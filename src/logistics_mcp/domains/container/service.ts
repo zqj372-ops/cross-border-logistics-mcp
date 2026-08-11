@@ -25,6 +25,8 @@ import {
   type ContainerProfile,
   type VolumeMeasurement,
   type WeightMeasurement,
+  validateCargoMetrics,
+  validateContainerProfile,
   versionSchema,
   volumeMeasurementSchema,
   weightMeasurementSchema,
@@ -166,15 +168,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasSpatialLayoutRequest(input: unknown): boolean {
-  if (!isRecord(input)) {
-    return false;
-  }
-  if (input.spatial_layout_requested === true) {
-    return true;
-  }
-
-  const forbiddenKeys = new Set([
+const forbiddenSpatialKeys = new Set([
     ["center", "of", "mass"].join("_"),
     ["stacking", "coordinates"].join("_"),
     "ro" + "tation",
@@ -183,7 +177,34 @@ function hasSpatialLayoutRequest(input: unknown): boolean {
     "y",
     "z",
   ]);
-  return Object.keys(input).some((key) => forbiddenKeys.has(key));
+
+function hasForbiddenSpatialKey(
+  input: unknown,
+  visited: Set<object> = new Set(),
+): boolean {
+  if (!isRecord(input) && !Array.isArray(input)) {
+    return false;
+  }
+  if (visited.has(input)) {
+    return false;
+  }
+  visited.add(input);
+  if (
+    isRecord(input) &&
+    Object.keys(input).some((key) => forbiddenSpatialKeys.has(key))
+  ) {
+    return true;
+  }
+  return Object.values(input).some((value) =>
+    hasForbiddenSpatialKey(value, visited),
+  );
+}
+
+function hasSpatialLayoutRequest(input: unknown): boolean {
+  return (
+    (isRecord(input) && input.spatial_layout_requested === true) ||
+    hasForbiddenSpatialKey(input)
+  );
 }
 
 function sourceIds(input: ContainerPlanSummaryInput): readonly string[] {
@@ -461,7 +482,7 @@ function outcomeFromInput(input: unknown): ServiceOutcome {
         issueNotice(
           "container.spatial.request-blocked",
           "requested_output",
-          "该工具只提供理论容量与运营目标汇总，不执行空间布局或现场装载保证。",
+          "该工具只提供理论容量与运营目标汇总，不执行空间布局，也不代表现场装载结果。",
         ),
       ],
       calculationTrace: [],
@@ -475,7 +496,7 @@ function outcomeFromInput(input: unknown): ServiceOutcome {
   }
   const request = parsed.data;
 
-  const profileValidation = containerProfileSchema.safeParse({
+  const profileValidation = validateContainerProfile({
     version: request.version,
     container_type: request.container_type,
     physical_capacity: request.physical_capacity,
@@ -483,11 +504,23 @@ function outcomeFromInput(input: unknown): ServiceOutcome {
     max_payload: request.max_payload,
     source_ref_ids: request.source_ref_ids,
   });
-  if (!profileValidation.success) {
-    return parsedInputFailure(profileValidation.error);
+  if (!profileValidation.ok) {
+    return statusForInputFailure(
+      profileValidation.code,
+      profileValidation.issues[0]?.field ?? "container_profile",
+      profileValidation.issues[0]?.message ?? "The container profile is invalid.",
+    );
   }
-  const profile = profileValidation.data;
-  const metrics = request.cargo_metrics;
+  const profile = profileValidation.value;
+  const metricsValidation = validateCargoMetrics(request.cargo_metrics);
+  if (!metricsValidation.ok) {
+    return statusForInputFailure(
+      metricsValidation.code,
+      metricsValidation.issues[0]?.field ?? "cargo_metrics",
+      metricsValidation.issues[0]?.message ?? "CargoMetrics is invalid.",
+    );
+  }
+  const metrics = metricsValidation.value;
   const constraintsValidation = validateLoadingConstraints(
     request.loading_constraints,
   );

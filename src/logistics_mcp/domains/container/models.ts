@@ -269,5 +269,13 @@ export function validateCargoMetrics(
     );
   }
 
+  if (metrics.line_count !== metrics.derived_from_line_ids.length) {
+    return failure(
+      "container.cargo.line-count-mismatch",
+      "line_count",
+      "line_count must match the number of derived line IDs.",
+    );
+  }
+
   return { ok: true, value: metrics };
 }

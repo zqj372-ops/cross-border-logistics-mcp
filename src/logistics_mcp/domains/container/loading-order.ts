@@ -1,3 +1,5 @@
+import { Decimal } from "decimal.js";
+
 import type { Notice } from "../../platform/envelope";
 import {
   validateLoadingConstraints,
@@ -92,7 +94,9 @@ export function deriveLoadingOrder(
       right.line.customer_priority !== null &&
       left.line.customer_priority !== right.line.customer_priority
     ) {
-      return left.line.customer_priority - right.line.customer_priority;
+      return new Decimal(String(left.line.customer_priority)).comparedTo(
+        new Decimal(String(right.line.customer_priority)),
+      );
     }
     if (constraints.value.fifo_for_other && left.index !== right.index) {
       return left.index - right.index;

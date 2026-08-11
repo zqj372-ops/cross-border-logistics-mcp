@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Decimal } from "decimal.js";
 
 import type { Notice } from "../../platform/envelope";
@@ -98,6 +100,18 @@ function minimumContainerCount(value: Decimal, capacity: Decimal): Decimal {
 
 function distinct(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
+}
+
+function planVersion(profile: ContainerProfile, cargoMetrics: CargoMetrics): string {
+  const fullVersion = `container-plan@${profile.version}/cargo@${cargoMetrics.version}`;
+  if (fullVersion.length <= 128) {
+    return fullVersion;
+  }
+  const digest = createHash("sha256")
+    .update(`${profile.version}\u0000${cargoMetrics.version}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `container-plan@${digest}`;
 }
 
 export function summarizeContainer(
@@ -217,7 +231,7 @@ export function summarizeContainer(
   warnings.push(...(options.additional_warnings ?? []));
 
   return {
-    version: `container-plan@${profile.version}/cargo@${cargoMetrics.version}`,
+    version: planVersion(profile, cargoMetrics),
     plan_id: options.plan_id,
     container_type: profile.container_type,
     physical_capacity: volumeMeasurement(physicalCapacity),

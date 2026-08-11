@@ -122,6 +122,18 @@ describe("container.plan_summary service outcomes", () => {
     );
   });
 
+  it("returns needs_input when CargoMetrics line count and line references disagree", () => {
+    const result = planContainerSummary(
+      completeInput({
+        cargo_metrics: cargoMetrics({ line_count: 3 }),
+      }),
+    );
+
+    expect(result.status).toBe("needs_input");
+    expect(result.data).toBeNull();
+    expect(result.blockers[0]?.code).toBe("container.cargo.line-count-mismatch");
+  });
+
   it("returns manual_review with the non-final summary for capacity or payload violations", () => {
     const result = planContainerSummary(
       completeInput({
@@ -175,6 +187,26 @@ describe("container.plan_summary service outcomes", () => {
   it("blocks spatial-layout requests before calculating any summary", () => {
     const result = planContainerSummary(
       completeInput({ spatial_layout_requested: true }),
+    );
+
+    expect(result.status).toBe("blocked");
+    expect(result.data).toBeNull();
+    expect(result.calculation_trace).toEqual([]);
+  });
+
+  it("blocks nested spatial-layout keys before calculating any summary", () => {
+    const result = planContainerSummary(
+      completeInput({
+        loading_lines: [
+          {
+            line_id: "line:sensitive",
+            sensitive: false,
+            customer_priority: null,
+            declaration_required: false,
+            layout: { ["x"]: "not accepted" },
+          },
+        ],
+      }),
     );
 
     expect(result.status).toBe("blocked");
