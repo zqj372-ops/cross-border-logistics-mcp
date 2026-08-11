@@ -16,18 +16,30 @@ import {
   type ResponseEnvelope,
 } from "../platform/envelope";
 import { MemoryAuditRepository } from "../platform/audit";
-import type { AuditRepository } from "../platform/repositories";
+import type {
+  AuditEvent,
+  AuditRepository,
+  IdempotencyRepository,
+} from "../platform/repositories";
 import {
   CrossTenantAccessError,
   ForbiddenError,
 } from "../platform/rbac";
-import { IdempotencyConflictError } from "../platform/idempotency";
 import {
-  executeRegisteredTool,
+  IdempotencyConflictError,
+  IdempotencyRequiredError,
+  MemoryIdempotencyRepository,
+} from "../platform/idempotency";
+import {
+  executeRegisteredToolWithResult,
   HandlerUnavailableError,
+  ToolContractUnavailableError,
+  ToolContractValidationError,
+  WriteContractError,
   registerPhaseOneTools,
   type DomainToolHandler,
   type ToolDefinition,
+  type ToolContractMap,
   type ToolHandlerMap,
 } from "./tool-registry";
 
@@ -38,7 +50,9 @@ export interface McpHttpOptions {
     token: string,
   ) => AuthClaims | Promise<AuthClaims>;
   readonly handlers?: ToolHandlerMap;
+  readonly contracts?: ToolContractMap;
   readonly auditRepository?: AuditRepository;
+  readonly idempotencyRepository?: IdempotencyRepository;
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly requireHttps?: boolean;
@@ -115,6 +129,34 @@ function errorOutcome(error: unknown): {
       message: "The idempotency key conflicts with an earlier request.",
     };
   }
+  if (error instanceof IdempotencyRequiredError) {
+    return {
+      status: "unavailable",
+      code: "idempotency.unavailable",
+      message: "The write idempotency service is not configured.",
+    };
+  }
+  if (error instanceof ToolContractUnavailableError) {
+    return {
+      status: "unavailable",
+      code: "contract.unavailable",
+      message: "The tool contract is not configured.",
+    };
+  }
+  if (error instanceof ToolContractValidationError) {
+    return {
+      status: "manual_review",
+      code: "contract.output_invalid",
+      message: "The domain result does not satisfy the tool contract.",
+    };
+  }
+  if (error instanceof WriteContractError) {
+    return {
+      status: error.status,
+      code: error.code,
+      message: error.message,
+    };
+  }
   if (error instanceof HandlerUnavailableError) {
     return {
       status: "unavailable",
@@ -185,6 +227,8 @@ function auditValues(
   envelope: ResponseEnvelope,
   tool: string,
   startedAt: number,
+  idempotencyOutcome: AuditEvent["idempotency_outcome"] = "not_applicable",
+  readbackStatus: AuditEvent["readback_status"] = "not_applicable",
 ): Parameters<AuditRepository["append"]>[0] {
   return {
     audit_id: envelope.audit_id,
@@ -199,9 +243,28 @@ function auditValues(
     versions: envelope.source_refs.map((source) => source.version),
     reason_codes: envelope.blockers.map((blocker) => blocker.code),
     duration_ms: Math.max(0, Date.now() - startedAt),
-    idempotency_outcome: "not_applicable",
-    readback_status: "not_applicable",
+    idempotency_outcome: idempotencyOutcome,
+    readback_status: readbackStatus,
   };
+}
+
+function readbackStatusFor(
+  tool: string,
+  envelope: ResponseEnvelope,
+): AuditEvent["readback_status"] {
+  if (tool !== "quote.save_draft" && tool !== "review.create_task") {
+    return "not_applicable";
+  }
+  if (envelope.status !== "success" || !isRecord(envelope.data)) {
+    return "missing";
+  }
+  if (envelope.data.operation_status === "previewed") {
+    return "not_applicable";
+  }
+  const readback = envelope.data.readback_evidence;
+  return isRecord(readback) && readback.verified === true
+    ? "verified"
+    : "missing";
 }
 
 async function recordAudit(
@@ -211,8 +274,19 @@ async function recordAudit(
   envelope: ResponseEnvelope,
   tool: string,
   startedAt: number,
+  idempotencyOutcome: AuditEvent["idempotency_outcome"] = "not_applicable",
 ): Promise<void> {
-  await repository.append(auditValues(context, requestId, envelope, tool, startedAt));
+  await repository.append(
+    auditValues(
+      context,
+      requestId,
+      envelope,
+      tool,
+      startedAt,
+      idempotencyOutcome,
+      readbackStatusFor(tool, envelope),
+    ),
+  );
 }
 
 function failureEnvelope(
@@ -233,6 +307,9 @@ function failureEnvelope(
 function ensureSecurityOptions(options: McpHttpOptions): void {
   if (options.allowedOrigins.length === 0 || options.allowedHosts.length === 0) {
     throw new Error("Secure MCP HTTP options require origin and host allowlists.");
+  }
+  if (options.requireHttps === false) {
+    throw new Error("HTTPS is mandatory for the remote MCP gateway.");
   }
   if ((options.maxBodyBytes ?? 1024 * 1024) < 1) {
     throw new Error("The maximum request body size must be positive.");
@@ -287,6 +364,13 @@ function assertContextNotOverridden(
 
   for (const [key, value] of Object.entries(input)) {
     const normalized = key.toLowerCase();
+    if (normalized === "tenant_context" || normalized === "tenantcontext") {
+      if (!isRecord(value) || !Object.hasOwn(value, "tenant_id")) {
+        throw new ForbiddenError();
+      }
+      assertContextNotOverridden(value, context);
+      continue;
+    }
     if (normalized === "tenant_id" || normalized === "tenantid") {
       if (typeof value !== "string" || value !== context.tenantId) {
         throw new CrossTenantAccessError();
@@ -305,11 +389,14 @@ function assertContextNotOverridden(
     if (normalized === "roles" || normalized === "scopes") {
       if (
         !Array.isArray(value) ||
-        value.some((candidate) =>
-          typeof candidate !== "string" ||
-          (normalized === "roles"
-            ? !context.roles.some((role) => role === candidate)
-            : !context.scopes.includes(candidate)),
+        value.length !==
+          (normalized === "roles" ? context.roles.length : context.scopes.length) ||
+        value.some(
+          (candidate) =>
+            typeof candidate !== "string" ||
+            (normalized === "roles"
+              ? !context.roles.some((role) => role === candidate)
+              : !context.scopes.includes(candidate)),
         )
       ) {
         throw new ForbiddenError();
@@ -330,9 +417,16 @@ function assertContextNotOverridden(
 }
 
 function sameContext(left: ExecutionContext, right: ExecutionContext): boolean {
+  const sameValues = (leftValues: readonly string[], rightValues: readonly string[]) =>
+    leftValues.length === rightValues.length &&
+    leftValues.every((value) => rightValues.includes(value));
+
   return (
     left.tenantId === right.tenantId &&
     left.actorId === right.actorId &&
+    left.role === right.role &&
+    sameValues(left.roles, right.roles) &&
+    sameValues(left.scopes, right.scopes) &&
     left.clientId === right.clientId &&
     left.sessionId === right.sessionId
   );
@@ -367,27 +461,38 @@ function registerMcpTools(
   context: ExecutionContext,
   requestIdForCall: () => string,
   auditRepository: AuditRepository,
+  idempotencyRepository: IdempotencyRepository,
 ): void {
-  const emptyInputSchema = z.object({}).strict();
+  const missingContractInputSchema = z.record(z.string(), z.unknown());
   for (const definition of definitions) {
     server.registerTool(
       definition.name,
       {
         title: definition.name,
         description: `Phase 1 ${definition.kind} tool; domain schema is ${definition.inputSchemaId}.`,
-        inputSchema: emptyInputSchema,
+        inputSchema: definition.inputSchema ?? missingContractInputSchema,
       },
       async (input) => {
         const requestId = requestIdForCall();
         const audit = auditId();
         const startedAt = Date.now();
         let envelope: ResponseEnvelope;
+        let idempotencyOutcome: AuditEvent["idempotency_outcome"] =
+          "not_applicable";
         try {
           assertContextNotOverridden(input, context);
-          envelope = await executeRegisteredTool(definition, input, context, {
-            requestId,
-            auditId: audit,
-          });
+          const result = await executeRegisteredToolWithResult(
+            definition,
+            input,
+            context,
+            {
+              requestId,
+              auditId: audit,
+              idempotencyRepository,
+            },
+          );
+          envelope = result.envelope;
+          idempotencyOutcome = result.idempotencyOutcome;
         } catch (error: unknown) {
           const outcome = errorOutcome(error);
           envelope = createEnvelope({
@@ -401,6 +506,9 @@ function registerMcpTools(
                 ? "manual_review"
                 : "not_required",
           });
+          if (error instanceof IdempotencyConflictError) {
+            idempotencyOutcome = "conflict";
+          }
         }
         await recordAudit(
           auditRepository,
@@ -409,6 +517,7 @@ function registerMcpTools(
           envelope,
           definition.name,
           startedAt,
+          idempotencyOutcome,
         );
         return responseForToolEnvelope(envelope);
       },
@@ -421,7 +530,9 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   const auditRepository = options.auditRepository ?? new MemoryAuditRepository();
-  const definitions = registerPhaseOneTools(options.handlers);
+  const idempotencyRepository =
+    options.idempotencyRepository ?? new MemoryIdempotencyRepository();
+  const definitions = registerPhaseOneTools(options.handlers, options.contracts);
   const sessions = new Map<string, SessionRecord>();
   const requireHttps = options.requireHttps ?? true;
 
@@ -475,6 +586,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       context,
       requestIdForCall,
       auditRepository,
+      idempotencyRepository,
     );
     const record: SessionRecord = { transport, server, context };
     sessionRef.current = record;

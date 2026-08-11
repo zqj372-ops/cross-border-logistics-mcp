@@ -34,6 +34,15 @@ export class IdempotencyStateError extends Error {
   }
 }
 
+export class IdempotencyRequiredError extends Error {
+  readonly code = "idempotency_required";
+
+  constructor() {
+    super("A write operation requires an idempotency repository.");
+    this.name = "IdempotencyRequiredError";
+  }
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
