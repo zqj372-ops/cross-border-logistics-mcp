@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/cargo-metrics.schema.json",
+  "title": "CargoMetrics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "line_count", "total_quantity", "total_volume", "actual_weight", "volumetric_weight", "weight_evidence", "derived_from_line_ids"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "line_count": { "type": "integer", "minimum": 0 },
+    "total_quantity": { "type": "integer", "minimum": 0 },
+    "total_volume": { "$ref": "common.schema.json#/$defs/VolumeMeasurement" },
+    "actual_weight": { "$ref": "common.schema.json#/$defs/WeightMeasurement" },
+    "volumetric_weight": { "$ref": "common.schema.json#/$defs/WeightMeasurement" },
+    "weight_evidence": { "type": "string", "enum": ["unit_weight", "piece_weights", "line_total_weight", "missing", "conflicting"] },
+    "derived_from_line_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+  }
+}

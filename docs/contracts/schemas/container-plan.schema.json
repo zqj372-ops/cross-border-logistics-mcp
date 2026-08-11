@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/container-plan.schema.json",
+  "title": "ContainerPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "plan_id", "container_type", "physical_capacity", "operational_target", "max_payload", "total_volume", "total_weight", "utilization_ratio", "over_capacity", "overweight", "remaining_volume", "loading_order", "overflow_line_ids", "theoretical_only", "source_ref_ids"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "container_type": { "type": "string", "enum": ["20GP", "40GP", "40HQ", "45HQ", "other"] },
+    "physical_capacity": { "$ref": "common.schema.json#/$defs/VolumeMeasurement" },
+    "operational_target": { "$ref": "common.schema.json#/$defs/VolumeMeasurement" },
+    "max_payload": { "$ref": "common.schema.json#/$defs/WeightMeasurement" },
+    "total_volume": { "$ref": "common.schema.json#/$defs/VolumeMeasurement" },
+    "total_weight": { "$ref": "common.schema.json#/$defs/WeightMeasurement" },
+    "utilization_ratio": { "$ref": "common.schema.json#/$defs/RatioString" },
+    "over_capacity": { "type": "boolean" },
+    "overweight": { "type": "boolean" },
+    "remaining_volume": { "$ref": "common.schema.json#/$defs/VolumeMeasurement" },
+    "loading_order": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/Identifier" } },
+    "overflow_line_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true },
+    "theoretical_only": { "const": true },
+    "special_warnings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/Notice" } },
+    "source_ref_ids": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_review_task_001",
+  "status": "success",
+  "data": {
+    "version": "write-result@2026-08-11.v1",
+    "operation": "review.create_task",
+    "operation_status": "committed",
+    "record_id": "review-task-demo-001",
+    "preview_ref": "preview:review-task-demo-001",
+    "readback_evidence": {
+      "target_system": "existing-quote-system",
+      "record_id": "review-task-demo-001",
+      "observed_version": "manual-quote-task@3",
+      "observed_at": "2026-08-11T09:08:00Z",
+      "verified": true,
+      "source_ref_ids": ["src:review:readback:demo"]
+    },
+    "idempotency_key": "idem_demo_review_task_001_abcdef",
+    "approval": { "required": false, "status": "not_required", "approval_id": null }
+  },
+  "source_refs": [
+    {
+      "source_id": "src:review:readback:demo",
+      "source_type": "internal_system",
+      "system": "existing-quote-system",
+      "locator": "manual_quote_tasks/review-task-demo-001",
+      "version": "manual-quote-task@3",
+      "retrieved_at": "2026-08-11T09:08:00Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:demoreviewreadback01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [{ "code": "review.pending", "message": "任务已创建，需运营/关务/财务按任务类型处理。", "severity": "info", "field": null }],
+  "blockers": [],
+  "calculation_trace": [],
+  "review_status": "pending",
+  "audit_id": "audit_demo_review_task_001"
+}

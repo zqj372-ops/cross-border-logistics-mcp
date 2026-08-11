@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/cargo-result.schema.json",
+  "title": "Cargo calculation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "metrics", "chargeable_weight"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "metrics": { "$ref": "cargo-metrics.schema.json" },
+    "chargeable_weight": { "$ref": "chargeable-weight.schema.json" }
+  }
+}

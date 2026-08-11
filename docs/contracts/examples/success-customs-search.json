@@ -1,0 +1,49 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_customs_search_001",
+  "status": "success",
+  "data": {
+    "version": "customs-search@2026-08-11.v1",
+    "query_id": "query_demo_customs_001",
+    "jurisdiction": "CA",
+    "query_kind": "name_search",
+    "candidates": [
+      {
+        "hs_code": "9617.00.10",
+        "classification_status": "candidate",
+        "confidence": "0.72",
+        "reason_summary": "候选与已提供的材质、用途和保温属性相符，但仍需人员确认。",
+        "source_ref_ids": ["src:customs:release:demo"]
+      }
+    ],
+    "next_questions": ["请确认主要材质及比例。"],
+    "data_status": {
+      "version": "data-status@2026-08-11.v1",
+      "system": "riskcustoms",
+      "ready": true,
+      "test_data": false,
+      "evaluated_at": "2026-08-11T09:05:00Z",
+      "last_source_check_at": "2026-08-11T08:55:00Z",
+      "reasons": [],
+      "release_ids": ["ca-tariff-demo-2026"]
+    }
+  },
+  "source_refs": [
+    {
+      "source_id": "src:customs:release:demo",
+      "source_type": "official_source",
+      "system": "RiskCustoms",
+      "locator": "release/ca-tariff-demo-2026/candidate",
+      "version": "ca-tariff-demo-2026",
+      "retrieved_at": "2026-08-11T09:05:00Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:democustomsrelease01"
+    }
+  ],
+  "assumptions": [{ "code": "customs.candidate_only", "message": "该 HS 仅为候选，不是正式归类。", "severity": "info", "field": "data.candidates[0]" }],
+  "warnings": [],
+  "blockers": [],
+  "calculation_trace": [],
+  "review_status": "pending",
+  "audit_id": "audit_demo_customs_search_001"
+}

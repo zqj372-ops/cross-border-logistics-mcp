@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/knowledge-search-result.schema.json",
+  "title": "Curated knowledge search result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "query", "curated_only", "archived_excluded", "results"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "query": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "curated_only": { "const": true },
+    "archived_excluded": { "const": true },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["result_id", "title", "summary", "source_ref"],
+        "properties": {
+          "result_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "source_ref": { "$ref": "common.schema.json#/$defs/SourceRef" }
+        }
+      }
+    }
+  }
+}

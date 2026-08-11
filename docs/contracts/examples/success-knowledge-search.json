@@ -1,0 +1,46 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_knowledge_001",
+  "status": "success",
+  "data": {
+    "version": "knowledge-index@2026-08-11",
+    "query": "加拿大尾程地址类型和 Zone",
+    "curated_only": true,
+    "archived_excluded": true,
+    "results": [
+      {
+        "result_id": "knowledge-demo-001",
+        "title": "加拿大尾程快速 SOP",
+        "summary": "用于解释输入字段和人工复核边界；不覆盖价格矩阵。",
+        "source_ref": {
+          "source_id": "src:knowledge:sop:demo",
+          "source_type": "internal_system",
+          "system": "curated-knowledge",
+          "locator": "SOP_QUICK.md",
+          "version": "knowledge@2026-08-11",
+          "retrieved_at": "2026-08-11T09:09:00Z",
+          "authority": "supporting",
+          "content_hash": "sha256:demoknowledge01"
+        }
+      }
+    ]
+  },
+  "source_refs": [
+    {
+      "source_id": "src:knowledge:sop:demo",
+      "source_type": "internal_system",
+      "system": "curated-knowledge",
+      "locator": "SOP_QUICK.md",
+      "version": "knowledge@2026-08-11",
+      "retrieved_at": "2026-08-11T09:09:00Z",
+      "authority": "supporting",
+      "content_hash": "sha256:demoknowledge01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [{ "code": "knowledge.not_calculation_authority", "message": "检索资料不能覆盖可执行价格、Zone 或税率。", "severity": "info", "field": null }],
+  "blockers": [],
+  "calculation_trace": [],
+  "review_status": "not_required",
+  "audit_id": "audit_demo_knowledge_001"
+}

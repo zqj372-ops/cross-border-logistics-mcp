@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/customs-assessment.schema.json",
+  "title": "CustomsAssessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "assessment_id", "jurisdiction", "assessment_status", "data_status", "hs_candidates", "valuation", "rates", "total_estimated_import_tax", "tariff_release_version", "requires_broker_confirmation", "source_ref_ids"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "assessment_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "jurisdiction": { "type": "string", "pattern": "^[A-Z]{2}$" },
+    "assessment_status": { "type": "string", "enum": ["candidate", "estimated", "manual_review", "unavailable"] },
+    "data_status": { "type": "string", "enum": ["ready", "not_ready", "source_conflict", "source_missing"] },
+    "hs_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["hs_code", "classification_status", "confidence", "reason_summary", "source_ref_ids"],
+        "properties": {
+          "hs_code": { "type": "string", "pattern": "^[0-9.]{4,20}$" },
+          "classification_status": { "type": "string", "enum": ["candidate", "confirmed", "manual_review"] },
+          "confidence": { "$ref": "common.schema.json#/$defs/RatioString" },
+          "reason_summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "source_ref_ids": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+        }
+      }
+    },
+    "valuation": { "oneOf": [{ "$ref": "common.schema.json#/$defs/Money" }, { "type": "null" }] },
+    "rates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rate_id", "label", "rate_expression_raw", "amount", "confirmed", "source_ref_ids"],
+        "properties": {
+          "rate_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "rate_expression_raw": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "amount": { "oneOf": [{ "$ref": "common.schema.json#/$defs/Money" }, { "type": "null" }] },
+          "confirmed": { "type": "boolean" },
+          "source_ref_ids": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+        }
+      }
+    },
+    "total_estimated_import_tax": { "oneOf": [{ "$ref": "common.schema.json#/$defs/Money" }, { "type": "null" }] },
+    "tariff_release_version": { "oneOf": [{ "$ref": "common.schema.json#/$defs/Version" }, { "type": "null" }] },
+    "requires_broker_confirmation": { "type": "boolean" },
+    "source_ref_ids": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+  }
+}

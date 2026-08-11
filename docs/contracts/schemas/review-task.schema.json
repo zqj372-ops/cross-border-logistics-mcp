@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/review-task.schema.json",
+  "title": "Manual review task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "task_id", "task_type", "status", "priority", "reason_codes", "opaque_context_refs", "created_by", "created_at"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "task_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "task_type": { "type": "string", "enum": ["quote", "customs", "container", "data_conflict", "source_unavailable"] },
+    "status": { "type": "string", "enum": ["pending", "assigned", "resolved", "rejected"] },
+    "priority": { "type": "string", "enum": ["low", "normal", "high", "critical"] },
+    "reason_codes": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true },
+    "opaque_context_refs": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/OpaqueReference" } },
+    "assigned_role": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+    "created_by": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "created_at": { "$ref": "common.schema.json#/$defs/DateTime" }
+  }
+}

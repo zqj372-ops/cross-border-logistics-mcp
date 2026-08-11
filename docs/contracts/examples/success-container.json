@@ -1,0 +1,52 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_container_success_001",
+  "status": "success",
+  "data": {
+    "version": "container-plan@2026-08-11.v1",
+    "plan_id": "plan_demo_container_001",
+    "container_type": "40HQ",
+    "physical_capacity": { "value": "76", "unit": "cbm" },
+    "operational_target": { "value": "75", "unit": "cbm" },
+    "max_payload": { "value": "26000", "unit": "kg" },
+    "total_volume": { "value": "60", "unit": "cbm" },
+    "total_weight": { "value": "18000", "unit": "kg" },
+    "utilization_ratio": "0.8000",
+    "over_capacity": false,
+    "overweight": false,
+    "remaining_volume": { "value": "15", "unit": "cbm" },
+    "loading_order": ["line_sensitive_001", "line_priority_002", "line_declaration_003"],
+    "overflow_line_ids": [],
+    "theoretical_only": true,
+    "special_warnings": [{ "code": "container.no_3d_promise", "message": "结果是理论汇总，不代表现场可装或 3D 坐标。", "severity": "warning" }],
+    "source_ref_ids": ["src:container:config:demo", "src:container:cargo:demo"]
+  },
+  "source_refs": [
+    {
+      "source_id": "src:container:config:demo",
+      "source_type": "internal_system",
+      "system": "container-rule-registry",
+      "locator": "container/40HQ/operational-target",
+      "version": "container-config@2026-08-11",
+      "retrieved_at": "2026-08-11T09:04:00Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:democontainerconfig01"
+    },
+    {
+      "source_id": "src:container:cargo:demo",
+      "source_type": "tenant_record",
+      "system": "mcp-gateway",
+      "locator": "opaque://cargo/plan_demo_container_001",
+      "version": "cargo-metrics@2026-08-11.v1",
+      "retrieved_at": "2026-08-11T09:04:01Z",
+      "authority": "supporting",
+      "content_hash": "sha256:democontainercargo01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [{ "code": "container.operational_target_distinct", "message": "已同时展示物理容量和运营目标。", "severity": "info", "field": null }],
+  "blockers": [],
+  "calculation_trace": [{ "step_id": "step:container-utilization", "operation": "total volume / operational target", "inputs": [{ "name": "total_volume", "value": { "value": "60", "unit": "cbm" } }, { "name": "operational_target", "value": { "value": "75", "unit": "cbm" } }], "result": "0.8000", "source_ref_ids": ["src:container:config:demo", "src:container:cargo:demo"] }],
+  "review_status": "not_required",
+  "audit_id": "audit_demo_container_success_001"
+}

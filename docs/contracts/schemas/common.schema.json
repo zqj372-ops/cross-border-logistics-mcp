@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json",
+  "title": "Cross-border Logistics MCP shared schema definitions",
+  "$defs": {
+    "DecimalString": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+      "description": "Decimal value encoded as a string; never a binary float."
+    },
+    "NonNegativeDecimalString": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "RatioString": {
+      "type": "string",
+      "pattern": "^(0|0\\.[0-9]+|1(?:\\.0+)?)$",
+      "description": "Ratio in the closed interval [0, 1], encoded as a decimal string."
+    },
+    "Version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "DateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "$ref": "#/$defs/DecimalString" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "Measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "$ref": "#/$defs/NonNegativeDecimalString" },
+        "unit": {
+          "type": "string",
+          "enum": ["g", "kg", "lb", "mm", "cm", "m", "l", "cbm", "m3", "piece", "pallet", "container", "hours", "days"]
+        }
+      }
+    },
+    "WeightMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "$ref": "#/$defs/NonNegativeDecimalString" },
+        "unit": { "type": "string", "enum": ["g", "kg", "lb"] }
+      }
+    },
+    "LengthMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "$ref": "#/$defs/NonNegativeDecimalString" },
+        "unit": { "type": "string", "enum": ["mm", "cm", "m"] }
+      }
+    },
+    "VolumeMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "$ref": "#/$defs/NonNegativeDecimalString" },
+        "unit": { "type": "string", "enum": ["l", "cbm", "m3"] }
+      }
+    },
+    "DimensionSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["length", "width", "height", "quantity"],
+      "properties": {
+        "length": { "$ref": "#/$defs/LengthMeasurement" },
+        "width": { "$ref": "#/$defs/LengthMeasurement" },
+        "height": { "$ref": "#/$defs/LengthMeasurement" },
+        "quantity": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "OpaqueReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref_id", "kind", "purpose"],
+      "properties": {
+        "ref_id": { "$ref": "#/$defs/Identifier" },
+        "kind": { "type": "string", "enum": ["raw_input", "document", "credential", "record", "attachment", "external_response"] },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "expires_at": { "oneOf": [{ "$ref": "#/$defs/DateTime" }, { "type": "null" }] }
+      }
+    },
+    "SourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_type", "system", "locator", "version", "retrieved_at", "authority"],
+      "properties": {
+        "source_id": { "$ref": "#/$defs/Identifier" },
+        "source_type": { "type": "string", "enum": ["internal_system", "official_source", "tenant_record", "user_input", "opaque_reference", "fixture"] },
+        "system": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "version": { "$ref": "#/$defs/Version" },
+        "retrieved_at": { "$ref": "#/$defs/DateTime" },
+        "authority": { "type": "string", "enum": ["authoritative", "supporting", "user_provided", "opaque"] },
+        "content_hash": {
+          "oneOf": [
+            { "type": "string", "pattern": "^(sha256:)?[A-Za-z0-9._:-]{8,128}$" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "Notice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "severity"],
+      "properties": {
+        "code": { "$ref": "#/$defs/Identifier" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+        "field": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+      }
+    },
+    "TraceValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "integer" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "$ref": "#/$defs/Money" },
+        { "$ref": "#/$defs/Measurement" }
+      ]
+    },
+    "CalculationOperand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "value": { "$ref": "#/$defs/TraceValue" }
+      }
+    },
+    "CalculationStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "operation", "inputs", "result", "source_ref_ids"],
+      "properties": {
+        "step_id": { "$ref": "#/$defs/Identifier" },
+        "operation": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/CalculationOperand" } },
+        "result": { "$ref": "#/$defs/TraceValue" },
+        "source_ref_ids": { "type": "array", "items": { "$ref": "#/$defs/Identifier" }, "uniqueItems": true },
+        "rounding": { "type": ["string", "null"], "maxLength": 120 }
+      }
+    },
+    "ApprovalState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status", "approval_id"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["not_required", "pending", "approved", "rejected"] },
+        "approval_id": { "oneOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] }
+      }
+    },
+    "TenantContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenant_id", "actor_id", "actor_role", "client_id", "session_id"],
+      "properties": {
+        "tenant_id": { "$ref": "#/$defs/Identifier" },
+        "actor_id": { "$ref": "#/$defs/Identifier" },
+        "actor_role": { "type": "string", "enum": ["admin", "sales", "operator", "customs_reviewer", "finance", "viewer", "service"] },
+        "client_id": { "$ref": "#/$defs/Identifier" },
+        "session_id": { "$ref": "#/$defs/Identifier" }
+      }
+    },
+    "WriteContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenant_context", "idempotency_key", "operation_mode", "preview_ref", "approval"],
+      "properties": {
+        "tenant_context": { "$ref": "#/$defs/TenantContext" },
+        "idempotency_key": { "type": "string", "minLength": 16, "maxLength": 200 },
+        "operation_mode": { "type": "string", "enum": ["preview", "commit"] },
+        "preview_ref": { "oneOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] },
+        "approval": { "$ref": "#/$defs/ApprovalState" }
+      }
+    },
+    "ReadbackEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_system", "record_id", "observed_version", "observed_at", "verified", "source_ref_ids"],
+      "properties": {
+        "target_system": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "record_id": { "$ref": "#/$defs/Identifier" },
+        "observed_version": { "$ref": "#/$defs/Version" },
+        "observed_at": { "$ref": "#/$defs/DateTime" },
+        "verified": { "type": "boolean" },
+        "source_ref_ids": { "type": "array", "items": { "$ref": "#/$defs/Identifier" }, "minItems": 1, "uniqueItems": true }
+      }
+    }
+  }
+}

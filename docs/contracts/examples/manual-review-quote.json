@@ -1,0 +1,55 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_quote_review_001",
+  "status": "manual_review",
+  "data": {
+    "version": "quote-result@2026-08-11.v1",
+    "quote_id": "quote_demo_review_001",
+    "quote_status": "manual_review",
+    "currency": "USD",
+    "total": null,
+    "line_items": [
+      {
+        "line_id": "line:base-price",
+        "label": "Canada final-mile base price",
+        "amount": null,
+        "pricing_basis": "postal/FSA source conflict; no price selected",
+        "source_ref_ids": ["src:quote:postal-conflict", "src:quote:price-matrix"]
+      }
+    ],
+    "rule_version": "quote-rule@2026-08-11",
+    "data_version": "zone-price@2026-08-11",
+    "sendable": false,
+    "valid_from": null,
+    "valid_to": null,
+    "source_ref_ids": ["src:quote:postal-conflict", "src:quote:price-matrix"]
+  },
+  "source_refs": [
+    {
+      "source_id": "src:quote:postal-conflict",
+      "source_type": "internal_system",
+      "system": "existing-quote-system",
+      "locator": "zone-lookup/opaque-result/quote_demo_review_001",
+      "version": "zone-lookup@2026-08-11",
+      "retrieved_at": "2026-08-11T09:02:00Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:demozoneconflict01"
+    },
+    {
+      "source_id": "src:quote:price-matrix",
+      "source_type": "internal_system",
+      "system": "existing-quote-system",
+      "locator": "zone_price_matrix/quote_demo_review_001",
+      "version": "zone-price@2026-08-11",
+      "retrieved_at": "2026-08-11T09:02:01Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:demopricematrix01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [{ "code": "quote.not_sendable", "message": "Phase 1 结果不能发送或发布。", "severity": "warning", "field": null }],
+  "blockers": [{ "code": "quote.zone_conflict", "message": "邮编与 FSA/城市锚点冲突，需要运营或供应商确认。", "severity": "error", "field": "destination.postal_code" }],
+  "calculation_trace": [],
+  "review_status": "manual_review",
+  "audit_id": "audit_demo_quote_review_001"
+}

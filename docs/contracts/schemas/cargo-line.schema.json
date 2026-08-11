@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/cargo-line.schema.json",
+  "title": "CargoLine",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "line_id", "description", "quantity", "quantity_unit", "package_type", "stackable", "fragile", "sensitive", "source_ref_ids"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "line_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "quantity": { "type": "integer", "minimum": 1 },
+    "quantity_unit": { "type": "string", "enum": ["piece", "carton", "crate", "bag", "pallet", "drum", "container"] },
+    "package_type": { "type": "string", "enum": ["carton", "wooden_crate", "pallet", "bag", "drum", "other"] },
+    "unit_weight": { "$ref": "common.schema.json#/$defs/WeightMeasurement" },
+    "piece_weights": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/WeightMeasurement" } },
+    "line_total_weight": { "$ref": "common.schema.json#/$defs/WeightMeasurement" },
+    "dimensions": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/DimensionSet" } },
+    "volume": { "$ref": "common.schema.json#/$defs/VolumeMeasurement" },
+    "stackable": { "type": "boolean" },
+    "fragile": { "type": "boolean" },
+    "sensitive": { "type": "boolean" },
+    "declared_value": { "$ref": "common.schema.json#/$defs/Money" },
+    "opaque_input_ref": { "$ref": "common.schema.json#/$defs/OpaqueReference" },
+    "source_ref_ids": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+  },
+  "oneOf": [
+    { "required": ["unit_weight"], "not": { "anyOf": [{ "required": ["piece_weights"] }, { "required": ["line_total_weight"] }] } },
+    { "required": ["piece_weights"], "not": { "anyOf": [{ "required": ["unit_weight"] }, { "required": ["line_total_weight"] }] } },
+    { "required": ["line_total_weight"], "not": { "anyOf": [{ "required": ["unit_weight"] }, { "required": ["piece_weights"] }] } },
+    { "not": { "anyOf": [{ "required": ["unit_weight"] }, { "required": ["piece_weights"] }, { "required": ["line_total_weight"] }] } }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_customs_estimate_review_001",
+  "status": "manual_review",
+  "data": {
+    "version": "customs-assessment@2026-08-11.v1",
+    "assessment_id": "assessment_demo_customs_001",
+    "jurisdiction": "CA",
+    "assessment_status": "manual_review",
+    "data_status": "source_conflict",
+    "hs_candidates": [
+      {
+        "hs_code": "9617.00.10",
+        "classification_status": "candidate",
+        "confidence": "0.72",
+        "reason_summary": "候选 HS 尚未由报关行确认。",
+        "source_ref_ids": ["src:customs:release:demo"]
+      }
+    ],
+    "valuation": { "amount": "20000.00", "currency": "CAD" },
+    "rates": [
+      {
+        "rate_id": "rate:customs-duty:demo",
+        "label": "Customs duty",
+        "rate_expression_raw": "rate requires confirmed treatment",
+        "amount": null,
+        "confirmed": false,
+        "source_ref_ids": ["src:customs:release:demo"]
+      }
+    ],
+    "total_estimated_import_tax": null,
+    "tariff_release_version": "ca-tariff-demo-2026",
+    "requires_broker_confirmation": true,
+    "source_ref_ids": ["src:customs:release:demo"]
+  },
+  "source_refs": [
+    {
+      "source_id": "src:customs:release:demo",
+      "source_type": "official_source",
+      "system": "RiskCustoms",
+      "locator": "release/ca-tariff-demo-2026/estimate",
+      "version": "ca-tariff-demo-2026",
+      "retrieved_at": "2026-08-11T09:06:00Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:democustomsrelease02"
+    }
+  ],
+  "assumptions": [{ "code": "customs.estimate_only", "message": "不得将本结果作为正式报关结论。", "severity": "warning", "field": null }],
+  "warnings": [{ "code": "customs.broker_confirmation_required", "message": "HS、贸易待遇和税率适用范围需报关行确认。", "severity": "warning", "field": "data.hs_candidates" }],
+  "blockers": [{ "code": "customs.classification_unconfirmed", "message": "候选归类未确认，无法安全形成总税额。", "severity": "error", "field": "data.total_estimated_import_tax" }],
+  "calculation_trace": [],
+  "review_status": "manual_review",
+  "audit_id": "audit_demo_customs_estimate_review_001"
+}

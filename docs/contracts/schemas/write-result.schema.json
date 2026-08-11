@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/write-result.schema.json",
+  "title": "Narrow write result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operation", "operation_status", "record_id", "preview_ref", "readback_evidence", "idempotency_key", "approval"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "operation": { "type": "string", "enum": ["quote.save_draft", "review.create_task"] },
+    "operation_status": { "type": "string", "enum": ["previewed", "committed", "already_committed", "rejected"] },
+    "record_id": { "oneOf": [{ "$ref": "common.schema.json#/$defs/Identifier" }, { "type": "null" }] },
+    "preview_ref": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "readback_evidence": { "oneOf": [{ "$ref": "common.schema.json#/$defs/ReadbackEvidence" }, { "type": "null" }] },
+    "idempotency_key": { "type": "string", "minLength": 16, "maxLength": 200 },
+    "approval": { "$ref": "common.schema.json#/$defs/ApprovalState" }
+  }
+}

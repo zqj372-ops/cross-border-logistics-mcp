@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-11/customs-search-result.schema.json",
+  "title": "Canada customs search result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "query_id", "jurisdiction", "query_kind", "candidates", "next_questions", "data_status"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/Version" },
+    "query_id": { "$ref": "common.schema.json#/$defs/Identifier" },
+    "jurisdiction": { "const": "CA" },
+    "query_kind": { "type": "string", "enum": ["exact_code", "name_search", "candidate_selection"] },
+    "candidates": { "type": "array", "items": { "$ref": "customs-assessment.schema.json#/properties/hs_candidates/items" } },
+    "next_questions": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "data_status": { "$ref": "data-status.schema.json" }
+  }
+}

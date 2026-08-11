@@ -1,0 +1,13 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_quote_send_blocked_001",
+  "status": "blocked",
+  "data": null,
+  "source_refs": [],
+  "assumptions": [],
+  "warnings": [],
+  "blockers": [{ "code": "phase1.quote_send_forbidden", "message": "Phase 1 禁止通过 MCP 发送或发布报价，只能保存现有报价系统草稿。", "severity": "error", "field": "requested_action" }],
+  "calculation_trace": [],
+  "review_status": "not_required",
+  "audit_id": "audit_demo_quote_send_blocked_001"
+}

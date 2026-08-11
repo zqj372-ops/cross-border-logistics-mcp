@@ -1,0 +1,76 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_demo_cargo_success_001",
+  "status": "success",
+  "data": {
+    "version": "cargo-result@2026-08-11.v1",
+    "metrics": {
+      "version": "cargo-metrics@2026-08-11.v1",
+      "line_count": 1,
+      "total_quantity": 7,
+      "total_volume": { "value": "4.800", "unit": "cbm" },
+      "actual_weight": { "value": "1800", "unit": "kg" },
+      "volumetric_weight": { "value": "800", "unit": "kg" },
+      "weight_evidence": "line_total_weight",
+      "derived_from_line_ids": ["line_001"]
+    },
+    "chargeable_weight": {
+      "version": "chargeable-weight@2026-08-11.v1",
+      "actual_weight": { "value": "1800", "unit": "kg" },
+      "volumetric_weight": { "value": "800", "unit": "kg" },
+      "bubble_weight": { "value": "0", "unit": "kg" },
+      "customer_chargeable_weight": { "value": "1800", "unit": "kg" },
+      "supplier_chargeable_weight": { "value": "1800", "unit": "kg" },
+      "bubble_share_ratio": "0",
+      "method": "none",
+      "rule_version": "channel:CAQ-HP@2026-01-01",
+      "source_ref_ids": ["src:cargo:input:demo", "src:cargo:rule:demo"]
+    }
+  },
+  "source_refs": [
+    {
+      "source_id": "src:cargo:input:demo",
+      "source_type": "user_input",
+      "system": "mcp-gateway",
+      "locator": "opaque://request/req_demo_cargo_success_001",
+      "version": "input@2026-08-11",
+      "retrieved_at": "2026-08-11T09:00:00Z",
+      "authority": "user_provided",
+      "content_hash": "sha256:democargoinput01"
+    },
+    {
+      "source_id": "src:cargo:rule:demo",
+      "source_type": "internal_system",
+      "system": "quote-rule-registry",
+      "locator": "channel/CAQ-HP/dimensional-weight",
+      "version": "channel:CAQ-HP@2026-01-01",
+      "retrieved_at": "2026-08-11T09:00:01Z",
+      "authority": "authoritative",
+      "content_hash": "sha256:democargorule01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [],
+  "blockers": [],
+  "calculation_trace": [
+    {
+      "step_id": "step:volume",
+      "operation": "sum line volume",
+      "inputs": [{ "name": "line_count", "value": 1 }],
+      "result": { "value": "4.800", "unit": "cbm" },
+      "source_ref_ids": ["src:cargo:input:demo"]
+    },
+    {
+      "step_id": "step:chargeable",
+      "operation": "max actual weight and volumetric weight",
+      "inputs": [
+        { "name": "actual_weight", "value": { "value": "1800", "unit": "kg" } },
+        { "name": "volumetric_weight", "value": { "value": "800", "unit": "kg" } }
+      ],
+      "result": { "value": "1800", "unit": "kg" },
+      "source_ref_ids": ["src:cargo:rule:demo"]
+    }
+  ],
+  "review_status": "not_required",
+  "audit_id": "audit_demo_cargo_success_001"
+}
