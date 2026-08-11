@@ -11,6 +11,10 @@ import {
   type ExecutionContext,
 } from "../platform/context";
 import {
+  validateShortLivedToken,
+  type ShortLivedTokenValidationOptions,
+} from "../platform/security";
+import {
   createEnvelope,
   type EnvelopeStatus,
   type ResponseEnvelope,
@@ -49,6 +53,7 @@ export interface McpHttpOptions {
   readonly authenticate: (
     token: string,
   ) => AuthClaims | Promise<AuthClaims>;
+  readonly tokenPolicy?: ShortLivedTokenValidationOptions;
   readonly handlers?: ToolHandlerMap;
   readonly contracts?: ToolContractMap;
   readonly auditRepository?: AuditRepository;
@@ -58,7 +63,10 @@ export interface McpHttpOptions {
   readonly requireHttps?: boolean;
 }
 
-export type McpHttpHandler = (request: Request) => Promise<Response>;
+export interface McpHttpHandler {
+  (request: Request): Promise<Response>;
+  close(): Promise<void>;
+}
 
 class BodyTooLargeError extends Error {}
 class InvalidJsonError extends Error {}
@@ -432,6 +440,30 @@ function assertContextNotOverridden(
   }
 }
 
+function assertPhaseOneBoundary(toolName: string, input: unknown): void {
+  const forbiddenKey = /(?:^|_)(?:send|publish|booking|commit_operation|formal_declaration|3d|coordinate|layout|center_of_mass|rotation)(?:_|$)/i;
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!isRecord(value)) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        forbiddenKey.test(key) &&
+        (toolName === "container.plan_summary" ||
+        /(?:^|_)(?:send|publish|booking|formal_declaration|commit_operation)(?:_|$)/i.test(key))
+      ) {
+        throw new ForbiddenError(
+          "The requested operation is outside the Phase 1 tool boundary.",
+        );
+      }
+      visit(child);
+    }
+  };
+  visit(input);
+}
+
 function sameContext(left: ExecutionContext, right: ExecutionContext): boolean {
   const sameValues = (leftValues: readonly string[], rightValues: readonly string[]) =>
     leftValues.length === rightValues.length &&
@@ -497,6 +529,7 @@ function registerMcpTools(
           "not_applicable";
         try {
           assertContextNotOverridden(input, context);
+          assertPhaseOneBoundary(definition.name, input);
           const result = await executeRegisteredToolWithResult(
             definition,
             input,
@@ -547,7 +580,7 @@ function registerMcpTools(
 
 export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   ensureSecurityOptions(options);
-  const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
+  const maxBodyBytes = options.maxBodyBytes ?? 32 * 1024;
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   const auditRepository = options.auditRepository ?? new MemoryAuditRepository();
   const idempotencyRepository =
@@ -671,7 +704,17 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
         throw new AuthenticationError();
       }
       const claims = await options.authenticate(token);
-      context = parseExecutionContext(claims);
+      if (options.tokenPolicy === undefined) {
+        context = parseExecutionContext(claims);
+      } else {
+        const verified = validateShortLivedToken(claims, options.tokenPolicy);
+        context = parseExecutionContext({
+          ...verified,
+          actor_id:
+            typeof verified.actor_id === "string" ? verified.actor_id : verified.sub,
+          expires_at: verified.exp,
+        });
+      }
     } catch {
       return secureFailure(request, 401, new AuthenticationError());
     }
@@ -720,11 +763,22 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     }
   };
 
-  return (request: Request): Promise<Response> =>
+  const handler = (request: Request): Promise<Response> =>
     withTimeout(processRequest(request), requestTimeoutMs).catch(
       async (error: unknown) =>
         secureFailure(request, error instanceof RequestTimeoutError ? 504 : 503, error),
     );
+
+  handler.close = async (): Promise<void> => {
+    const activeSessions = [...sessions.values()];
+    sessions.clear();
+    for (const session of activeSessions) {
+      await session.server.close();
+      await session.transport.close();
+    }
+  };
+
+  return handler;
 }
 
 export type { DomainToolHandler };
