@@ -109,7 +109,6 @@ function zodFailure<T>(
     return failure(fallbackCode, "<root>", "Input does not satisfy the contract.");
   }
 
-  const field = first.path.length > 0 ? first.path.join(".") : "<root>";
   const code =
     first.code === "unrecognized_keys"
       ? "container.unknown_field"
