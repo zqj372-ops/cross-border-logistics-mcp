@@ -1,0 +1,19 @@
+{
+  "version": "quote-fixture@1",
+  "quote_id": "quote-demo-001",
+  "postal_code": "A0A 0A0",
+  "fsa": "A0A",
+  "city": "Fixture City",
+  "province": "ON",
+  "address_type": "commercial",
+  "origin": "fixture-warehouse",
+  "zone": "2",
+  "billing_pallets": 2,
+  "base_price": { "amount": "123.45", "currency": "USD" },
+  "fuel": { "amount": "12.34", "currency": "USD" },
+  "effective_from": "2026-08-01T00:00:00Z",
+  "effective_to": "2026-08-31T23:59:59Z",
+  "rule_version": "zone-rule-fixture@1",
+  "data_version": "zone-price-fixture@1",
+  "source_locator": "fixture://existing-quote/quote-demo-001"
+}

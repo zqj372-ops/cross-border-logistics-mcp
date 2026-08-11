@@ -1,0 +1,14 @@
+{
+  "version": "riskcustoms-fixture@1",
+  "system": "riskcustoms",
+  "ready": false,
+  "test_data": false,
+  "evaluated_at": "2026-08-11T00:00:00Z",
+  "last_source_check_at": null,
+  "reasons": ["published_snapshot_not_ready"],
+  "release_ids": [],
+  "snapshot_hash": null,
+  "candidates": [],
+  "rates": [],
+  "source_locator": "fixture://riskcustoms/not-ready"
+}
