@@ -1,3 +1,8 @@
+import {
+  assertAllowedOutboundUrl,
+  SecurityPolicyError,
+} from "../platform/security";
+
 export type FetchImplementation = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -70,33 +75,51 @@ function validatePositiveInteger(value: number, field: string): number {
 }
 
 function parseBaseUrl(baseUrl: string): URL {
-  let parsed: URL;
   try {
-    parsed = new URL(baseUrl);
+    return new URL(baseUrl);
   } catch {
     throw new HttpAdapterError(
       "upstream_request_invalid",
       "The upstream base URL is invalid.",
     );
   }
-  if (parsed.protocol !== "https:") {
-    throw new HttpAdapterError(
-      "upstream_scheme_not_allowed",
-      "The upstream base URL must use HTTPS.",
-    );
-  }
-  if (parsed.username !== "" || parsed.password !== "") {
-    throw new HttpAdapterError(
-      "upstream_request_invalid",
-      "Credentials in the upstream URL are not allowed.",
-    );
-  }
-  return parsed;
 }
 
-function allowedHost(hostname: string, hosts: readonly string[]): boolean {
-  const normalized = hostname.toLowerCase();
-  return hosts.some((host) => host.toLowerCase() === normalized);
+type OutboundUrlTarget = "base" | "request";
+
+function assertAllowedUrl(
+  url: URL,
+  allowedHosts: readonly string[],
+  target: OutboundUrlTarget,
+): void {
+  try {
+    assertAllowedOutboundUrl(url, allowedHosts);
+  } catch (error: unknown) {
+    if (!(error instanceof SecurityPolicyError)) throw error;
+
+    if (url.protocol !== "https:") {
+      throw new HttpAdapterError(
+        "upstream_scheme_not_allowed",
+        target === "base"
+          ? "The upstream base URL must use HTTPS."
+          : "The upstream request must use HTTPS.",
+      );
+    }
+    if (url.username !== "" || url.password !== "") {
+      throw new HttpAdapterError(
+        "upstream_request_invalid",
+        target === "base"
+          ? "Credentials in the upstream URL are not allowed."
+          : "Credentials in the upstream request URL are not allowed.",
+      );
+    }
+    throw new HttpAdapterError(
+      "upstream_host_not_allowed",
+      target === "base"
+        ? "The upstream base URL host is not allowlisted."
+        : "The upstream request host is not allowlisted.",
+    );
+  }
 }
 
 function resolveAllowedUrl(
@@ -113,24 +136,7 @@ function resolveAllowedUrl(
       "The upstream request path is invalid.",
     );
   }
-  if (resolved.protocol !== "https:") {
-    throw new HttpAdapterError(
-      "upstream_scheme_not_allowed",
-      "The upstream request must use HTTPS.",
-    );
-  }
-  if (!allowedHost(resolved.hostname, hosts)) {
-    throw new HttpAdapterError(
-      "upstream_host_not_allowed",
-      "The upstream request host is not allowlisted.",
-    );
-  }
-  if (resolved.username !== "" || resolved.password !== "") {
-    throw new HttpAdapterError(
-      "upstream_request_invalid",
-      "Credentials in the upstream request URL are not allowed.",
-    );
-  }
+  assertAllowedUrl(resolved, hosts, "request");
   return resolved;
 }
 
@@ -197,13 +203,7 @@ export function createFetchJsonClient(
   options: FetchJsonClientOptions,
 ): FetchJsonClient {
   const baseUrl = parseBaseUrl(options.baseUrl);
-  const allowedHosts = options.allowedHosts.map((host) => host.toLowerCase());
-  if (!allowedHost(baseUrl.hostname, allowedHosts)) {
-    throw new HttpAdapterError(
-      "upstream_host_not_allowed",
-      "The upstream base URL host is not allowlisted.",
-    );
-  }
+  assertAllowedUrl(baseUrl, options.allowedHosts, "base");
   const timeoutMs = validatePositiveInteger(
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     "timeoutMs",
@@ -226,7 +226,7 @@ export function createFetchJsonClient(
         "The production upstream adapter is disabled until its endpoint contract is verified.",
       );
     }
-    const url = resolveAllowedUrl(baseUrl, path, allowedHosts);
+    const url = resolveAllowedUrl(baseUrl, path, options.allowedHosts);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const requestHeadersValue = requestHeaders(headers);

@@ -17,9 +17,13 @@
 
 ## 出站与日志
 
-- 只允许 HTTPS 和精确 hostname allowlist；拒绝 redirect、URL credentials、IP literal、
-  loopback、RFC1918、link-local、IPv4-mapped private address。网络出口还必须在网关/代理
-  层做 DNS rebinding 防护。
+- 只允许 HTTPS 和精确 hostname allowlist；`createFetchJsonClient` 初始化时以及每次解析
+  请求 URL 后都必须复用 `assertAllowedOutboundUrl`。统一策略要正确规范化大小写、末尾点
+  和 IPv6 方括号，并拒绝 redirect、URL credentials、IP literal、loopback、RFC1918、
+  link-local、IPv4-mapped private address；即使这些地址被误加入 allowlist，也必须在应用层
+  拒绝。测试应通过真实 HTTP client 请求路径验证，不只单测 security helper。
+- 应用层这里只检查 URL/hostname，不做 DNS 解析，不能单独解决 DNS rebinding。生产网络出口
+  仍必须由 egress proxy/firewall 对解析后的目的 IP 执行 allow/deny 和 rebinding 防护。
 - 审计失败 fail-closed；未完成审计的结果不能释放为 success。
 - 日志/审计只保留脱敏 ID、版本、状态、原因和 opaque reference metadata；不得写入 bearer、
   API key、客户地址、报价金额、税务材料全文或原始聊天。

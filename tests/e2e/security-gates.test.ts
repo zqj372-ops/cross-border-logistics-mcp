@@ -6,6 +6,7 @@ import {
   redactSecurityError,
   validateShortLivedToken,
 } from "../../src/logistics_mcp/platform/security";
+import { createFetchJsonClient } from "../../src/logistics_mcp/adapters/http-client";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
 import { MemoryAuditRepository } from "../../src/logistics_mcp/platform/audit";
 import { createMcpHttpHandler } from "../../src/logistics_mcp/server/http";
@@ -45,6 +46,31 @@ describe("integration security gates", () => {
     ]) {
       expect(() => assertAllowedOutboundUrl(url, allowed)).toThrow();
     }
+  });
+
+  it("enforces the same outbound policy through the real fetch client path", async () => {
+    let fetchCalls = 0;
+    const client = createFetchJsonClient({
+      baseUrl: "https://quote.example.invalid",
+      allowedHosts: ["quote.example.invalid", "127.0.0.1", "[::1]"],
+      enabled: true,
+      fetchImpl: () => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response("{}"));
+      },
+    });
+
+    await expect(client.get("https://127.0.0.1/internal")).rejects.toMatchObject({
+      code: "upstream_host_not_allowed",
+    });
+    expect(fetchCalls).toBe(0);
+    expect(() =>
+      createFetchJsonClient({
+        baseUrl: "https://[::1]/",
+        allowedHosts: ["[::1]"],
+        enabled: true,
+      }),
+    ).toThrow(/host|private|loopback|link-local/i);
   });
 
   it("redacts bearer, API key, customer address, quote amount and tax material from errors", () => {
