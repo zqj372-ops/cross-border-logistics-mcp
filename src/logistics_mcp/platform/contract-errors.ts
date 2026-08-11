@@ -14,3 +14,21 @@ export class ContractValidationError extends Error {
     this.name = "ContractValidationError";
   }
 }
+
+export class ForbiddenError extends Error {
+  readonly code: string = "forbidden";
+
+  constructor(message = "The requested operation is not permitted.") {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
+export class CrossTenantAccessError extends ForbiddenError {
+  override readonly code: string = "cross_tenant_denied";
+
+  constructor() {
+    super("The requested tenant is outside the authenticated tenant scope.");
+    this.name = "CrossTenantAccessError";
+  }
+}
