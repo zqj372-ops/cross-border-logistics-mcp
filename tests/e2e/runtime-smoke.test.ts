@@ -1,12 +1,13 @@
 import { createServer } from "node:net";
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
-const entry = resolve(root, "dist/src/logistics_mcp/server/start.js");
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -68,10 +69,14 @@ describe("built runtime smoke", () => {
         npm_config_update_notifier: "false",
       },
     });
-    expect(readFileSync(entry, "utf8")).toContain("cross-border-logistics-mcp");
+    const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-runtime-"));
+    await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
+    await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), { recursive: true });
+    const entry = resolve(layout, "dist/src/logistics_mcp/server/start.mjs");
+    expect(existsSync(resolve(layout, "package.json"))).toBe(false);
     const port = await freePort();
     const child = spawn(process.execPath, [entry], {
-      cwd: root,
+      cwd: layout,
       env: {
         PATH: process.env.PATH ?? "",
         MCP_PORT: String(port),
@@ -102,6 +107,7 @@ describe("built runtime smoke", () => {
       );
     } finally {
       await stop(child);
+      await rm(layout, { recursive: true, force: true });
     }
   });
 });

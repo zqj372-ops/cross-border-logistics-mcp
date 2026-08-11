@@ -709,9 +709,14 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       } else {
         const verified = validateShortLivedToken(claims, options.tokenPolicy);
         context = parseExecutionContext({
-          ...verified,
+          tenant_id: verified.tenant_id,
           actor_id:
             typeof verified.actor_id === "string" ? verified.actor_id : verified.sub,
+          actor_role: verified.actor_role,
+          roles: verified.roles,
+          scopes: verified.scopes,
+          client_id: verified.client_id,
+          session_id: verified.session_id,
           expires_at: verified.exp,
         });
       }

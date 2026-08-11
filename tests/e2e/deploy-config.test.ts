@@ -14,11 +14,11 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).toContain("RUN npm run build");
     expect(dockerfile).toMatch(/COPY --from=build .*\/dist \.\/dist/);
     expect(dockerfile).toMatch(/COPY --from=build .*\/docs\/contracts .*\/docs\/contracts/);
-    expect(dockerfile).toContain('CMD ["node", "dist/src/logistics_mcp/server/start.js"]');
+    expect(dockerfile).toContain('CMD ["node", "dist/src/logistics_mcp/server/start.mjs"]');
     expect(dockerfile).not.toMatch(/COPY --from=build .*\/src \.\/src/);
     expect(dockerfile).not.toMatch(/COPY --from=build .*\/node_modules \.\/node_modules/);
     expect(dockerfile).not.toMatch(/--import\s+tsx\/esm/);
-    expect(dockerfile).toMatch(/CMD .*dist\/.*\.js/);
+    expect(dockerfile).toMatch(/CMD .*dist\/.*\.mjs/);
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
   });
 
