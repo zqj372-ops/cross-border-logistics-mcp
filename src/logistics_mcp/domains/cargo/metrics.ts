@@ -230,10 +230,7 @@ function dimensionVolume(
           { name: "width", value: measurement(dimension.width.value, dimension.width.unit) },
           { name: "height", value: measurement(dimension.height.value, dimension.height.unit) },
         ],
-        measurement(
-          `${length.toString()}x${width.toString()}x${height.toString()}`,
-          "cm",
-        ),
+        `${length.toString()}x${width.toString()}x${height.toString()} cm`,
         line.source_ref_ids,
       ),
     );

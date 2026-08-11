@@ -704,7 +704,10 @@ export function calculateVolumetricWeight(
         : "multiply CBM by explicit dimensional density",
       [
         { name: "volume", value: measurement(volumeText, "cbm") },
-        { name: rule.density === undefined ? "divisor" : "density", value: measurement(basisText, basis.unit) },
+        {
+          name: rule.density === undefined ? "divisor" : "density",
+          value: `${basisText} ${basis.unit}`,
+        },
       ],
       measurement(normalized(unrounded), "kg"),
       rule.source_ref_ids,
