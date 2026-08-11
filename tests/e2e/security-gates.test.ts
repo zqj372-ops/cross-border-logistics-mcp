@@ -54,6 +54,80 @@ describe("integration security gates", () => {
     expect(redacted).not.toMatch(/real-token|real-key|123 Main Street|999\.99|secret\.pdf/);
   });
 
+  it("applies issuer and audience policy at the HTTP authentication boundary", async () => {
+    const claims = { ...fakeJwtClaims, ...securityClaims };
+    const handle = createMcpHttpHandler({
+      allowedOrigins: ["https://client.example.invalid"],
+      allowedHosts: ["mcp.example.invalid"],
+      authenticate: () => claims,
+      tokenPolicy: {
+        issuer: fakeJwtClaims.iss,
+        audience: fakeJwtClaims.aud,
+        nowSeconds: Math.floor(Date.now() / 1000),
+      },
+    });
+    try {
+      const response = await handle(new Request("https://mcp.example.invalid/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer verified-fixture-token",
+          origin: "https://client.example.invalid",
+          host: "mcp.example.invalid",
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-03-26",
+              capabilities: {},
+              clientInfo: { name: "security-fixture", version: "1.0.0" },
+            },
+        }),
+      }));
+      expect(response.status).toBe(200);
+
+      const rejected = createMcpHttpHandler({
+        allowedOrigins: ["https://client.example.invalid"],
+        allowedHosts: ["mcp.example.invalid"],
+        authenticate: () => ({ ...claims, iss: "https://evil.example.invalid/" }),
+        tokenPolicy: {
+          issuer: fakeJwtClaims.iss,
+          audience: fakeJwtClaims.aud,
+        },
+      });
+      try {
+        const rejectedResponse = await rejected(new Request("https://mcp.example.invalid/mcp", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer verified-fixture-token",
+            origin: "https://client.example.invalid",
+            host: "mcp.example.invalid",
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-03-26",
+              capabilities: {},
+              clientInfo: { name: "security-fixture", version: "1.0.0" },
+            },
+          }),
+        }));
+        expect(rejectedResponse.status).toBe(401);
+      } finally {
+        await rejected.close();
+      }
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("uses a 32 KiB default request cap and fails closed when audit persistence fails", async () => {
     const handle = createMcpHttpHandler({
       allowedOrigins: ["https://client.example.invalid"],

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   callTool,
   cargoInput,
+  containerInput,
   createFixtureHarness,
   initialize,
   quoteInput,
@@ -90,6 +91,61 @@ describe("Phase 1 integrated fixture gateway", () => {
       expect(result.status).toBe("unavailable");
       expect((result.data as { data_status: { ready: boolean } }).data_status.ready).toBe(false);
       expect((result.data as { data_status: { release_ids: string[] } }).data_status.release_ids).toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("keeps quote address type and container theory-only boundaries explicit", async () => {
+    const harness = createFixtureHarness();
+    try {
+      const sessionId = await initialize(harness);
+      const missingAddressType = await callTool(
+        harness,
+        sessionId,
+        "quote.canada_final_mile.calculate",
+        quoteInput({
+          destination: {
+            ...(quoteInput().destination as Record<string, unknown>),
+            address_type: "unknown",
+          },
+        }),
+      );
+      expect(missingAddressType.status).toBe("needs_input");
+      expect(missingAddressType.data).toBeNull();
+
+      const theoretical = await callTool(
+        harness,
+        sessionId,
+        "container.plan_summary",
+        containerInput(),
+      );
+      expect(theoretical.status).toBe("success");
+      expect((theoretical.data as { theoretical_only: boolean }).theoretical_only).toBe(true);
+
+      const manualReview = await callTool(
+        harness,
+        sessionId,
+        "container.plan_summary",
+        containerInput({
+          cargo_metrics: {
+            ...(containerInput().cargo_metrics as Record<string, unknown>),
+            total_volume: { value: "80", unit: "cbm" },
+          },
+        }),
+      );
+      expect(manualReview.status).toBe("manual_review");
+      expect((manualReview.data as { theoretical_only: boolean }).theoretical_only).toBe(true);
+
+      const spatialRequest = await callTool(
+        harness,
+        sessionId,
+        "container.plan_summary",
+        containerInput({ spatial_layout_requested: true }),
+      );
+      expect(spatialRequest.status).toBe("blocked");
+      expect(spatialRequest.data).toBeNull();
+      expect(JSON.stringify(spatialRequest)).toContain("security.forbidden");
     } finally {
       await harness.close();
     }

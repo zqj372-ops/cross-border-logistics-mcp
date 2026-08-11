@@ -178,6 +178,44 @@ export function cargoInput(overrides: Record<string, unknown> = {}): Record<stri
   };
 }
 
+export function containerInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "container-profile@fixture-1",
+    plan_id: "plan_fixture_1",
+    container_type: "40HQ",
+    physical_capacity: { value: "76", unit: "cbm" },
+    operational_target: { value: "75", unit: "cbm" },
+    max_payload: { value: "26000", unit: "kg" },
+    source_ref_ids: ["src:container:profile:fixture"],
+    cargo_metrics: {
+      version: "cargo-metrics@fixture-1",
+      line_count: 1,
+      total_quantity: 2,
+      total_volume: { value: "60", unit: "cbm" },
+      actual_weight: { value: "18000", unit: "kg" },
+      volumetric_weight: { value: "60000", unit: "kg" },
+      weight_evidence: "line_total_weight",
+      derived_from_line_ids: ["line_fixture_1"],
+    },
+    loading_constraints: {
+      sensitive_at_head: true,
+      declaration_at_tail: true,
+      fifo_for_other: true,
+      customer_priority: null,
+    },
+    loading_lines: [
+      {
+        line_id: "line_fixture_1",
+        sensitive: false,
+        customer_priority: null,
+        declaration_required: false,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 export function quoteInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schema_version: "2026-08-11.v1",
