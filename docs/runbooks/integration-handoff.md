@@ -1,0 +1,40 @@
+# Integration handoff
+
+当前交付分支只保留 03→04→05 的 cherry-pick 历史和 06 集成提交；不 push、不部署、不
+连接现有生产系统。真实跨系统 endpoint、tenant mapping、认证、RiskCustoms estimate 和
+写后读 API 在取得批准 staging evidence 前均为“待适配验证”。
+当前 `start.ts` 没有内置 JWT 签名验证器：issuer/audience 只会在外部 verifier 产出已验签
+claims 后执行短时 token policy；默认 production authenticate 故意 fail-closed。因而进程
+可运行并回答 health，但生产 MCP 请求在 verifier 接入前不可用，不能伪称认证已配置。
+
+## 精确验证命令
+
+```bash
+npm ci
+npm run build
+npm test -- --run tests/platform tests/cargo tests/container tests/adapters tests/domains tests/e2e
+npm test -- --run
+npm run typecheck
+npm run lint
+npm run validate:schemas
+git diff --check
+git status --short
+docker compose -f deploy/compose.yml config
+bash deploy/scripts/check-release.sh --fixture-only
+```
+
+Docker build 只允许在本地做非推送验证；不可用时记录“Docker 未验证”，不以 compose config
+代替镜像构建证据。测试 fixture 不读 `.env`、系统凭证或真实 URL；每个 harness 都调用
+`close()`。
+
+## 交接边界
+
+- 唯一注册九工具：`cargo.calculate`、`container.plan_summary`、
+  `quote.canada_final_mile.calculate`、`quote.save_draft`、`customs.ca.search`、
+  `customs.ca.estimate`、`knowledge.search_curated`、`system.get_data_status`、
+  `review.create_task`。
+- 五状态必须闭合；`unavailable`、`manual_review`、`blocked` 不能提升为 success。
+- 生产组合默认禁用未核验适配器；fixture 只接受 `DATA_MODE=fixtures`/显式 fixture mode。
+- 两个窄写工具只能 preview→approval policy→commit→readback；不发送/发布报价、不订舱、不
+  改价格/Zone/税率、不建立第二套业务主数据。
+- 报价 `sendable=false`、装柜 `theoretical_only=true` 是客户端不可越过的边界。

@@ -11,7 +11,10 @@
 - Phase 1 禁止发送/发布报价、修改价格或 Zone、形成正式报关结论、订舱/SO、自动学习并上线规则，以及任何未列明的通用写操作。
 - RiskCustoms 的 `ready=false` 必须原样映射为 `unavailable` 或 `manual_review`，不得由 AI 补成可用。
 
-本仓库当前只包含共享基线文档、契约、JSON Schema 草案和后续实现计划，不包含运行时代码，也不接入生产、数据库、服务器或外部服务。
+当前分支还包含 02–05 的实现和 06 集成交付：九工具组合入口、隔离 fixture harness、生产默认
+fail-closed 组合、候选 Docker 构建和发布/回滚 runbook。它只可在本地/隔离环境验证，不接入
+生产、数据库、服务器或外部服务；真实 endpoint、tenant mapping、JWT 签名验证器和
+RiskCustoms readiness 仍是“待适配验证”。
 
 ## 快速导航
 
