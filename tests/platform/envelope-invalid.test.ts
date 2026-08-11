@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   createEnvelope,
   validateEnvelope,
-  type EnvelopeStatus,
 } from "../../src/logistics_mcp/platform/envelope";
 
 const validEnvelope = {
@@ -27,7 +26,8 @@ describe("validateEnvelope", () => {
   });
 
   it("rejects a missing audit id", () => {
-    const { audit_id: _auditId, ...withoutAuditId } = validEnvelope;
+    const withoutAuditId: Record<string, unknown> = { ...validEnvelope };
+    Reflect.deleteProperty(withoutAuditId, "audit_id");
 
     expect(() => validateEnvelope(withoutAuditId)).toThrow(/audit_id/i);
   });
@@ -69,7 +69,7 @@ describe("validateEnvelope", () => {
     expect(() =>
       createEnvelope({
         requestId: "req_invalid_002",
-        status: "blocked" as EnvelopeStatus,
+        status: "blocked",
         data: null,
         auditId: "audit_invalid_002",
       }),
