@@ -304,6 +304,22 @@ function failureEnvelope(
   });
 }
 
+function auditPersistenceFailureEnvelope(requestId: string): ResponseEnvelope {
+  return createEnvelope({
+    requestId,
+    auditId: auditId(),
+    status: "manual_review",
+    data: null,
+    blockers: [
+      fixedNotice(
+        "audit.persistence_failed",
+        "The result cannot be released because audit persistence is unavailable.",
+      ),
+    ],
+    reviewStatus: "manual_review",
+  });
+}
+
 function ensureSecurityOptions(options: McpHttpOptions): void {
   if (options.allowedOrigins.length === 0 || options.allowedHosts.length === 0) {
     throw new Error("Secure MCP HTTP options require origin and host allowlists.");
@@ -510,15 +526,19 @@ function registerMcpTools(
             idempotencyOutcome = "conflict";
           }
         }
-        await recordAudit(
-          auditRepository,
-          context,
-          requestId,
-          envelope,
-          definition.name,
-          startedAt,
-          idempotencyOutcome,
-        );
+        try {
+          await recordAudit(
+            auditRepository,
+            context,
+            requestId,
+            envelope,
+            definition.name,
+            startedAt,
+            idempotencyOutcome,
+          );
+        } catch {
+          envelope = auditPersistenceFailureEnvelope(requestId);
+        }
         return responseForToolEnvelope(envelope);
       },
     );
@@ -545,14 +565,21 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   ): Promise<Response> => {
     const requestId = requestIdFor(request);
     const envelope = failureEnvelope(requestId, error);
-    await recordAudit(
-      auditRepository,
-      context,
-      requestId,
-      envelope,
-      tool,
-      Date.now(),
-    );
+    try {
+      await recordAudit(
+        auditRepository,
+        context,
+        requestId,
+        envelope,
+        tool,
+        Date.now(),
+      );
+    } catch {
+      return responseForEnvelope(
+        auditPersistenceFailureEnvelope(requestId),
+        503,
+      );
+    }
     return responseForEnvelope(envelope, status);
   };
 

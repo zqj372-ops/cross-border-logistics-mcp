@@ -171,6 +171,35 @@ describe("Streamable HTTP security boundary", () => {
     );
   });
 
+  it("fails closed when audit persistence is unavailable", async () => {
+    const handle = makeHandler({
+      auditRepository: {
+        append: () => Promise.reject(new Error("audit store unavailable")),
+        list: () => Promise.resolve([]),
+      },
+    });
+    const initializeResponse = await handle(makeRequest(initializeBody));
+    const sessionId = initializeResponse.headers.get("mcp-session-id");
+    expect(sessionId).not.toBeNull();
+
+    const response = await handle(
+      makeRequest(
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "cargo.calculate", arguments: {} },
+        },
+        { "mcp-session-id": sessionId ?? "" },
+      ),
+    );
+    const body = (await response.json()) as {
+      result?: { structuredContent?: { status?: string } };
+    };
+
+    expect(body.result?.structuredContent?.status).toBe("manual_review");
+  });
+
   it("replays a write result and blocks a same-key payload conflict over HTTP", async () => {
     let handlerCalls = 0;
     const key = "idem_http_registry_123";
