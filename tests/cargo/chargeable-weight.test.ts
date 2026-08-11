@@ -103,6 +103,15 @@ describe("chargeable weight", () => {
         sourceRefIds: ["src_rule_1", "src_rule_1"],
       }),
     ).toMatchObject({ ok: false, code: "cargo.source_ref_ids_duplicate" });
+    expect(
+      calculateChargeableWeight({
+        actual: "1000",
+        volumetric: "1500",
+        method: "full",
+        ruleVersion: "CAQ-HP@2026-01-01",
+        sourceRefIds: [],
+      }),
+    ).toMatchObject({ ok: false, code: "cargo.source_ref_ids_invalid" });
   });
 
   it("calculates volumetric weight only from an explicit density", () => {

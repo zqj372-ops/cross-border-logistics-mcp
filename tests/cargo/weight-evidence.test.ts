@@ -49,12 +49,33 @@ describe("CargoLine weight evidence", () => {
     expect(result).toMatchObject({ ok: true });
   });
 
-  it("fails closed when any two weight evidence modes are mixed", () => {
-    const result = validateCargoLine(
-      line({
+  it.each([
+    [
+      "unit_weight + piece_weights",
+      {
+        piece_weights: [
+          { value: "10", unit: "kg" },
+          { value: "10", unit: "kg" },
+        ],
+      },
+    ],
+    [
+      "unit_weight + line_total_weight",
+      { line_total_weight: { value: "20", unit: "kg" } },
+    ],
+    [
+      "piece_weights + line_total_weight",
+      {
+        unit_weight: undefined,
+        piece_weights: [
+          { value: "10", unit: "kg" },
+          { value: "10", unit: "kg" },
+        ],
         line_total_weight: { value: "20", unit: "kg" },
-      }),
-    );
+      },
+    ],
+  ])("fails closed when %s are mixed", (_pair, overrides) => {
+    const result = validateCargoLine(line(overrides));
 
     expect(result).toMatchObject({
       ok: false,

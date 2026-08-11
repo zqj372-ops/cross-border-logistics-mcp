@@ -133,6 +133,12 @@ const sourceRefSchema = z
     content_hash: z.string().regex(/^(sha256:)?[A-Za-z0-9._:-]{8,128}$/).nullable().optional(),
   })
   .strict();
+const uniqueSourceRefsSchema = z.array(sourceRefSchema).min(1).superRefine((values, ctx) => {
+  const sourceIds = values.map((value) => value.source_id);
+  if (new Set(sourceIds).size !== sourceIds.length) {
+    ctx.addIssue({ code: "custom", message: "source_refs source_id values must be unique." });
+  }
+});
 
 const dimensionalBasisSchema = z
   .object({
@@ -183,7 +189,7 @@ export const cargoInputSchema = z
     dimensional_divisor: dimensionalDivisorSchema,
     bubble_rule: bubbleRuleSchema,
     channel_code: z.string().min(1).max(120),
-    source_refs: z.array(sourceRefSchema).min(1),
+    source_refs: uniqueSourceRefsSchema,
   })
   .strict();
 
