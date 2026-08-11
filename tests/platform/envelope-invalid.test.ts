@@ -66,6 +66,34 @@ describe("validateEnvelope", () => {
     ).toThrow(/source_refs|unique/i);
   });
 
+  it("rejects source references duplicated with a different property order", () => {
+    const first = {
+      source_id: "source_demo_002",
+      source_type: "fixture",
+      system: "platform-test",
+      locator: "fixture://source-demo-002",
+      version: "fixture.v1",
+      retrieved_at: "2026-08-11T00:00:00Z",
+      authority: "supporting",
+    } as const;
+    const second = {
+      authority: "supporting",
+      retrieved_at: "2026-08-11T00:00:00Z",
+      version: "fixture.v1",
+      locator: "fixture://source-demo-002",
+      system: "platform-test",
+      source_type: "fixture",
+      source_id: "source_demo_002",
+    } as const;
+
+    expect(() =>
+      validateEnvelope({
+        ...validEnvelope,
+        source_refs: [first, second],
+      }),
+    ).toThrow(/source_refs|unique/i);
+  });
+
   it("rejects success combined with blockers", () => {
     expect(() =>
       createEnvelope({
