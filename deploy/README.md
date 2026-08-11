@@ -20,12 +20,19 @@ Compose 不会为 production、JWT、Origin/Host 或出站 allowlist 配置静�
 当前生产 authenticate 仍故意 fail-closed。因此进程可以运行并回答 `/healthz`，但生产
 `/mcp` 请求在验证器接入前会被拒绝，不能视为已配置认证或可用生产服务。
 
+生产组合还必须由调用方显式提供带 durable marker 和 health/close lifecycle 的审计仓库、幂等仓库、
+session binding store，以及带 health lifecycle 的 token verifier 和 production adapter source。
+当前没有这些真实 provider；不会静默创建 Memory store 或 fixture fallback。缺依赖时 `/readyz`
+返回 `503/not_ready` 和固定脱敏 reason codes，`/mcp` 在调用认证器或 adapter 前直接返回 `503/unavailable`。
+
 ## health 与 readiness
 
 - `GET /healthz` 只证明 Node 进程能响应，不代表适配器、数据发布或写端点可用。
 - `GET /readyz` 反映配置和适配器发布状态。当前生产适配器仍 disabled，故 readiness
   必须是 `503`/`not_ready`，直到有经批准的 staging evidence；RiskCustoms
   `ready=false` 绝不能被映射成 ready。
+- fixture 运行时使用有界进程内 session registry，只用于隔离测试；SDK server/transport 不会被序列化
+  到 Redis。未来 sticky owner store 只能保存脱敏 session binding metadata。
 - `/mcp` 只通过前置 HTTPS 边界访问；容器不会暴露数据库、SSH 或用户凭证。
 
 ## 本地静态检查

@@ -45,10 +45,15 @@ describe("gateway composition modes", () => {
   });
 
   it("keeps the default production HTTP entrypoint fail-closed without a verifier", async () => {
+    let authenticateCalls = 0;
     const composition = createProductionComposition({
       dataMode: "production",
       allowedOrigins: ["https://client.example.invalid"],
       allowedHosts: ["mcp.example.invalid"],
+      authenticate: () => {
+        authenticateCalls += 1;
+        return securityClaims;
+      },
     });
     try {
       const response = await composition.handler(
@@ -57,9 +62,10 @@ describe("gateway composition modes", () => {
           headers: {
             authorization: "Bearer fake-production-token",
             origin: "https://client.example.invalid",
-            host: "mcp.example.invalid",
-            "content-type": "application/json",
-          },
+          host: "mcp.example.invalid",
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
           body: JSON.stringify({
             jsonrpc: "2.0",
             id: 1,
@@ -72,8 +78,9 @@ describe("gateway composition modes", () => {
           }),
         }),
       );
-      expect(response.status).toBe(401);
-      expect((await response.json()) as { status: string }).toMatchObject({ status: "blocked" });
+      expect(response.status).toBe(503);
+      expect((await response.json()) as { status: string }).toMatchObject({ status: "unavailable" });
+      expect(authenticateCalls).toBe(0);
     } finally {
       await composition.close();
     }

@@ -35,20 +35,25 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(serialized);
 }
 
-function readiness(): { readonly ready: boolean; readonly reasons: readonly string[] } {
+async function readiness(
+  composition: GatewayComposition,
+): Promise<{ readonly ready: boolean; readonly reasons: readonly string[] }> {
   const dataMode = process.env.MCP_DATA_MODE ?? "production";
   const required = [
     "MCP_JWT_ISSUER",
     "MCP_JWT_AUDIENCE",
     "MCP_ALLOWED_ORIGINS",
+    "MCP_ALLOWED_HOSTS",
     "MCP_ALLOWED_OUTBOUND_HOSTS",
     "MCP_DATA_MODE",
   ];
   const missing = required.filter((name) => (process.env[name] ?? "").trim() === "");
   const reasons = [...missing.map((name) => `missing_${name.toLowerCase()}`)];
   if (dataMode !== "production") reasons.push("fixture_mode_not_production_ready");
-  reasons.push("production_adapters_disabled_until_endpoint_tenant_auth_and_readiness_contracts_are_verified");
-  return { ready: false, reasons };
+  const compositionState = await composition.readiness();
+  reasons.push(...compositionState.reasons);
+  const uniqueReasons = [...new Set(reasons)];
+  return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
 }
 
 function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefined {
@@ -132,7 +137,7 @@ async function handleRuntimeRequest(
       return;
     }
     if (request.method === "GET" && path === "/readyz") {
-      const state = readiness();
+      const state = await readiness(composition);
       json(response, state.ready ? 200 : 503, {
         status: state.ready ? "ready" : "not_ready",
         reasons: state.reasons,

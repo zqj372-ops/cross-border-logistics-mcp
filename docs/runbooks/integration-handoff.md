@@ -6,6 +6,10 @@
 当前 `start.ts` 没有内置 JWT 签名验证器：issuer/audience 只会在外部 verifier 产出已验签
 claims 后执行短时 token policy；默认 production authenticate 故意 fail-closed。因而进程
 可运行并回答 health，但生产 MCP 请求在 verifier 接入前不可用，不能伪称认证已配置。
+生产组合同时要求显式 durable audit/idempotency/session-binding 依赖和 production adapter source；
+缺任一依赖时不创建 Memory fallback，`/readyz` 为 `503/not_ready`，`/mcp` 在认证和 adapter
+之前返回 `503/unavailable`。fixture 只使用有界本地 session registry；MCP SDK runtime 对象不进入
+未来的远程 binding store。
 
 ## 精确验证命令
 

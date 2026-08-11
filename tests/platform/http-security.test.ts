@@ -7,6 +7,7 @@ import {
   hashPayload,
   MemoryIdempotencyRepository,
 } from "../../src/logistics_mcp/platform/idempotency";
+import { SessionRuntimeRegistry } from "../../src/logistics_mcp/platform/session-runtime";
 import { createMcpHttpHandler } from "../../src/logistics_mcp/server/http";
 
 const validClaims = (expiresAt = Math.floor(Date.now() / 1000) + 300): AuthClaims => ({
@@ -57,6 +58,14 @@ function makeHandler(overrides: Partial<Parameters<typeof createMcpHttpHandler>[
     maxBodyBytes: 256,
     requestTimeoutMs: 100,
     authenticate: () => validClaims(),
+    auditRepository: new MemoryAuditRepository(),
+    idempotencyRepository: new MemoryIdempotencyRepository(),
+    sessionRegistry: new SessionRuntimeRegistry({
+      idleTtlMs: 60_000,
+      maxLifetimeMs: 60_000,
+      maxTokenLifetimeMs: 60_000,
+      maxSessions: 16,
+    }),
     ...overrides,
   });
 }

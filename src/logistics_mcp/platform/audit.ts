@@ -70,6 +70,8 @@ function clone<T>(value: T): T {
 }
 
 export class MemoryAuditRepository implements AuditRepository {
+  readonly durability = "memory" as const;
+
   private readonly events: AuditEvent[] = [];
 
   async append(event: AuditEvent): Promise<void> {

@@ -99,7 +99,39 @@ describe("built runtime smoke", () => {
       expect(await health.json()).toMatchObject({ status: "ok" });
       const readiness = await fetch(`http://127.0.0.1:${port}/readyz`);
       expect(readiness.status).toBe(503);
-      expect(await readiness.json()).toMatchObject({ status: "not_ready" });
+      const readinessBody = (await readiness.json()) as {
+        status?: string;
+        reasons?: string[];
+      };
+      expect(readinessBody).toMatchObject({ status: "not_ready" });
+      expect(readinessBody.reasons).toEqual(
+        expect.arrayContaining([
+          "platform_audit_repository_missing",
+          "production_token_verifier_missing",
+          "production_adapter_source_missing",
+        ]),
+      );
+      const unavailable = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-proto": "https",
+          origin: "https://client.example.invalid",
+          host: "mcp.example.invalid",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "runtime-smoke", version: "1.0.0" },
+          },
+        }),
+      });
+      expect(unavailable.status).toBe(503);
+      expect(await unavailable.json()).toMatchObject({ status: "unavailable" });
       const oversized = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: "POST",
         headers: {

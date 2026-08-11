@@ -19,12 +19,23 @@ import {
   type EnvelopeStatus,
   type ResponseEnvelope,
 } from "../platform/envelope";
-import { MemoryAuditRepository } from "../platform/audit";
 import type {
   AuditEvent,
   AuditRepository,
   IdempotencyRepository,
 } from "../platform/repositories";
+import {
+  PlatformConfigurationError,
+  type PlatformReadiness,
+} from "../platform/dependencies";
+import {
+  SessionContextMismatchError,
+  SessionRegistryCapacityError,
+  SessionRegistryClosedError,
+  SessionTokenExpiredError,
+  type SessionRuntimeHandle,
+  type SessionRuntimeRegistry,
+} from "../platform/session-runtime";
 import {
   CrossTenantAccessError,
   ForbiddenError,
@@ -34,7 +45,6 @@ import {
   IdempotencyInProgressError,
   IdempotencyRequiredError,
   IdempotencyStateError,
-  MemoryIdempotencyRepository,
 } from "../platform/idempotency";
 import {
   executeRegisteredToolWithResult,
@@ -58,8 +68,10 @@ export interface McpHttpOptions {
   readonly tokenPolicy?: ShortLivedTokenValidationOptions;
   readonly handlers?: ToolHandlerMap;
   readonly contracts?: ToolContractMap;
-  readonly auditRepository?: AuditRepository;
-  readonly idempotencyRepository?: IdempotencyRepository;
+  readonly auditRepository: AuditRepository;
+  readonly idempotencyRepository: IdempotencyRepository;
+  readonly sessionRegistry: SessionRuntimeRegistry;
+  readonly runtimeReadiness?: () => Promise<PlatformReadiness>;
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly requireHttps?: boolean;
@@ -74,12 +86,6 @@ class BodyTooLargeError extends Error {}
 class InvalidJsonError extends Error {}
 class RequestSecurityError extends Error {}
 class RequestTimeoutError extends Error {}
-
-interface SessionRecord {
-  readonly transport: WebStandardStreamableHTTPServerTransport;
-  readonly server: McpServer;
-  readonly context: ExecutionContext;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -123,6 +129,34 @@ function errorOutcome(error: unknown): {
       status: "blocked",
       code: "security.cross_tenant_denied",
       message: "The requested tenant is outside the authenticated scope.",
+    };
+  }
+  if (error instanceof SessionContextMismatchError) {
+    return {
+      status: "blocked",
+      code: "security.session_context_mismatch",
+      message: "The MCP session is not bound to the authenticated context.",
+    };
+  }
+  if (error instanceof SessionRegistryCapacityError) {
+    return {
+      status: "unavailable",
+      code: "session.capacity_exhausted",
+      message: "The MCP session capacity is currently unavailable.",
+    };
+  }
+  if (error instanceof SessionRegistryClosedError) {
+    return {
+      status: "unavailable",
+      code: "session.registry_closed",
+      message: "The MCP session runtime is unavailable.",
+    };
+  }
+  if (error instanceof SessionTokenExpiredError) {
+    return {
+      status: "blocked",
+      code: "security.authentication_failed",
+      message: "Authentication failed.",
     };
   }
   if (error instanceof ForbiddenError) {
@@ -359,6 +393,44 @@ function ensureSecurityOptions(options: McpHttpOptions): void {
   }
 }
 
+function ensurePlatformDependencies(options: McpHttpOptions): void {
+  if (options.auditRepository === undefined) {
+    throw new PlatformConfigurationError(
+      "platform_dependency_missing",
+      "audit_repository",
+    );
+  }
+  if (options.idempotencyRepository === undefined) {
+    throw new PlatformConfigurationError(
+      "platform_dependency_missing",
+      "idempotency_repository",
+    );
+  }
+  if (options.sessionRegistry === undefined) {
+    throw new PlatformConfigurationError(
+      "platform_dependency_missing",
+      "session_runtime_registry",
+    );
+  }
+}
+
+function unavailableRuntimeResponse(reasonCodes: readonly string[]): Response {
+  const reasons = [...new Set(reasonCodes)].filter((reason) => /^[a-z0-9_]+$/.test(reason));
+  return new Response(
+    JSON.stringify({
+      status: "unavailable",
+      reasons: reasons.length > 0 ? reasons : ["runtime_unavailable"],
+    }),
+    {
+      status: 503,
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      },
+    },
+  );
+}
+
 async function readJsonBody(
   request: Request,
   maxBodyBytes: number,
@@ -480,22 +552,6 @@ function assertPhaseOneBoundary(toolName: string, input: unknown): void {
   visit(input);
 }
 
-function sameContext(left: ExecutionContext, right: ExecutionContext): boolean {
-  const sameValues = (leftValues: readonly string[], rightValues: readonly string[]) =>
-    leftValues.length === rightValues.length &&
-    leftValues.every((value) => rightValues.includes(value));
-
-  return (
-    left.tenantId === right.tenantId &&
-    left.actorId === right.actorId &&
-    left.role === right.role &&
-    sameValues(left.roles, right.roles) &&
-    sameValues(left.scopes, right.scopes) &&
-    left.clientId === right.clientId &&
-    left.sessionId === right.sessionId
-  );
-}
-
 function jsonRpcMethod(body: unknown): string | null {
   if (!isRecord(body) || typeof body.method !== "string") {
     return null;
@@ -599,13 +655,13 @@ function registerMcpTools(
 
 export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   ensureSecurityOptions(options);
+  ensurePlatformDependencies(options);
   const maxBodyBytes = options.maxBodyBytes ?? 32 * 1024;
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
-  const auditRepository = options.auditRepository ?? new MemoryAuditRepository();
-  const idempotencyRepository =
-    options.idempotencyRepository ?? new MemoryIdempotencyRepository();
+  const auditRepository = options.auditRepository;
+  const idempotencyRepository = options.idempotencyRepository;
   const definitions = registerPhaseOneTools(options.handlers, options.contracts);
-  const sessions = new Map<string, SessionRecord>();
+  const sessions = options.sessionRegistry;
   const requireHttps = options.requireHttps ?? true;
 
   const secureFailure = async (
@@ -637,21 +693,16 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
 
   const createSession = async (
     context: ExecutionContext,
-  ): Promise<SessionRecord> => {
-    const sessionRef: { current?: SessionRecord } = {};
+  ): Promise<SessionRuntimeHandle> => {
+    const sessionId = `mcp_${randomUUID()}`;
     const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => `mcp_${randomUUID()}`,
+      sessionIdGenerator: () => sessionId,
       enableJsonResponse: true,
       allowedHosts: [...options.allowedHosts],
       allowedOrigins: [...options.allowedOrigins],
       enableDnsRebindingProtection: true,
-      onsessioninitialized: (sessionId) => {
-        if (sessionRef.current !== undefined) {
-          sessions.set(sessionId, sessionRef.current);
-        }
-      },
-      onsessionclosed: (sessionId) => {
-        sessions.delete(sessionId);
+      onsessionclosed: (closedSessionId) => {
+        void sessions.delete(closedSessionId).catch(() => undefined);
       },
     });
     const server = new McpServer({
@@ -667,13 +718,33 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       auditRepository,
       idempotencyRepository,
     );
-    const record: SessionRecord = { transport, server, context };
-    sessionRef.current = record;
-    await server.connect(transport);
-    return record;
+    const runtime: SessionRuntimeHandle = { transport, server };
+    let registered = false;
+    try {
+      await sessions.register(sessionId, runtime, context);
+      registered = true;
+      await server.connect(transport);
+    } catch (error: unknown) {
+      if (registered) {
+        await sessions.delete(sessionId).catch(() => undefined);
+      } else {
+        await Promise.allSettled([server.close(), transport.close()]);
+      }
+      throw error;
+    }
+    return runtime;
   };
 
   const processRequest = async (request: Request): Promise<Response> => {
+    if (options.runtimeReadiness !== undefined) {
+      let state: PlatformReadiness;
+      try {
+        state = await options.runtimeReadiness();
+      } catch {
+        state = { ready: false, reasons: ["runtime_readiness_unavailable"] };
+      }
+      if (!state.ready) return unavailableRuntimeResponse(state.reasons);
+    }
     const startedAt = Date.now();
     let url: URL;
     try {
@@ -750,14 +821,25 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     }
 
     const sessionId = request.headers.get("mcp-session-id");
-    let session: SessionRecord | undefined;
+    let session: SessionRuntimeHandle;
     if (sessionId !== null) {
-      session = sessions.get(sessionId);
-      if (session === undefined) {
-        return secureFailure(request, 404, new RequestSecurityError(), context);
-      }
-      if (!sameContext(session.context, context)) {
-        return secureFailure(request, 403, new CrossTenantAccessError(), context);
+      try {
+        const entry = await sessions.get(sessionId, context);
+        if (entry === null) {
+          return secureFailure(request, 404, new RequestSecurityError(), context);
+        }
+        const touched = await sessions.touch(sessionId, context);
+        if (touched === null) {
+          return secureFailure(request, 404, new RequestSecurityError(), context);
+        }
+        session = touched.runtime;
+      } catch (error: unknown) {
+        return secureFailure(
+          request,
+          error instanceof SessionContextMismatchError ? 403 : 503,
+          error,
+          context,
+        );
       }
     } else if (jsonRpcMethod(body) === "initialize") {
       session = await createSession(context);
@@ -794,14 +876,18 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     );
 
   handler.close = async (): Promise<void> => {
-    const activeSessions = [...sessions.values()];
-    sessions.clear();
-    for (const session of activeSessions) {
-      await session.server.close();
-      await session.transport.close();
-    }
+    await sessions.close();
   };
 
+  return handler;
+}
+
+export function createUnavailableMcpHttpHandler(
+  reasonCodes: readonly string[],
+): McpHttpHandler {
+  const handler = (): Promise<Response> =>
+    Promise.resolve(unavailableRuntimeResponse(reasonCodes));
+  handler.close = (): Promise<void> => Promise.resolve();
   return handler;
 }
 

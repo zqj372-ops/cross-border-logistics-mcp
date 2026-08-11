@@ -14,6 +14,9 @@
   会话；跨租户请求在 adapter 前拒绝。
 - 未注册工具和 Phase 1 禁止动作（发送、发布、订舱、通用写入、3D 装载布局）不进入
   下游 adapter。
+- 每个 session 绑定 tenant、actor、client、认证 session 和 context fingerprint；idle TTL、
+  max lifetime、token expiry 上限和 max sessions 必须有界。context 不匹配不能复用或 touch，
+  过期/关闭必须关闭对应 SDK server/transport。
 
 ## 出站与日志
 
@@ -24,6 +27,8 @@
   拒绝。测试应通过真实 HTTP client 请求路径验证，不只单测 security helper。
 - 应用层这里只检查 URL/hostname，不做 DNS 解析，不能单独解决 DNS rebinding。生产网络出口
   仍必须由 egress proxy/firewall 对解析后的目的 IP 执行 allow/deny 和 rebinding 防护。
+- 生产 assembly 不得把 Memory audit/idempotency 实现当作 durable；缺 audit、幂等、session
+  binding、token verifier 或 adapter source 时 readiness fail-closed，`/mcp` 不调用认证器或下游。
 - 审计失败 fail-closed；未完成审计的结果不能释放为 success。
 - 日志/审计只保留脱敏 ID、版本、状态、原因和 opaque reference metadata；不得写入 bearer、
   API key、客户地址、报价金额、税务材料全文或原始聊天。

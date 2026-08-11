@@ -102,6 +102,8 @@ function assertRequest(
 }
 
 export class MemoryIdempotencyRepository implements IdempotencyRepository {
+  readonly durability = "memory" as const;
+
   private readonly records = new Map<string, IdempotencyRecord>();
 
   constructor(

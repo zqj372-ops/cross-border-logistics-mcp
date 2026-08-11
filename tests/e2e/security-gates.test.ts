@@ -9,8 +9,29 @@ import {
 import { createFetchJsonClient } from "../../src/logistics_mcp/adapters/http-client";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
 import { MemoryAuditRepository } from "../../src/logistics_mcp/platform/audit";
+import { MemoryIdempotencyRepository } from "../../src/logistics_mcp/platform/idempotency";
+import { SessionRuntimeRegistry } from "../../src/logistics_mcp/platform/session-runtime";
 import { createMcpHttpHandler } from "../../src/logistics_mcp/server/http";
 import { securityClaims, fakeJwtClaims } from "./fixtures/security-fixtures";
+
+function makeSecurityHandler(
+  overrides: Partial<Parameters<typeof createMcpHttpHandler>[0]> = {},
+) {
+  return createMcpHttpHandler({
+    allowedOrigins: ["https://client.example.invalid"],
+    allowedHosts: ["mcp.example.invalid"],
+    authenticate: () => securityClaims,
+    auditRepository: new MemoryAuditRepository(),
+    idempotencyRepository: new MemoryIdempotencyRepository(),
+    sessionRegistry: new SessionRuntimeRegistry({
+      idleTtlMs: 60_000,
+      maxLifetimeMs: 60_000,
+      maxTokenLifetimeMs: 60_000,
+      maxSessions: 16,
+    }),
+    ...overrides,
+  });
+}
 
 describe("integration security gates", () => {
   it("requires issuer, audience, subject, tenant, role, iat and exp for short-lived claims", () => {
@@ -82,9 +103,7 @@ describe("integration security gates", () => {
 
   it("applies issuer and audience policy at the HTTP authentication boundary", async () => {
     const claims = { ...fakeJwtClaims, ...securityClaims };
-    const handle = createMcpHttpHandler({
-      allowedOrigins: ["https://client.example.invalid"],
-      allowedHosts: ["mcp.example.invalid"],
+    const handle = makeSecurityHandler({
       authenticate: () => claims,
       tokenPolicy: {
         issuer: fakeJwtClaims.iss,
@@ -115,9 +134,7 @@ describe("integration security gates", () => {
       }));
       expect(response.status).toBe(200);
 
-      const rejected = createMcpHttpHandler({
-        allowedOrigins: ["https://client.example.invalid"],
-        allowedHosts: ["mcp.example.invalid"],
+      const rejected = makeSecurityHandler({
         authenticate: () => ({ ...claims, iss: "https://evil.example.invalid/" }),
         tokenPolicy: {
           issuer: fakeJwtClaims.iss,
@@ -155,12 +172,7 @@ describe("integration security gates", () => {
   });
 
   it("uses a 32 KiB default request cap and fails closed when audit persistence fails", async () => {
-    const handle = createMcpHttpHandler({
-      allowedOrigins: ["https://client.example.invalid"],
-      allowedHosts: ["mcp.example.invalid"],
-      authenticate: () => securityClaims,
-      auditRepository: new MemoryAuditRepository(),
-    });
+    const handle = makeSecurityHandler();
     const body = { jsonrpc: "2.0", id: 1, method: "initialize", params: {} };
     const oversized = new Request("https://mcp.example.invalid/mcp", {
       method: "POST",
@@ -175,10 +187,7 @@ describe("integration security gates", () => {
     });
     expect((await handle(oversized)).status).toBe(413);
 
-    const failClosed = createMcpHttpHandler({
-      allowedOrigins: ["https://client.example.invalid"],
-      allowedHosts: ["mcp.example.invalid"],
-      authenticate: () => securityClaims,
+    const failClosed = makeSecurityHandler({
       auditRepository: {
         append: () => Promise.reject(new Error("audit unavailable")),
         list: () => Promise.resolve([]),
