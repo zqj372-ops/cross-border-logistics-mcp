@@ -203,15 +203,38 @@ describe("Phase 1 integrated fixture gateway", () => {
       const preview = await callTool(harness, sessionId, "quote.save_draft", previewInput);
       expect(preview.status).toBe("success");
       const previewRef = (preview.data as { preview_ref: string }).preview_ref;
+      const pendingApproval = await callTool(harness, sessionId, "quote.save_draft", {
+        ...previewInput,
+        write_context: writeContext(
+          "tenant_demo_a",
+          "commit",
+          previewRef,
+          "idem_fixture_quote_pending_001",
+          { required: true, status: "pending", approval_id: null },
+        ),
+      });
+      expect(pendingApproval.status).toBe("blocked");
       const commit = await callTool(harness, sessionId, "quote.save_draft", {
         ...previewInput,
-        write_context: writeContext("tenant_demo_a", "commit", previewRef, commitKey),
+        write_context: writeContext(
+          "tenant_demo_a",
+          "commit",
+          previewRef,
+          commitKey,
+          { required: true, status: "approved", approval_id: "approval_quote_001" },
+        ),
       });
       expect(commit.status).toBe("success");
       expect((commit.data as { readback_evidence: { verified: boolean } }).readback_evidence.verified).toBe(true);
       const replay = await callTool(harness, sessionId, "quote.save_draft", {
         ...previewInput,
-        write_context: writeContext("tenant_demo_a", "commit", previewRef, commitKey),
+        write_context: writeContext(
+          "tenant_demo_a",
+          "commit",
+          previewRef,
+          commitKey,
+          { required: true, status: "approved", approval_id: "approval_quote_001" },
+        ),
       });
       expect(replay).toEqual(commit);
 
@@ -230,12 +253,40 @@ describe("Phase 1 integrated fixture gateway", () => {
       };
       const taskPreview = await callTool(harness, sessionId, "review.create_task", taskPreviewInput);
       const taskPreviewRef = (taskPreview.data as { preview_ref: string }).preview_ref;
+      const taskPendingApproval = await callTool(harness, sessionId, "review.create_task", {
+        ...taskPreviewInput,
+        write_context: writeContext(
+          "tenant_demo_a",
+          "commit",
+          taskPreviewRef,
+          "idem_fixture_review_pending_001",
+          { required: true, status: "pending", approval_id: null },
+        ),
+      });
+      expect(taskPendingApproval.status).toBe("blocked");
       const taskCommit = await callTool(harness, sessionId, "review.create_task", {
         ...taskPreviewInput,
-        write_context: writeContext("tenant_demo_a", "commit", taskPreviewRef, taskCommitKey),
+        write_context: writeContext(
+          "tenant_demo_a",
+          "commit",
+          taskPreviewRef,
+          taskCommitKey,
+          { required: true, status: "approved", approval_id: "approval_review_001" },
+        ),
       });
       expect(taskCommit.status).toBe("success");
       expect((taskCommit.data as { readback_evidence: { verified: boolean } }).readback_evidence.verified).toBe(true);
+      const taskReplay = await callTool(harness, sessionId, "review.create_task", {
+        ...taskPreviewInput,
+        write_context: writeContext(
+          "tenant_demo_a",
+          "commit",
+          taskPreviewRef,
+          taskCommitKey,
+          { required: true, status: "approved", approval_id: "approval_review_001" },
+        ),
+      });
+      expect(taskReplay).toEqual(taskCommit);
     } finally {
       await harness.close();
     }
