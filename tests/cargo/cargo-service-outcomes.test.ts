@@ -170,6 +170,24 @@ describe("cargo.calculate service outcomes", () => {
     ).toBe(false);
   });
 
+  it("requires explicit rule metadata and rejects generic dimensional units", () => {
+    expect(
+      cargoToolContract.inputSchema.safeParse(
+        request({
+          bubble_rule: {
+            ...request().bubble_rule,
+            source_ref_ids: undefined,
+          },
+        }),
+      ).success,
+    ).toBe(false);
+    expect(
+      cargoToolContract.inputSchema.safeParse(
+        request({ dimensional_divisor: { value: "1000", unit: "kg" } }),
+      ).success,
+    ).toBe(false);
+  });
+
   it("injects only cargo.calculate handler and contract into the phase-one registry", () => {
     const definitions = registerPhaseOneTools(
       { "cargo.calculate": cargoToolHandler },

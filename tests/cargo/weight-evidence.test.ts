@@ -136,4 +136,33 @@ describe("CargoLine weight evidence", () => {
       code: "cargo.unit_invalid",
     });
   });
+
+  it("rejects unsafe integer quantities before Decimal arithmetic", () => {
+    expect(
+      validateCargoLine(line({ quantity: Number.MAX_SAFE_INTEGER + 1 })),
+    ).toMatchObject({
+      ok: false,
+      code: "cargo.quantity_invalid",
+      status: "needs_input",
+    });
+    expect(
+      validateCargoLine(
+        line({
+          quantity: 1,
+          dimensions: [
+            {
+              length: { value: "1", unit: "cm" },
+              width: { value: "1", unit: "cm" },
+              height: { value: "1", unit: "cm" },
+              quantity: Number.MAX_SAFE_INTEGER + 1,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      code: "cargo.dimension_quantity_invalid",
+      status: "needs_input",
+    });
+  });
 });

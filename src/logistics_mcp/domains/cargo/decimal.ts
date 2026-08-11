@@ -26,11 +26,11 @@ export function formatFixed(value: Decimal, scale: number): string {
 }
 
 export function formatWeight(value: Decimal, scaleHint = 0): string {
-  return formatFixed(value, Math.max(0, Math.min(12, scaleHint)));
+  return formatFixed(value, Math.max(0, scaleHint, value.decimalPlaces()));
 }
 
 export function formatVolume(value: Decimal): string {
-  return formatFixed(value, 6);
+  return formatFixed(value, Math.max(6, value.decimalPlaces()));
 }
 
 export type DecimalValue = Decimal;

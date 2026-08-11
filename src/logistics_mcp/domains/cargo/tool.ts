@@ -52,7 +52,7 @@ const dimensionSetSchema = z
     length: lengthMeasurementSchema,
     width: lengthMeasurementSchema,
     height: lengthMeasurementSchema,
-    quantity: z.number().int().min(1),
+    quantity: z.number().int().safe().min(1),
   })
   .strict();
 const moneySchema = z
@@ -82,7 +82,7 @@ const cargoLineSchema = z
     version: versionSchema,
     line_id: identifierSchema,
     description: z.string().min(1).max(500),
-    quantity: z.number().int().min(1),
+    quantity: z.number().int().safe().min(1),
     quantity_unit: z.enum([
       "piece",
       "carton",
@@ -160,23 +160,22 @@ const supplierRuleSchema = z
   .strict();
 const bubbleRuleSchema = z
   .object({
-    channel: z.string().min(1).max(120).optional(),
+    channel: z.string().min(1).max(120),
     mode: z.enum(["none", "full", "half", "ratio", "fixed_density"]),
-    method: z.enum(["none", "full", "half", "ratio", "fixed_density"]).optional(),
-    ratio: ratioSchema.nullable().optional(),
+    ratio: ratioSchema.nullable(),
     rule_version: versionSchema,
-    source_ref_ids: uniqueIdentifiersSchema.optional(),
+    source_ref_ids: uniqueIdentifiersSchema,
     divisor: dimensionalBasisSchema.optional(),
     density: dimensionalBasisSchema.optional(),
-    unit: z.literal("kg").optional(),
-    rounding: roundingSchema.optional(),
+    unit: z.literal("kg"),
+    rounding: roundingSchema,
     supplier: supplierRuleSchema.optional(),
   })
   .strict();
 const dimensionalDivisorSchema = z
   .object({
     value: nonNegativeDecimalSchema,
-    unit: z.enum(["kg_per_cbm", "cbm_per_kg", "kg", "cbm", "m3"]),
+    unit: z.enum(["kg_per_cbm", "cbm_per_kg"]),
   })
   .strict()
   .nullable();

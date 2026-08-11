@@ -154,7 +154,7 @@ function validDecimal(
 }
 
 function normalized(value: DecimalValue): string {
-  const scale = Math.max(0, Math.min(18, value.decimalPlaces()));
+  const scale = Math.max(0, value.decimalPlaces());
   const fixed = formatFixed(value, scale);
   if (!fixed.includes(".")) {
     return fixed;

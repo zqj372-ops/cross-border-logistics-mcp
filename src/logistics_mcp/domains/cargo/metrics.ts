@@ -400,6 +400,15 @@ export function calculateCargoMetrics(input: unknown): CargoMetricsResult {
     calculationTrace.push(...weightResult.trace);
   }
 
+  if (totalQuantity.gt(decimalFromInteger(Number.MAX_SAFE_INTEGER))) {
+    return cargoDiagnostic(
+      "cargo.total_quantity_invalid",
+      "manual_review",
+      "The aggregate quantity exceeds the safe integer boundary of the output contract.",
+      "cargo_lines",
+    );
+  }
+
   calculationTrace.push(
     step(
       "cargo:metrics:volume-total",

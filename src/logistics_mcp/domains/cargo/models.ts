@@ -479,7 +479,7 @@ function validateDimensions(
       return height;
     }
     const quantity = candidate.quantity;
-    if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1) {
+    if (typeof quantity !== "number" || !Number.isSafeInteger(quantity) || quantity < 1) {
       return failure(
         "cargo.dimension_quantity_invalid",
         "needs_input",
@@ -537,7 +537,7 @@ export function validateCargoLine(input: unknown): CargoLineValidation {
     );
   }
   const quantity = input.quantity;
-  if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1) {
+  if (typeof quantity !== "number" || !Number.isSafeInteger(quantity) || quantity < 1) {
     return failure(
       "cargo.quantity_invalid",
       "needs_input",

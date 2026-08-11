@@ -114,7 +114,57 @@ describe("cargo metrics", () => {
       }),
     ]);
 
-    expect(metrics.actual_weight).toEqual({ value: "1.000000", unit: "kg" });
+    expect(metrics.actual_weight).toEqual({ value: "1.0000000000005552845", unit: "kg" });
+  });
+
+  it("does not silently truncate high-precision decimal measurements", () => {
+    const metrics = expectMetrics([
+      line({
+        line_id: "line_high_precision",
+        quantity: 1,
+        unit_weight: { value: "0.123456789012345678901", unit: "kg" },
+        dimensions: [
+          {
+            length: { value: "0.123456789", unit: "m" },
+            width: { value: "1", unit: "cm" },
+            height: { value: "1", unit: "cm" },
+            quantity: 1,
+          },
+        ],
+      }),
+    ]);
+
+    expect(metrics.actual_weight).toEqual({
+      value: "0.123456789012345678901",
+      unit: "kg",
+    });
+    expect(metrics.total_volume).toEqual({
+      value: "0.0000123456789",
+      unit: "cbm",
+    });
+  });
+
+  it("fails closed when the aggregate quantity exceeds the output integer boundary", () => {
+    const result = calculateCargoMetrics([
+      line({
+        line_id: "line_quantity_a",
+        quantity: Number.MAX_SAFE_INTEGER,
+        volume: { value: "0", unit: "cbm" },
+        dimensions: undefined,
+      }),
+      line({
+        line_id: "line_quantity_b",
+        quantity: 1,
+        volume: { value: "0", unit: "cbm" },
+        dimensions: undefined,
+      }),
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "cargo.total_quantity_invalid",
+      status: "manual_review",
+    });
   });
 
   it("rejects a conflict between direct volume and dimension-derived volume", () => {

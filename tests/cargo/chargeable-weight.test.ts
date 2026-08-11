@@ -180,6 +180,36 @@ describe("chargeable weight", () => {
     expect(rounded.volumetric_weight.value).toBe("12.3");
   });
 
+  it("preserves high-precision volumetric and chargeable results until explicit rounding", () => {
+    const volumetric = calculateVolumetricWeight({
+      volume: { value: "0.123456789012345678901", unit: "cbm" },
+      rule: {
+        ...ruleBase,
+        density: { value: "1", unit: "kg_per_cbm" },
+      },
+    });
+
+    expect(volumetric).toMatchObject({ ok: true });
+    if (volumetric.ok !== true) {
+      throw new Error(volumetric.diagnostic.message);
+    }
+    expect(volumetric.volumetric_weight.value).toBe("0.123456789012345678901");
+
+    const chargeable = calculateChargeableWeight({
+      actual: "0",
+      volumetric: volumetric.volumetric_weight.value,
+      method: "full",
+      ruleVersion: "CAQ-HP@2026-01-01",
+      sourceRefIds: ["src_rule_1"],
+    });
+
+    expect(chargeable).toMatchObject({ ok: true });
+    if (chargeable.ok !== true) {
+      throw new Error(chargeable.diagnostic.message);
+    }
+    expect(chargeable.customer_chargeable_weight.value).toBe("0.123456789012345678901");
+  });
+
   it("does not expose currency fields in a weight-only result", () => {
     const result = calculateChargeableWeight({
       actual: "1000",
