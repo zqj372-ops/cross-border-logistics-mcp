@@ -30,7 +30,7 @@ No automatic send, publish, or booking path is included.
 ```bash
 npm run build
 bash deploy/scripts/check-release.sh --fixture-only
-docker compose -f deploy/compose.yml config
+docker compose --env-file deploy/env.example -f deploy/compose.yml config
 ```
 
 `--fixture-only` 只做本地只读/隔离验证，不访问网络、不打印密钥，也不启动容器。

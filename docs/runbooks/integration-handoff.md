@@ -19,7 +19,7 @@ npm run lint
 npm run validate:schemas
 git diff --check
 git status --short
-docker compose -f deploy/compose.yml config
+docker compose --env-file deploy/env.example -f deploy/compose.yml config
 bash deploy/scripts/check-release.sh --fixture-only
 ```
 

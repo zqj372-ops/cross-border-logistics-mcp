@@ -12,6 +12,12 @@ import {
 import type { ShortLivedTokenValidationOptions } from "../platform/security";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
+const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
+const RUNTIME_REQUEST_TIMEOUT_MS = 15_000;
+const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
+
+class RuntimeBodyTooLargeError extends Error {}
+class RuntimeRequestError extends Error {}
 
 function splitSetting(name: string, fallback: string): string[] {
   const value = process.env[name] ?? fallback;
@@ -60,12 +66,32 @@ function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefi
 }
 
 async function toRequest(request: IncomingMessage): Promise<Request> {
+  const contentLength = request.headers["content-length"];
+  if (Array.isArray(contentLength)) {
+    throw new RuntimeRequestError("Invalid content length.");
+  }
+  if (contentLength !== undefined) {
+    const declaredLength = Number(contentLength);
+    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0) {
+      throw new RuntimeRequestError("Invalid content length.");
+    }
+    if (declaredLength > RUNTIME_MAX_BODY_BYTES) {
+      throw new RuntimeBodyTooLargeError();
+    }
+  }
+
   const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
     const value: unknown = chunk;
     if (typeof value === "string") {
-      chunks.push(new TextEncoder().encode(value));
+      const bytes = new TextEncoder().encode(value);
+      totalBytes += bytes.byteLength;
+      if (totalBytes > RUNTIME_MAX_BODY_BYTES) throw new RuntimeBodyTooLargeError();
+      chunks.push(bytes);
     } else if (value instanceof Uint8Array) {
+      totalBytes += value.byteLength;
+      if (totalBytes > RUNTIME_MAX_BODY_BYTES) throw new RuntimeBodyTooLargeError();
       chunks.push(value);
     } else {
       throw new TypeError("The request body chunk is not a byte sequence.");
@@ -119,7 +145,15 @@ async function handleRuntimeRequest(
     }
     try {
       await forward(await composition.handler(await toRequest(request)), response);
-    } catch {
+    } catch (error) {
+      if (error instanceof RuntimeBodyTooLargeError) {
+        json(response, 413, { status: "blocked", reason: "body_too_large" });
+        return;
+      }
+      if (error instanceof RuntimeRequestError) {
+        json(response, 400, { status: "blocked", reason: "invalid_request" });
+        return;
+      }
       json(response, 503, { status: "unavailable", reason: "gateway_unavailable" });
     }
 }
@@ -127,9 +161,15 @@ async function handleRuntimeRequest(
 export function createRuntimeServer(
   composition: GatewayComposition,
 ): ReturnType<typeof createServer> {
-  return createServer((request, response) => {
+  return createServer(
+    {
+      headersTimeout: RUNTIME_HEADERS_TIMEOUT_MS,
+      requestTimeout: RUNTIME_REQUEST_TIMEOUT_MS,
+    },
+    (request, response) => {
     void handleRuntimeRequest(request, response, composition);
-  });
+    },
+  );
 }
 
 function makeComposition(): GatewayComposition {

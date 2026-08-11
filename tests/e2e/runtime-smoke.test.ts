@@ -100,6 +100,19 @@ describe("built runtime smoke", () => {
       const readiness = await fetch(`http://127.0.0.1:${port}/readyz`);
       expect(readiness.status).toBe(503);
       expect(await readiness.json()).toMatchObject({ status: "not_ready" });
+      const oversized = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(32 * 1024 + 1),
+          "x-forwarded-proto": "https",
+          origin: "https://client.example.invalid",
+          host: "mcp.example.invalid",
+        },
+        body: "x".repeat(32 * 1024 + 1),
+      });
+      expect(oversized.status).toBe(413);
+      expect(await oversized.json()).toMatchObject({ status: "blocked" });
     } catch (error) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}; stderr=${stderr}`,

@@ -42,6 +42,17 @@ describe("safe deployment artifacts", () => {
     expect(compose).not.toMatch(/^\s*ports:/m);
     expect(compose).toMatch(/healthcheck:/);
     for (const required of [
+      "MCP_DATA_MODE",
+      "MCP_JWT_ISSUER",
+      "MCP_JWT_AUDIENCE",
+      "MCP_ALLOWED_ORIGINS",
+      "MCP_ALLOWED_HOSTS",
+      "MCP_ALLOWED_OUTBOUND_HOSTS",
+    ]) {
+      expect(compose).toContain(`\${${required}:?`);
+      expect(compose).not.toContain(`\${${required}:-`);
+    }
+    for (const required of [
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
       "MCP_ALLOWED_ORIGINS",
@@ -55,6 +66,14 @@ describe("safe deployment artifacts", () => {
     expect(env).toContain("tenant_demo");
     expect(env).toContain("CHANGE_ME_IN_SECRET_STORE");
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+  });
+
+  it("sets runtime request and header timeout guards", () => {
+    const start = read("src/logistics_mcp/server/start.ts");
+    expect(start).toContain("RUNTIME_MAX_BODY_BYTES");
+    expect(start).toContain("requestTimeout");
+    expect(start).toContain("headersTimeout");
+    expect(start).toContain("body_too_large");
   });
 
   it("documents health/readiness and refuses fixture mode in production", () => {

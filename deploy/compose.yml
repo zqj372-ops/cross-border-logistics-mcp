@@ -9,14 +9,14 @@ services:
       - "8080"
     environment:
       MCP_PORT: "8080"
-      MCP_DATA_MODE: "${MCP_DATA_MODE:-production}"
-      MCP_JWT_ISSUER: "${MCP_JWT_ISSUER:-https://issuer.example.invalid/}"
-      MCP_JWT_AUDIENCE: "${MCP_JWT_AUDIENCE:-logistics-mcp-demo}"
-      MCP_ALLOWED_ORIGINS: "${MCP_ALLOWED_ORIGINS:-https://client.example.invalid}"
-      MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:-mcp.example.invalid}"
-      MCP_ALLOWED_OUTBOUND_HOSTS: "${MCP_ALLOWED_OUTBOUND_HOSTS:-riskcustoms.example.invalid,quote.example.invalid}"
-      MCP_TENANT_MAPPING: "${MCP_TENANT_MAPPING:-tenant_demo}"
-      MCP_CLIENT_ID: "${MCP_CLIENT_ID:-client_demo}"
+      MCP_DATA_MODE: "${MCP_DATA_MODE:?MCP_DATA_MODE is required}"
+      MCP_JWT_ISSUER: "${MCP_JWT_ISSUER:?MCP_JWT_ISSUER is required}"
+      MCP_JWT_AUDIENCE: "${MCP_JWT_AUDIENCE:?MCP_JWT_AUDIENCE is required}"
+      MCP_ALLOWED_ORIGINS: "${MCP_ALLOWED_ORIGINS:?MCP_ALLOWED_ORIGINS is required}"
+      MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:?MCP_ALLOWED_HOSTS is required}"
+      MCP_ALLOWED_OUTBOUND_HOSTS: "${MCP_ALLOWED_OUTBOUND_HOSTS:?MCP_ALLOWED_OUTBOUND_HOSTS is required}"
+      MCP_TENANT_MAPPING: "${MCP_TENANT_MAPPING:?MCP_TENANT_MAPPING is required}"
+      MCP_CLIENT_ID: "${MCP_CLIENT_ID:?MCP_CLIENT_ID is required}"
       MCP_UPSTREAM_TOKEN_FILE: "/run/secrets/mcp_upstream_token"
     read_only: true
     tmpfs:

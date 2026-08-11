@@ -11,6 +11,10 @@
 RiskCustoms readiness 未核验前，生产 adapter 默认 disabled/fail-closed，结果为
 `unavailable` 或 `manual_review`，不能用 fixture 冒充 ready。
 
+Compose 不会为 production、JWT、Origin/Host 或出站 allowlist 配置静默填入示例默认值；
+这些变量必须由调用环境显式提供。只有本地只读 config 检查可以使用
+`--env-file deploy/env.example`，其中的值全部是假值。
+
 当前交付没有内置 JWT 签名验证器。`start.ts` 会从 `MCP_JWT_ISSUER` 和
 `MCP_JWT_AUDIENCE` 接线短时 claims policy，但签名验证必须由批准的前置身份网关注入；
 当前生产 authenticate 仍故意 fail-closed。因此进程可以运行并回答 `/healthz`，但生产
