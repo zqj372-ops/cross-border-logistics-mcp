@@ -185,8 +185,12 @@ function canonicalLineWeight(
   );
 }
 
-function dimensionsQuantity(dimensions: readonly DimensionSet[]): number {
-  return dimensions.reduce((total, dimension) => total + dimension.quantity, 0);
+function dimensionsQuantity(dimensions: readonly DimensionSet[]): ReturnType<typeof decimalFromString> {
+  let total = decimalFromString("0");
+  for (const dimension of dimensions) {
+    total = total.add(decimalFromInteger(dimension.quantity));
+  }
+  return total;
 }
 
 function dimensionVolume(
@@ -206,7 +210,7 @@ function dimensionVolume(
       `cargo_lines[${lineIndex}].volume`,
     );
   }
-  if (dimensionsQuantity(line.dimensions) !== line.quantity) {
+  if (!dimensionsQuantity(line.dimensions).eq(decimalFromInteger(line.quantity))) {
     return cargoDiagnostic(
       "cargo.dimension_quantity_mismatch",
       "manual_review",
