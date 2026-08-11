@@ -109,6 +109,11 @@ function writeContext(
   operationMode: "preview" | "commit",
   previewRef: string | null,
   key: string,
+  approval: Record<string, unknown> = {
+    required: false,
+    status: "not_required",
+    approval_id: null,
+  },
 ) {
   return {
     tenant_context: {
@@ -121,7 +126,7 @@ function writeContext(
     idempotency_key: key,
     operation_mode: operationMode,
     preview_ref: previewRef,
-    approval: { required: false, status: "not_required", approval_id: null },
+    approval,
   };
 }
 
@@ -311,7 +316,12 @@ describe("Task 05 Phase 1 bundle", () => {
         version: "quote-save@fixture-1",
         quote_result: quoteResult,
         target: { system: "existing_quote_system", record_kind: "draft" },
-        write_context: writeContext("commit", previewRef, "idem_demo_quote_commit_1234"),
+        write_context: writeContext(
+          "commit",
+          previewRef,
+          "idem_demo_quote_commit_1234",
+          { required: true, status: "approved", approval_id: "approval_demo_quote_001" },
+        ),
       },
       context,
       {
@@ -371,7 +381,12 @@ describe("Task 05 Phase 1 bundle", () => {
             expires_at: null,
           },
         ],
-        write_context: writeContext("commit", taskPreviewRef, "idem_demo_review_commit_1234"),
+        write_context: writeContext(
+          "commit",
+          taskPreviewRef,
+          "idem_demo_review_commit_1234",
+          { required: true, status: "approved", approval_id: "approval_demo_review_001" },
+        ),
       },
       context,
       {

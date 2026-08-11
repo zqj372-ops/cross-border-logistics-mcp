@@ -19,7 +19,9 @@ import {
 } from "../platform/rbac";
 import {
   hashPayload,
+  IdempotencyInProgressError,
   IdempotencyRequiredError,
+  IdempotencyStateError,
 } from "../platform/idempotency";
 import type {
   AuditEvent,
@@ -167,6 +169,17 @@ interface WriteRequest {
   readonly previewRef: string | null;
 }
 
+type WriteToolName = "quote.save_draft" | "review.create_task";
+
+const writeApprovalPolicy: Readonly<Record<WriteToolName, true>> = {
+  "quote.save_draft": true,
+  "review.create_task": true,
+};
+
+function requiresCommitApproval(toolName: PhaseOneToolName): boolean {
+  return toolName in writeApprovalPolicy;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -182,6 +195,7 @@ function writeContractError(
 function parseWriteRequest(
   input: unknown,
   context: ExecutionContext,
+  toolName: PhaseOneToolName,
 ): WriteRequest {
   if (!isRecord(input) || !isRecord(input.write_context)) {
     throw writeContractError(
@@ -264,8 +278,10 @@ function parseWriteRequest(
   }
   if (
     operationMode === "commit" &&
-    approval.required === true &&
-    (approval.status !== "approved" || typeof approval.approval_id !== "string")
+    requiresCommitApproval(toolName) &&
+    (approval.status !== "approved" ||
+      typeof approval.approval_id !== "string" ||
+      approval.approval_id.length === 0)
   ) {
     throw writeContractError(
       "approval.not_approved",
@@ -279,6 +295,23 @@ function parseWriteRequest(
     operationMode,
     previewRef: typeof previewRef === "string" ? previewRef : null,
   };
+}
+
+function validateToolOutput(
+  definition: ToolDefinition,
+  outcome: DomainToolOutcome,
+): void {
+  if (outcome.status === "success" && outcome.data === null) {
+    throw new ToolContractValidationError();
+  }
+  if (outcome.data === null) {
+    return;
+  }
+  try {
+    definition.validateOutput?.(outcome.data);
+  } catch {
+    throw new ToolContractValidationError();
+  }
 }
 
 function validateWriteOutcome(
@@ -364,7 +397,9 @@ export async function executeRegisteredToolWithResult(
   }
 
   const writeRequest =
-    definition.kind === "write" ? parseWriteRequest(input, context) : null;
+    definition.kind === "write"
+      ? parseWriteRequest(input, context, definition.name)
+      : null;
   let idempotencyOutcome: AuditEvent["idempotency_outcome"] = "not_applicable";
   let reservation:
     | Awaited<ReturnType<IdempotencyRepository["reserve"]>>
@@ -380,22 +415,22 @@ export async function executeRegisteredToolWithResult(
       requestHash: hashPayload(input),
     });
     if (reservation.replayed) {
+      if (reservation.record.status !== "committed" || reservation.record.result === null) {
+        throw new IdempotencyStateError();
+      }
       return {
         envelope: validateEnvelope(reservation.record.result),
         idempotencyOutcome: "replayed",
       };
     }
+    if (reservation.inProgress) {
+      throw new IdempotencyInProgressError();
+    }
     idempotencyOutcome = "reserved";
   }
 
   const outcome = await definition.handler(input, context);
-  if (definition.validateOutput !== undefined && outcome.status === "success") {
-    try {
-      definition.validateOutput(outcome.data);
-    } catch {
-      throw new ToolContractValidationError();
-    }
-  }
+  validateToolOutput(definition, outcome);
   if (writeRequest !== null) {
     validateWriteOutcome(writeRequest, outcome);
   }

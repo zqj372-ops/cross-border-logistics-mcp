@@ -31,7 +31,9 @@ import {
 } from "../platform/rbac";
 import {
   IdempotencyConflictError,
+  IdempotencyInProgressError,
   IdempotencyRequiredError,
+  IdempotencyStateError,
   MemoryIdempotencyRepository,
 } from "../platform/idempotency";
 import {
@@ -135,6 +137,20 @@ function errorOutcome(error: unknown): {
       status: "blocked",
       code: "idempotency.payload_conflict",
       message: "The idempotency key conflicts with an earlier request.",
+    };
+  }
+  if (error instanceof IdempotencyInProgressError) {
+    return {
+      status: "manual_review",
+      code: "idempotency.in_progress",
+      message: "The idempotency key is already being processed.",
+    };
+  }
+  if (error instanceof IdempotencyStateError) {
+    return {
+      status: "manual_review",
+      code: "idempotency.state_invalid",
+      message: "The idempotency operation could not be safely replayed.",
     };
   }
   if (error instanceof IdempotencyRequiredError) {
@@ -557,6 +573,9 @@ function registerMcpTools(
           });
           if (error instanceof IdempotencyConflictError) {
             idempotencyOutcome = "conflict";
+          }
+          if (error instanceof IdempotencyInProgressError) {
+            idempotencyOutcome = "in_progress";
           }
         }
         try {

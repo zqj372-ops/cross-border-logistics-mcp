@@ -124,6 +124,29 @@ describe("idempotency repository", () => {
     ).rejects.toThrow(IdempotencyConflictError);
   });
 
+  it("marks the second concurrent identical reservation as in progress", async () => {
+    const store = new MemoryIdempotencyRepository();
+    const request = {
+      tenantId: "tenant_demo",
+      tool: "quote.save_draft",
+      key: "idem_demo_concurrent_001",
+      requestHash: "hash_concurrent",
+    };
+
+    const reservations = await Promise.all([
+      store.reserve(request),
+      store.reserve(request),
+    ]);
+    const inProgressFlags = reservations.map(
+      (reservation) =>
+        (reservation as unknown as { inProgress: boolean }).inProgress,
+    );
+
+    expect(inProgressFlags.filter((value) => value === true)).toHaveLength(1);
+    expect(inProgressFlags.filter((value) => value === false)).toHaveLength(1);
+    expect(reservations.every((reservation) => reservation.record.result === null)).toBe(true);
+  });
+
   it("keeps keys isolated by tenant and tool", async () => {
     const store = new MemoryIdempotencyRepository();
 

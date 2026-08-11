@@ -3,6 +3,10 @@ import { z } from "zod";
 
 import { parseExecutionContext, type AuthClaims } from "../../src/logistics_mcp/platform/context";
 import { MemoryAuditRepository } from "../../src/logistics_mcp/platform/audit";
+import {
+  hashPayload,
+  MemoryIdempotencyRepository,
+} from "../../src/logistics_mcp/platform/idempotency";
 import { createMcpHttpHandler } from "../../src/logistics_mcp/server/http";
 
 const validClaims = (expiresAt = Math.floor(Date.now() / 1000) + 300): AuthClaims => ({
@@ -303,6 +307,102 @@ describe("Streamable HTTP security boundary", () => {
       "replayed",
       "conflict",
     ]);
+  });
+
+  it("returns a deterministic non-500 result for a concurrent in-progress write", async () => {
+    const key = "idem_http_concurrent_001";
+    let handlerCalls = 0;
+    const writeInput = {
+      schema_version: "2026-08-11.v1",
+      write_context: {
+        tenant_context: {
+          tenant_id: "tenant_demo",
+          actor_id: "actor_sales",
+          actor_role: "sales",
+          client_id: "client_demo",
+          session_id: "session_demo",
+        },
+        idempotency_key: key,
+        operation_mode: "preview",
+        preview_ref: null,
+        approval: {
+          required: false,
+          status: "not_required",
+          approval_id: null,
+        },
+      },
+    };
+    const idempotencyRepository = new MemoryIdempotencyRepository();
+    const reserve = idempotencyRepository.reserve({
+      tenantId: "tenant_demo",
+      tool: "quote.save_draft",
+      key,
+      requestHash: hashPayload(writeInput),
+    });
+    const writeClaims = {
+      ...validClaims(),
+      scopes: ["quote:calculate", "system:read", "quote:draft_write"],
+    } satisfies AuthClaims;
+    const handle = makeHandler({
+      maxBodyBytes: 2048,
+      authenticate: () => writeClaims,
+      idempotencyRepository,
+      handlers: {
+        "quote.save_draft": () => {
+          handlerCalls += 1;
+          return {
+            status: "success" as const,
+            data: {
+              version: "write-result@fixture-1",
+              operation: "quote.save_draft",
+              operation_status: "previewed",
+              record_id: null,
+              preview_ref: "preview_http_concurrent_001",
+              readback_evidence: null,
+              idempotency_key: key,
+              approval: {
+                required: false,
+                status: "not_required",
+                approval_id: null,
+              },
+            },
+          };
+        },
+      },
+      contracts: {
+        "quote.save_draft": {
+          inputSchema: z.record(z.string(), z.unknown()),
+          validateOutput: () => undefined,
+        },
+      },
+    });
+    await reserve;
+    const initializeResponse = await handle(makeRequest(initializeBody));
+    const sessionId = initializeResponse.headers.get("mcp-session-id");
+    expect(sessionId).not.toBeNull();
+    const response = await handle(
+      makeRequest(
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "quote.save_draft", arguments: writeInput },
+        },
+        { "mcp-session-id": sessionId ?? "" },
+      ),
+    );
+    const body = (await response.json()) as {
+      result?: { structuredContent?: Record<string, unknown> };
+    };
+    const envelope = body.result?.structuredContent;
+
+    expect(response.status).toBe(200);
+    expect(envelope?.status).toBe("manual_review");
+    expect(envelope?.data).toBeNull();
+    expect(envelope?.blockers).toEqual([
+      expect.objectContaining({ code: "idempotency.in_progress" }),
+    ]);
+    expect(handlerCalls).toBe(0);
   });
 
   it("does not let an input tenant override the authenticated context", async () => {

@@ -43,6 +43,15 @@ export class IdempotencyRequiredError extends Error {
   }
 }
 
+export class IdempotencyInProgressError extends Error {
+  readonly code = "idempotency.in_progress";
+
+  constructor() {
+    super("The idempotency key is already being processed.");
+    this.name = "IdempotencyInProgressError";
+  }
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -137,6 +146,7 @@ export class MemoryIdempotencyRepository implements IdempotencyRepository {
       }
       return {
         replayed: existing.status === "committed",
+        inProgress: existing.status === "reserved",
         record: clone(existing),
       };
     }
@@ -156,7 +166,7 @@ export class MemoryIdempotencyRepository implements IdempotencyRepository {
       this.keyFor(request.tenantId, request.tool, request.key),
       record,
     );
-    return { replayed: false, record: clone(record) };
+    return { replayed: false, inProgress: false, record: clone(record) };
   }
 
   async commit(request: IdempotencyCommitRequest): Promise<IdempotencyRecord> {

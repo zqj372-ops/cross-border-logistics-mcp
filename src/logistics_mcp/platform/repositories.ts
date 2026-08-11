@@ -16,6 +16,7 @@ export interface AuditEvent {
   readonly idempotency_outcome:
     | "not_applicable"
     | "reserved"
+    | "in_progress"
     | "replayed"
     | "conflict";
   readonly readback_status:
@@ -65,6 +66,7 @@ export interface IdempotencyCommitRequest {
 
 export interface IdempotencyReserveResult {
   readonly replayed: boolean;
+  readonly inProgress: boolean;
   readonly record: IdempotencyRecord;
 }
 
