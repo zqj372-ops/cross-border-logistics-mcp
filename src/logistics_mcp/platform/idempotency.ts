@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   IdempotencyCommitRequest,
   IdempotencyRecord,
@@ -34,6 +36,37 @@ export class IdempotencyStateError extends Error {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalize(item));
+  }
+  if (isRecord(value)) {
+    const entries = Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalize(value[key])] as const);
+    return Object.fromEntries(entries);
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new IdempotencyStateError();
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    throw new IdempotencyStateError();
+  }
+  return value;
+}
+
+export function hashPayload(payload: unknown): string {
+  const serialized = JSON.stringify(canonicalize(payload));
+  if (serialized === undefined) {
+    throw new IdempotencyStateError();
+  }
+  return `sha256:${createHash("sha256").update(serialized).digest("hex")}`;
 }
 
 function assertRequest(

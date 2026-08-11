@@ -198,6 +198,17 @@ const calculationStepSchema = z
     rounding: z.string().max(120).nullable().optional(),
   })
   .strict();
+const sourceRefsSchema = z
+  .array(sourceRefSchema)
+  .superRefine((values, ctx) => {
+    const serialized = values.map((value) => JSON.stringify(value));
+    if (new Set(serialized).size !== serialized.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "source_refs must be unique",
+      });
+    }
+  });
 
 export const envelopeSchema = z
   .object({
@@ -205,7 +216,7 @@ export const envelopeSchema = z
     request_id: identifierSchema,
     status: z.enum(ENVELOPE_STATUSES),
     data: z.record(z.string(), z.unknown()).nullable(),
-    source_refs: z.array(sourceRefSchema),
+    source_refs: sourceRefsSchema,
     assumptions: z.array(noticeSchema),
     warnings: z.array(noticeSchema),
     blockers: z.array(noticeSchema),

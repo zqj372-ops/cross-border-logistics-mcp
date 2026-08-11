@@ -47,6 +47,25 @@ describe("validateEnvelope", () => {
     ).toThrow(/schema_version/i);
   });
 
+  it("rejects duplicate source references", () => {
+    const sourceRef = {
+      source_id: "source_demo_001",
+      source_type: "fixture",
+      system: "platform-test",
+      locator: "fixture://source-demo-001",
+      version: "fixture.v1",
+      retrieved_at: "2026-08-11T00:00:00Z",
+      authority: "supporting",
+    } as const;
+
+    expect(() =>
+      validateEnvelope({
+        ...validEnvelope,
+        source_refs: [sourceRef, sourceRef],
+      }),
+    ).toThrow(/source_refs|unique/i);
+  });
+
   it("rejects success combined with blockers", () => {
     expect(() =>
       createEnvelope({

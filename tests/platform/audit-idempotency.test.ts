@@ -7,6 +7,7 @@ import {
 import {
   IdempotencyConflictError,
   MemoryIdempotencyRepository,
+  hashPayload,
 } from "../../src/logistics_mcp/platform/idempotency";
 
 describe("redacted audit repository", () => {
@@ -141,5 +142,10 @@ describe("idempotency repository", () => {
         requestHash: "hash_b",
       }),
     ).resolves.toMatchObject({ replayed: false });
+  });
+
+  it("computes a stable payload hash without retaining the payload", () => {
+    expect(hashPayload({ b: 2, a: 1 })).toBe(hashPayload({ a: 1, b: 2 }));
+    expect(hashPayload({ a: 1 })).not.toBe(hashPayload({ a: 2 }));
   });
 });
