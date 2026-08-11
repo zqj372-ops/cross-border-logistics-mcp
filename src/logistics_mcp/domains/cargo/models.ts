@@ -113,12 +113,19 @@ export interface CargoMetrics {
 
 export type BubbleMethod = "none" | "full" | "half" | "ratio" | "fixed_density";
 
+export type DimensionalUnit = "kg_per_cbm" | "cbm_per_kg";
+
+export interface DimensionalBasis {
+  readonly value: string;
+  readonly unit: DimensionalUnit;
+}
+
 export interface DimensionalRule {
   readonly channel: string;
   readonly rule_version: string;
   readonly source_ref_ids: readonly string[];
-  readonly divisor?: WeightMeasurement;
-  readonly density?: WeightMeasurement;
+  readonly divisor?: DimensionalBasis;
+  readonly density?: DimensionalBasis;
   readonly unit: "kg";
   readonly rounding: RoundingRule;
   readonly method: BubbleMethod;
