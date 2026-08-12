@@ -12,7 +12,7 @@ import {
 import { createRuntimeServer } from "../../src/logistics_mcp/server/start";
 
 const ASSETS = {
-  "index.html": "<!doctype html><title>Admin fixture</title>",
+  "index.html": "<!doctype html><title>Admin fixture</title><link rel=\"stylesheet\" href=\"./styles.css\"><script src=\"./app.js\"></script>",
   "styles.css": "body { color: black; }",
   "app.js": "window.adminFixture = false;",
   "fixture-data.js": "window.adminFixtureData = true;",
@@ -74,6 +74,42 @@ describe("admin static runtime boundary", () => {
     }
   });
 
+  it("redirects /admin to the slash canonical path without reflecting the host", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const { server, baseUrl } = await listen(
+      composition,
+      createAdminStaticHandler({ enabledSetting: "true", staticDir: directory }),
+    );
+    try {
+      const manual = await fetch(`${baseUrl}/admin?fixture=1`, { redirect: "manual" });
+      expect(manual.status).toBe(308);
+      expect(manual.headers.get("location")).toBe("/admin/?fixture=1");
+      expect(manual.headers.get("cache-control")).toBe("no-store");
+      expect(manual.headers.get("content-security-policy")).toContain("default-src 'self'");
+
+      const head = await fetch(`${baseUrl}/admin?fixture=1`, {
+        method: "HEAD",
+        redirect: "manual",
+      });
+      expect(head.status).toBe(308);
+      expect(head.headers.get("location")).toBe("/admin/?fixture=1");
+      expect(await head.text()).toBe("");
+
+      const followed = await fetch(`${baseUrl}/admin?fixture=1`);
+      expect(followed.status).toBe(200);
+      expect(followed.url).toBe(`${baseUrl}/admin/?fixture=1`);
+      const html = await followed.text();
+      expect(html).toContain("./styles.css");
+      expect(html).toContain("./app.js");
+      expect(new URL("./styles.css", followed.url).pathname).toBe("/admin/styles.css");
+      expect(new URL("./app.js", followed.url).pathname).toBe("/admin/app.js");
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+  });
+
   it("serves only the four allowlisted resources, supports HEAD, and rejects writes", async () => {
     const directory = await makeAssets();
     const composition = createFixtureComposition({ dataMode: "fixtures" });
@@ -82,14 +118,21 @@ describe("admin static runtime boundary", () => {
       createAdminStaticHandler({ enabledSetting: "true", staticDir: directory }),
     );
     try {
-      for (const path of ["/admin", "/admin/", "/admin/styles.css", "/admin/app.js", "/admin/fixture-data.js"]) {
+      for (const path of ["/admin/", "/admin/styles.css", "/admin/app.js", "/admin/fixture-data.js"]) {
         const response = await fetch(`${baseUrl}${path}`);
         expect(response.status).toBe(200);
         expect(response.headers.get("cache-control")).toBe("no-store");
       }
-      const head = await fetch(`${baseUrl}/admin`, { method: "HEAD" });
+      const head = await fetch(`${baseUrl}/admin/`, { method: "HEAD" });
       expect(head.status).toBe(200);
       expect(await head.text()).toBe("");
+
+      const adminPost = await fetch(`${baseUrl}/admin`, {
+        method: "POST",
+        redirect: "manual",
+      });
+      expect(adminPost.status).toBe(405);
+      expect(adminPost.headers.get("location")).toBeNull();
 
       const post = await fetch(`${baseUrl}/admin/app.js`, { method: "POST" });
       expect(post.status).toBe(405);

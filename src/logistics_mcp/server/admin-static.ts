@@ -67,6 +67,22 @@ function pathFromRequest(request: IncomingMessage): string {
   return path;
 }
 
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
+function queryForRedirect(request: IncomingMessage): string | null {
+  try {
+    const url = new URL(request.url ?? "/", "http://admin.invalid");
+    return hasControlCharacter(url.search) ? null : url.search;
+  } catch {
+    return null;
+  }
+}
+
 function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader("content-security-policy", CONTENT_SECURITY_POLICY);
   response.setHeader("x-content-type-options", "nosniff");
@@ -104,6 +120,20 @@ function sendJson(
   send(request, response, status, "application/json; charset=utf-8", JSON.stringify(body), allow);
 }
 
+function redirectToAdminSlash(request: IncomingMessage, response: ServerResponse): void {
+  const query = queryForRedirect(request);
+  if (query === null) {
+    sendJson(request, response, 400, { status: "blocked", reason: "invalid_admin_redirect_target" });
+    return;
+  }
+  setSecurityHeaders(response);
+  response.statusCode = 308;
+  response.setHeader("location", `/admin/${query}`);
+  response.setHeader("content-length", "0");
+  if (request.method !== "GET" && request.method !== "HEAD") request.resume();
+  response.end();
+}
+
 function isAdminPath(path: string): boolean {
   return path === "/admin" || path.startsWith("/admin/");
 }
@@ -122,12 +152,19 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
       const path = pathFromRequest(request);
       if (!isAdminPath(path)) return false;
 
+      if (path === "/admin" && !methodAllowed(request, response, "GET, HEAD")) return true;
+
       if (state.kind === "disabled") {
         sendJson(request, response, 404, { status: "blocked", reason: "admin_ui_disabled" });
         return true;
       }
       if (state.kind === "invalid") {
         sendJson(request, response, 503, { status: "unavailable", reason: "admin_ui_config_invalid" });
+        return true;
+      }
+
+      if (path === "/admin") {
+        redirectToAdminSlash(request, response);
         return true;
       }
 
