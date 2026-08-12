@@ -9,8 +9,8 @@
 目标是为公司多人提供一个共享的薄 MCP 控制层：统一身份、租户/RBAC、Schema、审计、幂等、状态和窄 API 适配，让 ChatGPT、Codex、企业助手和内部工作台使用同一组结构化工具。
 
 - `cargo`、`container` 在 MCP 内做本地确定性计算：CBM、体积重、分泡、计费重和理论/运营装柜摘要。
-- AI 报价、RiskCustoms、PDF/文档均通过现有生产 API 的窄适配器接入；上游继续拥有业务规则和数据。
-- 每次请求直连当前上游 API，不复制上游代码/数据库，不做缓存、轮询、队列或模块同步。
+- AI 报价、RiskCustoms、PDF/文档的目标形态是通过现有生产 API 的窄适配器接入；上游继续拥有业务规则和数据。
+- 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合、PDF 未注册。
 
 非目标：不在 MCP 内重做报价或关务引擎，不在本地生成文档，不把上游业务记录复制成 MCP 主表，不发送/发布报价，不形成正式报关结论，不订舱或提供通用写入口。
 
@@ -62,7 +62,7 @@ client request
   → envelope + audit record
 ```
 
-报价、RiskCustoms 和未来 PDF 不使用 MCP 业务缓存；下一次请求直接读取当前上游状态。`quote.save_draft` 是窄写入口，只有生产草稿 API 的 preview/approval/commit/readback 合同完整后才能启用；写后读回不一致不得报告成功。
+报价、RiskCustoms 和未来 PDF 不使用 MCP 业务缓存；获准启用后，下一次请求直接读取当前上游状态。`quote.save_draft` 是窄写入口，只有生产草稿 API 的 preview/approval/commit/readback 合同完整后才能启用；写后读回不一致不得报告成功。
 
 ### 请求时证据
 
@@ -112,12 +112,12 @@ client request
 
 后台只展示控制面证据，不伪造上游业务状态：
 
-- client：`client_id`、issuer/audience 引用、allowed origins、最近校验结果；
-- source：`quote API`、`RiskCustoms API`、`PDF/document API (pending)`、endpoint/secret opaque refs、source version、readiness 和 reason；
-- tool：名称、permission、read/write kind、当前 status、affected source；
-- result：`audit_id`、request ID、tenant/actor 脱敏标识、source IDs、version/hash、warnings/blockers、calculation trace 摘要；
-- write：preview ref、approval 状态、idempotency outcome、record ID opaque ref、readback verified 状态；
-- 系统结构：clients → MCP identity/RBAC/audit → local cargo/container 或 quote/customs API adapter；PDF 显示 pending，不显示“已连接”。
+- 客户端：只展示中文业务名称、登记状态和最近校验结论；身份来源、使用范围、允许来源地址和内部标识均隐藏；
+- 数据源：只展示中文业务名称、是否已配置、当前可用性和原因；接口地址、凭证引用和版本原值均隐藏；
+- 工具：只展示中文名称、操作类型、当前可用性、受影响来源和角色授权；内部工具名与权限码均隐藏；
+- 结果与审计：只展示中文状态、原因和脱敏证据摘要；请求、审计、来源、版本和哈希标识不回显具体值；
+- 写操作：只展示预览、审批、幂等和写后读回状态；预览引用、记录标识和内部审批标识均隐藏；
+- 系统结构：只展示中文业务节点及关系；报价单能力显示“未注册”，不展示内部代码、路径或接口地址。
 
 后台不显示原始 token、密码、base URL、客户地址、报价明细、税务材料、原始聊天或下游响应全文；fixture 视图必须有明确“演示数据 / 未连接正式后台”标记。
 
@@ -133,7 +133,7 @@ client request
 ### 可激活前提
 
 1. 平台身份、tenant binding、RBAC、durable audit/idempotency/session binding 和安全出站策略已由服务端注入并通过负面测试。
-2. quote API 的 HTTP adapter 已隔离核验 endpoint/auth/tenant/response、副作用 warning、版本证据和失败映射，并通过 fake-HTTP/local 组合测试；经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed。
+2. quote HTTP 适配器仅通过 fake HTTP/local 核验请求响应映射与失败闭合；真实接口地址、认证、租户映射、业务副作用、CBM/origin 映射及版本有效期仍待合同核验，生产工具路径保持 `unavailable`/fail-closed。
 3. RiskCustoms 已隔离核验 status/query、ready/test data/release/source 关联；estimate 仍固定 unavailable。
 4. `quote.save_draft` 的生产草稿 API preview/approval/commit/readback 合同未齐全前保持 disabled；PDF 在 OpenAPI、认证、输入输出、副作用和读回合同完成前不注册。
 

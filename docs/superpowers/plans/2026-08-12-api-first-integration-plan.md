@@ -94,7 +94,7 @@ RiskCustoms 查询只有在 status 的 `ready=true`，且 POST `/api/query` 响�
 
 ### 11D：API 适配器组合与隔离（组合测试完成，生产资格阻塞）
 
-1. 通过 `createProductionApiAdapterSource` 注入 quote/customs API adapters；缺少适配器继续 fail closed。
+1. `createProductionApiAdapterSource` 当前只允许显式注入经核验的 RiskCustoms 适配器；quote 在生产组合中强制保持失败闭合，PDF 不注册。缺少获准适配器时返回结构化不可用。
 2. source health 只表示本地结构/生命周期可用；单一上游故障只让对应工具不可用，平台依赖缺失才阻断全局。
 3. 不注册 PDF，直到 OpenAPI/endpoint、认证、响应和写后读回合同完成；PDF 只通过未来已核验生产 API 的窄适配器接入。
 
