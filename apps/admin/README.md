@@ -28,7 +28,7 @@ GET /admin/api/v1/snapshot
 
 ## 边界
 
-- Quote Engine 继续是报价权威源；RiskCustoms 继续是关务权威源；货物、分泡和装柜仍由确定性工具计算。
+- AI 报价 API、RiskCustoms API、PDF API 均为外部 API；当前 quote 生产路径保持 unavailable/fail-closed，PDF 未注册；MCP 本地只有 cargo/container 确定性计算。
 - 数据源快照可以为业务 API 提供可选字段 `category`、`environment`、`adapter_contract_version`、`business_version_evidence`、`update_mode`、`last_checked_at`、`last_success_at`、`affected_tools`、`registration_status` 和 `blocker`；缺字段显示“未返回”，不会由前端推断。
 - `#adapters` 顶部只把 `category=business_api` 的来源渲染为 API 状态卡；fixture 包含 AI 报价 API、RiskCustoms API 和未配置/未注册的 PDF API，knowledge/status/review 仍在普通引用表中。
 - 页面只展示 opaque `endpoint_ref`、opaque `secret_ref`、adapter contract version、业务证据和 readiness，不展示原始凭证、客户内容、报价明细或税务材料。

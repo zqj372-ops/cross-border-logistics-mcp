@@ -263,7 +263,7 @@ const VIEW_META = {
   adapters: {
     title: "数据源与适配器",
     eyebrow: "权威来源引用",
-    description: "查看 Quote Engine、RiskCustoms、精选知识、状态和复核任务的引用与就绪状态。",
+    description: "查看 AI 报价 API、RiskCustoms API、PDF API（未注册）、精选知识、状态和复核任务的引用与就绪状态；本地只有 cargo/container。",
   },
   architecture: {
     title: "系统结构",
@@ -530,7 +530,7 @@ function renderTools(data) {
   const visibleTools = state.roleFilter === "all" ? tools : tools.filter((tool) => tool.roles?.includes(state.roleFilter));
   return `${pageHeader("tools")}
     ${modeBanner()}
-    <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup(permissionDataReady ? "ready" : "unavailable", permissionDataReady ? "快照授权" : "授权数据不可用")}</div><p>下面的角色和工具来自平台 RBAC。写工具只有保存报价草稿和创建人工复核；没有 generic write 或通用提交按钮。</p></div>
+    <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup(permissionDataReady ? "ready" : "unavailable", permissionDataReady ? "快照授权" : "授权数据不可用")}</div><p>下面的角色和工具来自平台 RBAC。工具契约仅保留两个窄写动作；quote.save_draft 当前 disabled，review.create_task 仍需正式写 API、审批和写后读回；没有 generic write 或通用提交按钮。</p></div>
     <section class="panel" aria-labelledby="tool-table-title">
       <div class="card-head"><div><h2 id="tool-table-title">Phase 1 工具权限</h2><p>读/写 kind 只说明工具边界，不代表当前下游适配器已经就绪。</p></div><span class="status-pill status-neutral">${tools.length} 个工具</span></div>
       <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${roleLabel(role.key)}</option>`).join("")}</select></div><p class="field-help">选中角色后只看它能使用的工具。</p></div>
@@ -557,7 +557,7 @@ function renderAdapters(data) {
       ${renderSourceTable(supportingSources, true)}
     </section>
     <div class="section-grid">
-      <section class="panel" aria-labelledby="adapter-boundary-title"><div class="card-head"><div><h2 id="adapter-boundary-title">权威边界</h2><p>专业词旁边给出操作含义。</p></div></div><dl class="key-value-list"><div class="key-value-row"><dt>Quote Engine</dt><dd>报价仍由现有报价系统计算；MCP 只读取版本或保存不可发送草稿。</dd></div><div class="key-value-row"><dt>RiskCustoms</dt><dd>关务仍由 RiskCustoms 提供；ready=false 时必须显示不可用或人工复核。</dd></div><div class="key-value-row"><dt>确定性工具</dt><dd>货物、分泡和装柜由代码计算；AI 只能解释或预填。</dd></div></dl></section>
+      <section class="panel" aria-labelledby="adapter-boundary-title"><div class="card-head"><div><h2 id="adapter-boundary-title">权威边界</h2><p>专业词旁边给出操作含义。</p></div></div><dl class="key-value-list"><div class="key-value-row"><dt>AI 报价 API</dt><dd>外部 API；当前 quote 生产路径保持 unavailable/fail-closed，未获生产启用资格。</dd></div><div class="key-value-row"><dt>RiskCustoms API</dt><dd>外部 API；先 status 后 query，ready=false 时必须显示不可用或人工复核。</dd></div><div class="key-value-row"><dt>PDF API</dt><dd>外部 API；合同未核验，未注册任何 PDF 工具，不在本地替代。</dd></div><div class="key-value-row"><dt>本地确定性工具</dt><dd>本地只有 cargo/container 计算；AI 只能解释或预填。</dd></div></dl></section>
       <section class="panel" aria-labelledby="adapter-failure-title"><div class="card-head"><div><h2 id="adapter-failure-title">失败处理</h2><p>没有可靠来源就停在当前状态。</p></div>${statusMarkup("unavailable")}</div><ul class="plain-list"><li>端点不可达：unavailable（不可用）。</li><li>版本或租户边界不清：manual_review（人工复核）。</li><li>权限或阶段禁止：blocked（已阻断）。</li><li>不使用地图、聊天或相似记录补齐权威数据。</li></ul></section>
     </div>`;
 }

@@ -1,79 +1,80 @@
 # 跨境物流 MCP
 
-这是公司内部共用的跨境物流能力基线：一个共享的远程 MCP 网关、现有业务系统适配器，以及新的确定性计算引擎。它供 ChatGPT、Codex、企业助手和内部工作台共同使用，目标是把已有报价、关务、记录和运营能力以稳定、结构化、可审计的工具契约暴露出来。
+公司多人共享的薄控制层：ChatGPT、Codex、企业助手和内部工作台通过同一个远程 MCP 网关调用受控工具。MCP 负责身份、租户/RBAC、Schema、审计、幂等、状态和窄 API 适配，不复制报价、关务或文档系统。
 
-## 定位与边界
+## 当前定位
 
-- AI 负责理解意图、收集缺失字段、选择工具和解释结果。
-- 确定性代码负责金额、计费重、分泡、装柜容量、状态和规则命中。
-- 现有系统仍是价格、Zone、规则、关税和业务记录的权威源；MCP 不复制一套权威业务数据库。
-- Phase 1 只允许查询/试算、保存现有报价系统草稿、创建人工复核任务。
-- Phase 1 禁止发送/发布报价、修改价格或 Zone、形成正式报关结论、订舱/SO、自动学习并上线规则，以及任何未列明的通用写操作。
-- RiskCustoms 的 `ready=false` 必须原样映射为 `unavailable` 或 `manual_review`，不得由 AI 补成可用。
+- `cargo`、`container`：MCP 内的本地确定性计算，负责 CBM、体积重、分泡、计费重和理论/运营装柜摘要。
+- AI 报价、RiskCustoms、PDF/文档：只通过现有生产 API 的窄适配器接入；上游系统继续拥有价格、规则、关务和文档权威。
+- 每次业务请求直连当前上游 API；不复制上游代码或数据库，不做缓存、轮询、队列或模块同步。
+- AI 只负责理解意图、补输入、选择工具和解释结果；金额、重量、容量、状态和版本边界由确定性代码或上游 API 决定。
+- `ready=false`、版本缺失、响应冲突和上游故障必须保持结构化 `needs_input`、`manual_review`、`blocked` 或 `unavailable`，不使用 fixture 静默回退。
 
-当前分支还包含 02–05 的实现和 06 集成交付：九工具组合入口、隔离 fixture harness、生产默认
-fail-closed 组合、候选 Docker 构建和发布/回滚 runbook。它只可在本地/隔离环境验证，不接入
-生产、数据库、服务器或外部服务；真实 endpoint、tenant mapping、JWT 签名验证器和
-RiskCustoms readiness 仍是“待适配验证”。
+## 当前真实状态
 
-## 快速导航
+| 能力 | 当前状态 |
+| --- | --- |
+| quote API adapter | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed；保留上游副作用 warning |
+| RiskCustoms search adapter | 已实现；先检查 `/api/status`，再按 ready gate 调用 `/api/query`，保留真实 `query.sources` release |
+| `customs.ca.estimate` | `unavailable`；尚无已核验生产 API 合同 |
+| PDF/文档能力 | 未注册；等待 OpenAPI、认证、输入/输出、写后读回和副作用合同 |
+| 生产组合 | 默认 fail-closed；仍要求真实 token verifier、durable audit/idempotency/session binding 和服务端 adapter source |
 
-- [AGENTS.md](AGENTS.md)：后续并行任务的所有权、禁止交叉修改和验证规则。
-- [产品实现说明](docs/product/2026-08-11-cross-border-logistics-mcp-product-implementation.md)：目标、边界、角色、架构、流程、权限、路线图和验收标准。
-- [统一响应包络](docs/contracts/envelope.md)：五种状态及审计/计算追踪要求。
-- [工具目录](docs/contracts/tool-catalog.md)：Phase 1 的九个窄语义工具契约。
-- [权威矩阵](docs/contracts/authority-matrix.md)：每类数据的权威源、缓存、失败策略和 MCP 禁止动作。
-- [Schema 目录](docs/contracts/schemas/)：Draft 2020-12 共享模型。
-- [示例目录](docs/contracts/examples/)：成功、补输入、人工复核、不可用、阻断以及关键工具的结构化示例。
-- [实施计划](docs/superpowers/plans/)：货物、装柜、适配器、平台和集成安全发布的独立小步计划。
+## 架构边界
 
-## 目录约定
-
-```text
-src/logistics_mcp/
-├── platform/       # 02：租户、RBAC、envelope、审计、幂等、MCP transport
-├── server/         # 02：远程 MCP 网关与工具注册
-├── domains/
-│   ├── cargo/      # 03：货物、CBM、体积重、分泡、计费重
-│   ├── container/  # 04：理论容量与可操作容量汇总
-│   ├── quote/      # 05：现有报价系统的窄适配与草稿保存
-│   ├── customs/    # 05：RiskCustoms 查询/估算适配
-│   ├── knowledge/  # 05：精选资料检索
-│   ├── status/     # 05：数据就绪状态映射
-│   └── review/     # 05：人工复核任务
-└── adapters/       # 05：现有系统边界适配器
-
-tests/
-├── platform/       # 02
-├── cargo/          # 03
-├── container/      # 04
-├── adapters/       # 05
-├── domains/        # 05
-└── e2e/             # 06
+```mermaid
+flowchart LR
+  C["ChatGPT / Codex / 企业助手 / 内部工作台"] --> M["MCP 薄控制层\n身份 / RBAC / audit / idempotency"]
+  M --> L["本地确定性\ncargo / container"]
+  M --> Q["quote API 窄适配器"]
+  M --> R["RiskCustoms API 窄适配器"]
+  M -. "pending contract" .-> P["PDF / 文档 API"]
 ```
 
-共享契约只在 `docs/contracts/**` 定义。后续任务不得在自己的 worktree 偷改共享契约；发现必须变更时，先在自己的分支写 RFC，得到基线维护者确认后再改。
+单个业务 API 故障只关闭依赖它的工具；身份、审计、session/idempotency 等平台依赖缺失才会阻断生产入口。MCP 保存必要的版本引用、opaque handle、审计关联和写后读回证据，不建立报价或关务主表。
 
-## 只读核验依据
+## 工具与契约
 
-2026-08-11 已对三个现有目录做只读核验，未修改它们：
+- [统一响应包络](docs/contracts/envelope.md)：五种状态、来源、警告、阻断、计算 trace 和审计字段。
+- [工具目录](docs/contracts/tool-catalog.md)：Phase 1 九个窄语义工具；Schema 和注册保持不变。
+- [权威矩阵](docs/contracts/authority-matrix.md)：Quote API、RiskCustoms API、cargo/container 及其失败边界。
+- [Schema 目录](docs/contracts/schemas/) 与 [示例目录](docs/contracts/examples/)：Draft 2020-12 契约和结构化样例。
 
-- `AI自动报价模块`：`apps/api/main.py` 注册 FastAPI 路由；`apps/api/auth.py` 有 Bearer/API-Key 和角色门禁；`packages/quote_engine/` 有确定性匹配/定价；`apps/api/db/models.py` 有 Zone、价格矩阵、报价审计和人工任务模型；`tests/quote-engine/` 覆盖精确 FSA、无价格转人工等。
-- `美国、加拿大关务`：`src/worker/http/query-route.ts` 对 JSON、Schema、限流、Turnstile 和数据仓库就绪状态做门禁；`status-route.ts` 返回 `ready` 与原因；`src/shared/contracts/query.ts` 绑定来源、版本、有效期；测试覆盖就绪门禁、来源和不落原始查询审计。
-- `物流LCP服务/canada-logistics-records`：`app/lib/quote-data.ts` 定义公开目录和参考费用计算；目录不可读时自动停止参考价计算；`admin-server/server.mjs` 提供单管理员草稿→发布→审计/备份流程，并将成本字段隔离在私有数据。
+## 唯一当前执行计划
 
-这些是适配器的输入证据，不代表已确认稳定的跨系统 API。跨系统调用、生产部署、租户映射和写后读端点仍标记为“待适配验证”。
+- [API-first 适配实施计划](docs/superpowers/plans/2026-08-12-api-first-integration-plan.md)：当前唯一权威执行计划，覆盖 quote、RiskCustoms、组合隔离、PDF 阻塞条件和验收。
+- [产品实现说明](docs/product/2026-08-11-cross-border-logistics-mcp-product-implementation.md)：API 对接产品边界、流程、后台显示和验收。
+- [后台控制台说明](docs/product/admin-console.md)：只展示来源、版本、状态、权限和审批证据，不启用未经合同核验的写入。
 
-## 本地验证
+## 安全与验证
 
-基线不要求安装依赖或联网。提交前至少运行：
+生产运行时由服务端注入 tenant/actor 和上游身份映射；客户端不能提交 token、base URL、密码或跨租户上下文。日志不写客户地址、报价明细、税务材料全文、原始聊天或凭证。
 
-```bash
-python3 -m json.tool docs/contracts/schemas/envelope.schema.json >/dev/null
-python3 -m json.tool docs/contracts/schemas/common.schema.json >/dev/null
-python3 -m json.tool docs/contracts/examples/success-cargo.json >/dev/null
-git diff --check
-git status --short
-```
+本仓库只用假值、fixture 和 fake HTTP 验证，不连接生产、数据库、服务器或外部业务仓库。提交前运行对应计划中的定向测试、`npm run typecheck`、`npm run lint`、`npm run validate:schemas` 和 `git diff --check`。
 
-后续实现按各计划中的精确命令验证；不要把 `code: 0` 当作数据读回或业务正确性的替代证据。
+## 请求边界
+
+- 进入工具前由服务端完成 Schema、tenant、actor、RBAC、权限和敏感输入校验。
+- `cargo`、`container` 请求只在本地计算，并返回单位、规则版本、假设、warnings 和 trace。
+- quote 请求只调用现有 Quote API；RiskCustoms search 只调用 status/query API 的对应路径。
+- PDF/文档能力在 OpenAPI、认证、输入输出、副作用和写后读回合同完成前不注册。
+- 客户端不能选择任意上游 URL、提交上游 token，或把客户端 tenant/actor 当成服务端身份。
+
+## 结果与故障隔离
+
+- 统一包络只允许 `success`、`needs_input`、`manual_review`、`blocked`、`unavailable`。
+- 上游 503、超时或 RiskCustoms `ready=false` 只关闭 affected tools，不关闭本地工具或其他可用 API。
+- quote 当前工具路径保持 `unavailable`/fail-closed；未获生产启用资格前不伪造可发送结果。
+- customs estimate 当前固定 `unavailable`；`quote.save_draft` 仍等生产草稿 API 的完整写后读回合同。
+- 生产组合的身份、durable audit/idempotency/session binding 或真实 token verifier 缺失时，全局保持 fail-closed。
+
+## 开发入口
+
+- `src/logistics_mcp/adapters/`：Quote API 与 RiskCustoms API 的窄适配器。
+- `src/logistics_mcp/server/composition.ts`：生产组合注入点和 fail-closed 默认适配器。
+- `src/logistics_mcp/domains/cargo/`、`src/logistics_mcp/domains/container/`：本地确定性计算。
+- `tests/adapters/`、`tests/domains/`、`tests/e2e/`：fake HTTP、fixture 和隔离证据；fixture 不自动回退。
+- [API-first 适配实施计划](docs/superpowers/plans/2026-08-12-api-first-integration-plan.md) 是唯一当前执行计划。
+- 文档中的 endpoint 仅表示已核验的路径形状，不代表仓库保存生产地址。
+- 任何业务 API 合同缺口都保留为 pending、disabled 或结构化不可用状态。
+- 组合测试通过不等于生产 API 获准启用。

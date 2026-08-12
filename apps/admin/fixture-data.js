@@ -117,7 +117,7 @@ export const fixtureSnapshot = {
     {
       name: "quote.canada_final_mile.calculate",
       label: "加拿大尾程试算",
-      description: "请求 AI 报价 API；缺少业务版本证据，结果需人工复核。",
+      description: "请求 AI 报价 API；当前生产合同阻塞，工具保持 unavailable/fail-closed。",
       permission: "quote:calculate",
       kind: "read",
       roles: ["admin", "sales", "operator", "customs_reviewer", "finance", "viewer", "service"],
@@ -133,7 +133,7 @@ export const fixtureSnapshot = {
     {
       name: "customs.ca.estimate",
       label: "加拿大税费估算",
-      description: "按已发布版本形成带确认边界的估算。",
+      description: "当前固定 unavailable；无已核验生产 API 合同，零 HTTP 请求。",
       permission: "tariff:estimate",
       kind: "read",
       roles: ["admin", "sales", "operator", "customs_reviewer", "finance", "viewer", "service"],
@@ -141,7 +141,7 @@ export const fixtureSnapshot = {
     {
       name: "quote.save_draft",
       label: "保存报价草稿",
-      description: "只允许保存现有报价系统的不可发送草稿。",
+      description: "当前固定 unavailable/disabled；等待生产草稿 API 完整合同和写后读回。",
       permission: "quote:draft_write",
       kind: "write",
       roles: ["admin", "sales", "operator"],
@@ -172,9 +172,9 @@ export const fixtureSnapshot = {
       last_success_at: null,
       affected_tools: ["quote.canada_final_mile.calculate"],
       registration_status: "工具合同已注册，API 适配未启用",
-      readiness: "manual_review",
-      reason: "业务版本证据未提供，端点本身存在上游审计/诊断/人工任务副作用。",
-      blocker: "quote-zone-api 的生产合同、租户映射和 rule/data/effective 证据待适配验证。",
+      readiness: "unavailable",
+      reason: "HTTP adapter 已实现并通过 fake-HTTP/local 组合测试；经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 unavailable/fail-closed。",
+      blocker: "三项未决：上游端点存在非零业务写副作用；正式输入到 cbm/origin 映射不成立；真实响应缺业务版本/有效期证据。",
     },
     {
       name: "riskcustoms_api",

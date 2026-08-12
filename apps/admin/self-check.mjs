@@ -93,7 +93,10 @@ assert.deepEqual(
 assert.equal(businessSources.length, 3);
 assert.equal(businessSources.find((source) => source.business_key === "quote").adapter_contract_version, "quote-zone-api.v1");
 assert.match(businessSources.find((source) => source.business_key === "quote").business_version_evidence, /rule\/data\/effective/);
-assert.match(businessSources.find((source) => source.business_key === "quote").reason, /副作用/);
+assert.match(businessSources.find((source) => source.business_key === "quote").blocker, /副作用/);
+assert.equal(businessSources.find((source) => source.business_key === "quote").readiness, "unavailable");
+assert.match(businessSources.find((source) => source.business_key === "quote").reason, /10A.*生产合同阻塞/);
+assert.match(businessSources.find((source) => source.business_key === "quote").blocker, /cbm\/origin.*业务版本.*有效期/);
 assert.equal(businessSources.find((source) => source.business_key === "quote").registration_status, "工具合同已注册，API 适配未启用");
 assert.equal(businessSources.find((source) => source.business_key === "customs").readiness, "unavailable");
 assert.match(businessSources.find((source) => source.business_key === "customs").business_version_evidence, /query\.sources/);
@@ -103,8 +106,12 @@ assert.match(businessSources.find((source) => source.business_key === "customs")
 assert.equal(businessSources.find((source) => source.business_key === "pdf").registration_status, "未注册");
 assert.match(businessSources.find((source) => source.business_key === "pdf").blocker, /OpenAPI/);
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /请求 AI 报价 API/);
-assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /人工复核/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /unavailable\/fail-closed/);
 assert.doesNotMatch(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /已版本化规则/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /unavailable/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /零 HTTP/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /unavailable\/disabled/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /写后读回/);
 assert.ok(fixtureSnapshot.sources.filter((source) => source.secret_ref).every((source) => source.secret_ref.startsWith("secret_ref:")));
 assert.ok(!JSON.stringify(fixtureSnapshot).match(/eyJ|Bearer\s|sk-[A-Za-z0-9]/));
 
@@ -135,7 +142,7 @@ assert.deepEqual(
   ["knowledge.search_curated", "system.get_data_status", "quote.save_draft", "review.create_task"],
 );
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").sourceBusinessKey, "quote");
-assert.equal(architecture.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").sourceReadiness, "manual_review");
+assert.equal(architecture.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").sourceReadiness, "unavailable");
 assert.equal(architecture.tools.find((tool) => tool.name === "customs.ca.search").sourceReadiness, "unavailable");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").executionKey, "");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").sourceBusinessKey, "");

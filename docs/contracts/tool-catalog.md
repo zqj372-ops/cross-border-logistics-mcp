@@ -18,10 +18,10 @@
 | `system.get_data_status` | 查询现有系统和数据发布就绪状态 | 读 | `system:read` | 直接映射源状态 | 把 `ready=false` 补成可用 |
 | `cargo.calculate` | 计算 CBM、体积重、实际重、分泡和计费重 | 读/试算 | `quote:calculate` | 单位换算、合计、分泡公式、互斥重量证据 | 缺证据时猜重量、使用全局除数 |
 | `container.plan_summary` | 计算理论容量与可操作目标的装载摘要 | 读/试算 | `container:calculate` | 汇总方数、重量、比率、超方超重和顺序摘要 | 3D 装箱承诺、把物理容量当可操作容量 |
-| `quote.canada_final_mile.calculate` | 按邮编/Zone/规则/费表计算加拿大尾程试算 | 读/试算 | `quote:calculate` | 只按已版本化权威规则查表并追踪命中 | 默认地址类型、线性 Zone 外推、改价、发送 |
+| `quote.canada_final_mile.calculate` | 请求时调用现有 AI 报价 API 的加拿大尾程试算 | 读/试算 | `quote:calculate` | 只映射 API 响应和真实来源；当前合同缺口保持 `unavailable` | 本地持有 Zone/价格/规则表、默认地址类型、线性外推、改价、发送 |
 | `customs.ca.search` | 查询加拿大 HS 候选、税目、措施和缺失问题 | 读 | `tariff:read` | RiskCustoms 候选和来源/有效期映射 | 把候选变正式归类、绕过 ready gate |
-| `customs.ca.estimate` | 依据已选候选和版本化官方数据做进口税估算 | 读/试算 | `tariff:estimate` | 税率表达式、估算基数和确认边界可回放 | 正式报关结论、补造税率/SIMA |
-| `quote.save_draft` | 保存现有报价系统的报价草稿 | 写（窄） | `quote:draft_write` | 只写明确草稿边界，必须读回 | 发布、发送、覆盖历史报价、改价格/Zone |
+| `customs.ca.estimate` | 预留进口税估算工具；当前无已核验生产 API 合同 | 读/试算 | `tariff:estimate` | 固定 `unavailable`，不拼造税额 | 正式报关结论、补造税率/SIMA |
+| `quote.save_draft` | 保存现有报价系统的报价草稿 | 写（窄） | `quote:draft_write` | 当前固定 `unavailable`；只有生产草稿 API 合同、审批和写后读回齐全后才可启用 | 发布、发送、覆盖历史报价、改价格/Zone |
 | `review.create_task` | 创建一个人工复核任务 | 写（窄） | `review:create_task` | 任务字段、原因码、opaque context、读回可确认 | 自动解决复核、自动上线规则 |
 
 ## 逐项契约
@@ -130,14 +130,19 @@ services: { appointment: boolean, liftgate: boolean, limited_access: boolean, re
 effective_at: YYYY-MM-DD, required
 ```
 
-邮编优先级、FSA/城市锚点、托数、基础价、燃油和附加费必须由适配器/确定性引擎执行。`origin + zone + billing_pallets` 的查表结果、规则版本、价格版本和附加费来源必须进入 trace/source refs。输出 `quote-result.schema.json`，Phase 1 强制 `sendable=false`。
+请求时由适配器 POST `/quotes/zone-calculate`；MCP 不持有 Zone、价格或规则表，也不在本地运行确定性报价引擎。只映射 API 响应和真实来源，输出 `quote-result.schema.json`，Phase 1 强制 `sendable=false`。
 
-**状态**
+**当前 API 状态**
 
-- `success`：邮编/Zone 唯一、地址类型已确认、价格矩阵覆盖、有效期和费用来源完整。
-- `needs_input`：缺邮编、地址类型、始发仓、货物/托数或服务选项。
-- `manual_review`：邮编冲突、唯一锚点不足、表无价、供应商确认、重量证据冲突或规则版本不确定；不输出可发送总价。
-- `blocked`：试图改价、发布、发送或使用未经审批的 Zone。
+- HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed。
+- 三项未决合同问题：上游端点存在非零业务写副作用；正式输入到 `cbm`/`origin` 的映射不成立；真实响应缺业务版本/有效期证据。不以本地 Zone/价格/规则表或 fixture 代替上游合同。
+
+**合同核验后的候选状态语义**
+
+- `success`：API 返回必要字段、地址/服务映射和上游来源/有效期证据完整。
+- `needs_input`：缺 API 合同要求的 origin、CBM、地址类型、货物/托数或服务选项。
+- `manual_review`：API 响应冲突、上游来源/版本证据不完整或需要供应商确认；不输出可发送总价。
+- `blocked`：试图改价、发布、发送或覆盖 API 结果。
 - `unavailable`：现有报价系统或权威规则适配器不可用；不回退到地图/聊天/公开参考价。
 
 ### `customs.ca.search`
@@ -157,6 +162,8 @@ selected_hs6: string|null, optional
 ```
 
 输出 `customs-search-result.schema.json`。返回候选、候选状态、缺失问题、来源、release 和就绪状态；自然语言/AI 只能帮助提出问题，不能把候选标成 confirmed。
+
+每次搜索先 GET `/api/status`；只有响应 `ready=true` 才 POST `/api/query`。`release`、`testData` 和来源版本只取自 status/query 响应，不由 MCP 生成或补造。
 
 **状态**
 
@@ -182,17 +189,23 @@ trade_treatment: string|null, required
 
 输出 `customs-assessment.schema.json`。每条税率/附加税/SIMA 项必须保留原始表达式、确认布尔值、版本和 source refs。总额只能是估算，`requires_broker_confirmation` 默认 true，除非后续批准的适配器契约明确允许改变。
 
-**状态**
+**当前状态**
 
-- `success`：只表示可按已发布版本形成估算，不表示正式报关结论。
-- `needs_input`：缺原产国、货值、进口日期、候选或计税信息。
-- `manual_review`：候选未确认、措施 scope/出口商不完整、税率表达式无法确认或 broker 需审阅。
-- `unavailable`：RiskCustoms `ready=false`、release 缺失或官方数据不可读取。
-- `blocked`：请求写入归类结论、修改税率或对外出具正式报关结论。
+- 当前无已核验生产 API 合同，工具固定返回 `unavailable` 且零 HTTP 请求；Schema 与注册保留，不拼造税额。
+- 后续只有在生产 estimate API 合同、认证、来源版本和失败映射核验完成后，才评估 `needs_input`、`manual_review` 或 `success` 的实际映射。
+
+### PDF / 文档能力（未注册）
+
+尚无已核验 PDF API 合同；未注册任何 `pdf.*` 工具，不以本地实现替代。
 
 ### `quote.save_draft`
 
 这是唯一允许保存报价系统草稿的 Phase 1 工具之一，目标系统必须是现有报价系统的明确草稿/记录边界。
+
+**当前状态**
+
+- 当前固定返回 `unavailable`。生产写 API、租户认证、幂等、preview/approval/commit 和写后读回合同尚未齐全；Schema 与注册不删除。
+- 只有上述合同全部由现有生产 API 覆盖后，才可启用生产路径。
 
 **输入**
 
@@ -206,7 +219,7 @@ write_context: WriteContext, required; tenant_context由服务端注入并校验
 
 `operation_mode=preview` 只生成 `preview_ref` 和请求摘要；`operation_mode=commit` 必须提供同一 preview、幂等键和适用审批状态。服务器不得信任模型提交的 actor/tenant 字段。输出 `write-result.schema.json`，提交成功必须包含 `ReadbackEvidence.verified=true`；`record_id`、observed version 和 readback source ref 不得省略。
 
-**状态**
+**启用后的状态语义**
 
 - `success`：预览成功或草稿写入并完成写后读回；重复幂等请求返回同一 record/readback 证据。
 - `manual_review`：审批/预览不一致、写后读回不一致、目标系统返回不确定结果。

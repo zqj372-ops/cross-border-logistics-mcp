@@ -11,7 +11,7 @@
 1. **总览**：展示 `/healthz`、`/readyz`、来源就绪、阻断原因、待处理项和状态说明。
 2. **客户端接入**：展示 ChatGPT、Codex、企业助手的 `client_id`、issuer、audience、allowed origins 和最近校验结果。
 3. **工具权限**：按已校验快照返回的角色和 Phase 1 工具展示 permission、读/写 kind 和角色授权；缺失或空数组只显示暂无/不可用，不生成默认权限。
-4. **数据源与适配器**：展示 Quote Engine、RiskCustoms、knowledge、status、review 的 `endpoint_ref`、`secret_ref`、source version 和 readiness。编辑动作只生成浏览器本地草稿。
+4. **数据源与适配器**：展示 AI 报价 API、RiskCustoms API、PDF API（未注册）、knowledge、status、review 的 `endpoint_ref`、`secret_ref`、source version 和 readiness。编辑动作只生成控制台草稿，不表示已接通生产。
 5. **系统结构**：以 C4-like 静态结构展示 `clients → MCP 控制层 → tools → sources`，并以第二张图展示 `draft → validate → approval → publish → readback/rollback` 的审批生命周期。
 6. **审批与发布**：展示草稿差异、校验结果、审批链和禁用的发布/回滚动作。
 7. **审计日志**：展示脱敏 actor、tenant、action、result、reason、config version 和 trace id。
@@ -30,7 +30,7 @@
 
 ## 数据边界
 
-控制台是现有 MCP 的控制面，不建立第二套报价、关税、Zone、航线、装柜或业务记录库。Quote Engine、RiskCustoms 和确定性货物/装柜工具的权威边界保持不变；页面只展示版本、状态、来源引用、权限和审批信息。
+控制台是现有 MCP 的控制面，不建立第二套报价、关税、Zone、航线、装柜或业务记录库。AI 报价 API、RiskCustoms API、PDF API 均归外部服务；MCP 本地只有 cargo/container 确定性计算。页面只展示版本、状态、来源引用、权限和审批信息。
 
 展示字段应遵守以下约束：
 
