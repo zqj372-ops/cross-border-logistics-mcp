@@ -6,6 +6,7 @@ import {
   deriveArchitectureModel,
   escapeHtml,
   safeOpaqueReference,
+  toChineseDisplayText,
   validateSnapshot,
 } from "./app.js";
 
@@ -20,6 +21,9 @@ assert.match(files.html, /<main[^>]+id="main-content"/);
 assert.match(files.html, /skip-link/);
 assert.match(files.html, /<dialog[^>]+aria-labelledby/);
 assert.match(files.html, /<script type="module" src="\.\/app\.js"><\/script>/);
+assert.doesNotMatch(files.html, />[^<]*(?:MCP|JavaScript)[^<]*</);
+assert.doesNotMatch(files.app, /<code>|class="[^"]*codeish/);
+assert.doesNotMatch(files.css, /\.codeish|(?:^|,)\s*code\s*[{,]/m);
 assert.match(files.app, /fetch\("\/admin\/api\/v1\/snapshot"/);
 assert.match(files.app, /get\("fixture"\) === "1"/);
 assert.match(files.app, /import\("\.\/fixture-data\.js"\)/);
@@ -29,7 +33,7 @@ assert.match(files.app, /name\.split\("\."\)/);
 assert.match(files.app, /静态结构图/);
 assert.match(files.app, /不证明真实网络连通/);
 assert.match(files.app, /未知工具\/未分类/);
-assert.match(files.app, /readback\/rollback/);
+assert.match(files.app, /读回或回滚/);
 assert.match(files.app, /display\(safeOpaqueReference/);
 assert.match(files.app, /category === "business_api"/);
 assert.match(files.app, /source-api-card/);
@@ -38,12 +42,12 @@ assert.match(files.app, /source\.business_version_evidence/);
 assert.match(files.app, /source\.last_checked_at/);
 assert.match(files.app, /source\.last_success_at/);
 assert.match(files.app, /source\.affected_tools/);
-assert.match(files.app, /一个业务 API 不可达/);
+assert.match(files.app, /一个业务接口不可达/);
 assert.match(files.app, /affected_tools/);
-assert.match(files.app, /\/readyz/);
+assert.match(files.app, /metricCard\("发布就绪"/);
 assert.match(files.app, /本地确定性执行/);
-assert.match(files.app, /外部 API 窄适配/);
-assert.match(files.app, /不缓存\/不轮询/);
+assert.match(files.app, /外部接口调用/);
+assert.match(files.app, /不缓存、不轮询/);
 assert.match(files.app, /source\.registration_status/);
 assert.match(files.app, /未返回/);
 assert.match(files.app, /class="sr-only">层：/);
@@ -53,23 +57,33 @@ assert.doesNotMatch(files.html, /style\s*=/i);
 assert.doesNotMatch(files.app, /style\s*=/i);
 assert.doesNotMatch(files.css, /linear-gradient|radial-gradient/i);
 assert.doesNotMatch(files.app, /ROLE_ORDER|ROLE_LABELS/);
+assert.doesNotMatch(files.app, /display\(client\.(?:client_id|issuer|audience)/);
+assert.doesNotMatch(files.app, /display\(tool\.(?:name|permission)/);
+assert.doesNotMatch(files.app, /display\(change\.path/);
+assert.doesNotMatch(files.app, /display\(entry\.(?:actor|tenant|action|config_version|trace_id)/);
 assert.equal(validateSnapshot(fixtureSnapshot), fixtureSnapshot);
 assert.equal(escapeHtml(`<img src=x onerror="leak">`), "&lt;img src=x onerror=&quot;leak&quot;&gt;");
+assert.equal(toChineseDisplayText("ChatGPT"), "对话助手");
+assert.equal(toChineseDisplayText("AI 报价 API"), "智能报价服务");
+assert.equal(toChineseDisplayText("RiskCustoms API"), "关务查询服务");
+assert.equal(toChineseDisplayText("quote.save_draft"), "技术信息已隐藏");
+assert.equal(toChineseDisplayText("已通过中文校验"), "已通过中文校验");
 assert.equal(
   safeOpaqueReference("endpoint_ref:https://internal.invalid/api", "endpoint_ref"),
-  "endpoint_ref 引用（实际值隐藏）",
+  "已配置（具体内容隐藏）",
 );
-assert.equal(safeOpaqueReference("secret_ref:Bearer secret-token", "secret_ref"), "secret_ref 引用（实际值隐藏）");
+assert.equal(safeOpaqueReference("secret_ref:Bearer secret-token", "secret_ref"), "已配置（具体内容隐藏）");
+assert.equal(safeOpaqueReference("endpoint_ref:knowledge/curated", "endpoint_ref"), "已配置（具体内容隐藏）");
 assert.equal(safeOpaqueReference(undefined, "secret_ref"), "未返回");
-assert.throws(() => validateSnapshot({ ...fixtureSnapshot, roles: undefined }), /roles/);
+assert.throws(() => validateSnapshot({ ...fixtureSnapshot, roles: undefined }), /角色/);
 assert.throws(
   () => validateSnapshot({
     ...fixtureSnapshot,
     approvals: { ...fixtureSnapshot.approvals, changes: {} },
   }),
-  /approvals\.changes/,
+  /差异记录/,
 );
-assert.throws(() => validateSnapshot({ ...fixtureSnapshot, tenant: [] }), /tenant/);
+assert.throws(() => validateSnapshot({ ...fixtureSnapshot, tenant: [] }), /租户/);
 assert.match(files.app, /disabled title="未连接正式后台/);
 assert.match(files.app, /不会回退到演示数据/);
 assert.match(files.app, /activeElement/);
@@ -88,35 +102,59 @@ assert.ok(fixtureSnapshot.tools.every((tool) => tool.kind === "read" || tool.kin
 const businessSources = fixtureSnapshot.sources.filter((source) => source.category === "business_api");
 assert.deepEqual(
   businessSources.map((source) => source.label),
-  ["AI 报价 API", "RiskCustoms API", "PDF API"],
+  ["智能报价服务", "关务查询服务", "报价单服务"],
 );
 assert.equal(businessSources.length, 3);
 assert.equal(businessSources.find((source) => source.business_key === "quote").adapter_contract_version, "quote-zone-api.v1");
-assert.match(businessSources.find((source) => source.business_key === "quote").business_version_evidence, /rule\/data\/effective/);
+assert.match(businessSources.find((source) => source.business_key === "quote").business_version_evidence, /规则版本.*数据版本.*生效期/);
 assert.match(businessSources.find((source) => source.business_key === "quote").blocker, /副作用/);
 assert.equal(businessSources.find((source) => source.business_key === "quote").readiness, "unavailable");
-assert.match(businessSources.find((source) => source.business_key === "quote").reason, /10A.*生产合同阻塞/);
-assert.match(businessSources.find((source) => source.business_key === "quote").blocker, /cbm\/origin.*业务版本.*有效期/);
-assert.equal(businessSources.find((source) => source.business_key === "quote").registration_status, "工具合同已注册，API 适配未启用");
+assert.match(businessSources.find((source) => source.business_key === "quote").reason, /专项审查.*生产接口约定受阻/);
+assert.match(businessSources.find((source) => source.business_key === "quote").blocker, /体积.*始发地.*业务版本.*有效期/);
+assert.equal(businessSources.find((source) => source.business_key === "quote").registration_status, "工具约定已注册，接口连接未启用");
 assert.equal(businessSources.find((source) => source.business_key === "customs").readiness, "unavailable");
-assert.match(businessSources.find((source) => source.business_key === "customs").business_version_evidence, /query\.sources/);
+assert.match(businessSources.find((source) => source.business_key === "customs").business_version_evidence, /发布版本标识.*真实查询响应/);
 assert.deepEqual(businessSources.find((source) => source.business_key === "customs").affected_tools, ["customs.ca.search", "customs.ca.estimate"]);
-assert.equal(businessSources.find((source) => source.business_key === "customs").registration_status, "工具合同已注册，API 适配未启用");
-assert.match(businessSources.find((source) => source.business_key === "customs").reason, /当前 API 未提供正式税额估算/);
+assert.equal(businessSources.find((source) => source.business_key === "customs").registration_status, "工具约定已注册，接口连接未启用");
+assert.match(businessSources.find((source) => source.business_key === "customs").reason, /当前接口未提供正式税额估算/);
 assert.equal(businessSources.find((source) => source.business_key === "pdf").registration_status, "未注册");
-assert.match(businessSources.find((source) => source.business_key === "pdf").blocker, /OpenAPI/);
-assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /请求 AI 报价 API/);
-assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /unavailable\/fail-closed/);
+assert.match(businessSources.find((source) => source.business_key === "pdf").blocker, /接口说明/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /请求智能报价服务/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /不可用.*失败闭合/);
 assert.doesNotMatch(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /已版本化规则/);
-assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /unavailable/);
-assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /零 HTTP/);
-assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /unavailable\/disabled/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /固定不可用/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /不发起网络请求/);
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /固定不可用/);
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /写后读回/);
 assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").availability, "unavailable");
 assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").availability, "unavailable");
 assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").availability, "unavailable");
 assert.ok(fixtureSnapshot.sources.filter((source) => source.secret_ref).every((source) => source.secret_ref.startsWith("secret_ref:")));
 assert.ok(!JSON.stringify(fixtureSnapshot).match(/eyJ|Bearer\s|sk-[A-Za-z0-9]/));
+const visibleFixtureText = [
+  fixtureSnapshot.tenant.name,
+  fixtureSnapshot.actor.name,
+  ...fixtureSnapshot.blockers,
+  ...fixtureSnapshot.clients.flatMap((client) => [client.name, client.check.detail]),
+  ...fixtureSnapshot.roles.flatMap((role) => [role.label, role.description]),
+  ...fixtureSnapshot.tools.flatMap((tool) => [tool.label, tool.description]),
+  ...fixtureSnapshot.sources.flatMap((source) => [
+    source.label,
+    source.type,
+    source.business_version_evidence,
+    source.update_mode,
+    source.registration_status,
+    source.reason,
+    source.blocker,
+  ]),
+  fixtureSnapshot.approvals.draft.persistence,
+  fixtureSnapshot.approvals.validation.summary,
+  ...fixtureSnapshot.approvals.changes.flatMap((change) => [change.before, change.after]),
+  ...fixtureSnapshot.approvals.chain.flatMap((step) => [step.label, step.detail]),
+  ...fixtureSnapshot.audit.map((entry) => entry.reason),
+  ...fixtureSnapshot.status_legend.flatMap((item) => [item.label, item.detail]),
+].filter(Boolean);
+assert.ok(visibleFixtureText.every((value) => toChineseDisplayText(value) !== "技术信息已隐藏"));
 
 const architecture = deriveArchitectureModel(fixtureSnapshot);
 assert.deepEqual(
@@ -164,8 +202,8 @@ assert.match(architectureNodeStatus({ kindLabel: "read", invalidName: false }, "
 assert.match(architectureNodeStatus({ kindLabel: "write", invalidName: false }, "tool"), /受控写入/);
 assert.match(architectureNodeStatus({ kindLabel: "read", invalidName: true, availability: "ready" }, "tool"), /名称异常/);
 assert.doesNotMatch(architectureNodeStatus({ kindLabel: "read", invalidName: true, availability: "ready" }, "tool"), /已就绪/);
-assert.match(architectureNodeStatus({ kindLabel: "", invalidName: false }, "tool"), /kind 未返回/);
-assert.match(architectureNodeStatus({ kindLabel: "query", invalidName: false }, "tool"), /kind 未知/);
+assert.match(architectureNodeStatus({ kindLabel: "", invalidName: false }, "tool"), /操作类型未返回/);
+assert.match(architectureNodeStatus({ kindLabel: "query", invalidName: false }, "tool"), /操作类型未知/);
 assert.equal(deriveArchitectureModel({ ...fixtureSnapshot, tools: [{ name: "custom.preview", kind: "read" }] }).tools[0].availability, "");
 
 const unknownTools = [
@@ -192,7 +230,7 @@ assert.equal(emptyArchitecture.clients.length, 0);
 assert.equal(emptyArchitecture.tools.length, 0);
 assert.equal(emptyArchitecture.sources.length, 0);
 assert.equal(emptyArchitecture.approvalLifecycle.length, 0);
-assert.throws(() => deriveArchitectureModel({ ...fixtureSnapshot, clients: null }), /clients/);
+assert.throws(() => deriveArchitectureModel({ ...fixtureSnapshot, clients: null }), /客户端/);
 
 const legacySource = { ...fixtureSnapshot.sources[0] };
 for (const field of [

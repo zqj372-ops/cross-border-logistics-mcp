@@ -2,6 +2,8 @@
 
 这是 08A 的单页控制面原型。它管理客户端接入、角色/工具授权、API-first 来源状态、适配器引用、系统结构、就绪状态、审批差异和审计摘要；它不是报价、关税、Zone 或装柜业务数据库。
 
+前端只显示中文业务名称和状态；内部工具名、权限码、配置路径、接口引用、凭证引用、版本号和追踪号仅保留在底层契约中，页面不回显具体值。
+
 ## 本地运行
 
 仓库根目录执行：
@@ -32,7 +34,7 @@ GET /admin/api/v1/snapshot
 - 数据源快照可以为业务 API 提供可选字段 `category`、`environment`、`adapter_contract_version`、`business_version_evidence`、`update_mode`、`last_checked_at`、`last_success_at`、`affected_tools`、`registration_status` 和 `blocker`；缺字段显示“未返回”，不会由前端推断。
 - 工具快照可提供独立的 `availability`；`kind` 不是可用性，字段未返回时显示“未返回”，不会推断为已就绪。
 - `#adapters` 顶部只把 `category=business_api` 的来源渲染为 API 状态卡；fixture 包含 AI 报价 API、RiskCustoms API 和未配置/未注册的 PDF API，knowledge/status/review 仍在普通引用表中。
-- 页面只展示 opaque `endpoint_ref`、opaque `secret_ref`、adapter contract version、业务证据和 readiness，不展示原始凭证、客户内容、报价明细或税务材料。
+- 页面只展示接口、凭证和版本证据是否已配置；不展示具体引用值、版本号、原始凭证、客户内容、报价明细或税务材料。
 - 一个业务 API 不可达只关闭其 `affected_tools`；只有身份、审计、session 等平台基础设施故障才影响全局 `/readyz`，来源卡不会被汇总为整个 MCP 健康。
 - 角色和 Phase 1 工具只按已校验快照中的平台 RBAC 展示；快照缺失时不生成默认权限，不能从页面新增 generic write。
 - `#architecture` 只把已校验快照中的 clients、tools、sources 和 `approvals.chain` 画成静态关系：clients → MCP 控制层 → 两类执行 → sources。本地确定性执行明确列出 `cargo.calculate`、`container.plan_summary`；外部 API 窄适配明确关联 quote 与 RiskCustoms；PDF 仅显示未配置/未注册来源，不生成可用工具节点。未知/空/异常 name 仍保留在平台支持/其他工具中。
@@ -55,7 +57,7 @@ node --check apps/admin/fixture-data.js
 node apps/admin/self-check.mjs
 ```
 
-self-check 还会验证三业务 API 卡字段、opaque 引用隐藏、旧快照缺新字段仍可校验、缺字段不造状态、工具到来源分组、PDF 未注册、原始工具顺序、未知工具保留、空数组不造节点，以及审批链缺步骤不标记为成功。
+self-check 还会验证前端中文展示边界、技术字段不回显、三业务 API 卡字段、引用隐藏、旧快照缺新字段仍可校验、缺字段不造状态、工具到来源分组、PDF 未注册、原始工具顺序、未知工具保留、空数组不造节点，以及审批链缺步骤不标记为成功。
 
 静态服务器 smoke 应使用明确的 `?fixture=1` URL；正式模式的预期结果是显示 `正式快照不可用`，而不是展示演示数据。
 
