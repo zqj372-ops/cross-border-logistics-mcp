@@ -10,6 +10,10 @@ import {
   type GatewayComposition,
 } from "./composition";
 import type { ShortLivedTokenValidationOptions } from "../platform/security";
+import {
+  createAdminStaticHandler,
+  type AdminStaticHandler,
+} from "./admin-static";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
@@ -130,7 +134,9 @@ async function handleRuntimeRequest(
   request: IncomingMessage,
   response: ServerResponse,
   composition: GatewayComposition,
+  adminUi: AdminStaticHandler,
 ): Promise<void> {
+    if (adminUi.handle(request, response)) return;
     const path = (request.url ?? "/").split("?", 1)[0];
     if (request.method === "GET" && path === "/healthz") {
       json(response, 200, { status: "ok", service: "cross-border-logistics-mcp" });
@@ -163,16 +169,28 @@ async function handleRuntimeRequest(
     }
 }
 
+export interface RuntimeServerOptions {
+  readonly adminUi?: AdminStaticHandler;
+}
+
 export function createRuntimeServer(
   composition: GatewayComposition,
+  options: RuntimeServerOptions = {},
 ): ReturnType<typeof createServer> {
+  const enabledSetting = process.env.MCP_ADMIN_UI_ENABLED;
+  const adminUi =
+    options.adminUi ??
+    createAdminStaticHandler({
+      staticDir: resolve(process.cwd(), "dist/admin"),
+      ...(enabledSetting === undefined ? {} : { enabledSetting }),
+    });
   return createServer(
     {
       headersTimeout: RUNTIME_HEADERS_TIMEOUT_MS,
       requestTimeout: RUNTIME_REQUEST_TIMEOUT_MS,
     },
     (request, response) => {
-    void handleRuntimeRequest(request, response, composition);
+    void handleRuntimeRequest(request, response, composition, adminUi);
     },
   );
 }
