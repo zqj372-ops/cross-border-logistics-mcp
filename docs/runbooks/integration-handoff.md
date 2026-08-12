@@ -1,8 +1,9 @@
 # Integration handoff
 
-当前交付分支只保留 03→04→05 的 cherry-pick 历史和 06 集成提交；不 push、不部署、不
-连接现有生产系统。真实跨系统 endpoint、tenant mapping、认证、RiskCustoms estimate 和
-写后读 API 在取得批准 staging evidence 前均为“待适配验证”。
+当前候选分支已经整合平台、货物、装柜、失败闭合适配器、编译产物运行时和中文脱敏后台。
+本地尚未配置明确的 GitHub remote，因此当前证据不包括 GitHub CI 或部署成功；在取得批准的
+staging 证据前不连接现有生产系统。真实跨系统 endpoint、tenant mapping、认证、
+RiskCustoms estimate 和写后读 API 均为“待适配验证”。
 当前 `start.ts` 已接入 RS256/JWKS 签名验证和 issuer/audience/短时 token policy；
 JWKS 主机必须在 HTTPS 出站白名单。生产身份源还必须经 staging 验证能提供
 `tenant_id`、`actor_role`、`roles`、`scopes`、`client_id` 和 `session_id` 等合同 claims；

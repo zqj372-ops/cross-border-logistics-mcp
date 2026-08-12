@@ -6,6 +6,39 @@ const root = resolve(import.meta.dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("safe deployment artifacts", () => {
+  it("keeps runtime secrets and state out of Git and Docker build contexts", () => {
+    const gitignore = read(".gitignore");
+    const dockerignore = read(".dockerignore");
+    for (const pattern of [".env", "*.sqlite", "*.db", "*.log"]) {
+      expect(gitignore).toContain(pattern);
+      expect(dockerignore).toContain(pattern);
+    }
+    expect(gitignore).toContain("!.env.example");
+    for (const pattern of [".git", "node_modules", "dist", "coverage"]) {
+      expect(dockerignore).toContain(pattern);
+    }
+  });
+
+  it("runs the complete local gates and image build in GitHub CI", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    expect(workflow).toContain("actions/checkout@v7");
+    expect(workflow).toContain("actions/setup-node@v7");
+    expect(workflow).toMatch(/node-version:\s*["']22\.13\.0["']/);
+    for (const command of [
+      "npm ci",
+      "npm run build",
+      "npm test -- --run",
+      "npm run typecheck",
+      "npm run lint",
+      "npm run validate:schemas",
+      "bash deploy/scripts/check-release.sh --fixture-only",
+      "docker compose --env-file deploy/env.example -f deploy/compose.yml config",
+      "docker build -f deploy/Dockerfile .",
+    ]) {
+      expect(workflow).toContain(command);
+    }
+  });
+
   it("defines a Node 22.13 multi-stage non-root image with a minimal runtime", () => {
     const dockerfile = read("deploy/Dockerfile");
     expect(dockerfile.match(/node:22\.13\.0-bookworm-slim/g)).toHaveLength(2);

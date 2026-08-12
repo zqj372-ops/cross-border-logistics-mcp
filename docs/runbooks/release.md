@@ -6,7 +6,7 @@ No automatic send, publish, or booking path is included.
 
 ## 必须按顺序完成
 
-1. **candidate build**：从干净的 `codex/task-06-integration` 工作区生成候选镜像/包，记录
+1. **candidate build**：从干净的候选分支工作区生成镜像/包，记录
    commit SHA、Node 版本和依赖锁文件 hash；构建始终校验并复制 `index.html`、`styles.css`、
    `app.js`、`fixture-data.js` 四个固定 admin 资源。资源打包不等于开放控制台，
    `MCP_ADMIN_UI_ENABLED` 默认关闭。
