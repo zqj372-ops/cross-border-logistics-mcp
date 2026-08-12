@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY src ./src
+COPY apps/admin ./apps/admin
 COPY docs/contracts ./docs/contracts
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY tsconfig.json .

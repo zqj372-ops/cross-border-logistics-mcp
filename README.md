@@ -70,6 +70,22 @@ flowchart LR
 
 ## 开发入口
 
+本机先用真实编译产物和隔离演示数据跑通整条链路：
+
+```bash
+npm run start:fixture
+```
+
+启动后访问 `http://127.0.0.1:8080/admin/?fixture=1`；MCP 入口为
+`http://127.0.0.1:8080/mcp`，本机假 token 为 `local-fixture-token`。演示模式只绑定
+`127.0.0.1`，`/readyz` 保持 `503/fixture_mode_not_production_ready`，不代表生产就绪。
+一条命令验收编译产物、后台页面、认证拒绝、MCP 初始化、九个工具和
+`cargo.calculate`：
+
+```bash
+npm run verify:runtime
+```
+
 - `src/logistics_mcp/adapters/`：Quote API 与 RiskCustoms API 的窄适配器。
 - `src/logistics_mcp/server/composition.ts`：生产组合注入点和 fail-closed 默认适配器。
 - `src/logistics_mcp/domains/cargo/`、`src/logistics_mcp/domains/container/`：本地确定性计算。

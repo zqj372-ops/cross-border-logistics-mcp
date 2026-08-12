@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { AuthenticationError } from "../platform/context";
+import { AuthenticationError, type AuthClaims } from "../platform/context";
 import {
   createFixtureComposition,
   createProductionComposition,
@@ -74,7 +74,30 @@ function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefi
   return { issuer, audience };
 }
 
-async function toRequest(request: IncomingMessage): Promise<Request> {
+function fixtureAuthenticatorFromEnvironment(): (token: string) => AuthClaims {
+  const expectedToken = process.env.MCP_FIXTURE_TOKEN?.trim();
+  if (expectedToken === undefined || expectedToken.length === 0) {
+    throw new Error("MCP_FIXTURE_TOKEN must be explicitly set in fixtures mode.");
+  }
+  return (token) => {
+    if (token !== expectedToken) throw new AuthenticationError();
+    return {
+      tenant_id: "tenant_fixture",
+      actor_id: "local_operator",
+      actor_role: "admin",
+      roles: ["admin"],
+      scopes: ["platform:admin"],
+      client_id: "local_fixture_client",
+      session_id: "local_fixture_auth",
+      expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
+    };
+  };
+}
+
+async function toRequest(
+  request: IncomingMessage,
+  allowLoopbackHttp = false,
+): Promise<Request> {
   const contentLength = request.headers["content-length"];
   if (Array.isArray(contentLength)) {
     throw new RuntimeRequestError("Invalid content length.");
@@ -115,8 +138,18 @@ async function toRequest(request: IncomingMessage): Promise<Request> {
       headers.set(name, value);
     }
   }
-  const forwardedProto = headers.get("x-forwarded-proto") === "https" ? "https" : "http";
+  const localAddress = request.socket.localAddress;
+  const loopbackFixture =
+    allowLoopbackHttp &&
+    (localAddress === "127.0.0.1" ||
+      localAddress === "::1" ||
+      localAddress === "::ffff:127.0.0.1");
   const host = headers.get("host") ?? "mcp.example.invalid";
+  if (loopbackFixture && headers.get("origin") === null) {
+    headers.set("origin", `http://${host}`);
+  }
+  const forwardedProto =
+    loopbackFixture || headers.get("x-forwarded-proto") === "https" ? "https" : "http";
   return new Request(`${forwardedProto}://${host}${request.url ?? "/mcp"}`, {
     method: request.method ?? "GET",
     headers,
@@ -155,7 +188,10 @@ async function handleRuntimeRequest(
       return;
     }
     try {
-      await forward(await composition.handler(await toRequest(request)), response);
+      await forward(
+        await composition.handler(await toRequest(request, composition.mode === "fixtures")),
+        response,
+      );
     } catch (error) {
       if (error instanceof RuntimeBodyTooLargeError) {
         json(response, 413, { status: "blocked", reason: "body_too_large" });
@@ -198,14 +234,21 @@ export function createRuntimeServer(
 function makeComposition(): GatewayComposition {
   const mode = process.env.MCP_DATA_MODE;
   const common = {
-    allowedOrigins: splitSetting("MCP_ALLOWED_ORIGINS", "https://client.example.invalid"),
-    allowedHosts: splitSetting("MCP_ALLOWED_HOSTS", "mcp.example.invalid"),
-    authenticate: () => {
-      throw new AuthenticationError("A production token verifier must be configured by the gateway.");
-    },
+    allowedOrigins: splitSetting(
+      "MCP_ALLOWED_ORIGINS",
+      mode === "fixtures" ? `http://127.0.0.1:${PORT}` : "https://client.example.invalid",
+    ),
+    allowedHosts: splitSetting(
+      "MCP_ALLOWED_HOSTS",
+      mode === "fixtures" ? `127.0.0.1:${PORT}` : "mcp.example.invalid",
+    ),
   };
   if (mode === "fixtures") {
-    return createFixtureComposition({ dataMode: "fixtures", ...common });
+    return createFixtureComposition({
+      dataMode: "fixtures",
+      ...common,
+      authenticate: fixtureAuthenticatorFromEnvironment(),
+    });
   }
   if (mode !== "production") {
     throw new Error("MCP_DATA_MODE must be explicitly set to production or fixtures.");
@@ -235,7 +278,7 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   const composition = makeComposition();
   const server = createRuntimeServer(composition);
-  server.listen(PORT, "0.0.0.0");
+  server.listen(PORT, process.env.MCP_DATA_MODE === "fixtures" ? "127.0.0.1" : "0.0.0.0");
   const close = async () => {
     await composition.close();
     await new Promise<void>((resolve, reject) => {

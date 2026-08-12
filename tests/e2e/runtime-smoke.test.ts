@@ -5,7 +5,12 @@ import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { describe, expect, it } from "vitest";
+
+import { cargoInput } from "./fixtures/tenant-fixtures";
 
 const root = resolve(import.meta.dirname, "../..");
 
@@ -151,6 +156,146 @@ describe("built runtime smoke", () => {
         { cause: error },
       );
     } finally {
+      await stop(child);
+      await rm(layout, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("starts the dist fixture entry and serves admin plus a real MCP tool call", async () => {
+    execFileSync("npm", ["run", "build"], {
+      cwd: root,
+      stdio: "pipe",
+      env: {
+        PATH: process.env.PATH ?? "",
+        npm_config_update_notifier: "false",
+      },
+    });
+    const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-fixture-runtime-"));
+    await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
+    await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), { recursive: true });
+    const entry = resolve(layout, "dist/src/logistics_mcp/server/start.mjs");
+    const port = await freePort();
+    const child = spawn(process.execPath, [entry], {
+      cwd: layout,
+      env: {
+        PATH: process.env.PATH ?? "",
+        MCP_PORT: String(port),
+        MCP_DATA_MODE: "fixtures",
+        MCP_ADMIN_UI_ENABLED: "true",
+        MCP_FIXTURE_TOKEN: "local-fixture-token",
+        MCP_JWT_ISSUER: "https://issuer.example.invalid/",
+        MCP_JWT_AUDIENCE: "logistics-mcp-local",
+        MCP_ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
+        MCP_ALLOWED_HOSTS: `127.0.0.1:${port}`,
+        MCP_ALLOWED_OUTBOUND_HOSTS: "fixture.example.invalid",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    let client: Client | undefined;
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    try {
+      expect((await waitForHealth(port, child)).status).toBe(200);
+      const readiness = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(readiness.status).toBe(503);
+      const readinessBody = (await readiness.json()) as {
+        status?: string;
+        reasons?: string[];
+      };
+      expect(readinessBody.status).toBe("not_ready");
+      expect(readinessBody.reasons).toContain("fixture_mode_not_production_ready");
+      const admin = await fetch(`http://127.0.0.1:${port}/admin/?fixture=1`);
+      expect(admin.status).toBe(200);
+      expect(await admin.text()).toContain("跨境物流控制台");
+
+      const headers = {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      };
+      const rejected = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: { ...headers, authorization: "Bearer wrong-fixture-token" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "local-runtime-smoke", version: "1.0.0" },
+          },
+        }),
+      });
+      expect(rejected.status).toBe(401);
+
+      const wrongOrigin = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          authorization: "Bearer local-fixture-token",
+          origin: "https://evil.example.invalid",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "local-runtime-smoke", version: "1.0.0" },
+          },
+        }),
+      });
+      expect(wrongOrigin.status).toBe(403);
+
+      client = new Client({ name: "local-runtime-smoke", version: "1.0.0" });
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+        {
+          requestInit: {
+            headers: {
+              authorization: "Bearer local-fixture-token",
+            },
+          },
+        },
+      );
+      await client.connect(transport as Transport);
+      expect(transport.sessionId).toBeTruthy();
+
+      const toolList = await client.listTools();
+      expect(toolList.tools.map((tool) => tool.name).sort()).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "customs.ca.estimate",
+        "customs.ca.search",
+        "knowledge.search_curated",
+        "quote.canada_final_mile.calculate",
+        "quote.save_draft",
+        "review.create_task",
+        "system.get_data_status",
+      ].sort());
+
+      const toolCall = await client.callTool({
+        name: "cargo.calculate",
+        arguments: cargoInput(),
+      });
+      const structured = toolCall.structuredContent as {
+        status?: string;
+        data?: { metrics?: { actual_weight?: { unit?: string } } };
+        calculation_trace?: unknown[];
+      } | undefined;
+      expect(structured?.status).toBe("success");
+      expect(structured?.data?.metrics?.actual_weight?.unit).toBe("kg");
+      expect(structured?.calculation_trace?.length).toBeGreaterThan(0);
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; stderr=${stderr}`,
+        { cause: error },
+      );
+    } finally {
+      await client?.close().catch(() => undefined);
       await stop(child);
       await rm(layout, { recursive: true, force: true });
     }

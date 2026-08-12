@@ -12,6 +12,7 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).toMatch(/FROM .* AS build/i);
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
+    expect(dockerfile).toContain("COPY apps/admin ./apps/admin");
     expect(dockerfile).toMatch(/COPY --from=build .*\/dist \.\/dist/);
     expect(dockerfile).toMatch(/COPY --from=build .*\/docs\/contracts .*\/docs\/contracts/);
     expect(dockerfile).toContain('CMD ["node", "dist/src/logistics_mcp/server/start.mjs"]');
@@ -30,7 +31,7 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("tokenPolicy");
     expect(start).toContain("fileURLToPath(import.meta.url)");
     expect(start).toContain("resolve");
-    expect(start).toMatch(/production token verifier.*configured|token verifier.*gateway/i);
+    expect(start).toContain("createProductionComposition");
     expect(deployReadme).toMatch(/no built-in JWT signature verifier|没有内置 JWT 签名验证器/i);
     expect(deployReadme).toContain("/mcp` 请求在验证器接入前会被拒绝");
   });
