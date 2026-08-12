@@ -8,7 +8,7 @@ import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   cargoInput,
@@ -80,10 +80,11 @@ function runtimeWriteContext(
     status: "not_required",
     approval_id: null,
   },
+  tenantId = "tenant_fixture",
 ): Record<string, unknown> {
   return {
     tenant_context: {
-      tenant_id: "tenant_fixture",
+      tenant_id: tenantId,
       actor_id: "local_operator",
       actor_role: "admin",
       client_id: "local_fixture_client",
@@ -147,7 +148,7 @@ async function stop(child: ChildProcess): Promise<void> {
 }
 
 describe("built runtime smoke", () => {
-  it("starts the dist entry directly, loads cargo contracts and answers health", async () => {
+  beforeAll(() => {
     execFileSync("npm", ["run", "build"], {
       cwd: root,
       stdio: "pipe",
@@ -156,6 +157,9 @@ describe("built runtime smoke", () => {
         npm_config_update_notifier: "false",
       },
     });
+  });
+
+  it("starts the dist entry directly, loads cargo contracts and answers health", async () => {
     const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-runtime-"));
     await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
     await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), { recursive: true });
@@ -243,15 +247,7 @@ describe("built runtime smoke", () => {
     }
   }, 10_000);
 
-  it("starts the dist fixture entry and serves admin plus a real MCP tool call", async () => {
-    execFileSync("npm", ["run", "build"], {
-      cwd: root,
-      stdio: "pipe",
-      env: {
-        PATH: process.env.PATH ?? "",
-        npm_config_update_notifier: "false",
-      },
-    });
+  it("starts the dist fixture entry and serves admin plus all MCP tool calls", async () => {
     const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-fixture-runtime-"));
     await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
     await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), { recursive: true });
@@ -436,6 +432,24 @@ describe("built runtime smoke", () => {
         quote_result: quote.data,
         target: { system: "existing_quote_system", record_kind: "draft" },
       };
+      const crossTenant = await client.callTool({
+        name: "quote.save_draft",
+        arguments: {
+          ...quoteDraftBase,
+          write_context: runtimeWriteContext(
+            "preview",
+            null,
+            "idem_runtime_cross_tenant_001",
+            undefined,
+            "tenant_other",
+          ),
+        },
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(crossTenant).toMatchObject({ code: 403 });
+      expect(String(crossTenant)).toContain("security.cross_tenant_denied");
       const quotePreview = structured(await client.callTool({
         name: "quote.save_draft",
         arguments: {
@@ -452,7 +466,9 @@ describe("built runtime smoke", () => {
         operation_status: "previewed",
         readback_evidence: null,
       });
-      const quotePreviewRef = String(quotePreview.data?.preview_ref);
+      const quotePreviewRef = quotePreview.data?.preview_ref;
+      expect(quotePreviewRef).toEqual(expect.any(String));
+      if (typeof quotePreviewRef !== "string") throw new Error("quote preview_ref missing");
       const quoteCommitBase = {
         ...quoteDraftBase,
         write_context: runtimeWriteContext(
@@ -528,7 +544,9 @@ describe("built runtime smoke", () => {
       }));
       expect(reviewPreview.status).toBe("success");
       expect(reviewPreview.data).toMatchObject({ operation_status: "previewed" });
-      const reviewPreviewRef = String(reviewPreview.data?.preview_ref);
+      const reviewPreviewRef = reviewPreview.data?.preview_ref;
+      expect(reviewPreviewRef).toEqual(expect.any(String));
+      if (typeof reviewPreviewRef !== "string") throw new Error("review preview_ref missing");
       const blockedReview = structured(await client.callTool({
         name: "review.create_task",
         arguments: {
@@ -542,27 +560,38 @@ describe("built runtime smoke", () => {
         },
       }));
       expect(blockedReview.status).toBe("blocked");
+      expect(blockedReview.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "approval.not_approved" }),
+        ]),
+      );
+      const approvedReviewCommit = {
+        ...reviewBase,
+        write_context: runtimeWriteContext(
+          "commit",
+          reviewPreviewRef,
+          "idem_runtime_review_commit_001",
+          {
+            required: true,
+            status: "approved",
+            approval_id: "approval_runtime_review_001",
+          },
+        ),
+      };
       const committedReview = structured(await client.callTool({
         name: "review.create_task",
-        arguments: {
-          ...reviewBase,
-          write_context: runtimeWriteContext(
-            "commit",
-            reviewPreviewRef,
-            "idem_runtime_review_commit_001",
-            {
-              required: true,
-              status: "approved",
-              approval_id: "approval_runtime_review_001",
-            },
-          ),
-        },
+        arguments: approvedReviewCommit,
       }));
       expect(committedReview.status).toBe("success");
       expect(committedReview.data).toMatchObject({
         operation_status: "committed",
         readback_evidence: { verified: true },
       });
+      const replayedReview = structured(await client.callTool({
+        name: "review.create_task",
+        arguments: approvedReviewCommit,
+      }));
+      expect(replayedReview).toEqual(committedReview);
     } catch (error) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}; stderr=${stderr}`,
