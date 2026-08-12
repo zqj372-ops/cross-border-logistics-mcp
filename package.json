@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "node deploy/scripts/build.mjs",
+    "start:fixture": "npm run build && MCP_DATA_MODE=fixtures MCP_PORT=8080 MCP_ADMIN_UI_ENABLED=true MCP_FIXTURE_TOKEN=local-fixture-token MCP_JWT_ISSUER=https://issuer.example.invalid/ MCP_JWT_AUDIENCE=logistics-mcp-local MCP_ALLOWED_ORIGINS=http://127.0.0.1:8080 MCP_ALLOWED_HOSTS=127.0.0.1:8080 MCP_ALLOWED_OUTBOUND_HOSTS=fixture.example.invalid node dist/src/logistics_mcp/server/start.mjs",
+    "start:production": "npm run build && node dist/src/logistics_mcp/server/start.mjs",
     "test": "vitest run",
+    "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
     "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts"
@@ -18,6 +21,7 @@
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "decimal.js": "10.6.0",
+    "jose": "6.2.8",
     "zod": "4.4.3"
   },
   "devDependencies": {

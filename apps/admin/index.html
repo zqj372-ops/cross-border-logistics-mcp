@@ -3,22 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="跨境物流 MCP 控制面原型：管理客户端、权限、适配器状态、审批和审计。" />
-    <title>跨境物流 MCP 控制台</title>
+    <meta name="description" content="跨境物流控制台：管理客户端、权限、数据来源状态、审批和审计。" />
+    <title>跨境物流控制台</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div id="app" data-state="loading">
       <header class="topbar">
-        <a class="brand" href="#overview" aria-label="跨境物流 MCP 控制台首页">
+        <a class="brand" href="#overview" aria-label="跨境物流控制台首页">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" role="img">
               <path d="M6 7.5h20v5H6zM6 15h13v5H6zM6 22.5h20v2H6z" fill="currentColor" />
             </svg>
           </span>
           <span>
-            <span class="brand-title">跨境物流 MCP</span>
+            <span class="brand-title">跨境物流平台</span>
             <span class="brand-subtitle">控制台</span>
           </span>
         </a>
@@ -46,7 +46,7 @@
       <div class="app-layout">
         <aside class="sidebar" aria-label="控制台导航区域">
           <div class="sidebar-heading">
-            <span class="eyebrow">MCP 控制面</span>
+            <span class="eyebrow">平台控制面</span>
             <span class="muted">只管理接入与发布边界</span>
           </div>
           <nav aria-label="控制台主导航">
@@ -55,6 +55,7 @@
               <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"></span><span>客户端接入</span></button></li>
               <li><button class="nav-item" type="button" data-view="tools"><span class="nav-icon" aria-hidden="true"></span><span>工具权限</span></button></li>
               <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"></span><span>数据源与适配器</span></button></li>
+              <li><button class="nav-item" type="button" data-view="architecture"><span class="nav-icon" aria-hidden="true"></span><span>系统结构</span></button></li>
               <li><button class="nav-item" type="button" data-view="approvals"><span class="nav-icon" aria-hidden="true"></span><span>审批与发布</span></button></li>
               <li><button class="nav-item" type="button" data-view="audit"><span class="nav-icon" aria-hidden="true"></span><span>审计日志</span></button></li>
             </ul>
@@ -78,7 +79,7 @@
       </div>
 
       <footer class="app-footer">
-        <span>原型范围：客户端接入、权限、适配器引用、审批、发布和审计</span>
+        <span>只读控制台范围：客户端接入、权限、适配器状态、审批边界和审计状态</span>
         <span id="footer-mode">未连接正式后台</span>
       </footer>
     </div>
@@ -98,7 +99,7 @@
     </dialog>
 
     <noscript>
-      <div class="noscript-warning">此控制台需要启用 JavaScript 才能读取快照。当前不会连接任何正式后台。</div>
+      <div class="noscript-warning">此控制台需要启用浏览器脚本功能才能读取快照。当前不会连接任何正式后台。</div>
     </noscript>
     <script type="module" src="./app.js"></script>
   </body>

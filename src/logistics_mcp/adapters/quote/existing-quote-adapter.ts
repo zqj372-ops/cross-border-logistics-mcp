@@ -53,10 +53,14 @@ export interface QuoteDraftReadbackRecord {
 
 export interface QuoteUpstreamSource {
   lookup(input: Record<string, unknown>): Promise<QuoteLookupRecord>;
-  saveDraft(input: Record<string, unknown>): Promise<QuoteDraftWriteRecord>;
+  saveDraft(
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<QuoteDraftWriteRecord>;
   readDraft(
     recordId: string,
     tenantId: string,
+    signal?: AbortSignal,
   ): Promise<QuoteDraftReadbackRecord | null>;
 }
 
@@ -242,6 +246,20 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
   }
 
   async calculate(input: Record<string, unknown>): Promise<AdapterResult> {
+    if (this.source === undefined) {
+      return {
+        status: "unavailable",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.adapter_disabled",
+            "The existing quote endpoint is disabled until its route, tenant scope, and readback contract are verified.",
+          ),
+        ],
+        reviewStatus: "manual_review",
+      };
+    }
     const destination = nestedRecord(input, "destination");
     const addressType = stringValue(destination?.address_type);
     if (addressType === null || addressType === "unknown") {
@@ -259,21 +277,6 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
         ],
       };
     }
-    if (this.source === undefined) {
-      return {
-        status: "unavailable",
-        data: null,
-        sourceRefs: [],
-        blockers: [
-          notice(
-            "quote.adapter_disabled",
-            "The existing quote endpoint is disabled until its route, tenant scope, and readback contract are verified.",
-          ),
-        ],
-        reviewStatus: "manual_review",
-      };
-    }
-
     const record = await this.source.lookup(input);
     const sourceRefs = [record.source_ref];
     if (record.status !== "matched") {
@@ -446,6 +449,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
   }
 
   async previewDraft(input: Record<string, unknown>): Promise<AdapterResult> {
+    if (this.source === undefined) return this.disabledWriteResult(input);
     await Promise.resolve();
     const parsed = this.validateDraftInput(input, "preview");
     if (parsed.error !== null) return parsed.error;
@@ -479,7 +483,10 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
     };
   }
 
-  async commitDraft(input: Record<string, unknown>): Promise<AdapterResult> {
+  async commitDraft(
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult> {
     const parsed = this.validateDraftInput(input, "commit");
     if (parsed.error !== null) return parsed.error;
     if (this.source === undefined) return this.disabledWriteResult(input);
@@ -514,12 +521,19 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
       return { ...existing.result, data: existingData };
     }
 
+    const activeSignal = signal ?? new AbortController().signal;
+    activeSignal.throwIfAborted();
     const saved = await this.source.saveDraft({
       quote_result: parsed.quoteResult,
       target: input.target,
       tenant_id: parsed.tenant,
-    });
-    const readback = await this.source.readDraft(saved.record_id, parsed.tenant);
+      idempotency_key: parsed.key,
+    }, activeSignal);
+    const readback = await this.source.readDraft(
+      saved.record_id,
+      parsed.tenant,
+      activeSignal,
+    );
     if (
       readback === null ||
       readback.tenant_id !== parsed.tenant ||

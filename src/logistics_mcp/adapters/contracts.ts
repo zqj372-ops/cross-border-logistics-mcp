@@ -47,6 +47,10 @@ export const measurementSchema = z
   })
   .strict();
 
+const volumeMeasurementSchema = measurementSchema.extend({
+  unit: z.enum(["cbm", "m3"]),
+});
+
 const tenantContextSchema = z
   .object({
     tenant_id: identifierSchema,
@@ -236,6 +240,7 @@ export const canadaFinalMileInputSchema = z
         weight_kg: measurementSchema.nullable(),
         pieces: z.number().int().min(1).nullable(),
         package_types: z.array(z.string().min(1).max(100)),
+        total_volume: volumeMeasurementSchema.nullable().optional(),
       })
       .strict(),
     services: z
@@ -256,6 +261,7 @@ export const customsSearchInputSchema = z
     version: versionSchema,
     rule_date: dateSchema,
     query_kind: z.enum(["exact_code", "name_search", "candidate_selection"]),
+    query: z.string().trim().min(1).max(200).optional(),
     query_code: z.string().min(1).max(20).nullable().optional(),
     product_description_ref: opaqueReferenceSchema.nullable().optional(),
     product_attributes: z

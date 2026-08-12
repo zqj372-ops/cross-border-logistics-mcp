@@ -6,12 +6,46 @@ const root = resolve(import.meta.dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("safe deployment artifacts", () => {
-  it("defines a Node 22 multi-stage non-root image with a minimal runtime", () => {
+  it("keeps runtime secrets and state out of Git and Docker build contexts", () => {
+    const gitignore = read(".gitignore");
+    const dockerignore = read(".dockerignore");
+    for (const pattern of [".env", "*.sqlite", "*.db", "*.log"]) {
+      expect(gitignore).toContain(pattern);
+      expect(dockerignore).toContain(pattern);
+    }
+    expect(gitignore).toContain("!.env.example");
+    for (const pattern of [".git", "node_modules", "dist", "coverage"]) {
+      expect(dockerignore).toContain(pattern);
+    }
+  });
+
+  it("runs the complete local gates and image build in GitHub CI", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    expect(workflow).toContain("actions/checkout@v7");
+    expect(workflow).toContain("actions/setup-node@v7");
+    expect(workflow).toMatch(/node-version:\s*["']22\.13\.0["']/);
+    for (const command of [
+      "npm ci",
+      "npm run build",
+      "npm test -- --run",
+      "npm run typecheck",
+      "npm run lint",
+      "npm run validate:schemas",
+      "bash deploy/scripts/check-release.sh --fixture-only",
+      "docker compose --env-file deploy/env.example -f deploy/compose.yml config",
+      "docker build -f deploy/Dockerfile .",
+    ]) {
+      expect(workflow).toContain(command);
+    }
+  });
+
+  it("defines a Node 22.13 multi-stage non-root image with a minimal runtime", () => {
     const dockerfile = read("deploy/Dockerfile");
-    expect(dockerfile).toMatch(/node:22/i);
+    expect(dockerfile.match(/node:22\.13\.0-bookworm-slim/g)).toHaveLength(2);
     expect(dockerfile).toMatch(/FROM .* AS build/i);
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
+    expect(dockerfile).toContain("COPY apps/admin ./apps/admin");
     expect(dockerfile).toMatch(/COPY --from=build .*\/dist \.\/dist/);
     expect(dockerfile).toMatch(/COPY --from=build .*\/docs\/contracts .*\/docs\/contracts/);
     expect(dockerfile).toContain('CMD ["node", "dist/src/logistics_mcp/server/start.mjs"]');
@@ -22,7 +56,7 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
   });
 
-  it("does not claim production JWT verification without an injected verifier", () => {
+  it("wires the production JWKS verifier and durable state provider", () => {
     const start = read("src/logistics_mcp/server/start.ts");
     const deployReadme = read("deploy/README.md");
     expect(start).toContain("MCP_JWT_ISSUER");
@@ -30,9 +64,11 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("tokenPolicy");
     expect(start).toContain("fileURLToPath(import.meta.url)");
     expect(start).toContain("resolve");
-    expect(start).toMatch(/production token verifier.*configured|token verifier.*gateway/i);
-    expect(deployReadme).toMatch(/no built-in JWT signature verifier|没有内置 JWT 签名验证器/i);
-    expect(deployReadme).toContain("/mcp` 请求在验证器接入前会被拒绝");
+    expect(start).toContain("createProductionComposition");
+    expect(start).toContain("createProductionTokenVerifier");
+    expect(start).toContain("SqliteProductionStore");
+    expect(deployReadme).toContain("JWKS");
+    expect(deployReadme).toContain("SQLite");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
@@ -45,6 +81,9 @@ describe("safe deployment artifacts", () => {
       "MCP_DATA_MODE",
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
+      "MCP_JWKS_URL",
+      "MCP_INSTANCE_ID",
+      "MCP_TRUSTED_PROXY_ADDRESSES",
       "MCP_ALLOWED_ORIGINS",
       "MCP_ALLOWED_HOSTS",
       "MCP_ALLOWED_OUTBOUND_HOSTS",
@@ -63,8 +102,11 @@ describe("safe deployment artifacts", () => {
       expect(compose).toContain(required);
     }
     expect(env).toContain("https://issuer.example.invalid/");
-    expect(env).toContain("tenant_demo");
-    expect(env).toContain("CHANGE_ME_IN_SECRET_STORE");
+    expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
+    expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
+    expect(compose).toContain("MCP_STATE_DB_PATH");
+    expect(compose).toMatch(/\/var\/lib\/logistics-mcp/);
+    expect(compose).toMatch(/volumes:/);
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
   });
 

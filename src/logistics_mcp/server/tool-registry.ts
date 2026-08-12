@@ -89,6 +89,7 @@ export interface DomainToolOutcome {
 export type DomainToolHandler = (
   input: unknown,
   context: ExecutionContext,
+  signal?: AbortSignal,
 ) => DomainToolOutcome | Promise<DomainToolOutcome>;
 
 export interface ToolContract {
@@ -114,6 +115,7 @@ export interface ToolExecutionMetadata {
   readonly requestId: string;
   readonly auditId: string;
   readonly idempotencyRepository?: IdempotencyRepository;
+  readonly signal?: AbortSignal;
 }
 
 export interface ToolExecutionResult {
@@ -382,6 +384,7 @@ export async function executeRegisteredToolWithResult(
   metadata: ToolExecutionMetadata,
 ): Promise<ToolExecutionResult> {
   authorizeTool(context, definition.name);
+  metadata.signal?.throwIfAborted();
   if (definition.handler === undefined) {
     throw new HandlerUnavailableError();
   }
@@ -414,6 +417,7 @@ export async function executeRegisteredToolWithResult(
       key: writeRequest.idempotencyKey,
       requestHash: hashPayload(input),
     });
+    metadata.signal?.throwIfAborted();
     if (reservation.replayed) {
       if (reservation.record.status !== "committed" || reservation.record.result === null) {
         throw new IdempotencyStateError();
@@ -429,7 +433,8 @@ export async function executeRegisteredToolWithResult(
     idempotencyOutcome = "reserved";
   }
 
-  const outcome = await definition.handler(input, context);
+  const outcome = await definition.handler(input, context, metadata.signal);
+  metadata.signal?.throwIfAborted();
   validateToolOutput(definition, outcome);
   if (writeRequest !== null) {
     validateWriteOutcome(writeRequest, outcome);
@@ -458,6 +463,7 @@ export async function executeRegisteredToolWithResult(
   const envelope = createEnvelope(envelopeInput);
 
   if (writeRequest !== null && reservation !== undefined) {
+    metadata.signal?.throwIfAborted();
     await metadata.idempotencyRepository!.commit({
       tenantId: context.tenantId,
       tool: definition.name,

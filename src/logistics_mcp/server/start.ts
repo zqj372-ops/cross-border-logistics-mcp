@@ -1,11 +1,18 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { realpathSync } from "node:fs";
+import { BlockList, isIP } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { AuthenticationError } from "../platform/context";
+import { AuthenticationError, type AuthClaims } from "../platform/context";
+import {
+  getToolPolicy,
+  type PhaseOneToolName,
+} from "../platform/rbac";
+import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
   createFixtureComposition,
+  createProductionApiAdapterSource,
   createProductionComposition,
   type GatewayComposition,
 } from "./composition";
@@ -14,6 +21,7 @@ import {
   createAdminStaticHandler,
   type AdminStaticHandler,
 } from "./admin-static";
+import { createProductionTokenVerifier } from "./production-token-verifier";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
@@ -43,14 +51,20 @@ async function readiness(
   composition: GatewayComposition,
 ): Promise<{ readonly ready: boolean; readonly reasons: readonly string[] }> {
   const dataMode = process.env.MCP_DATA_MODE ?? "production";
-  const required = [
-    "MCP_JWT_ISSUER",
-    "MCP_JWT_AUDIENCE",
-    "MCP_ALLOWED_ORIGINS",
-    "MCP_ALLOWED_HOSTS",
-    "MCP_ALLOWED_OUTBOUND_HOSTS",
-    "MCP_DATA_MODE",
-  ];
+  const required = dataMode === "production"
+    ? [
+        "MCP_JWT_ISSUER",
+        "MCP_JWT_AUDIENCE",
+        "MCP_JWKS_URL",
+        "MCP_STATE_DB_PATH",
+        "MCP_INSTANCE_ID",
+        "MCP_ALLOWED_ORIGINS",
+        "MCP_ALLOWED_HOSTS",
+        "MCP_ALLOWED_OUTBOUND_HOSTS",
+        "MCP_TRUSTED_PROXY_ADDRESSES",
+        "MCP_DATA_MODE",
+      ]
+    : ["MCP_DATA_MODE"];
   const missing = required.filter((name) => (process.env[name] ?? "").trim() === "");
   const reasons = [...missing.map((name) => `missing_${name.toLowerCase()}`)];
   if (dataMode !== "production") reasons.push("fixture_mode_not_production_ready");
@@ -58,6 +72,197 @@ async function readiness(
   reasons.push(...compositionState.reasons);
   const uniqueReasons = [...new Set(reasons)];
   return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
+}
+
+const TOOL_PRESENTATION: Record<
+  PhaseOneToolName,
+  { readonly label: string; readonly description: string }
+> = {
+  "knowledge.search_curated": {
+    label: "精选知识搜索",
+    description: "只查询经过审核的当前操作资料。",
+  },
+  "system.get_data_status": {
+    label: "数据状态查询",
+    description: "读取已接入来源的就绪状态和版本证据。",
+  },
+  "cargo.calculate": {
+    label: "货物与分泡计算",
+    description: "计算体积、体积重、分泡和计费重。",
+  },
+  "container.plan_summary": {
+    label: "装柜摘要计算",
+    description: "汇总理论容量、运营目标和超限提醒。",
+  },
+  "quote.canada_final_mile.calculate": {
+    label: "加拿大尾程报价",
+    description: "通过受控接口获取加拿大尾程报价。",
+  },
+  "customs.ca.search": {
+    label: "加拿大关务候选查询",
+    description: "查询海关编码候选和待补充问题。",
+  },
+  "customs.ca.estimate": {
+    label: "加拿大税费估算",
+    description: "正式估算接口约定完成前保持不可用。",
+  },
+  "quote.save_draft": {
+    label: "保存报价草稿",
+    description: "正式草稿接口和写后读回完成前保持不可用。",
+  },
+  "review.create_task": {
+    label: "创建人工复核任务",
+    description: "正式任务接口和写后读回完成前保持不可用。",
+  },
+};
+
+const ROLE_PRESENTATION = {
+  admin: ["管理员", "管理平台授权和审计边界。"],
+  sales: ["销售", "补充询价信息并查看受控结果。"],
+  operator: ["运营", "核对货物、装柜和任务状态。"],
+  customs_reviewer: ["关务审核", "审核关务候选和风险信息。"],
+  finance: ["财务", "查看计费口径和税费结果。"],
+  viewer: ["查看者", "查看已授权的结构化结果。"],
+  service: ["后台服务", "以最小权限调用确定性工具。"],
+} as const;
+
+const LOCAL_TOOL_NAMES = new Set<PhaseOneToolName>([
+  "cargo.calculate",
+  "container.plan_summary",
+]);
+
+function adminBlocker(reason: string): string {
+  if (reason === "fixture_mode_not_production_ready") {
+    return "当前为演示环境，不能作为正式发布依据。";
+  }
+  if (reason.startsWith("missing_") || reason.includes("allowed_")) {
+    return "正式运行配置不完整，具体字段已隐藏。";
+  }
+  if (reason.includes("token") || reason.includes("jwks")) {
+    return "身份验证依赖尚未通过就绪检查。";
+  }
+  if (
+    reason.includes("audit") ||
+    reason.includes("idempotency") ||
+    reason.includes("session") ||
+    reason.includes("platform")
+  ) {
+    return "审计、幂等或会话持久化依赖尚未通过就绪检查。";
+  }
+  if (reason.includes("adapter")) {
+    return "业务接口适配层尚未通过就绪检查。";
+  }
+  return "存在未通过的运行门槛，技术信息已隐藏。";
+}
+
+function businessSources(mode: GatewayComposition["mode"]): readonly Record<string, unknown>[] {
+  const fixture = mode === "fixtures";
+  const common = {
+    category: "business_api",
+    type: "外部业务接口",
+    environment: fixture ? "演示环境" : "正式环境",
+    update_mode: "每次请求直接读取，不在平台保存业务数据。",
+    last_checked_at: null,
+    last_success_at: null,
+    readiness: fixture ? "manual_review" : "unavailable",
+    reason: fixture
+      ? "当前使用演示替身验证流程，不代表外部接口已经连接。"
+      : "正式业务接口尚未注入运行组合，相关工具保持不可用。",
+  } as const;
+  return [
+    {
+      ...common,
+      name: "ai_quote_api",
+      label: "智能报价服务",
+      business_key: "quote",
+      affected_tools: ["quote.canada_final_mile.calculate"],
+      registration_status: "工具已登记，正式接口未启用",
+      business_version_evidence: "尚未取得完整的规则版本、数据版本和生效期证据。",
+      blocker: "上游只读边界、货物体积与始发地映射、响应版本证据仍待确认。",
+    },
+    {
+      ...common,
+      name: "riskcustoms_api",
+      label: "关务查询服务",
+      business_key: "customs",
+      affected_tools: ["customs.ca.search", "customs.ca.estimate"],
+      registration_status: "查询工具已登记，正式接口未启用",
+      business_version_evidence: "发布版本和数据就绪证据必须来自真实查询响应。",
+      blocker: "正式认证、租户映射和发布状态读回仍待适配验证；现有接口不提供正式税额估算。",
+    },
+    {
+      ...common,
+      name: "pdf_api",
+      label: "报价单服务",
+      business_key: "pdf",
+      affected_tools: [],
+      registration_status: "未登记工具",
+      business_version_evidence: "尚未提供可核验的服务端接口约定。",
+      blocker: "缺少服务端接口地址、身份认证、输入输出和文件读回约定。",
+    },
+  ];
+}
+
+async function adminRuntimeSnapshot(
+  composition: GatewayComposition,
+): Promise<Readonly<Record<string, unknown>>> {
+  const state = await readiness(composition);
+  const fixture = composition.mode === "fixtures";
+  const blockers = [...new Set(state.reasons.map(adminBlocker))];
+  return {
+    schema_version: "2026-08-11.v1",
+    environment: fixture ? "演示环境" : "正式环境",
+    tenant: { name: "服务级只读状态（未绑定租户）" },
+    actor: { name: "未绑定具体用户" },
+    config: { current_version: null, last_published_at: null },
+    health: {
+      healthz: {
+        status: "ready",
+        value: "服务在线",
+        detail: "只说明进程存活，不代表业务接口可用。",
+      },
+      readyz: {
+        status: state.ready ? "ready" : "blocked",
+        value: state.ready ? "平台依赖已就绪" : "未满足正式发布门槛",
+        detail: state.ready
+          ? "平台身份、审计、幂等和会话依赖已通过检查。"
+          : "具体技术字段已隐藏，请由管理员检查部署配置。",
+      },
+    },
+    blockers,
+    clients: [],
+    roles: Object.entries(ROLE_PRESENTATION).map(([key, [label, description]]) => ({
+      key,
+      label,
+      description,
+    })),
+    tools: composition.definitions.map((definition) => ({
+      name: definition.name,
+      ...TOOL_PRESENTATION[definition.name],
+      kind: definition.kind,
+      roles: [...getToolPolicy(definition.name).roles],
+      availability:
+        fixture || (state.ready && LOCAL_TOOL_NAMES.has(definition.name))
+          ? "ready"
+          : "unavailable",
+    })),
+    sources: businessSources(composition.mode),
+    approvals: {
+      validation: {
+        status: "blocked",
+        summary: "当前后台只读，不提供保存、发布或回滚操作。",
+      },
+      changes: [],
+      chain: [],
+    },
+    audit: [],
+    status_legend: [
+      { key: "ready", label: "已就绪", detail: "当前检查通过。" },
+      { key: "unavailable", label: "不可用", detail: "所需来源当前不能使用。" },
+      { key: "blocked", label: "已阻断", detail: "安全或发布门槛禁止继续。" },
+      { key: "manual_review", label: "人工复核", detail: "只能用于流程核验，不能作为正式结果。" },
+    ],
+  };
 }
 
 function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefined {
@@ -74,7 +279,31 @@ function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefi
   return { issuer, audience };
 }
 
-async function toRequest(request: IncomingMessage): Promise<Request> {
+function fixtureAuthenticatorFromEnvironment(): (token: string) => AuthClaims {
+  const expectedToken = process.env.MCP_FIXTURE_TOKEN?.trim();
+  if (expectedToken === undefined || expectedToken.length === 0) {
+    throw new Error("MCP_FIXTURE_TOKEN must be explicitly set in fixtures mode.");
+  }
+  return (token) => {
+    if (token !== expectedToken) throw new AuthenticationError();
+    return {
+      tenant_id: "tenant_fixture",
+      actor_id: "local_operator",
+      actor_role: "admin",
+      roles: ["admin"],
+      scopes: ["platform:admin"],
+      client_id: "local_fixture_client",
+      session_id: "local_fixture_auth",
+      expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
+    };
+  };
+}
+
+async function toRequest(
+  request: IncomingMessage,
+  allowLoopbackHttp = false,
+  trustedProxy: (address: string | undefined) => boolean = () => false,
+): Promise<Request> {
   const contentLength = request.headers["content-length"];
   if (Array.isArray(contentLength)) {
     throw new RuntimeRequestError("Invalid content length.");
@@ -115,8 +344,20 @@ async function toRequest(request: IncomingMessage): Promise<Request> {
       headers.set(name, value);
     }
   }
-  const forwardedProto = headers.get("x-forwarded-proto") === "https" ? "https" : "http";
+  const localAddress = request.socket.localAddress;
+  const loopbackFixture =
+    allowLoopbackHttp &&
+    (localAddress === "127.0.0.1" ||
+      localAddress === "::1" ||
+      localAddress === "::ffff:127.0.0.1");
   const host = headers.get("host") ?? "mcp.example.invalid";
+  if (loopbackFixture && headers.get("origin") === null) {
+    headers.set("origin", `http://${host}`);
+  }
+  const forwardedProto = loopbackFixture ||
+    (headers.get("x-forwarded-proto") === "https" && trustedProxy(request.socket.remoteAddress))
+    ? "https"
+    : "http";
   return new Request(`${forwardedProto}://${host}${request.url ?? "/mcp"}`, {
     method: request.method ?? "GET",
     headers,
@@ -135,6 +376,7 @@ async function handleRuntimeRequest(
   response: ServerResponse,
   composition: GatewayComposition,
   adminUi: AdminStaticHandler,
+  trustedProxy: (address: string | undefined) => boolean,
 ): Promise<void> {
     if (adminUi.handle(request, response)) return;
     const path = (request.url ?? "/").split("?", 1)[0];
@@ -155,7 +397,12 @@ async function handleRuntimeRequest(
       return;
     }
     try {
-      await forward(await composition.handler(await toRequest(request)), response);
+      await forward(
+        await composition.handler(
+          await toRequest(request, composition.mode === "fixtures", trustedProxy),
+        ),
+        response,
+      );
     } catch (error) {
       if (error instanceof RuntimeBodyTooLargeError) {
         json(response, 413, { status: "blocked", reason: "body_too_large" });
@@ -171,6 +418,35 @@ async function handleRuntimeRequest(
 
 export interface RuntimeServerOptions {
   readonly adminUi?: AdminStaticHandler;
+  readonly trustedProxyAddresses?: readonly string[];
+}
+
+function trustedProxyChecker(entries: readonly string[]): (address: string | undefined) => boolean {
+  const list = new BlockList();
+  for (const entry of entries) {
+    const [address, prefixText, ...extra] = entry.split("/");
+    const family = address === undefined ? 0 : isIP(address);
+    if (address === undefined || family === 0 || extra.length > 0) {
+      throw new Error("Trusted proxy entries must be IP addresses or CIDR subnets.");
+    }
+    const type = family === 4 ? "ipv4" : "ipv6";
+    if (prefixText === undefined) {
+      list.addAddress(address, type);
+      continue;
+    }
+    const prefix = Number(prefixText);
+    if (!Number.isSafeInteger(prefix) || prefix < 0 || prefix > (family === 4 ? 32 : 128)) {
+      throw new Error("Trusted proxy CIDR prefix is invalid.");
+    }
+    list.addSubnet(address, prefix, type);
+  }
+  return (address) => {
+    if (address === undefined) return false;
+    const family = isIP(address);
+    if (family !== 0 && list.check(address, family === 4 ? "ipv4" : "ipv6")) return true;
+    const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
+    return mapped !== undefined && list.check(mapped, "ipv4");
+  };
 }
 
 export function createRuntimeServer(
@@ -183,37 +459,102 @@ export function createRuntimeServer(
     createAdminStaticHandler({
       staticDir: resolve(process.cwd(), "dist/admin"),
       ...(enabledSetting === undefined ? {} : { enabledSetting }),
+      snapshotProvider: () => adminRuntimeSnapshot(composition),
     });
+  const trustedProxy = trustedProxyChecker(
+    options.trustedProxyAddresses ?? splitSetting("MCP_TRUSTED_PROXY_ADDRESSES", ""),
+  );
   return createServer(
     {
       headersTimeout: RUNTIME_HEADERS_TIMEOUT_MS,
       requestTimeout: RUNTIME_REQUEST_TIMEOUT_MS,
     },
     (request, response) => {
-    void handleRuntimeRequest(request, response, composition, adminUi);
+    void handleRuntimeRequest(request, response, composition, adminUi, trustedProxy);
     },
   );
+}
+
+export async function closeRuntimeServer(
+  server: ReturnType<typeof createServer>,
+  composition: GatewayComposition,
+): Promise<void> {
+  const serverClosed = new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+  let failed = false;
+  try {
+    await composition.close();
+  } catch {
+    failed = true;
+  }
+  server.closeAllConnections();
+  try {
+    await serverClosed;
+  } catch {
+    failed = true;
+  }
+  if (failed) {
+    throw new Error("The runtime could not close every resource cleanly.");
+  }
 }
 
 function makeComposition(): GatewayComposition {
   const mode = process.env.MCP_DATA_MODE;
   const common = {
-    allowedOrigins: splitSetting("MCP_ALLOWED_ORIGINS", "https://client.example.invalid"),
-    allowedHosts: splitSetting("MCP_ALLOWED_HOSTS", "mcp.example.invalid"),
-    authenticate: () => {
-      throw new AuthenticationError("A production token verifier must be configured by the gateway.");
-    },
+    allowedOrigins: splitSetting(
+      "MCP_ALLOWED_ORIGINS",
+      mode === "fixtures" ? `http://127.0.0.1:${PORT}` : "",
+    ),
+    allowedHosts: splitSetting(
+      "MCP_ALLOWED_HOSTS",
+      mode === "fixtures" ? `127.0.0.1:${PORT}` : "",
+    ),
   };
   if (mode === "fixtures") {
-    return createFixtureComposition({ dataMode: "fixtures", ...common });
+    return createFixtureComposition({
+      dataMode: "fixtures",
+      ...common,
+      authenticate: fixtureAuthenticatorFromEnvironment(),
+    });
   }
   if (mode !== "production") {
     throw new Error("MCP_DATA_MODE must be explicitly set to production or fixtures.");
   }
   const tokenPolicy = tokenPolicyFromEnvironment();
+  const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
+  const instanceId = process.env.MCP_INSTANCE_ID?.trim();
+  const jwksUrl = process.env.MCP_JWKS_URL?.trim();
+  const outboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
+  const store =
+    databasePath === undefined || databasePath.length === 0
+      ? undefined
+      : new SqliteProductionStore(databasePath);
+  const tokenVerifier =
+    tokenPolicy === undefined ||
+    jwksUrl === undefined ||
+    jwksUrl.length === 0 ||
+    outboundHosts.length === 0
+      ? undefined
+      : createProductionTokenVerifier({
+          jwksUrl,
+          allowedHosts: outboundHosts,
+        });
   return createProductionComposition({
     dataMode: "production",
     ...common,
+    adapterSource: createProductionApiAdapterSource(),
+    ...(store === undefined
+      ? {}
+      : {
+          auditRepository: store,
+          idempotencyRepository: store,
+          sessionBindingStore: store,
+        }),
+    ...(instanceId === undefined || instanceId.length === 0
+      ? {}
+      : { sessionOwnerId: instanceId }),
+    ...(tokenVerifier === undefined ? {} : { tokenVerifier }),
     ...(tokenPolicy === undefined ? {} : { tokenPolicy }),
   });
 }
@@ -235,13 +576,11 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   const composition = makeComposition();
   const server = createRuntimeServer(composition);
-  server.listen(PORT, "0.0.0.0");
-  const close = async () => {
-    await composition.close();
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error === undefined ? resolve() : reject(error)));
-    });
-  };
-  process.once("SIGTERM", () => void close().finally(() => process.exit(0)));
-  process.once("SIGINT", () => void close().finally(() => process.exit(0)));
+  server.listen(PORT, process.env.MCP_DATA_MODE === "fixtures" ? "127.0.0.1" : "0.0.0.0");
+  const shutdown = () => void closeRuntimeServer(server, composition).then(
+    () => process.exit(0),
+    () => process.exit(1),
+  );
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }

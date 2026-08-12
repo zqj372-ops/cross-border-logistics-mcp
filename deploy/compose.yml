@@ -12,12 +12,15 @@ services:
       MCP_DATA_MODE: "${MCP_DATA_MODE:?MCP_DATA_MODE is required}"
       MCP_JWT_ISSUER: "${MCP_JWT_ISSUER:?MCP_JWT_ISSUER is required}"
       MCP_JWT_AUDIENCE: "${MCP_JWT_AUDIENCE:?MCP_JWT_AUDIENCE is required}"
+      MCP_JWKS_URL: "${MCP_JWKS_URL:?MCP_JWKS_URL is required}"
+      MCP_INSTANCE_ID: "${MCP_INSTANCE_ID:?MCP_INSTANCE_ID is required}"
+      MCP_STATE_DB_PATH: "/var/lib/logistics-mcp/platform.sqlite"
       MCP_ALLOWED_ORIGINS: "${MCP_ALLOWED_ORIGINS:?MCP_ALLOWED_ORIGINS is required}"
       MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:?MCP_ALLOWED_HOSTS is required}"
       MCP_ALLOWED_OUTBOUND_HOSTS: "${MCP_ALLOWED_OUTBOUND_HOSTS:?MCP_ALLOWED_OUTBOUND_HOSTS is required}"
-      MCP_TENANT_MAPPING: "${MCP_TENANT_MAPPING:?MCP_TENANT_MAPPING is required}"
-      MCP_CLIENT_ID: "${MCP_CLIENT_ID:?MCP_CLIENT_ID is required}"
-      MCP_UPSTREAM_TOKEN_FILE: "/run/secrets/mcp_upstream_token"
+      MCP_TRUSTED_PROXY_ADDRESSES: "${MCP_TRUSTED_PROXY_ADDRESSES:?MCP_TRUSTED_PROXY_ADDRESSES is required}"
+    volumes:
+      - mcp_state:/var/lib/logistics-mcp
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
@@ -37,9 +40,5 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
-    secrets:
-      - mcp_upstream_token
-
-secrets:
-  mcp_upstream_token:
-    external: true
+volumes:
+  mcp_state:

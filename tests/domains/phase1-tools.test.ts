@@ -190,6 +190,40 @@ describe("Task 05 Phase 1 bundle", () => {
     })).toThrow();
   });
 
+  it("accepts optional quote volume and trims customs query at its boundaries", () => {
+    const bundle = createPhase1Bundle(createFixtureAdapters());
+    const quoteContract = bundle.contracts["quote.canada_final_mile.calculate"];
+    const customsContract = bundle.contracts["customs.ca.search"];
+
+    expect(quoteContract?.inputSchema.safeParse(quoteInput()).success).toBe(true);
+    expect(quoteContract?.inputSchema.safeParse({
+      ...quoteInput(),
+      cargo: { ...quoteInput().cargo, total_volume: { value: "1.25", unit: "cbm" } },
+    }).success).toBe(true);
+    expect(quoteContract?.inputSchema.safeParse({
+      ...quoteInput(),
+      cargo: { ...quoteInput().cargo, total_volume: { value: "1.25", unit: "m3" } },
+    }).success).toBe(true);
+    expect(quoteContract?.inputSchema.safeParse({
+      ...quoteInput(),
+      cargo: { ...quoteInput().cargo, total_volume: null },
+    }).success).toBe(true);
+    expect(quoteContract?.inputSchema.safeParse({
+      ...quoteInput(),
+      cargo: { ...quoteInput().cargo, total_volume: { value: "1.25", unit: "l" } },
+    }).success).toBe(false);
+
+    expect(customsContract?.inputSchema.safeParse(searchInput()).success).toBe(true);
+    const parsedQuery = customsContract?.inputSchema.safeParse({
+      ...searchInput(),
+      query: `  ${"x".repeat(200)}  `,
+    });
+    expect(parsedQuery.success).toBe(true);
+    expect((parsedQuery.data as { query?: string }).query).toBe("x".repeat(200));
+    expect(customsContract?.inputSchema.safeParse({ ...searchInput(), query: " \t" }).success).toBe(false);
+    expect(customsContract?.inputSchema.safeParse({ ...searchInput(), query: "x".repeat(201) }).success).toBe(false);
+  });
+
   it("executes quote and customs read tools with versioned sources", async () => {
     const bundle = createPhase1Bundle(createFixtureAdapters());
     const quote = await executeRegisteredToolWithResult(

@@ -249,27 +249,33 @@ export function createProductionPlatformAssembly(
         ["platform_idempotency_repository_unhealthy", idempotencyRepository] as const,
         ["platform_session_binding_store_unhealthy", sessionBindingStore] as const,
       ];
+      const uniqueDependencies = new Map<DurableDependency, string[]>();
+      for (const [reason, dependency] of healthChecks) {
+        const reasons = uniqueDependencies.get(dependency) ?? [];
+        reasons.push(reason);
+        uniqueDependencies.set(dependency, reasons);
+      }
       const results = await Promise.all(
-        healthChecks.map(async ([reason, dependency]) => {
+        [...uniqueDependencies].map(async ([dependency, dependencyReasons]) => {
           try {
-            return (await dependency.health()).ready ? null : reason;
+            return (await dependency.health()).ready ? [] : dependencyReasons;
           } catch {
-            return reason;
+            return dependencyReasons;
           }
         }),
       );
-      const reasons: string[] = [];
-      for (const reason of results) {
-        if (reason !== null) reasons.push(reason);
-      }
+      const reasons = results.flat();
       return { ready: reasons.length === 0, reasons };
     },
     close: async () => {
+      const dependencies = new Set<DurableDependency>([
+        auditRepository,
+        idempotencyRepository,
+        sessionBindingStore,
+      ]);
       const results = await Promise.allSettled([
         sessionRegistry.close(),
-        auditRepository.close(),
-        idempotencyRepository.close(),
-        sessionBindingStore.close(),
+        ...[...dependencies].map((dependency) => dependency.close()),
       ]);
       if (results.some((result) => result.status === "rejected")) {
         throw new Error("A production platform dependency could not be closed.");

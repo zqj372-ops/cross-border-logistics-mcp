@@ -3,6 +3,10 @@ import { z } from "zod";
 
 import { parseExecutionContext, type AuthClaims } from "../../src/logistics_mcp/platform/context";
 import { MemoryAuditRepository } from "../../src/logistics_mcp/platform/audit";
+import type {
+  SessionBinding,
+  SessionBindingStore,
+} from "../../src/logistics_mcp/platform/dependencies";
 import {
   hashPayload,
   MemoryIdempotencyRepository,
@@ -105,11 +109,15 @@ describe("Streamable HTTP security boundary", () => {
     const invalidContentType = await handle(
       makeRequest(initializeBody, { "content-type": "text/plain" }),
     );
+    const originlessRequest = makeRequest(initializeBody);
+    originlessRequest.headers.delete("origin");
+    const missingOrigin = await handle(originlessRequest);
 
     expect(invalidOrigin.status).toBe(403);
     expect(invalidHost.status).toBe(403);
     expect(nonHttps.status).toBe(400);
     expect(invalidContentType.status).toBe(415);
+    expect(missingOrigin.status).toBe(200);
   });
 
   it("does not allow HTTPS to be disabled by configuration", () => {
@@ -130,8 +138,21 @@ describe("Streamable HTTP security boundary", () => {
   });
 
   it("returns a bounded timeout response when authentication does not finish", async () => {
+    const bindings = new Map<string, SessionBinding>();
     const handle = makeHandler({
       requestTimeoutMs: 10,
+      sessionBindingStore: {
+        get: (sessionId) => Promise.resolve(bindings.get(sessionId) ?? null),
+        put: (binding) => {
+          bindings.set(binding.sessionId, binding);
+          return Promise.resolve();
+        },
+        delete: (sessionId) => {
+          bindings.delete(sessionId);
+          return Promise.resolve();
+        },
+      },
+      sessionOwnerId: "worker_timeout_test",
       authenticate: async () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
         return validClaims();
@@ -143,6 +164,65 @@ describe("Streamable HTTP security boundary", () => {
 
     expect(response.status).toBe(504);
     expect(body.status).toBe("unavailable");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(bindings.size).toBe(0);
+  });
+
+  it("propagates timeout cancellation before a write handler commits", async () => {
+    let writes = 0;
+    const key = "idem_http_timeout_123456";
+    const handle = makeHandler({
+      maxBodyBytes: 2048,
+      requestTimeoutMs: 20,
+      authenticate: () => ({
+        ...validClaims(),
+        scopes: ["quote:calculate", "quote:draft_write"],
+      }),
+      handlers: {
+        "quote.save_draft": async (_input, _context, signal) => {
+          await new Promise((resolve) => setTimeout(resolve, 60));
+          signal?.throwIfAborted();
+          writes += 1;
+          return { status: "unavailable", data: null };
+        },
+      },
+      contracts: {
+        "quote.save_draft": {
+          inputSchema: z.record(z.string(), z.unknown()),
+          validateOutput: () => undefined,
+        },
+      },
+    });
+    const initialized = await handle(makeRequest(initializeBody));
+    const sessionId = initialized.headers.get("mcp-session-id");
+    expect(sessionId).not.toBeNull();
+
+    const response = await handle(makeRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "quote.save_draft", arguments: {
+        schema_version: "2026-08-11.v1",
+        write_context: {
+          tenant_context: {
+            tenant_id: "tenant_demo",
+            actor_id: "actor_sales",
+            actor_role: "sales",
+            client_id: "client_demo",
+            session_id: "session_demo",
+          },
+          idempotency_key: key,
+          operation_mode: "commit",
+          preview_ref: "preview_timeout_001",
+          approval: { required: true, status: "approved", approval_id: "approval_timeout_001" },
+        },
+      } },
+    }, { "mcp-session-id": sessionId ?? "" }));
+
+    expect(response.status).toBe(504);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    expect(writes).toBe(0);
+    await handle.close();
   });
 
   it("uses the SDK Streamable HTTP transport for an allowed initialize request", async () => {
@@ -154,6 +234,103 @@ describe("Streamable HTTP security boundary", () => {
 
     expect(response.status).toBe(200);
     expect(body.result?.protocolVersion).toBe("2025-03-26");
+  });
+
+  it("removes a new session when the SDK rejects initialize", async () => {
+    const bindings = new Map<string, SessionBinding>();
+    const handle = makeHandler({
+      sessionBindingStore: {
+        get: (sessionId) => Promise.resolve(bindings.get(sessionId) ?? null),
+        put: (binding) => {
+          bindings.set(binding.sessionId, binding);
+          return Promise.resolve();
+        },
+        delete: (sessionId) => {
+          bindings.delete(sessionId);
+          return Promise.resolve();
+        },
+      },
+      sessionOwnerId: "worker_rejected_initialize",
+    });
+    const request = makeRequest(initializeBody);
+    request.headers.delete("accept");
+
+    const response = await handle(request);
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(bindings.size).toBe(0);
+    await handle.close();
+  });
+
+  it("persists session ownership and rejects a binding owned by another process", async () => {
+    const bindings = new Map<string, SessionBinding>();
+    const bindingStore: SessionBindingStore = {
+      get: (sessionId) => Promise.resolve(bindings.get(sessionId) ?? null),
+      put: (binding) => {
+        bindings.set(binding.sessionId, binding);
+        return Promise.resolve();
+      },
+      delete: (sessionId) => {
+        bindings.delete(sessionId);
+        return Promise.resolve();
+      },
+    };
+    const handle = makeHandler({
+      sessionBindingStore: bindingStore,
+      sessionOwnerId: "worker_a",
+    });
+
+    const initialized = await handle(makeRequest(initializeBody));
+    const sessionId = initialized.headers.get("mcp-session-id");
+    expect(sessionId).not.toBeNull();
+    expect(bindings.get(sessionId ?? "")).toMatchObject({
+      sessionId,
+      tenantId: "tenant_demo",
+      ownerId: "worker_a",
+    });
+
+    const binding = bindings.get(sessionId ?? "");
+    if (binding === undefined) throw new Error("session binding was not stored");
+    bindings.set(binding.sessionId, { ...binding, ownerId: "worker_b" });
+    const response = await handle(
+      makeRequest(
+        { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+        { "mcp-session-id": sessionId ?? "" },
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    await handle.close();
+    expect(bindings.size).toBe(0);
+  });
+
+  it("maps a verified raw JWT payload only after gateway token policy validation", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const handle = makeHandler({
+      tokenPolicy: {
+        issuer: "https://issuer.example.invalid/",
+        audience: "logistics-mcp",
+        nowSeconds: now,
+      },
+      authenticate: () => ({
+        iss: "https://issuer.example.invalid/",
+        aud: "logistics-mcp",
+        sub: "actor_sales",
+        tenant_id: "tenant_demo",
+        actor_role: "sales",
+        roles: ["sales"],
+        scopes: ["quote:calculate", "system:read"],
+        client_id: "client_demo",
+        session_id: "session_demo",
+        iat: now - 1,
+        exp: now + 300,
+      }),
+    });
+
+    const response = await handle(makeRequest(initializeBody));
+
+    expect(response.status).toBe(200);
+    await handle.close();
   });
 
   it("returns unavailable instead of a pseudo-success when no handler exists", async () => {

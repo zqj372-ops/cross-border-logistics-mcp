@@ -11,6 +11,7 @@ export const reviewCreateTaskOutputValidator = outputValidator(writeResultSchema
 export async function createReviewTask(
   adapter: ReviewAdapter,
   input: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<AdapterResult> {
   const writeContext = input.write_context;
   if (
@@ -21,5 +22,5 @@ export async function createReviewTask(
   ) {
     return adapter.previewTask(input);
   }
-  return adapter.commitTask(input);
+  return adapter.commitTask(input, signal);
 }

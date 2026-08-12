@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -7,7 +8,6 @@ import { z } from "zod";
 import {
   AuthenticationError,
   parseExecutionContext,
-  type AuthClaims,
   type ExecutionContext,
 } from "../platform/context";
 import {
@@ -26,7 +26,8 @@ import type {
 } from "../platform/repositories";
 import {
   PlatformConfigurationError,
-  type PlatformReadiness,
+  type SessionBinding,
+  type SessionBindingStore,
 } from "../platform/dependencies";
 import {
   SessionContextMismatchError,
@@ -64,14 +65,15 @@ export interface McpHttpOptions {
   readonly allowedHosts: readonly string[];
   readonly authenticate: (
     token: string,
-  ) => AuthClaims | Promise<AuthClaims>;
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
   readonly tokenPolicy?: ShortLivedTokenValidationOptions;
   readonly handlers?: ToolHandlerMap;
   readonly contracts?: ToolContractMap;
   readonly auditRepository: AuditRepository;
   readonly idempotencyRepository: IdempotencyRepository;
   readonly sessionRegistry: SessionRuntimeRegistry;
-  readonly runtimeReadiness?: () => Promise<PlatformReadiness>;
+  readonly sessionBindingStore?: SessionBindingStore;
+  readonly sessionOwnerId?: string;
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly requireHttps?: boolean;
@@ -391,6 +393,15 @@ function ensureSecurityOptions(options: McpHttpOptions): void {
   if ((options.requestTimeoutMs ?? 10_000) < 1) {
     throw new Error("The request timeout must be positive.");
   }
+  if ((options.sessionBindingStore === undefined) !== (options.sessionOwnerId === undefined)) {
+    throw new Error("Session binding store and owner ID must be configured together.");
+  }
+  if (
+    options.sessionOwnerId !== undefined &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(options.sessionOwnerId)
+  ) {
+    throw new Error("The session owner ID is invalid.");
+  }
 }
 
 function ensurePlatformDependencies(options: McpHttpOptions): void {
@@ -559,10 +570,17 @@ function jsonRpcMethod(body: unknown): string | null {
   return body.method;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new RequestTimeoutError()), timeoutMs);
-    promise.then(
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new RequestTimeoutError());
+    }, timeoutMs);
+    operation(controller.signal).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -575,6 +593,10 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
+function assertRequestActive(signal: AbortSignal): void {
+  if (signal.aborted) throw new RequestTimeoutError();
+}
+
 function registerMcpTools(
   server: McpServer,
   definitions: readonly ToolDefinition[],
@@ -582,6 +604,7 @@ function registerMcpTools(
   requestIdForCall: () => string,
   auditRepository: AuditRepository,
   idempotencyRepository: IdempotencyRepository,
+  requestSignals: AsyncLocalStorage<AbortSignal>,
 ): void {
   const missingContractInputSchema = z.record(z.string(), z.unknown());
   for (const definition of definitions) {
@@ -594,6 +617,7 @@ function registerMcpTools(
       },
       async (input) => {
         const requestId = requestIdForCall();
+        const signal = requestSignals.getStore();
         const audit = auditId();
         const startedAt = Date.now();
         let envelope: ResponseEnvelope;
@@ -610,6 +634,7 @@ function registerMcpTools(
               requestId,
               auditId: audit,
               idempotencyRepository,
+              ...(signal === undefined ? {} : { signal }),
             },
           );
           envelope = result.envelope;
@@ -662,6 +687,10 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   const idempotencyRepository = options.idempotencyRepository;
   const definitions = registerPhaseOneTools(options.handlers, options.contracts);
   const sessions = options.sessionRegistry;
+  const sessionBindingStore = options.sessionBindingStore;
+  const sessionOwnerId = options.sessionOwnerId;
+  const requestSignals = new AsyncLocalStorage<AbortSignal>();
+  const createdSessionIds = new Set<string>();
   const requireHttps = options.requireHttps ?? true;
 
   const secureFailure = async (
@@ -693,7 +722,8 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
 
   const createSession = async (
     context: ExecutionContext,
-  ): Promise<SessionRuntimeHandle> => {
+    signal: AbortSignal,
+  ): Promise<{ readonly sessionId: string; readonly runtime: SessionRuntimeHandle }> => {
     const sessionId = `mcp_${randomUUID()}`;
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => sessionId,
@@ -702,7 +732,9 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       allowedOrigins: [...options.allowedOrigins],
       enableDnsRebindingProtection: true,
       onsessionclosed: (closedSessionId) => {
+        createdSessionIds.delete(closedSessionId);
         void sessions.delete(closedSessionId).catch(() => undefined);
+        void sessionBindingStore?.delete(closedSessionId).catch(() => undefined);
       },
     });
     const server = new McpServer({
@@ -717,34 +749,52 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       requestIdForCall,
       auditRepository,
       idempotencyRepository,
+      requestSignals,
     );
     const runtime: SessionRuntimeHandle = { transport, server };
     let registered = false;
     try {
-      await sessions.register(sessionId, runtime, context);
+      const entry = await sessions.register(sessionId, runtime, context);
       registered = true;
+      assertRequestActive(signal);
       await server.connect(transport);
+      assertRequestActive(signal);
+      if (sessionBindingStore !== undefined && sessionOwnerId !== undefined) {
+        const binding: SessionBinding = {
+          sessionId: entry.sessionId,
+          tenantId: entry.tenantId,
+          actorId: entry.actorId,
+          clientId: entry.clientId,
+          authSessionId: entry.authSessionId,
+          contextFingerprint: entry.contextFingerprint,
+          ownerId: sessionOwnerId,
+          createdAtMs: entry.createdAtMs,
+          expiresAtMs: Math.min(
+            entry.tokenExpiresAtMs,
+            entry.createdAtMs + sessions.limits.maxLifetimeMs,
+          ),
+        };
+        await sessionBindingStore.put(binding);
+        createdSessionIds.add(sessionId);
+        assertRequestActive(signal);
+      }
     } catch (error: unknown) {
       if (registered) {
         await sessions.delete(sessionId).catch(() => undefined);
       } else {
         await Promise.allSettled([server.close(), transport.close()]);
       }
+      await sessionBindingStore?.delete(sessionId).catch(() => undefined);
+      createdSessionIds.delete(sessionId);
       throw error;
     }
-    return runtime;
+    return { sessionId, runtime };
   };
 
-  const processRequest = async (request: Request): Promise<Response> => {
-    if (options.runtimeReadiness !== undefined) {
-      let state: PlatformReadiness;
-      try {
-        state = await options.runtimeReadiness();
-      } catch {
-        state = { ready: false, reasons: ["runtime_readiness_unavailable"] };
-      }
-      if (!state.ready) return unavailableRuntimeResponse(state.reasons);
-    }
+  const processRequest = async (
+    request: Request,
+    signal: AbortSignal,
+  ): Promise<Response> => {
     const startedAt = Date.now();
     let url: URL;
     try {
@@ -757,7 +807,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     }
 
     const origin = request.headers.get("origin");
-    if (origin === null || !options.allowedOrigins.includes(origin)) {
+    if (origin !== null && !options.allowedOrigins.includes(origin)) {
       return secureFailure(request, 403, new ForbiddenError());
     }
     const host = request.headers.get("host") ?? url.host;
@@ -773,6 +823,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       }
       try {
         body = await readJsonBody(request, maxBodyBytes);
+        assertRequestActive(signal);
       } catch (error: unknown) {
         if (error instanceof BodyTooLargeError) {
           return secureFailure(request, 413, error);
@@ -794,6 +845,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
         throw new AuthenticationError();
       }
       const claims = await options.authenticate(token);
+      assertRequestActive(signal);
       if (options.tokenPolicy === undefined) {
         context = parseExecutionContext(claims);
       } else {
@@ -810,7 +862,8 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
           expires_at: verified.exp,
         });
       }
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof RequestTimeoutError) throw error;
       return secureFailure(request, 401, new AuthenticationError());
     }
 
@@ -822,18 +875,44 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
 
     const sessionId = request.headers.get("mcp-session-id");
     let session: SessionRuntimeHandle;
+    let newSessionId: string | null = null;
     if (sessionId !== null) {
       try {
+        const binding = await sessionBindingStore?.get(sessionId);
+        assertRequestActive(signal);
+        if (sessionBindingStore !== undefined) {
+          if (binding === null) {
+            await sessions.delete(sessionId).catch(() => undefined);
+            return secureFailure(request, 404, new RequestSecurityError(), context);
+          }
+          if (binding?.ownerId !== sessionOwnerId) {
+            return secureFailure(request, 503, new RequestSecurityError(), context);
+          }
+        }
         const entry = await sessions.get(sessionId, context);
+        assertRequestActive(signal);
         if (entry === null) {
+          await sessionBindingStore?.delete(sessionId);
           return secureFailure(request, 404, new RequestSecurityError(), context);
         }
+        if (
+          binding !== undefined && binding !== null &&
+          (binding.tenantId !== entry.tenantId ||
+            binding.actorId !== entry.actorId ||
+            binding.clientId !== entry.clientId ||
+            binding.authSessionId !== entry.authSessionId ||
+            binding.contextFingerprint !== entry.contextFingerprint)
+        ) {
+          return secureFailure(request, 503, new RequestSecurityError(), context);
+        }
         const touched = await sessions.touch(sessionId, context);
+        assertRequestActive(signal);
         if (touched === null) {
           return secureFailure(request, 404, new RequestSecurityError(), context);
         }
         session = touched.runtime;
       } catch (error: unknown) {
+        if (error instanceof RequestTimeoutError) throw error;
         return secureFailure(
           request,
           error instanceof SessionContextMismatchError ? 403 : 503,
@@ -842,17 +921,26 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
         );
       }
     } else if (jsonRpcMethod(body) === "initialize") {
-      session = await createSession(context);
+      const created = await createSession(context, signal);
+      session = created.runtime;
+      newSessionId = created.sessionId;
     } else {
       return secureFailure(request, 400, new RequestSecurityError(), context);
     }
 
     try {
-      const response = await session.transport.handleRequest(
-        request,
-        request.method === "POST" ? { parsedBody: body } : undefined,
-      );
+      const response = await requestSignals.run(signal, () =>
+        session.transport.handleRequest(
+          request,
+          request.method === "POST" ? { parsedBody: body } : undefined,
+        ));
+      assertRequestActive(signal);
       if (response.status >= 400) {
+        if (newSessionId !== null) {
+          await sessions.delete(newSessionId).catch(() => undefined);
+          await sessionBindingStore?.delete(newSessionId).catch(() => undefined);
+          createdSessionIds.delete(newSessionId);
+        }
         const envelope = failureEnvelope(requestIdFor(request), new RequestSecurityError());
         await recordAudit(
           auditRepository,
@@ -865,18 +953,32 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       }
       return response;
     } catch (error: unknown) {
+      if (newSessionId !== null) {
+        await sessions.delete(newSessionId).catch(() => undefined);
+        await sessionBindingStore?.delete(newSessionId).catch(() => undefined);
+        createdSessionIds.delete(newSessionId);
+      }
+      if (error instanceof RequestTimeoutError) throw error;
       return secureFailure(request, 503, error, context, "mcp.transport");
     }
   };
 
   const handler = (request: Request): Promise<Response> =>
-    withTimeout(processRequest(request), requestTimeoutMs).catch(
+    withTimeout((signal) => processRequest(request, signal), requestTimeoutMs).catch(
       async (error: unknown) =>
         secureFailure(request, error instanceof RequestTimeoutError ? 504 : 503, error),
     );
 
   handler.close = async (): Promise<void> => {
-    await sessions.close();
+    const sessionIds = [...createdSessionIds];
+    createdSessionIds.clear();
+    const results = await Promise.allSettled([
+      sessions.close(),
+      ...sessionIds.map((sessionId) => sessionBindingStore?.delete(sessionId)),
+    ]);
+    if (results.some((result) => result.status === "rejected")) {
+      throw new Error("The MCP session runtime could not be closed cleanly.");
+    }
   };
 
   return handler;

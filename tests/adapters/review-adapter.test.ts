@@ -116,6 +116,10 @@ describe("manual review task adapter", () => {
       record_id: "review-task-demo-001",
     });
     expect(createTask).toHaveBeenCalledTimes(1);
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotency_key: "idem_demo_review_12345678" }),
+      expect.any(AbortSignal),
+    );
     expect(readTask).toHaveBeenCalledTimes(1);
   });
 
@@ -150,6 +154,20 @@ describe("manual review task adapter", () => {
 
     expect(result.status).toBe("blocked");
     expect(result.blockers?.map((item) => item.code)).toContain("review.approval_required");
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it("does not cross the upstream task boundary after cancellation", async () => {
+    const { source, createTask } = createSource();
+    const adapter = new ManualTaskAdapter({ source });
+    const preview = await adapter.previewTask(taskInput("preview"));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(adapter.commitTask(
+      taskInput("commit", String(preview.data && preview.data.preview_ref)),
+      controller.signal,
+    )).rejects.toThrow();
     expect(createTask).not.toHaveBeenCalled();
   });
 

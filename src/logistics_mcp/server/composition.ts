@@ -28,8 +28,9 @@ import {
   type ToolDefinition,
   type ToolHandlerMap,
 } from "./tool-registry";
-import {
-  type FixtureAdapters,
+import type {
+  CustomsAdapter,
+  FixtureAdapters,
 } from "../adapters/ports";
 import {
   createFixtureAdapters,
@@ -68,12 +69,16 @@ export interface ManagedProductionDependency {
 
 export interface ProductionTokenVerifier extends ManagedProductionDependency {
   readonly kind: "token_verifier";
-  verify(token: string): AuthClaims | Promise<AuthClaims>;
+  verify(token: string): Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 export interface ProductionAdapterSource extends ManagedProductionDependency {
   readonly kind: "adapter_source";
   readonly adapters: FixtureAdapters;
+}
+
+export interface ProductionApiAdapterSourceOptions {
+  readonly customs?: CustomsAdapter;
 }
 
 export type CompositionMode = "fixtures" | "production";
@@ -105,6 +110,7 @@ export interface ProductionCompositionOptions
   readonly tokenVerifier?: ProductionTokenVerifier;
   readonly adapterSource?: ProductionAdapterSource;
   readonly sessionBindingStore?: DurableSessionBindingStore;
+  readonly sessionOwnerId?: string;
 }
 
 export interface GatewayComposition {
@@ -126,13 +132,27 @@ function failClosedAuthenticator(): AuthClaims {
   );
 }
 
-function productionAdapters(): FixtureAdapters {
+function productionAdapters(
+  options: ProductionApiAdapterSourceOptions = {},
+): FixtureAdapters {
   return {
     quote: new ExistingQuoteAdapter(),
-    customs: new RiskCustomsAdapter(),
+    customs: options.customs ?? new RiskCustomsAdapter(),
     knowledge: new CuratedKnowledgeAdapter(),
     status: new SystemStatusAdapter(),
     review: new ManualTaskAdapter(),
+  };
+}
+
+// Health is lifecycle-only; upstream API failures stay scoped to their tools.
+export function createProductionApiAdapterSource(
+  options: ProductionApiAdapterSourceOptions = {},
+): ProductionAdapterSource {
+  return {
+    kind: "adapter_source",
+    adapters: productionAdapters(options),
+    health: () => Promise.resolve({ ready: true }),
+    close: () => Promise.resolve(),
   };
 }
 
@@ -184,8 +204,20 @@ function buildComposition(
     handler,
     readiness,
     close: async () => {
-      await handler.close();
-      await closeExtra();
+      let failed = false;
+      try {
+        await handler.close();
+      } catch {
+        failed = true;
+      }
+      try {
+        await closeExtra();
+      } catch {
+        failed = true;
+      }
+      if (failed) {
+        throw new Error("A gateway composition dependency could not be closed.");
+      }
     },
   };
 }
@@ -277,10 +309,28 @@ export function createProductionComposition(
     "adapter_source",
     options.adapterSource,
   );
-  const adapters = options.adapterSource?.adapters ?? productionAdapters();
+  const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
+  const adapters: FixtureAdapters = {
+    ...providedAdapters,
+    quote: new ExistingQuoteAdapter(),
+    review: new ManualTaskAdapter(),
+  };
   const tools = compositionTools(adapters);
+  const allowedOrigins = options.allowedOrigins ?? [];
+  const allowedHosts = options.allowedHosts ?? [];
+  const validSessionOwner =
+    options.sessionOwnerId !== undefined &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(options.sessionOwnerId);
   const structuralReasons = [
     ...platform.reasonCodes,
+    ...(allowedOrigins.length === 0 ? ["production_allowed_origins_missing"] : []),
+    ...(allowedHosts.length === 0 ? ["production_allowed_hosts_missing"] : []),
+    ...(options.tokenPolicy === undefined
+      ? ["production_token_policy_missing"]
+      : []),
+    ...(!validSessionOwner
+      ? ["platform_session_owner_missing"]
+      : []),
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
     ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
   ];
@@ -302,8 +352,8 @@ export function createProductionComposition(
     structuralReasons.length > 0 || platform.dependencies === undefined
       ? createUnavailableMcpHttpHandler(structuralReasons)
       : createMcpHttpHandler({
-          allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
-          allowedHosts: options.allowedHosts ?? ["mcp.example.invalid"],
+          allowedOrigins,
+          allowedHosts,
           authenticate: (token) => options.tokenVerifier!.verify(token),
           ...(options.tokenPolicy === undefined ? {} : { tokenPolicy: options.tokenPolicy }),
           handlers: tools.handlers,
@@ -311,7 +361,8 @@ export function createProductionComposition(
           auditRepository: platform.dependencies.auditRepository,
           idempotencyRepository: platform.dependencies.idempotencyRepository,
           sessionRegistry: platform.dependencies.sessionRegistry,
-          runtimeReadiness: readiness,
+          sessionBindingStore: platform.dependencies.sessionBindingStore,
+          sessionOwnerId: options.sessionOwnerId!,
           maxBodyBytes: options.maxBodyBytes ?? 32 * 1024,
           requestTimeoutMs: options.requestTimeoutMs ?? 10_000,
           requireHttps: true,
