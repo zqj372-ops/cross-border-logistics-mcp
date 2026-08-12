@@ -10,9 +10,91 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { describe, expect, it } from "vitest";
 
-import { cargoInput } from "./fixtures/tenant-fixtures";
+import {
+  cargoInput,
+  containerInput,
+  quoteInput,
+} from "./fixtures/tenant-fixtures";
 
 const root = resolve(import.meta.dirname, "../..");
+
+type ToolEnvelope = {
+  readonly request_id?: string;
+  readonly status?: string;
+  readonly data?: Record<string, unknown> | null;
+  readonly blockers?: readonly { readonly code?: string }[];
+  readonly source_refs?: readonly unknown[];
+  readonly calculation_trace?: readonly unknown[];
+};
+
+function structured(result: Awaited<ReturnType<Client["callTool"]>>): ToolEnvelope {
+  return result.structuredContent ?? {};
+}
+
+function customsSearchInput(): Record<string, unknown> {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "customs-request@fixture-1",
+    rule_date: "2026-08-11",
+    query_kind: "name_search",
+    query_code: null,
+    product_description_ref: {
+      ref_id: "opaque-product-runtime-001",
+      kind: "raw_input",
+      purpose: "synthetic runtime fixture",
+      expires_at: null,
+    },
+    product_attributes: {
+      material: "synthetic",
+      use: "runtime fixture",
+      origin_country: "CN",
+      contains_steel_aluminum: false,
+    },
+    selected_hs6: null,
+  };
+}
+
+function customsEstimateInput(): Record<string, unknown> {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "customs-estimate@fixture-1",
+    rule_date: "2026-08-11",
+    classification: {
+      hs_code: "1234.56.78",
+      status: "confirmed",
+      source_ref_ids: ["src:customs:release:fixture"],
+    },
+    origin_country: "CN",
+    value_for_duty: { amount: "200.00", currency: "CAD" },
+    import_date: "2026-08-11",
+    trade_treatment: null,
+  };
+}
+
+function runtimeWriteContext(
+  operationMode: "preview" | "commit",
+  previewRef: string | null,
+  idempotencyKey: string,
+  approval: Record<string, unknown> = {
+    required: false,
+    status: "not_required",
+    approval_id: null,
+  },
+): Record<string, unknown> {
+  return {
+    tenant_context: {
+      tenant_id: "tenant_fixture",
+      actor_id: "local_operator",
+      actor_role: "admin",
+      client_id: "local_fixture_client",
+      session_id: "local_fixture_auth",
+    },
+    idempotency_key: idempotencyKey,
+    operation_mode: operationMode,
+    preview_ref: previewRef,
+    approval,
+  };
+}
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -277,18 +359,210 @@ describe("built runtime smoke", () => {
         "system.get_data_status",
       ].sort());
 
-      const toolCall = await client.callTool({
+      const cargo = structured(await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),
+      }));
+      expect(cargo.status).toBe("success");
+      expect(cargo.data).toMatchObject({
+        metrics: { actual_weight: { unit: "kg" } },
       });
-      const structured = toolCall.structuredContent as {
-        status?: string;
-        data?: { metrics?: { actual_weight?: { unit?: string } } };
-        calculation_trace?: unknown[];
-      } | undefined;
-      expect(structured?.status).toBe("success");
-      expect(structured?.data?.metrics?.actual_weight?.unit).toBe("kg");
-      expect(structured?.calculation_trace?.length).toBeGreaterThan(0);
+      expect(cargo.calculation_trace?.length).toBeGreaterThan(0);
+
+      const container = structured(await client.callTool({
+        name: "container.plan_summary",
+        arguments: containerInput(),
+      }));
+      expect(container.status).toBe("success");
+      expect(container.data).toMatchObject({ theoretical_only: true });
+
+      const quote = structured(await client.callTool({
+        name: "quote.canada_final_mile.calculate",
+        arguments: quoteInput(),
+      }));
+      expect(quote.status).toBe("success");
+      expect(quote.data).toMatchObject({
+        quote_status: "calculated",
+        sendable: false,
+      });
+      expect(quote.source_refs?.length).toBeGreaterThan(0);
+
+      const customsSearch = structured(await client.callTool({
+        name: "customs.ca.search",
+        arguments: customsSearchInput(),
+      }));
+      expect(customsSearch.status).toBe("success");
+      expect(customsSearch.data).toMatchObject({
+        data_status: { ready: true },
+      });
+      expect(customsSearch.source_refs?.length).toBeGreaterThan(0);
+
+      const customsEstimate = structured(await client.callTool({
+        name: "customs.ca.estimate",
+        arguments: customsEstimateInput(),
+      }));
+      expect(customsEstimate.status).toBe("success");
+      expect(customsEstimate.data).toMatchObject({
+        assessment_status: "estimated",
+        requires_broker_confirmation: true,
+      });
+
+      const knowledge = structured(await client.callTool({
+        name: "knowledge.search_curated",
+        arguments: {
+          schema_version: "2026-08-11.v1",
+          query: "加拿大尾程规则",
+          scope: "quote",
+          include_archived: false,
+        },
+      }));
+      expect(knowledge.status).toBe("success");
+      expect(knowledge.source_refs?.length).toBeGreaterThan(0);
+
+      const status = structured(await client.callTool({
+        name: "system.get_data_status",
+        arguments: {
+          schema_version: "2026-08-11.v1",
+          system: "all",
+          rule_date: null,
+        },
+      }));
+      expect(status.status).toBe("success");
+      expect(status.data).toMatchObject({ ready: false, test_data: true });
+
+      const quoteDraftBase = {
+        schema_version: "2026-08-11.v1",
+        version: "quote-save@fixture-1",
+        quote_result: quote.data,
+        target: { system: "existing_quote_system", record_kind: "draft" },
+      };
+      const quotePreview = structured(await client.callTool({
+        name: "quote.save_draft",
+        arguments: {
+          ...quoteDraftBase,
+          write_context: runtimeWriteContext(
+            "preview",
+            null,
+            "idem_runtime_quote_preview_001",
+          ),
+        },
+      }));
+      expect(quotePreview.status).toBe("success");
+      expect(quotePreview.data).toMatchObject({
+        operation_status: "previewed",
+        readback_evidence: null,
+      });
+      const quotePreviewRef = String(quotePreview.data?.preview_ref);
+      const quoteCommitBase = {
+        ...quoteDraftBase,
+        write_context: runtimeWriteContext(
+          "commit",
+          quotePreviewRef,
+          "idem_runtime_quote_commit_001",
+          { required: true, status: "pending", approval_id: null },
+        ),
+      };
+      const blockedQuoteCommit = structured(await client.callTool({
+        name: "quote.save_draft",
+        arguments: quoteCommitBase,
+      }));
+      expect(blockedQuoteCommit.status).toBe("blocked");
+      expect(blockedQuoteCommit.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "approval.not_approved" }),
+        ]),
+      );
+      const approvedQuoteCommit = {
+        ...quoteCommitBase,
+        write_context: runtimeWriteContext(
+          "commit",
+          quotePreviewRef,
+          "idem_runtime_quote_commit_001",
+          {
+            required: true,
+            status: "approved",
+            approval_id: "approval_runtime_quote_001",
+          },
+        ),
+      };
+      const committedQuote = structured(await client.callTool({
+        name: "quote.save_draft",
+        arguments: approvedQuoteCommit,
+      }));
+      expect(committedQuote.status).toBe("success");
+      expect(committedQuote.data).toMatchObject({
+        operation_status: "committed",
+        readback_evidence: { verified: true },
+      });
+      const replayedQuote = structured(await client.callTool({
+        name: "quote.save_draft",
+        arguments: approvedQuoteCommit,
+      }));
+      expect(replayedQuote).toEqual(committedQuote);
+
+      const reviewBase = {
+        schema_version: "2026-08-11.v1",
+        version: "review-task@fixture-1",
+        task_type: "quote",
+        priority: "normal",
+        reason_codes: ["quote.zone_conflict"],
+        opaque_context_refs: [
+          {
+            ref_id: "opaque-review-runtime-001",
+            kind: "record",
+            purpose: "synthetic runtime fixture",
+            expires_at: null,
+          },
+        ],
+      };
+      const reviewPreview = structured(await client.callTool({
+        name: "review.create_task",
+        arguments: {
+          ...reviewBase,
+          write_context: runtimeWriteContext(
+            "preview",
+            null,
+            "idem_runtime_review_preview_001",
+          ),
+        },
+      }));
+      expect(reviewPreview.status).toBe("success");
+      expect(reviewPreview.data).toMatchObject({ operation_status: "previewed" });
+      const reviewPreviewRef = String(reviewPreview.data?.preview_ref);
+      const blockedReview = structured(await client.callTool({
+        name: "review.create_task",
+        arguments: {
+          ...reviewBase,
+          write_context: runtimeWriteContext(
+            "commit",
+            reviewPreviewRef,
+            "idem_runtime_review_commit_001",
+            { required: true, status: "pending", approval_id: null },
+          ),
+        },
+      }));
+      expect(blockedReview.status).toBe("blocked");
+      const committedReview = structured(await client.callTool({
+        name: "review.create_task",
+        arguments: {
+          ...reviewBase,
+          write_context: runtimeWriteContext(
+            "commit",
+            reviewPreviewRef,
+            "idem_runtime_review_commit_001",
+            {
+              required: true,
+              status: "approved",
+              approval_id: "approval_runtime_review_001",
+            },
+          ),
+        },
+      }));
+      expect(committedReview.status).toBe("success");
+      expect(committedReview.data).toMatchObject({
+        operation_status: "committed",
+        readback_evidence: { verified: true },
+      });
     } catch (error) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}; stderr=${stderr}`,
