@@ -91,16 +91,16 @@ RiskCustoms 查询只有在 status 的 `ready=true`，且 POST `/api/query` 响�
 3. status/query ready、test data、release 缺失/冲突、challenge/限流、超时和 query 零调用均用假 HTTP 测试覆盖。
 4. `customs.ca.estimate` 继续返回 `unavailable`，不拼造税额。
 
-### 11D：模块化组合与隔离
+### 11D：API 适配器组合与隔离（本次完成）
 
-1. 生产组合只注入 secret references 和服务端 tenant mapping；quote、customs、PDF 独立 readiness。
-2. 单一上游故障只让对应工具不可用；MCP 认证、审计、session/idempotency 等平台依赖缺失才阻断全局。
+1. 通过 `createProductionApiAdapterSource` 注入 quote/customs API adapters；缺少适配器继续 fail closed。
+2. source health 只表示本地结构/生命周期可用；单一上游故障只让对应工具不可用，平台依赖缺失才阻断全局。
 3. 不注册 PDF，直到 OpenAPI/endpoint、认证、响应和写后读回合同完成；不把旧本地模块方案代码搬入 MCP。
 
-### 11E：验收与发布决策
+### 11E：验收与发布决策（验收完成，发布保持阻塞）
 
-1. 主任务重新审查 diff、契约、来源/hash、日志脱敏和 secret reference；只使用 fixture/fake HTTP。
-2. 运行下列门禁；任何生产连通性、部署或真实 API smoke 均不属于本任务完成条件。
+1. 已用 fake HTTP 覆盖 source health 不探测上游、quote/customs 局部故障和缺少适配器的 fail-closed 状态。
+2. 已完成定向测试与代码门禁；未进行生产连通性、部署或真实 API smoke。
 3. 若真实 PDF API 合同仍未提供，明确保持阻塞，不注册工具、不声称生产接通。
 
 ## 8. 验收命令

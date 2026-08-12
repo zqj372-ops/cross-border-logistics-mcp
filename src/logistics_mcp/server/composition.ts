@@ -28,8 +28,10 @@ import {
   type ToolDefinition,
   type ToolHandlerMap,
 } from "./tool-registry";
-import {
-  type FixtureAdapters,
+import type {
+  CustomsAdapter,
+  FixtureAdapters,
+  QuoteAdapter,
 } from "../adapters/ports";
 import {
   createFixtureAdapters,
@@ -74,6 +76,11 @@ export interface ProductionTokenVerifier extends ManagedProductionDependency {
 export interface ProductionAdapterSource extends ManagedProductionDependency {
   readonly kind: "adapter_source";
   readonly adapters: FixtureAdapters;
+}
+
+export interface ProductionApiAdapterSourceOptions {
+  readonly quote?: QuoteAdapter;
+  readonly customs?: CustomsAdapter;
 }
 
 export type CompositionMode = "fixtures" | "production";
@@ -126,13 +133,27 @@ function failClosedAuthenticator(): AuthClaims {
   );
 }
 
-function productionAdapters(): FixtureAdapters {
+function productionAdapters(
+  options: ProductionApiAdapterSourceOptions = {},
+): FixtureAdapters {
   return {
-    quote: new ExistingQuoteAdapter(),
-    customs: new RiskCustomsAdapter(),
+    quote: options.quote ?? new ExistingQuoteAdapter(),
+    customs: options.customs ?? new RiskCustomsAdapter(),
     knowledge: new CuratedKnowledgeAdapter(),
     status: new SystemStatusAdapter(),
     review: new ManualTaskAdapter(),
+  };
+}
+
+// Health is lifecycle-only; upstream API failures stay scoped to their tools.
+export function createProductionApiAdapterSource(
+  options: ProductionApiAdapterSourceOptions = {},
+): ProductionAdapterSource {
+  return {
+    kind: "adapter_source",
+    adapters: productionAdapters(options),
+    health: () => Promise.resolve({ ready: true }),
+    close: () => Promise.resolve(),
   };
 }
 
