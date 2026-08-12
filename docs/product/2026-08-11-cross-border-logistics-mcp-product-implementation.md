@@ -35,7 +35,7 @@ MCP 是访问控制和契约边界，不是报价、关务或文档权威库。�
 
 | 能力 | 已确认调用 | MCP 映射 | 当前状态 |
 | --- | --- | --- | --- |
-| AI 报价 | `POST /quotes/zone-calculate`；请求含 `cbm`，通知固定关闭 | 归一化货物体积、地址/服务字段；保留上游金额和 response hash | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed；保留 `quote.upstream_side_effects` |
+| AI 报价 | `POST /quotes/zone-calculate`；请求含 `cbm`，通知固定关闭 | 隔离投影实现，仅用于 fake-HTTP/local 合同核对，生产不执行；不持有 Zone、价格或规则表 | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed；保留 `quote.upstream_side_effects` |
 | RiskCustoms status | `GET /api/status` | 只使用 `ready`、`reasons` 等状态字段 | adapter 已实现；每次 search 先检查 status |
 | RiskCustoms search | `POST /api/query`；只发送显式 trim 后 query | 校验 query 响应 ready、非 test data、真实 `query.sources.releaseId` 和来源 hash | adapter 已实现；ready=false 或来源不完整为 `unavailable`/`manual_review` |
 | customs estimate | 尚无已核验生产估算 API | 不拼造税额或正式结论 | 固定 `unavailable` |

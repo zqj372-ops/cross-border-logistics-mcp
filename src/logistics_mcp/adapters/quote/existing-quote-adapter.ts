@@ -242,6 +242,20 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
   }
 
   async calculate(input: Record<string, unknown>): Promise<AdapterResult> {
+    if (this.source === undefined) {
+      return {
+        status: "unavailable",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.adapter_disabled",
+            "The existing quote endpoint is disabled until its route, tenant scope, and readback contract are verified.",
+          ),
+        ],
+        reviewStatus: "manual_review",
+      };
+    }
     const destination = nestedRecord(input, "destination");
     const addressType = stringValue(destination?.address_type);
     if (addressType === null || addressType === "unknown") {
@@ -259,21 +273,6 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
         ],
       };
     }
-    if (this.source === undefined) {
-      return {
-        status: "unavailable",
-        data: null,
-        sourceRefs: [],
-        blockers: [
-          notice(
-            "quote.adapter_disabled",
-            "The existing quote endpoint is disabled until its route, tenant scope, and readback contract are verified.",
-          ),
-        ],
-        reviewStatus: "manual_review",
-      };
-    }
-
     const record = await this.source.lookup(input);
     const sourceRefs = [record.source_ref];
     if (record.status !== "matched") {
@@ -446,6 +445,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
   }
 
   async previewDraft(input: Record<string, unknown>): Promise<AdapterResult> {
+    if (this.source === undefined) return this.disabledWriteResult(input);
     await Promise.resolve();
     const parsed = this.validateDraftInput(input, "preview");
     if (parsed.error !== null) return parsed.error;

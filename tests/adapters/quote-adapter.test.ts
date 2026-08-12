@@ -116,8 +116,8 @@ function createSource(record: QuoteLookupRecord): {
 }
 
 describe("existing quote adapter", () => {
-  it("keeps the production quote boundary disabled without an injected source", async () => {
-    const result = await new ExistingQuoteAdapter().calculate(calculateInput());
+  it("prioritizes the disabled production boundary over missing address input", async () => {
+    const result = await new ExistingQuoteAdapter().calculate(calculateInput("unknown"));
 
     expect(result.status).toBe("unavailable");
     expect(result.blockers?.map((item) => item.code)).toContain("quote.adapter_disabled");
@@ -261,6 +261,19 @@ describe("quote draft lifecycle", () => {
     });
     expect(saveDraft).not.toHaveBeenCalled();
     expect(readDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not create a local preview when the production write source is absent", async () => {
+    const result = await new ExistingQuoteAdapter().previewDraft({
+      quote_result: quoteResult(),
+      target: { system: "existing_quote_system", record_kind: "draft" },
+      write_context: writeContext("preview", null),
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.blockers?.map((item) => item.code)).toContain("quote.adapter_disabled");
+    expect(result.data).toMatchObject({ operation_status: "rejected" });
+    expect(result.data).not.toMatchObject({ operation_status: "previewed" });
   });
 
   it("commits once, reads back the same tenant/quote/revision, and replays idempotently", async () => {

@@ -29,19 +29,19 @@ RiskCustoms 查询只有在 status 的 `ready=true`，且 POST `/api/query` 响�
 
 | MCP 字段 | API 字段/动作 | 规则 |
 | --- | --- | --- |
-| `quote...calculate.cargo.total_volume` | `cbm` | 可省略或显式为 `null` 以保持旧客户端兼容；非空单位只接受 `m3`/`cbm`，按现有 Measurement/体积归一化传为 decimal `cbm`；没有值不调用报价 API |
-| `quote...calculate` 的地址、托数、重量、件数、包装、服务 | `/quotes/zone-calculate` 对应请求字段 | 只映射上游已核验字段；未知字段不猜、不丢失地伪装成成功 |
+| `quote...calculate.cargo.total_volume` | `cbm`（fake/local 合同投影） | 仅用于 fake/local 请求形状和响应核对；当前生产零调用，不能作为启用资格；正式输入到 `cbm` 的映射仍未闭合 |
+| `quote...calculate` 的地址、托数、重量、件数、包装、服务 | `/quotes/zone-calculate` 的响应核对投影 | 显式映射仅用于 fake/local 响应核对；`origin` 尚未进入已核验上游请求，生产零调用，不能作为启用资格 |
 | `quote...calculate.effective_at` | 不发送给 `/quotes/zone-calculate` | 只接受等于服务端 `clock().toISOString().slice(0,10)` 的当天日期；历史/未来/缺失均零调用并返回 `manual_review` blocker `quote.effective_date_unsupported` |
 | 报价通知选项 | `notify_email=false`、`notify_wecom=false` | 固定由服务端写入，客户端不能覆盖 |
 | `customs.ca.search.query` | `/api/query.query` | 可选以保持旧客户端兼容；输入先 trim，再校验 1–200；生产适配缺失时返回 `needs_input` |
 | 既有 `query_kind`、`query_code`、`product_attributes`、`product_description_ref` | RiskCustoms 业务上下文 | 保留现有字段；不得把它们拼成未获授权的 query 文本 |
 
-已核验报价响应缺少 `rule_version`、`data_version`、`valid_from`、`valid_to` 四个证据，所以在现行 `quoteResultSchema` 下不能映射为 `success`。11B 使用 `rule_version=upstream-rule-version:not-provided`、`data_version=response-sha256:<64hex>`、有效期为 `null`；这些 sentinel 不是上游业务规则、价格版本或有效期。
+已核验报价响应缺少 `rule_version`、`data_version`、`valid_from`、`valid_to` 四个证据，所以在现行 `quoteResultSchema` 下不能映射为 `success`。11B 的 `rule_version=upstream-rule-version:not-provided`、`data_version=response-sha256:<64hex>` 和空有效期只是 fake/local 合同投影证据；当前生产零调用，不能作为启用资格，也不是上游业务规则、价格版本或有效期。
 
 ## 4. 版本、来源和哈希
 
 - 每次请求直连当前 API，不缓存旧响应，不轮询、不排队；重试只服从安全 HTTP 客户端和上游明确合同。
-- 报价 source ref 使用 `version=quote-zone-api.v1` 和 canonical response SHA-256；QuoteResult 使用上述 sentinel，明确不把 MCP 证据伪装成上游业务 `rule_version`、`data_version` 或有效期。
+- 报价 source ref 在 fake/local 合同投影中使用 `version=quote-zone-api.v1` 和 canonical response SHA-256；QuoteResult 使用上述 sentinel。当前生产零调用，这些投影证据不能作为启用资格，也不代表上游业务 `rule_version`、`data_version` 或有效期。
 - RiskCustoms 结果记录从 `query.sources` 读取的真实 `releaseId`，并记录 canonical response SHA-256；不得把 MCP 时间戳或适配器版本伪装成 release。
 - canonical JSON、hash、release/source refs 只保存脱敏关联；日志不保存客户地址、报价明细、query 原文、税务材料或 token。
 

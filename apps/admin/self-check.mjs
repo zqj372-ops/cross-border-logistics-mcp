@@ -112,6 +112,9 @@ assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.esti
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").description, /零 HTTP/);
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /unavailable\/disabled/);
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").description, /写后读回/);
+assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").availability, "unavailable");
+assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").availability, "unavailable");
+assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").availability, "unavailable");
 assert.ok(fixtureSnapshot.sources.filter((source) => source.secret_ref).every((source) => source.secret_ref.startsWith("secret_ref:")));
 assert.ok(!JSON.stringify(fixtureSnapshot).match(/eyJ|Bearer\s|sk-[A-Za-z0-9]/));
 
@@ -143,10 +146,13 @@ assert.deepEqual(
 );
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").sourceBusinessKey, "quote");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").sourceReadiness, "unavailable");
+assert.equal(architecture.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").availability, "unavailable");
 assert.equal(architecture.tools.find((tool) => tool.name === "customs.ca.search").sourceReadiness, "unavailable");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").executionKey, "");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").sourceBusinessKey, "");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").sourceReadiness, "");
+assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").availability, "unavailable");
+assert.match(architectureNodeStatus(architecture.tools.find((tool) => tool.name === "quote.save_draft"), "tool"), /不可用/);
 assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").readiness, "unavailable");
 assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").registrationStatus, "未注册");
 assert.ok(!fixtureSnapshot.tools.some((tool) => tool.name.startsWith("pdf.")));
@@ -156,8 +162,11 @@ assert.ok(architecture.approvalLifecycle.every((stage) => stage.kind === "approv
 assert.ok(architecture.clients.length > 0 && architecture.sources.length > 0);
 assert.match(architectureNodeStatus({ kindLabel: "read", invalidName: false }, "tool"), /只读/);
 assert.match(architectureNodeStatus({ kindLabel: "write", invalidName: false }, "tool"), /受控写入/);
+assert.match(architectureNodeStatus({ kindLabel: "read", invalidName: true, availability: "ready" }, "tool"), /名称异常/);
+assert.doesNotMatch(architectureNodeStatus({ kindLabel: "read", invalidName: true, availability: "ready" }, "tool"), /已就绪/);
 assert.match(architectureNodeStatus({ kindLabel: "", invalidName: false }, "tool"), /kind 未返回/);
 assert.match(architectureNodeStatus({ kindLabel: "query", invalidName: false }, "tool"), /kind 未知/);
+assert.equal(deriveArchitectureModel({ ...fixtureSnapshot, tools: [{ name: "custom.preview", kind: "read" }] }).tools[0].availability, "");
 
 const unknownTools = [
   { name: "custom.preview", label: "报价", permission: "quote:calculate", roles: ["admin"], kind: "read" },

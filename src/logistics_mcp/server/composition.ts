@@ -31,7 +31,6 @@ import {
 import type {
   CustomsAdapter,
   FixtureAdapters,
-  QuoteAdapter,
 } from "../adapters/ports";
 import {
   createFixtureAdapters,
@@ -79,7 +78,6 @@ export interface ProductionAdapterSource extends ManagedProductionDependency {
 }
 
 export interface ProductionApiAdapterSourceOptions {
-  readonly quote?: QuoteAdapter;
   readonly customs?: CustomsAdapter;
 }
 
@@ -137,7 +135,7 @@ function productionAdapters(
   options: ProductionApiAdapterSourceOptions = {},
 ): FixtureAdapters {
   return {
-    quote: options.quote ?? new ExistingQuoteAdapter(),
+    quote: new ExistingQuoteAdapter(),
     customs: options.customs ?? new RiskCustomsAdapter(),
     knowledge: new CuratedKnowledgeAdapter(),
     status: new SystemStatusAdapter(),
@@ -298,7 +296,11 @@ export function createProductionComposition(
     "adapter_source",
     options.adapterSource,
   );
-  const adapters = options.adapterSource?.adapters ?? productionAdapters();
+  const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
+  const adapters: FixtureAdapters = {
+    ...providedAdapters,
+    quote: new ExistingQuoteAdapter(),
+  };
   const tools = compositionTools(adapters);
   const structuralReasons = [
     ...platform.reasonCodes,

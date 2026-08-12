@@ -11,6 +11,7 @@ import {
   createFixtureComposition,
   createProductionApiAdapterSource,
   createProductionComposition,
+  type ProductionAdapterSource,
 } from "../../src/logistics_mcp/server/composition";
 import {
   cargoInput,
@@ -71,15 +72,12 @@ function customsApi(fetchImpl: FetchImplementation): RiskCustomsApiAdapter {
 
 describe("gateway composition modes", () => {
   it("keeps source health local and omitted API adapters fail closed", async () => {
-    const quoteHealthFetch = vi.fn<FetchImplementation>();
     const customsHealthFetch = vi.fn<FetchImplementation>();
     const source = createProductionApiAdapterSource({
-      quote: quoteApi(quoteHealthFetch),
       customs: customsApi(customsHealthFetch),
     });
 
     await expect(source.health()).resolves.toEqual({ ready: true });
-    expect(quoteHealthFetch).not.toHaveBeenCalled();
     expect(customsHealthFetch).not.toHaveBeenCalled();
     await source.close();
 
@@ -95,15 +93,11 @@ describe("gateway composition modes", () => {
     await missing.close();
   });
 
-  it("keeps a quote outage local while local and customs handlers stay usable", async () => {
-    const quoteFetch = vi.fn<FetchImplementation>(() => Promise.resolve(
-      new Response(JSON.stringify({ error: "fixture quote outage" }), { status: 503 }),
-    ));
+  it("keeps disabled quote local while local and customs handlers stay usable", async () => {
     const customsFetch = vi.fn<FetchImplementation>(() =>
       Promise.resolve(new Response(JSON.stringify(riskCustomsStatus(true)))),
     );
     const source = createProductionApiAdapterSource({
-      quote: quoteApi(quoteFetch),
       customs: customsApi(customsFetch),
     });
     const context = parseExecutionContext(securityClaims);
@@ -115,19 +109,18 @@ describe("gateway composition modes", () => {
     ]);
 
     expect(quote.status).toBe("unavailable");
-    expect(quote.blockers?.map(({ code }) => code)).toContain("quote.upstream_unavailable");
+    expect(quote.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
     expect(cargo.status).toBe("success");
     expect(container.status).toBe("success");
     expect(customs.status).toBe("success");
     await source.close();
   });
 
-  it("keeps RiskCustoms ready=false scoped to customs search", async () => {
+  it("keeps RiskCustoms ready=false scoped while local handlers stay usable", async () => {
     const customsFetch = vi.fn<FetchImplementation>(() =>
       Promise.resolve(new Response(JSON.stringify(riskCustomsStatus(false)))),
     );
     const source = createProductionApiAdapterSource({
-      quote: createFixtureAdapters().quote,
       customs: customsApi(customsFetch),
     });
     const context = parseExecutionContext(securityClaims);
@@ -141,11 +134,39 @@ describe("gateway composition modes", () => {
     expect(customs.status).toBe("unavailable");
     expect(customs.blockers?.map(({ code }) => code)).toContain("customs.ready_false");
     expect(customs.data).toMatchObject({ data_status: { ready: false } });
-    expect(quote.status).toBe("success");
-    expect(quote.status).not.toBe("unavailable");
+    expect(quote.status).toBe("unavailable");
+    expect(quote.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
     expect(cargo.status).toBe("success");
     expect(container.status).toBe("success");
     await source.close();
+  });
+
+  it("overrides a quote adapter supplied through a manually constructed production source", async () => {
+    const quoteFetch = vi.fn<FetchImplementation>();
+    const fixtureAdapters = createFixtureAdapters();
+    const adapterSource: ProductionAdapterSource = {
+      kind: "adapter_source",
+      adapters: { ...fixtureAdapters, quote: quoteApi(quoteFetch) },
+      health: () => Promise.resolve({ ready: true }),
+      close: () => Promise.resolve(),
+    };
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource,
+      allowedOrigins: ["https://client.example.invalid"],
+      allowedHosts: ["mcp.example.invalid"],
+      authenticate: () => securityClaims,
+    });
+
+    try {
+      const result = await composition.adapters.quote.calculate(apiQuoteInput);
+
+      expect(result.status).toBe("unavailable");
+      expect(result.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
+      expect(quoteFetch).not.toHaveBeenCalled();
+    } finally {
+      await composition.close();
+    }
   });
 
   it("keeps production adapters disabled until endpoint, tenant and readiness contracts are verified", async () => {

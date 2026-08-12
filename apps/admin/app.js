@@ -179,6 +179,7 @@ export function deriveArchitectureModel(snapshot) {
     const prefix = validName ? name.split(".")[0] ?? "" : "";
     const execution = EXECUTION_GROUP_DEFINITIONS.find((group) => group.toolNames.includes(name));
     const source = sources.find((candidate) => candidate.affectedTools.includes(name));
+    const availability = safeStatus(tool.availability);
     return {
       kind: "tool",
       id: `tool-${index}`,
@@ -193,6 +194,7 @@ export function deriveArchitectureModel(snapshot) {
       permission: snapshotText(tool.permission),
       kindLabel: snapshotText(tool.kind),
       roles: Array.isArray(tool.roles) ? tool.roles.filter((role) => typeof role === "string") : [],
+      availability: availability === "empty" ? "" : availability,
       executionKey: execution?.key ?? "",
       sourceBusinessKey: source?.businessKey ?? "",
       sourceReadiness: source?.readiness ?? "",
@@ -532,9 +534,9 @@ function renderTools(data) {
     ${modeBanner()}
     <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup(permissionDataReady ? "ready" : "unavailable", permissionDataReady ? "快照授权" : "授权数据不可用")}</div><p>下面的角色和工具来自平台 RBAC。工具契约仅保留两个窄写动作；quote.save_draft 当前 disabled，review.create_task 仍需正式写 API、审批和写后读回；没有 generic write 或通用提交按钮。</p></div>
     <section class="panel" aria-labelledby="tool-table-title">
-      <div class="card-head"><div><h2 id="tool-table-title">Phase 1 工具权限</h2><p>读/写 kind 只说明工具边界，不代表当前下游适配器已经就绪。</p></div><span class="status-pill status-neutral">${tools.length} 个工具</span></div>
+      <div class="card-head"><div><h2 id="tool-table-title">Phase 1 工具权限</h2><p>读/写 kind 只说明工具边界；当前可用性单独读取快照，未返回时不推断。</p></div><span class="status-pill status-neutral">${tools.length} 个工具</span></div>
       <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${roleLabel(role.key)}</option>`).join("")}</select></div><p class="field-help">选中角色后只看它能使用的工具。</p></div>
-      ${visibleTools.length ? `<div class="table-scroll" role="region" aria-label="工具权限表格，可横向滚动" tabindex="0"><table class="data-table table-wide"><thead><tr><th scope="col">工具名称</th><th scope="col">中文说明</th><th scope="col">permission</th><th scope="col">kind</th><th scope="col">角色授权</th></tr></thead><tbody>${visibleTools.map((tool) => `<tr><td><span class="primary-cell codeish">${display(tool.name)}</span></td><td>${display(tool.description)}<span class="sub-cell">${display(tool.label)}</span></td><td><span class="codeish">${display(tool.permission)}</span></td><td>${tool.kind === "write" ? statusMarkup("manual_review", "受控写入") : statusMarkup("ready", "只读")}</td><td>${roleChips(tool.roles, state.roleFilter === "all" ? null : state.roleFilter)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无匹配工具", "这个角色没有返回可用工具，不能自行补权限。")}
+      ${visibleTools.length ? `<div class="table-scroll" role="region" aria-label="工具权限表格，可横向滚动" tabindex="0"><table class="data-table table-wide"><thead><tr><th scope="col">工具名称</th><th scope="col">中文说明</th><th scope="col">permission</th><th scope="col">kind</th><th scope="col">当前可用性</th><th scope="col">角色授权</th></tr></thead><tbody>${visibleTools.map((tool) => `<tr><td><span class="primary-cell codeish">${display(tool.name)}</span></td><td>${display(tool.description)}<span class="sub-cell">${display(tool.label)}</span></td><td><span class="codeish">${display(tool.permission)}</span></td><td>${tool.kind === "write" ? statusMarkup("manual_review", "受控写入") : statusMarkup("ready", "只读")}</td><td>${safeStatus(tool.availability) === "empty" ? statusMarkup("empty", "未返回") : statusMarkup(tool.availability)}</td><td>${roleChips(tool.roles, state.roleFilter === "all" ? null : state.roleFilter)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无匹配工具", "这个角色没有返回可用工具，不能自行补权限。")}
     </section>
     <section class="panel" aria-labelledby="role-list-title"><div class="card-head"><div><h2 id="role-list-title">角色授权</h2><p>角色名称和代码只来自当前快照；新增角色不在本原型中创建。</p></div></div>${roles.length ? `<div class="role-grid">${roles.map((role) => `<article class="role-card"><div class="role-card-head"><h3>${roleLabel(role.key)}</h3><span class="role-key codeish">${display(role.key)}</span></div><p>${display(role.description, "由服务端策略决定可见范围。")}</p></article>`).join("")}</div>` : emptyState("暂无角色授权数据", "正式快照没有返回角色，不能生成默认权限。")}</section>`;
 }
@@ -607,6 +609,7 @@ export function architectureNodeStatus(node, kind) {
   if (kind === "source") return statusMarkup(node.readiness);
   if (kind === "approval") return statusMarkup(node.status, node.status === "empty" ? "未返回" : undefined);
   if (node.invalidName) return statusMarkup("manual_review", "名称异常");
+  if (kind === "tool" && node.availability) return statusMarkup(node.availability);
   if (node.sourceReadiness) return statusMarkup(node.sourceReadiness);
   if (node.kindLabel === "read") return statusMarkup("ready", "只读");
   if (node.kindLabel === "write") return statusMarkup("manual_review", "受控写入");
@@ -692,6 +695,7 @@ function renderArchitectureDetails(model) {
       ["依赖来源", display(node.sourceBusinessKey, "未返回")],
       ["permission", display(node.permission, "未返回")],
       ["kind", display(node.kindLabel, "未返回")],
+      ["availability", node.availability ? statusMarkup(node.availability) : "未返回"],
       ["roles", display(node.roles.length ? node.roles.join("、") : "未返回")],
     ];
   } else if (selection.kind === "source") {

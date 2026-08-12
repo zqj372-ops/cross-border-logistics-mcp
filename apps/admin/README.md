@@ -30,6 +30,7 @@ GET /admin/api/v1/snapshot
 
 - AI 报价 API、RiskCustoms API、PDF API 均为外部 API；当前 quote 生产路径保持 unavailable/fail-closed，PDF 未注册；MCP 本地只有 cargo/container 确定性计算。
 - 数据源快照可以为业务 API 提供可选字段 `category`、`environment`、`adapter_contract_version`、`business_version_evidence`、`update_mode`、`last_checked_at`、`last_success_at`、`affected_tools`、`registration_status` 和 `blocker`；缺字段显示“未返回”，不会由前端推断。
+- 工具快照可提供独立的 `availability`；`kind` 不是可用性，字段未返回时显示“未返回”，不会推断为已就绪。
 - `#adapters` 顶部只把 `category=business_api` 的来源渲染为 API 状态卡；fixture 包含 AI 报价 API、RiskCustoms API 和未配置/未注册的 PDF API，knowledge/status/review 仍在普通引用表中。
 - 页面只展示 opaque `endpoint_ref`、opaque `secret_ref`、adapter contract version、业务证据和 readiness，不展示原始凭证、客户内容、报价明细或税务材料。
 - 一个业务 API 不可达只关闭其 `affected_tools`；只有身份、审计、session 等平台基础设施故障才影响全局 `/readyz`，来源卡不会被汇总为整个 MCP 健康。
