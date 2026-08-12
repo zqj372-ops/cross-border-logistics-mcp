@@ -27,6 +27,168 @@ export function validateSnapshot(snapshot) {
   return snapshot;
 }
 
+const ARCHITECTURE_TOOL_GROUPS = [
+  { key: "billing", label: "报价与计费", prefixes: ["quote", "cargo"], description: "报价、货物和计费相关确定性工具。" },
+  { key: "customs", label: "关务", prefixes: ["customs"], description: "关务候选与税费估算工具。" },
+  { key: "container", label: "装柜", prefixes: ["container"], description: "装柜容量和理论汇总工具。" },
+  { key: "platform", label: "平台支持", prefixes: ["knowledge", "system", "review"], description: "精选知识、数据状态和人工复核工具。" },
+  { key: "unknown", label: "未知工具/未分类", prefixes: [], description: "前缀不在已知 allowlist 分组中的工具，原样保留。" },
+];
+
+const APPROVAL_STAGE_DEFINITIONS = [
+  { key: "draft", label: "draft", pattern: /draft|草稿/i },
+  { key: "validate", label: "validate", pattern: /validate|校验|验证|核验|schema/i },
+  { key: "approval", label: "approval", pattern: /approval|approve|审批|批准/i },
+  { key: "publish", label: "publish", pattern: /publish|发布|commit/i },
+  { key: "readback", label: "readback/rollback", pattern: /readback|read\s*back|读回|回滚|rollback/i },
+];
+
+function snapshotText(value, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function displayNodeLabel(value, fallback) {
+  const text = snapshotText(value);
+  return text.trim() === "" ? fallback : text;
+}
+
+function findToolGroup(prefix) {
+  return ARCHITECTURE_TOOL_GROUPS.find((group) => group.prefixes.includes(prefix))?.key ?? "unknown";
+}
+
+function deriveApprovalLifecycle(chain) {
+  if (chain.length === 0) return { lifecycle: [], unmapped: [] };
+
+  const matchedIndexes = new Set();
+  const matchedStages = new Map();
+  const matchingOrder = [...APPROVAL_STAGE_DEFINITIONS].sort((left, right) => {
+    if (left.key === "readback") return -1;
+    if (right.key === "readback") return 1;
+    return 0;
+  });
+  for (const stage of matchingOrder) {
+    const matchIndex = chain.findIndex((entry, index) => {
+      if (matchedIndexes.has(index)) return false;
+      const label = snapshotText(isRecord(entry) ? entry.label : undefined);
+      return stage.pattern.test(label);
+    });
+    if (matchIndex >= 0) {
+      matchedIndexes.add(matchIndex);
+      matchedStages.set(stage.key, matchIndex);
+    }
+  }
+
+  const lifecycle = APPROVAL_STAGE_DEFINITIONS.map((stage) => {
+    const matchIndex = matchedStages.get(stage.key) ?? -1;
+    if (matchIndex < 0) {
+      return {
+        kind: "approval",
+        key: stage.key,
+        label: stage.label,
+        status: "empty",
+        evidenceLabel: "",
+        id: `approval-${stage.key}`,
+      };
+    }
+    const entry = isRecord(chain[matchIndex]) ? chain[matchIndex] : {};
+    return {
+      kind: "approval",
+      key: stage.key,
+      label: stage.label,
+      status: safeStatus(entry.status),
+      evidenceLabel: displayNodeLabel(entry.label, "（步骤名称为空）"),
+      id: `approval-${stage.key}`,
+    };
+  });
+
+  const unmapped = chain.flatMap((entry, index) => {
+    if (matchedIndexes.has(index)) return [];
+    const record = isRecord(entry) ? entry : {};
+    return [{
+      kind: "approval",
+      key: `unmapped-${index}`,
+      label: displayNodeLabel(record.label, "（步骤名称为空）"),
+      status: safeStatus(record.status),
+      id: `approval-unmapped-${index}`,
+    }];
+  });
+  return { lifecycle, unmapped };
+}
+
+export function deriveArchitectureModel(snapshot) {
+  const data = validateSnapshot(snapshot);
+  const clients = data.clients.map((item, index) => {
+    const client = isRecord(item) ? item : {};
+    const check = isRecord(client.check) ? client.check : {};
+    return {
+      kind: "client",
+      id: `client-${index}`,
+      label: displayNodeLabel(client.name, `客户端 ${index + 1}`),
+      clientId: snapshotText(client.client_id),
+      status: safeStatus(check.status),
+    };
+  });
+  const tools = data.tools.map((item, index) => {
+    const tool = isRecord(item) ? item : {};
+    const rawName = tool.name;
+    const validName = typeof rawName === "string";
+    const name = validName ? rawName : "";
+    const prefix = validName ? name.split(".")[0] ?? "" : "";
+    return {
+      kind: "tool",
+      id: `tool-${index}`,
+      name: rawName,
+      displayName: validName
+        ? displayNodeLabel(name, "（工具名称为空）")
+        : "（工具名称异常：非字符串）",
+      prefix,
+      groupKey: findToolGroup(prefix),
+      invalidName: !validName || name.trim() === "",
+      label: snapshotText(tool.label),
+      permission: snapshotText(tool.permission),
+      kindLabel: snapshotText(tool.kind),
+      roles: Array.isArray(tool.roles) ? tool.roles.filter((role) => typeof role === "string") : [],
+    };
+  });
+  const sources = data.sources.map((item, index) => {
+    const source = isRecord(item) ? item : {};
+    return {
+      kind: "source",
+      id: `source-${index}`,
+      label: displayNodeLabel(source.label ?? source.name, `来源 ${index + 1}`),
+      name: snapshotText(source.name),
+      type: snapshotText(source.type),
+      endpointRef: snapshotText(source.endpoint_ref),
+      secretRef: snapshotText(source.secret_ref),
+      sourceVersion: snapshotText(source.source_version),
+      readiness: safeStatus(source.readiness),
+      reason: snapshotText(source.reason),
+    };
+  });
+  const approval = deriveApprovalLifecycle(data.approvals.chain);
+  const toolGroups = ARCHITECTURE_TOOL_GROUPS.map(({ key, label, description }) => ({
+    key,
+    label,
+    description,
+    tools: tools.filter((tool) => tool.groupKey === key),
+  }));
+
+  return {
+    clients,
+    controlLayer: {
+      kind: "control",
+      id: "control-layer",
+      label: "MCP 控制层",
+      description: "产品边界：身份、租户、RBAC allowlist 与审计。",
+    },
+    tools,
+    toolGroups,
+    sources,
+    approvalLifecycle: approval.lifecycle,
+    unmappedApprovals: approval.unmapped,
+  };
+}
+
 const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
 
 const STATUS_META = {
@@ -62,6 +224,11 @@ const VIEW_META = {
     eyebrow: "权威来源引用",
     description: "查看 Quote Engine、RiskCustoms、精选知识、状态和复核任务的引用与就绪状态。",
   },
+  architecture: {
+    title: "系统结构",
+    eyebrow: "静态结构边界",
+    description: "按快照展示 clients、MCP 控制层、tools 和 sources 的关系，不代表实时网络拓扑。",
+  },
   approvals: {
     title: "审批与发布",
     eyebrow: "draft → validate → approval → publish",
@@ -83,6 +250,7 @@ const state = isBrowser
       error: null,
       roleFilter: "all",
       localDraft: null,
+      architectureSelection: null,
     }
   : null;
 
@@ -335,6 +503,177 @@ function renderAudit(data) {
     <section class="panel" aria-labelledby="audit-rule-title"><div class="card-head"><div><h2 id="audit-rule-title">日志最小化</h2><p>审计关联足够追责，但不把客户内容变成日志副本。</p></div>${statusMarkup("ready", "脱敏摘要")}</div><div class="state-guide"><div class="state-guide-item"><strong>保留</strong><p>tenant、actor、client、tool、版本、状态、reason code、trace id。</p></div><div class="state-guide-item"><strong>不保留</strong><p>客户地址、报价明细、税务材料全文、原始聊天和凭证。</p></div><div class="state-guide-item"><strong>写入失败</strong><p>审计或读回失败时转 manual_review，不报告假成功。</p></div></div></section>`;
 }
 
+function safeOpaqueReference(value, prefix) {
+  const reference = snapshotText(value).trim();
+  if (reference === "") return "未返回";
+  const suffix = reference.startsWith(`${prefix}:`) ? reference.slice(prefix.length + 1) : "";
+  if (!reference.startsWith(`${prefix}:`) || /:\/\//.test(reference) || /bearer|token|password|secret|sk-/i.test(suffix)) {
+    return `${prefix} 引用（实际值隐藏）`;
+  }
+  return reference;
+}
+
+export function architectureNodeStatus(node, kind) {
+  if (kind === "control") return '<span class="architecture-static-tag">固定边界</span>';
+  if (kind === "client") return statusMarkup(node.status);
+  if (kind === "source") return statusMarkup(node.readiness);
+  if (kind === "approval") return statusMarkup(node.status, node.status === "empty" ? "未返回" : undefined);
+  if (node.invalidName) return statusMarkup("manual_review", "名称异常");
+  if (node.kindLabel === "read") return statusMarkup("ready", "只读");
+  if (node.kindLabel === "write") return statusMarkup("manual_review", "受控写入");
+  return statusMarkup(node.kindLabel === "" ? "unavailable" : "manual_review", node.kindLabel === "" ? "kind 未返回" : "kind 未知");
+}
+
+function architectureNodeMarkup(node, kind, selected = false) {
+  const label = node.displayName ?? node.label;
+  const layerLabel = {
+    client: "clients",
+    control: "MCP 控制层",
+    tool: "tools",
+    source: "sources",
+    approval: "审批生命周期",
+  }[kind] ?? kind;
+  return `<button class="architecture-node architecture-node-${escapeHtml(kind)}${selected ? " is-selected" : ""}" type="button" data-architecture-kind="${escapeHtml(kind)}" data-architecture-id="${escapeHtml(node.id)}" aria-pressed="${selected}">
+    <span class="architecture-node-title">${display(label)}</span>
+    <span class="architecture-node-status">${architectureNodeStatus(node, kind)}</span>
+    <span class="sr-only">层：${escapeHtml(layerLabel)}；按 Enter 查看详情</span>
+  </button>`;
+}
+
+function architectureNodesMarkup(nodes, kind, emptyDetail) {
+  if (nodes.length === 0) {
+    return `<p class="architecture-empty">${statusMarkup("empty", "未返回")}<span>${escapeHtml(emptyDetail)}</span></p>`;
+  }
+  return `<div class="architecture-node-list">${nodes.map((node) => architectureNodeMarkup(node, kind, isArchitectureSelection(node))).join("")}</div>`;
+}
+
+function isArchitectureSelection(node) {
+  return state.architectureSelection?.kind === node.kind && state.architectureSelection?.id === node.id;
+}
+
+function architectureRelation(label) {
+  return `<div class="architecture-relation"><span class="architecture-relation-arrow" aria-hidden="true">↓</span><span>${escapeHtml(label)}</span></div>`;
+}
+
+function architectureDetailRow(label, value) {
+  return `<div class="architecture-detail-row"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
+}
+
+function renderArchitectureDetails(model) {
+  const selection = state.architectureSelection;
+  if (!selection) {
+    return `<div class="architecture-detail-empty">${statusMarkup("empty", "未选择节点")}<p>选择图中的客户端、控制层、工具、来源或审批步骤，查看脱敏字段。</p></div>`;
+  }
+
+  let node;
+  if (selection.kind === "control") node = model.controlLayer;
+  if (selection.kind === "client") node = model.clients.find((item) => item.id === selection.id);
+  if (selection.kind === "tool") node = model.tools.find((item) => item.id === selection.id);
+  if (selection.kind === "source") node = model.sources.find((item) => item.id === selection.id);
+  if (selection.kind === "approval") {
+    node = model.approvalLifecycle.find((item) => item.id === selection.id)
+      ?? model.unmappedApprovals.find((item) => item.id === selection.id);
+  }
+  if (!node) {
+    return `<div class="architecture-detail-empty">${statusMarkup("unavailable", "节点不可用")}<p>快照已变化或该节点不再返回；没有补造详情。</p></div>`;
+  }
+
+  let rows;
+  if (selection.kind === "control") {
+    rows = [
+      ["边界", "产品控制层"],
+      ["包含", "身份、tenant/actor 绑定、RBAC allowlist、审计"],
+      ["证据属性", "固定结构说明，不是 live 证据"],
+    ];
+  } else if (selection.kind === "client") {
+    rows = [
+      ["client_id", display(node.clientId, "未返回")],
+      ["client check", architectureNodeStatus(node, "client")],
+      ["安全边界", "仅显示认证后的元数据；不显示凭证或客户内容"],
+    ];
+  } else if (selection.kind === "tool") {
+    const group = model.toolGroups.find((item) => item.key === node.groupKey);
+    const rawName = node.name === undefined ? node.displayName : node.name;
+    rows = [
+      ["name", display(rawName, node.invalidName ? "（工具名称异常）" : "（工具名称为空）")],
+      ["name 前缀", display(node.prefix || "未识别")],
+      ["分组", display(group?.label, "未知工具/未分类")],
+      ["permission", display(node.permission, "未返回")],
+      ["kind", display(node.kindLabel, "未返回")],
+      ["roles", display(node.roles.length ? node.roles.join("、") : "未返回")],
+    ];
+  } else if (selection.kind === "source") {
+    rows = [
+      ["来源", display(node.label)],
+      ["type", display(node.type, "未返回")],
+      ["readiness", architectureNodeStatus(node, "source")],
+      ["source version", display(node.sourceVersion, "未返回")],
+      ["endpoint_ref", display(safeOpaqueReference(node.endpointRef, "endpoint_ref"))],
+      ["secret_ref", display(safeOpaqueReference(node.secretRef, "secret_ref"))],
+      ["readiness 原因", display(node.reason, "未返回")],
+    ];
+  } else {
+    rows = [
+      ["阶段", display(node.label)],
+      ["状态", architectureNodeStatus(node, "approval")],
+      ["链中证据", display(node.evidenceLabel, "审批链未返回此步骤；不判定成功。")],
+    ];
+  }
+
+  return `<div class="architecture-detail-content"><div class="architecture-detail-status">${architectureNodeStatus(node, selection.kind)}</div><dl class="architecture-detail-list">${rows.map(([label, value]) => architectureDetailRow(label, value)).join("")}</dl></div>`;
+}
+
+function renderArchitectureToolGroups(model) {
+  const groups = model.toolGroups.filter((group) => group.tools.length > 0);
+  if (groups.length === 0) return architectureNodesMarkup([], "tool", "快照没有返回工具，不生成工具节点。");
+  return `<div class="architecture-tool-groups">${groups.map((group) => `<section class="architecture-tool-group" aria-labelledby="architecture-group-${escapeHtml(group.key)}"><div class="architecture-group-head"><h4 id="architecture-group-${escapeHtml(group.key)}">${escapeHtml(group.label)}</h4><span class="codeish">${escapeHtml(group.tools.length)} 个</span></div><p>${escapeHtml(group.description)}</p><div class="architecture-node-list">${group.tools.map((tool) => architectureNodeMarkup(tool, "tool", isArchitectureSelection(tool))).join("")}</div></section>`).join("")}</div>`;
+}
+
+function renderArchitectureLifecycle(model) {
+  if (model.approvalLifecycle.length === 0) {
+    return emptyState("暂无审批链", "approvals.chain 没有返回步骤；不画固定步骤为完成。");
+  }
+  const stages = model.approvalLifecycle.map((stage, index) => `${architectureNodeMarkup(stage, "approval", isArchitectureSelection(stage))}${index < model.approvalLifecycle.length - 1 ? '<span class="architecture-lifecycle-arrow" aria-hidden="true">→</span>' : ""}`).join("");
+  const extras = model.unmappedApprovals.length === 0 ? "" : `<div class="architecture-unmapped"><h3>链中未分类步骤</h3><div class="architecture-node-list">${model.unmappedApprovals.map((item) => architectureNodeMarkup(item, "approval", isArchitectureSelection(item))).join("")}</div></div>`;
+  return `<p class="architecture-lifecycle-copy">顺序：draft → validate → approval → publish → readback/rollback。每个阶段的状态只取 approvals.chain；缺步或 blocked 不判定成功。</p><div class="architecture-lifecycle-steps">${stages}</div>${extras}`;
+}
+
+function renderArchitecture(data) {
+  const model = deriveArchitectureModel(data);
+  return `${pageHeader("architecture")}
+    ${modeBanner()}
+    <div class="callout callout-warning" role="note">
+      <div class="callout-head"><h2>静态结构边界</h2><span class="architecture-static-tag">非实时证据</span></div>
+      <p>静态结构图不证明真实网络连通、认证已接通或正式配置生效；连接线只表达产品边界和数据方向。</p>
+    </div>
+    <div class="callout callout-info" role="note">
+      <p>工具 allowlist、client check、source readiness、approval 状态分别来自已校验快照；本页不把四类状态汇总成“系统健康”或“可发布”。</p>
+    </div>
+    <div class="architecture-layout">
+      <section class="panel architecture-panel" aria-labelledby="architecture-diagram-title">
+        <div class="card-head"><div><h2 id="architecture-diagram-title">系统结构图</h2><p>clients → MCP 控制层 → tools → sources</p></div><span class="architecture-static-tag">C4-like</span></div>
+        <div class="architecture-flow" aria-label="客户端、MCP 控制层、工具和来源的结构关系">
+          <section class="architecture-layer" aria-labelledby="architecture-clients-title"><div class="architecture-layer-head"><h3 id="architecture-clients-title">clients</h3><p>通过身份与租户边界接入</p></div>${architectureNodesMarkup(model.clients, "client", "快照没有返回客户端，不生成客户端节点。")}</section>
+          ${architectureRelation("通过身份与租户边界接入")}
+          <section class="architecture-layer" aria-labelledby="architecture-control-title"><div class="architecture-layer-head"><h3 id="architecture-control-title">MCP 控制层</h3><p>认证后绑定 tenant/actor，按 RBAC 调用</p></div><div class="architecture-node-list">${architectureNodeMarkup(model.controlLayer, "control", isArchitectureSelection(model.controlLayer))}</div></section>
+          ${architectureRelation("认证后绑定 tenant/actor，按 RBAC 调用")}
+          <section class="architecture-layer" aria-labelledby="architecture-tools-title"><div class="architecture-layer-head"><h3 id="architecture-tools-title">tools</h3><p>执行确定性计算或窄适配</p></div>${renderArchitectureToolGroups(model)}</section>
+          ${architectureRelation("读取/试算；写草稿/创建复核")}
+          <section class="architecture-layer" aria-labelledby="architecture-sources-title"><div class="architecture-layer-head"><h3 id="architecture-sources-title">sources</h3><p>提供版本、引用和 readiness 原因；返回结构化结果</p></div>${architectureNodesMarkup(model.sources, "source", "快照没有返回来源，不生成来源节点。")}</section>
+        </div>
+        <p class="architecture-footnote">客户端调用工具；控制层负责认证、tenant/actor 绑定、RBAC allowlist 与审计。来源状态不是实时连通性证明。</p>
+      </section>
+      <aside class="panel architecture-details" aria-labelledby="architecture-details-title">
+        <div class="card-head"><div><h2 id="architecture-details-title">节点详情</h2><p>只展示快照安全字段或固定边界说明。</p></div></div>
+        ${renderArchitectureDetails(model)}
+      </aside>
+    </div>
+    <section class="panel architecture-approval-panel" aria-labelledby="architecture-lifecycle-title">
+      <div class="card-head"><div><h2 id="architecture-lifecycle-title">审批发布生命周期</h2><p>第二张图只从 approvals.chain 映射状态；缺步骤、blocked 或未读回不会显示为成功。</p></div><span class="architecture-static-tag">独立状态</span></div>
+      ${renderArchitectureLifecycle(model)}
+    </section>`;
+}
+
 function renderView() {
   if (state.loading) return renderLoading();
   if (state.error) return renderError();
@@ -346,6 +685,8 @@ function renderView() {
       return renderTools(state.data);
     case "adapters":
       return renderAdapters(state.data);
+    case "architecture":
+      return renderArchitecture(state.data);
     case "approvals":
       return renderApprovals(state.data);
     case "audit":
@@ -398,6 +739,13 @@ function render(announce = false) {
 
 function focusMain() {
   main.focus({ preventScroll: true });
+}
+
+function focusArchitectureNode(kind, id) {
+  const node = [...document.querySelectorAll("[data-architecture-kind]")].find(
+    (candidate) => candidate.dataset.architectureKind === kind && candidate.dataset.architectureId === id,
+  );
+  node?.focus({ preventScroll: true });
 }
 
 function openDiffDialog() {
@@ -467,6 +815,15 @@ document.addEventListener("click", (event) => {
     window.history.replaceState(null, "", `#${view}`);
     render(true);
     focusMain();
+    return;
+  }
+
+  const architectureKind = target.dataset.architectureKind;
+  const architectureId = target.dataset.architectureId;
+  if (architectureKind && architectureId) {
+    state.architectureSelection = { kind: architectureKind, id: architectureId };
+    render();
+    queueMicrotask(() => focusArchitectureNode(architectureKind, architectureId));
     return;
   }
 

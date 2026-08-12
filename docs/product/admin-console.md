@@ -6,14 +6,27 @@
 
 ## 信息架构
 
-单页左侧导航包含 6 个视图，使用 URL hash 保留当前视图，不引入多页路由框架：
+单页左侧导航包含 7 个视图，使用 URL hash 保留当前视图，不引入多页路由框架：
 
 1. **总览**：展示 `/healthz`、`/readyz`、来源就绪、阻断原因、待处理项和状态说明。
 2. **客户端接入**：展示 ChatGPT、Codex、企业助手的 `client_id`、issuer、audience、allowed origins 和最近校验结果。
 3. **工具权限**：按已校验快照返回的角色和 Phase 1 工具展示 permission、读/写 kind 和角色授权；缺失或空数组只显示暂无/不可用，不生成默认权限。
 4. **数据源与适配器**：展示 Quote Engine、RiskCustoms、knowledge、status、review 的 `endpoint_ref`、`secret_ref`、source version 和 readiness。编辑动作只生成浏览器本地草稿。
-5. **审批与发布**：展示草稿差异、校验结果、审批链和禁用的发布/回滚动作。
-6. **审计日志**：展示脱敏 actor、tenant、action、result、reason、config version 和 trace id。
+5. **系统结构**：以 C4-like 静态结构展示 `clients → MCP 控制层 → tools → sources`，并以第二张图展示 `draft → validate → approval → publish → readback/rollback` 的审批生命周期。
+6. **审批与发布**：展示草稿差异、校验结果、审批链和禁用的发布/回滚动作。
+7. **审计日志**：展示脱敏 actor、tenant、action、result、reason、config version 和 trace id。
+
+## 系统结构视图
+
+`#architecture` 只在 `validateSnapshot` 成功后从快照生成展示模型。clients、tools、sources 和 `approvals.chain` 的数组为空时不生成假动态节点；MCP 控制层是固定的产品边界说明，表示身份、tenant/actor 绑定、RBAC allowlist 和审计，不表示实时证据。
+
+工具分组只读取 `name` 的第一个 `.` 前缀，按以下固定映射处理：`quote.`/`cargo.` → 报价与计费，`customs.` → 关务，`container.` → 装柜，`knowledge.`/`system.`/`review.` → 平台支持；其他、空或非字符串名称进入“未知工具/未分类”，保留原始顺序和名称位置。不得依据 label、permission、roles 或包含关系推断分组。
+
+节点关系使用可读动词：客户端“通过身份与租户边界接入”；控制层“认证后绑定 tenant/actor，按 RBAC 调用”；工具“执行确定性计算或窄适配”；来源“提供版本、引用和 readiness 原因”，并返回结构化结果。连接箭头只是布局符号，不暗示实时流量。
+
+结构图明确声明：它不证明真实网络连通、认证已接通或正式配置生效。tool allowlist、client check、source readiness、approval 状态四类信号分别展示，不汇总成“系统健康”或“可发布”。详情只使用 `display`/`escapeHtml` 处理的安全字段；`secret_ref` 只作为 opaque 引用，实际 endpoint URL、原始 token/secret、客户内容和下游响应不展示。
+
+审批生命周期只有在 `approvals.chain` 非空时才绘制。缺少的阶段显示未返回，`blocked`、未读回或其他非成功状态不得被提升为成功；空链直接显示暂无审批链，不把固定阶段画成已完成。
 
 ## 数据边界
 

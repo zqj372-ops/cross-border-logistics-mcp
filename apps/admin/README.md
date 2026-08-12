@@ -1,6 +1,6 @@
 # 跨境物流 MCP 控制台原型
 
-这是 08A 的单页控制面原型。它管理客户端接入、角色/工具授权、适配器引用、就绪状态、审批差异和审计摘要；它不是报价、关税、Zone 或装柜业务数据库。
+这是 08A 的单页控制面原型。它管理客户端接入、角色/工具授权、适配器引用、系统结构、就绪状态、审批差异和审计摘要；它不是报价、关税、Zone 或装柜业务数据库。
 
 ## 本地运行
 
@@ -31,6 +31,8 @@ GET /admin/api/v1/snapshot
 - Quote Engine 继续是报价权威源；RiskCustoms 继续是关务权威源；货物、分泡和装柜仍由确定性工具计算。
 - 页面只展示 `endpoint_ref`、opaque `secret_ref`、source version 和 readiness，不展示原始凭证、客户内容、报价明细或税务材料。
 - 角色和 Phase 1 工具只按已校验快照中的平台 RBAC 展示；快照缺失时不生成默认权限，不能从页面新增 generic write。
+- `#architecture` 只把已校验快照中的 clients、tools、sources 和 `approvals.chain` 画成静态关系：clients → MCP 控制层 → tools → sources。控制层是产品边界说明，不是 live 证据；工具按 name 的第一个 `.` 前缀确定性分组，未知/空/异常 name 保留在“未知工具/未分类”。
+- 结构图不证明真实网络连通、认证已接通或正式配置生效；tool allowlist、client check、source readiness、approval 状态分别展示，不汇总为“系统健康”或“可发布”。节点详情只显示脱敏字段，`secret_ref` 仅作引用，实际 endpoint、凭证、客户内容和下游响应不显示。
 - 真实写操作必须经过 `draft → validate/preview → approval → publish → readback/rollback`；本原型没有正式写 API，因此不伪造成功。
 
 ## 运行安全边界
@@ -48,5 +50,7 @@ node --check apps/admin/app.js
 node --check apps/admin/fixture-data.js
 node apps/admin/self-check.mjs
 ```
+
+self-check 还会验证结构模型的前缀分组、原始工具顺序、未知工具保留、空数组不造节点，以及审批链缺步骤不标记为成功。
 
 静态服务器 smoke 应使用明确的 `?fixture=1` URL；正式模式的预期结果是显示 `正式快照不可用`，而不是展示演示数据。
