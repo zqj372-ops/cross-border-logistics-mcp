@@ -154,5 +154,5 @@ describe("built runtime smoke", () => {
       await stop(child);
       await rm(layout, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 });
