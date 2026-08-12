@@ -40,6 +40,6 @@ docker compose --env-file deploy/env.example -f deploy/compose.yml config
 `--fixture-only` 只做本地只读/隔离验证，不访问网络、不打印密钥，也不启动容器。
 
 Admin 控制台的静态路由在 MCP bearer auth 之前。只有在批准的企业身份网关/访问控制之后才允许
-开启 `MCP_ADMIN_UI_ENABLED=true`，不能直接公网暴露；未来正式 provider 仍需独立 admin RBAC、
-tenant binding、CSRF/Origin、版本/审批/审计。当前 snapshot/provider、保存/发布/回滚 API 仍未接通，
-正式配置保持不可用。
+开启 `MCP_ADMIN_UI_ENABLED=true`，不能直接公网暴露。当前只读 snapshot 仅允许本机回环访问且不返回
+身份、租户、地址、凭证或审计明细；多人入口仍需独立 admin RBAC、tenant binding、CSRF/Origin、
+版本/审批/审计。保存、发布和回滚 API 未接通，正式写配置保持不可用。

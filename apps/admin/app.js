@@ -469,8 +469,12 @@ function pageHeader(view, actions = "") {
   </div>`;
 }
 
+function isDemoSnapshot() {
+  return state.mode === "fixture" || state.data?.environment === "fixture" || state.data?.environment === "演示环境";
+}
+
 function modeBanner() {
-  if (state.mode === "fixture") {
+  if (isDemoSnapshot()) {
     return `<div class="callout callout-warning" role="status">
       <div class="callout-head"><h2>演示数据</h2>${statusMarkup("manual_review", "未连接正式后台")}</div>
       <p>当前已明确启用演示快照。发布、回滚和保存到服务器已禁用；本地差异只在浏览器中预览，未持久化。</p>
@@ -558,7 +562,7 @@ function renderOverview(data) {
   const approvals = data.approvals ?? {};
   const blockers = Array.isArray(data.blockers) ? data.blockers : [];
   const sources = Array.isArray(data.sources) ? data.sources : [];
-  const pendingCount = Array.isArray(approvals.changes) ? approvals.changes.filter((change) => change.status !== "ready").length : 0;
+  const pendingCount = blockers.length + (Array.isArray(approvals.changes) ? approvals.changes.filter((change) => change.status !== "ready").length : 0);
   const chain = Array.isArray(approvals.chain) ? approvals.chain : [];
   const legend = Array.isArray(data.status_legend) ? data.status_legend : [];
 
@@ -687,6 +691,12 @@ export function safeOpaqueReference(value, prefix) {
   return "已配置（具体内容隐藏）";
 }
 
+function toolKindStatus(node) {
+  if (node.kindLabel === "read") return statusMarkup("ready", "只读");
+  if (node.kindLabel === "write") return statusMarkup("manual_review", "受控写入");
+  return statusMarkup(node.kindLabel === "" ? "unavailable" : "manual_review", node.kindLabel === "" ? "操作类型未返回" : "操作类型未知");
+}
+
 export function architectureNodeStatus(node, kind) {
   if (kind === "control") return '<span class="architecture-static-tag">固定边界</span>';
   if (kind === "client") return statusMarkup(node.status);
@@ -695,9 +705,7 @@ export function architectureNodeStatus(node, kind) {
   if (node.invalidName) return statusMarkup("manual_review", "名称异常");
   if (kind === "tool" && node.availability) return statusMarkup(node.availability);
   if (node.sourceReadiness) return statusMarkup(node.sourceReadiness);
-  if (node.kindLabel === "read") return statusMarkup("ready", "只读");
-  if (node.kindLabel === "write") return statusMarkup("manual_review", "受控写入");
-  return statusMarkup(node.kindLabel === "" ? "unavailable" : "manual_review", node.kindLabel === "" ? "操作类型未返回" : "操作类型未知");
+  return toolKindStatus(node);
 }
 
 function architectureNodeMarkup(node, kind, selected = false) {
@@ -780,7 +788,7 @@ function renderArchitectureDetails(model) {
       ["分组", display(group?.label, "未知工具/未分类")],
       ["执行方式", display(executionGroup?.label, "未返回")],
       ["依赖来源", display(sourceLabel, "本地或未返回")],
-      ["操作类型", display(node.kindLabel, "未返回")],
+      ["操作类型", toolKindStatus(node)],
       ["当前可用性", node.availability ? statusMarkup(node.availability) : "未返回"],
       ["授权角色", roleChips(node.roles)],
     ];
@@ -899,7 +907,7 @@ function updateContext() {
   tenantName.textContent = toChineseDisplayText(data?.tenant?.name, state.loading ? "读取中" : "未连接");
   environment.innerHTML = state.loading
     ? statusMarkup("loading")
-    : state.mode === "fixture"
+    : isDemoSnapshot()
       ? statusMarkup("manual_review", "演示数据")
       : data
         ? statusMarkup("ready", "正式快照")
@@ -907,7 +915,7 @@ function updateContext() {
   configVersion.textContent = versionSummary(data?.config?.current_version);
   actorName.textContent = toChineseDisplayText(data?.actor?.name, "未认证");
   actorRole.textContent = data?.actor?.role ? roleLabel(data.actor.role) : "—";
-  footerMode.textContent = state.mode === "fixture" ? "演示数据 · 未连接正式后台" : "正式快照 · 失败闭合";
+  footerMode.textContent = isDemoSnapshot() ? "演示数据 · 未连接正式后台" : "正式快照 · 失败闭合";
 }
 
 function updateNav() {

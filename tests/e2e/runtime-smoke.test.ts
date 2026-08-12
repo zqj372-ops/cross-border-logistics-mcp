@@ -289,6 +289,14 @@ describe("built runtime smoke", () => {
       const admin = await fetch(`http://127.0.0.1:${port}/admin/?fixture=1`);
       expect(admin.status).toBe(200);
       expect(await admin.text()).toContain("跨境物流控制台");
+      const adminSnapshot = await fetch(`http://127.0.0.1:${port}/admin/api/v1/snapshot`);
+      expect(adminSnapshot.status).toBe(200);
+      expect(await adminSnapshot.json()).toMatchObject({
+        environment: "演示环境",
+        health: { readyz: { status: "blocked" } },
+        clients: [],
+        audit: [],
+      });
 
       const headers = {
         "content-type": "application/json",

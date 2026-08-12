@@ -1,4 +1,4 @@
-import type { Server } from "node:http";
+import { request as httpRequest, type Server } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -52,6 +52,17 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+async function requestStatus(url: string, headers: Readonly<Record<string, string>>): Promise<number> {
+  return new Promise<number>((resolvePromise, reject) => {
+    const request = httpRequest(url, { headers }, (response) => {
+      response.resume();
+      response.once("end", () => resolvePromise(response.statusCode ?? 0));
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -60,14 +71,23 @@ describe("admin static runtime boundary", () => {
   it("is closed by default", async () => {
     const directory = await makeAssets();
     const composition = createFixtureComposition({ dataMode: "fixtures" });
+    let snapshotCalls = 0;
     const { server, baseUrl } = await listen(
       composition,
-      createAdminStaticHandler({ staticDir: directory }),
+      createAdminStaticHandler({
+        staticDir: directory,
+        snapshotProvider: () => {
+          snapshotCalls += 1;
+          return {};
+        },
+      }),
     );
     try {
       const response = await fetch(`${baseUrl}/admin/app.js?fixture=1`);
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ status: "blocked", reason: "admin_ui_disabled" });
+      expect((await fetch(`${baseUrl}/admin/api/v1/snapshot`)).status).toBe(404);
+      expect(snapshotCalls).toBe(0);
     } finally {
       await closeServer(server);
       await composition.close();
@@ -165,7 +185,7 @@ describe("admin static runtime boundary", () => {
     }
   });
 
-  it("returns fixed security headers and a provider-missing snapshot without fixture data", async () => {
+  it("returns fixed security headers and fails closed without a snapshot provider", async () => {
     const directory = await makeAssets();
     const composition = createFixtureComposition({ dataMode: "fixtures" });
     const { server, baseUrl } = await listen(
@@ -196,6 +216,119 @@ describe("admin static runtime boundary", () => {
     } finally {
       await closeServer(server);
       await composition.close();
+    }
+  });
+
+  it("serves a provider snapshot without caching or leaking provider failures", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    let calls = 0;
+    const { server, baseUrl } = await listen(
+      composition,
+      createAdminStaticHandler({
+        enabledSetting: "true",
+        staticDir: directory,
+        snapshotProvider: () => {
+          calls += 1;
+          return { schema_version: "2026-08-11.v1", environment: "演示环境" };
+        },
+      }),
+    );
+    try {
+      const response = await fetch(`${baseUrl}/admin/api/v1/snapshot`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({
+        schema_version: "2026-08-11.v1",
+        environment: "演示环境",
+      });
+      expect(calls).toBe(1);
+      const wrongHostStatus = await requestStatus(`${baseUrl}/admin/api/v1/snapshot`, {
+        host: "attacker.example.invalid",
+      });
+      const wrongOrigin = await fetch(`${baseUrl}/admin/api/v1/snapshot`, {
+        headers: { origin: "https://attacker.example.invalid" },
+      });
+      expect(wrongHostStatus).toBe(404);
+      expect(wrongOrigin.status).toBe(404);
+      expect(calls).toBe(1);
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+
+    const failedComposition = createFixtureComposition({ dataMode: "fixtures" });
+    const failed = await listen(
+      failedComposition,
+      createAdminStaticHandler({
+        enabledSetting: "true",
+        staticDir: directory,
+        snapshotProvider: () => {
+          throw new Error("Bearer secret-value from https://private.example.invalid");
+        },
+      }),
+    );
+    try {
+      const response = await fetch(`${failed.baseUrl}/admin/api/v1/snapshot`);
+      expect(response.status).toBe(503);
+      const body = await response.text();
+      expect(JSON.parse(body)).toEqual({
+        status: "unavailable",
+        reasons: ["admin_snapshot_unavailable"],
+      });
+      expect(body).not.toContain("secret-value");
+      expect(body).not.toContain("private.example.invalid");
+    } finally {
+      await closeServer(failed.server);
+      await failedComposition.close();
+    }
+  });
+
+  it("uses a redacted live snapshot without changing fixture readiness", async () => {
+    const previousEnabled = process.env.MCP_ADMIN_UI_ENABLED;
+    const previousMode = process.env.MCP_DATA_MODE;
+    process.env.MCP_ADMIN_UI_ENABLED = "true";
+    process.env.MCP_DATA_MODE = "fixtures";
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const server = createRuntimeServer(composition);
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolvePromise());
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("No admin address.");
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const response = await fetch(`${baseUrl}/admin/api/v1/snapshot`);
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      const snapshot = JSON.parse(body) as Record<string, unknown>;
+      expect(snapshot).toMatchObject({
+        schema_version: "2026-08-11.v1",
+        environment: "演示环境",
+        health: { readyz: { status: "blocked" } },
+        clients: [],
+        audit: [],
+      });
+      expect((snapshot.tools as unknown[])).toHaveLength(9);
+      expect((snapshot.roles as unknown[])).toHaveLength(7);
+      expect((snapshot.sources as unknown[])).toHaveLength(3);
+      expect(body).not.toMatch(
+        /https?:\/\/|Bearer|token|secret|password|client_id|tenant_id|actor_id|request_id|audit_id|source_id|endpoint_ref|secret_ref|MCP_/i,
+      );
+      const ready = await fetch(`${baseUrl}/readyz`);
+      expect(ready.status).toBe(503);
+      expect(await ready.json()).toEqual({
+        status: "not_ready",
+        reasons: ["fixture_mode_not_production_ready"],
+      });
+    } finally {
+      await closeServer(server);
+      await composition.close();
+      if (previousEnabled === undefined) delete process.env.MCP_ADMIN_UI_ENABLED;
+      else process.env.MCP_ADMIN_UI_ENABLED = previousEnabled;
+      if (previousMode === undefined) delete process.env.MCP_DATA_MODE;
+      else process.env.MCP_DATA_MODE = previousMode;
     }
   });
 

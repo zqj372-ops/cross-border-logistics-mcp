@@ -2,19 +2,19 @@
 
 **范围：** 08A 单页控制面原型
 **版本：** `2026-08-11.v1` 兼容展示
-**状态：** 仅前端原型，未接入正式后台写 API
+**状态：** 已接只读脱敏运行快照，未接入正式后台写 API
 
 ## 信息架构
 
 单页左侧导航包含 7 个视图，使用 URL hash 保留当前视图，不引入多页路由框架：
 
 1. **总览**：展示 `/healthz`、`/readyz`、来源就绪、阻断原因、待处理项和状态说明。
-2. **客户端接入**：展示 ChatGPT、Codex、企业助手的 `client_id`、issuer、audience、allowed origins 和最近校验结果。
-3. **工具权限**：按已校验快照返回的角色和 Phase 1 工具展示 permission、读/写 kind、独立 availability 和角色授权；kind 不是 availability，字段未返回时显示未返回，不生成默认权限。
-4. **数据源与适配器**：展示 AI 报价 API、RiskCustoms API、PDF API（未注册）、knowledge、status、review 的 `endpoint_ref`、`secret_ref`、source version 和 readiness。编辑动作只生成控制台草稿，不表示已接通生产。
+2. **客户端接入**：只展示客户端业务名称、登记状态和最近校验结果；身份来源、使用范围、允许来源地址和内部标识均隐藏。
+3. **工具权限**：按已校验快照返回的中文角色和工具名称展示操作类型、当前可用性和角色授权；内部工具名与权限码不显示，字段未返回时不生成默认权限。
+4. **数据源与适配器**：展示智能报价、关务查询、报价单、精选知识、系统状态和复核任务的配置状态与就绪原因；接口、凭证和版本只显示是否已登记，不显示具体值。
 5. **系统结构**：以 C4-like 静态结构展示 `clients → MCP 控制层 → tools → sources`，并以第二张图展示 `draft → validate → approval → publish → readback/rollback` 的审批生命周期。
 6. **审批与发布**：展示草稿差异、校验结果、审批链和禁用的发布/回滚动作。
-7. **审计日志**：展示脱敏 actor、tenant、action、result、reason、config version 和 trace id。
+7. **审计日志**：只展示中文、脱敏的操作类别、结果和原因；用户、租户、版本和追踪标识不回显。
 
 ## 系统结构视图
 
@@ -61,9 +61,9 @@
 
 `ready` 是就绪检查文案，不是替代后端包络状态。颜色不是唯一依据；状态同时使用文字和图标。
 
-## 未来最小 API 契约
+## 只读快照与未来写 API
 
-本任务不实现后端接口。未来正式接入至少需要：
+当前实现只读运行快照；未来正式写入至少需要：
 
 ### 读取快照
 
@@ -72,7 +72,7 @@ GET /admin/api/v1/snapshot
 Accept: application/json
 ```
 
-返回必须带 `schema_version`，并返回本页需要的 `tenant`、`environment`、`config`、`actor`、`health`、`clients`、`roles`、`tools`、`sources`、`approvals` 和 `audit`。数组为空时返回空数组，不让前端猜测或补默认业务数据。来源必须带 `endpoint_ref`、`secret_ref`、`source_version` 和 readiness/reason；审计不得带敏感原文。
+返回带 `schema_version`，并返回本页需要的对象和数组。当前路由没有管理端用户上下文，因此 `clients`、`audit` 为空，租户和用户仅显示未绑定；来源不返回接口、凭证和版本原值。数组为空时不让前端猜测或补默认业务数据。
 
 ### 预览差异
 
@@ -100,4 +100,4 @@ POST /admin/api/v1/config/rollback
 
 ## 运行安全边界
 
-运行时 `/admin` 静态路由发生在 MCP bearer auth 之前。当前只提供静态壳和固定 `503/unavailable` 的 snapshot 占位，因此 `MCP_ADMIN_UI_ENABLED` 默认关闭；只有在批准的企业身份网关/访问控制之后才允许开启，不能直接公网暴露。未来 snapshot/provider 接入仍需独立的 admin RBAC、tenant binding、CSRF/Origin、版本/审批/审计；本原型不提供 header bypass、共享密钥、万能 admin token 或真实保存/发布/回滚。
+运行时 `/admin` 静态路由发生在 MCP bearer auth 之前，因此 `MCP_ADMIN_UI_ENABLED` 默认关闭，已开启的只读页面也只接受本机回环访问。多人访问只有在批准的企业身份网关/访问控制之后才可开放，并仍需独立的管理端角色权限、租户绑定、来源校验、版本/审批/审计。本控制台不提供 header bypass、共享密钥、万能 admin token 或真实保存/发布/回滚。

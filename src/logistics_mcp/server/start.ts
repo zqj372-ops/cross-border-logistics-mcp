@@ -5,6 +5,10 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { AuthenticationError, type AuthClaims } from "../platform/context";
+import {
+  getToolPolicy,
+  type PhaseOneToolName,
+} from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
   createFixtureComposition,
@@ -68,6 +72,197 @@ async function readiness(
   reasons.push(...compositionState.reasons);
   const uniqueReasons = [...new Set(reasons)];
   return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
+}
+
+const TOOL_PRESENTATION: Record<
+  PhaseOneToolName,
+  { readonly label: string; readonly description: string }
+> = {
+  "knowledge.search_curated": {
+    label: "精选知识搜索",
+    description: "只查询经过审核的当前操作资料。",
+  },
+  "system.get_data_status": {
+    label: "数据状态查询",
+    description: "读取已接入来源的就绪状态和版本证据。",
+  },
+  "cargo.calculate": {
+    label: "货物与分泡计算",
+    description: "计算体积、体积重、分泡和计费重。",
+  },
+  "container.plan_summary": {
+    label: "装柜摘要计算",
+    description: "汇总理论容量、运营目标和超限提醒。",
+  },
+  "quote.canada_final_mile.calculate": {
+    label: "加拿大尾程报价",
+    description: "通过受控接口获取加拿大尾程报价。",
+  },
+  "customs.ca.search": {
+    label: "加拿大关务候选查询",
+    description: "查询海关编码候选和待补充问题。",
+  },
+  "customs.ca.estimate": {
+    label: "加拿大税费估算",
+    description: "正式估算接口约定完成前保持不可用。",
+  },
+  "quote.save_draft": {
+    label: "保存报价草稿",
+    description: "正式草稿接口和写后读回完成前保持不可用。",
+  },
+  "review.create_task": {
+    label: "创建人工复核任务",
+    description: "正式任务接口和写后读回完成前保持不可用。",
+  },
+};
+
+const ROLE_PRESENTATION = {
+  admin: ["管理员", "管理平台授权和审计边界。"],
+  sales: ["销售", "补充询价信息并查看受控结果。"],
+  operator: ["运营", "核对货物、装柜和任务状态。"],
+  customs_reviewer: ["关务审核", "审核关务候选和风险信息。"],
+  finance: ["财务", "查看计费口径和税费结果。"],
+  viewer: ["查看者", "查看已授权的结构化结果。"],
+  service: ["后台服务", "以最小权限调用确定性工具。"],
+} as const;
+
+const LOCAL_TOOL_NAMES = new Set<PhaseOneToolName>([
+  "cargo.calculate",
+  "container.plan_summary",
+]);
+
+function adminBlocker(reason: string): string {
+  if (reason === "fixture_mode_not_production_ready") {
+    return "当前为演示环境，不能作为正式发布依据。";
+  }
+  if (reason.startsWith("missing_") || reason.includes("allowed_")) {
+    return "正式运行配置不完整，具体字段已隐藏。";
+  }
+  if (reason.includes("token") || reason.includes("jwks")) {
+    return "身份验证依赖尚未通过就绪检查。";
+  }
+  if (
+    reason.includes("audit") ||
+    reason.includes("idempotency") ||
+    reason.includes("session") ||
+    reason.includes("platform")
+  ) {
+    return "审计、幂等或会话持久化依赖尚未通过就绪检查。";
+  }
+  if (reason.includes("adapter")) {
+    return "业务接口适配层尚未通过就绪检查。";
+  }
+  return "存在未通过的运行门槛，技术信息已隐藏。";
+}
+
+function businessSources(mode: GatewayComposition["mode"]): readonly Record<string, unknown>[] {
+  const fixture = mode === "fixtures";
+  const common = {
+    category: "business_api",
+    type: "外部业务接口",
+    environment: fixture ? "演示环境" : "正式环境",
+    update_mode: "每次请求直接读取，不在平台保存业务数据。",
+    last_checked_at: null,
+    last_success_at: null,
+    readiness: fixture ? "manual_review" : "unavailable",
+    reason: fixture
+      ? "当前使用演示替身验证流程，不代表外部接口已经连接。"
+      : "正式业务接口尚未注入运行组合，相关工具保持不可用。",
+  } as const;
+  return [
+    {
+      ...common,
+      name: "ai_quote_api",
+      label: "智能报价服务",
+      business_key: "quote",
+      affected_tools: ["quote.canada_final_mile.calculate"],
+      registration_status: "工具已登记，正式接口未启用",
+      business_version_evidence: "尚未取得完整的规则版本、数据版本和生效期证据。",
+      blocker: "上游只读边界、货物体积与始发地映射、响应版本证据仍待确认。",
+    },
+    {
+      ...common,
+      name: "riskcustoms_api",
+      label: "关务查询服务",
+      business_key: "customs",
+      affected_tools: ["customs.ca.search", "customs.ca.estimate"],
+      registration_status: "查询工具已登记，正式接口未启用",
+      business_version_evidence: "发布版本和数据就绪证据必须来自真实查询响应。",
+      blocker: "正式认证、租户映射和发布状态读回仍待适配验证；现有接口不提供正式税额估算。",
+    },
+    {
+      ...common,
+      name: "pdf_api",
+      label: "报价单服务",
+      business_key: "pdf",
+      affected_tools: [],
+      registration_status: "未登记工具",
+      business_version_evidence: "尚未提供可核验的服务端接口约定。",
+      blocker: "缺少服务端接口地址、身份认证、输入输出和文件读回约定。",
+    },
+  ];
+}
+
+async function adminRuntimeSnapshot(
+  composition: GatewayComposition,
+): Promise<Readonly<Record<string, unknown>>> {
+  const state = await readiness(composition);
+  const fixture = composition.mode === "fixtures";
+  const blockers = [...new Set(state.reasons.map(adminBlocker))];
+  return {
+    schema_version: "2026-08-11.v1",
+    environment: fixture ? "演示环境" : "正式环境",
+    tenant: { name: "服务级只读状态（未绑定租户）" },
+    actor: { name: "未绑定具体用户" },
+    config: { current_version: null, last_published_at: null },
+    health: {
+      healthz: {
+        status: "ready",
+        value: "服务在线",
+        detail: "只说明进程存活，不代表业务接口可用。",
+      },
+      readyz: {
+        status: state.ready ? "ready" : "blocked",
+        value: state.ready ? "平台依赖已就绪" : "未满足正式发布门槛",
+        detail: state.ready
+          ? "平台身份、审计、幂等和会话依赖已通过检查。"
+          : "具体技术字段已隐藏，请由管理员检查部署配置。",
+      },
+    },
+    blockers,
+    clients: [],
+    roles: Object.entries(ROLE_PRESENTATION).map(([key, [label, description]]) => ({
+      key,
+      label,
+      description,
+    })),
+    tools: composition.definitions.map((definition) => ({
+      name: definition.name,
+      ...TOOL_PRESENTATION[definition.name],
+      kind: definition.kind,
+      roles: [...getToolPolicy(definition.name).roles],
+      availability:
+        fixture || (state.ready && LOCAL_TOOL_NAMES.has(definition.name))
+          ? "ready"
+          : "unavailable",
+    })),
+    sources: businessSources(composition.mode),
+    approvals: {
+      validation: {
+        status: "blocked",
+        summary: "当前后台只读，不提供保存、发布或回滚操作。",
+      },
+      changes: [],
+      chain: [],
+    },
+    audit: [],
+    status_legend: [
+      { key: "ready", label: "已就绪", detail: "当前检查通过。" },
+      { key: "unavailable", label: "不可用", detail: "所需来源当前不能使用。" },
+      { key: "blocked", label: "已阻断", detail: "安全或发布门槛禁止继续。" },
+      { key: "manual_review", label: "人工复核", detail: "只能用于流程核验，不能作为正式结果。" },
+    ],
+  };
 }
 
 function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefined {
@@ -264,6 +459,7 @@ export function createRuntimeServer(
     createAdminStaticHandler({
       staticDir: resolve(process.cwd(), "dist/admin"),
       ...(enabledSetting === undefined ? {} : { enabledSetting }),
+      snapshotProvider: () => adminRuntimeSnapshot(composition),
     });
   const trustedProxy = trustedProxyChecker(
     options.trustedProxyAddresses ?? splitSetting("MCP_TRUSTED_PROXY_ADDRESSES", ""),

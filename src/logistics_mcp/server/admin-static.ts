@@ -29,6 +29,9 @@ type AdminState =
 export interface AdminStaticHandlerOptions {
   readonly staticDir: string;
   readonly enabledSetting?: string;
+  readonly snapshotProvider?: () =>
+    | Readonly<Record<string, unknown>>
+    | Promise<Readonly<Record<string, unknown>>>;
 }
 
 export interface AdminStaticHandler {
@@ -106,6 +109,30 @@ function isAdminPath(path: string): boolean {
   return path === "/admin" || path.startsWith("/admin/");
 }
 
+function isLoopbackAddress(value: string | undefined): boolean {
+  return (
+    value === "localhost" ||
+    value === "127.0.0.1" ||
+    value === "[::1]" ||
+    value === "::1" ||
+    value === "::ffff:127.0.0.1"
+  );
+}
+
+function isLoopbackRequest(request: IncomingMessage): boolean {
+  if (!isLoopbackAddress(request.socket.remoteAddress)) return false;
+  try {
+    const host = new URL(`http://${request.headers.host ?? ""}`).hostname;
+    const origin = request.headers.origin;
+    return (
+      isLoopbackAddress(host) &&
+      (origin === undefined || isLoopbackAddress(new URL(origin).hostname))
+    );
+  } catch {
+    return false;
+  }
+}
+
 function methodAllowed(request: IncomingMessage, response: ServerResponse, allow: string): boolean {
   if (request.method === "GET" || request.method === "HEAD") return true;
   sendJson(request, response, 405, { status: "blocked", reason: "method_not_allowed" }, allow);
@@ -119,12 +146,15 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
       const path = pathFromRequest(request);
       if (!isAdminPath(path)) return false;
 
-      if (path === "/admin" && !methodAllowed(request, response, "GET, HEAD")) return true;
-
       if (state.kind === "disabled") {
         sendJson(request, response, 404, { status: "blocked", reason: "admin_ui_disabled" });
         return true;
       }
+      if (!isLoopbackRequest(request)) {
+        sendJson(request, response, 404, { status: "blocked", reason: "admin_ui_disabled" });
+        return true;
+      }
+      if (path === "/admin" && !methodAllowed(request, response, "GET, HEAD")) return true;
       if (state.kind === "invalid") {
         sendJson(request, response, 503, { status: "unavailable", reason: "admin_ui_config_invalid" });
         return true;
@@ -133,7 +163,6 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
         sendJson(request, response, 503, { status: "unavailable", reason: "admin_ui_assets_missing" });
         return true;
       }
-
       if (path === "/admin") {
         try {
           const requested = new URL(request.url ?? "/", "http://admin.invalid");
@@ -155,10 +184,26 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
           sendJson(request, response, 405, { status: "blocked", reason: "method_not_allowed" }, "GET");
           return true;
         }
-        sendJson(request, response, 503, {
-          status: "unavailable",
-          reasons: ["admin_snapshot_provider_missing"],
-        });
+        if (options.snapshotProvider === undefined) {
+          sendJson(request, response, 503, {
+            status: "unavailable",
+            reasons: ["admin_snapshot_provider_missing"],
+          });
+          return true;
+        }
+        void Promise.resolve()
+          .then(() => options.snapshotProvider!())
+          .then((snapshot) => {
+            if (!response.destroyed) sendJson(request, response, 200, snapshot);
+          })
+          .catch(() => {
+            if (!response.destroyed) {
+              sendJson(request, response, 503, {
+                status: "unavailable",
+                reasons: ["admin_snapshot_unavailable"],
+              });
+            }
+          });
         return true;
       }
 

@@ -77,8 +77,9 @@ flowchart LR
 npm run start:fixture
 ```
 
-启动后访问 `http://127.0.0.1:8080/admin/?fixture=1`；MCP 入口为
-`http://127.0.0.1:8080/mcp`，本机假 token 为 `local-fixture-token`。演示模式只绑定
+启动后访问 `http://127.0.0.1:8080/admin/` 查看当前进程的中文脱敏只读快照；带
+`?fixture=1` 的地址只用于完整界面演示。MCP 入口为 `http://127.0.0.1:8080/mcp`，
+本机假 token 为 `local-fixture-token`。演示模式只绑定
 `127.0.0.1`，`/readyz` 保持 `503/fixture_mode_not_production_ready`，不代表生产就绪。
 一条命令验收编译产物、后台页面、认证拒绝、MCP 初始化、九个工具和
 `cargo.calculate`：

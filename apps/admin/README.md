@@ -26,7 +26,7 @@ http://127.0.0.1:4173/apps/admin/?fixture=1
 GET /admin/api/v1/snapshot
 ```
 
-请求失败、返回非 2xx 或快照缺少必需对象/数组时显示 `unavailable`，不会回退到演示数据或默认配置。本仓库没有为该入口新增后台接口。
+运行时会为该入口提供只读、中文、脱敏的平台快照；请求失败、返回非 2xx 或快照缺少必需对象/数组时显示 `unavailable`，不会回退到演示数据或默认配置。快照不读取业务正文，也不调用报价、关务或写入接口做探测。
 
 ## 边界
 
@@ -45,7 +45,7 @@ GET /admin/api/v1/snapshot
 
 构建始终校验并复制 `index.html`、`styles.css`、`app.js`、`fixture-data.js` 四个固定资源；这不等于开启控制台。`MCP_ADMIN_UI_ENABLED` 默认关闭；未显式设置为 `true` 时不开放，默认未设置返回 blocked/404，非法值返回 unavailable/503。
 
-运行时静态 `/admin` 路由在 `start.ts` 中位于 MCP bearer auth 之前。由于当前只有静态壳和固定 `503/unavailable` 的快照占位，只有在批准的企业身份网关/访问控制之后才能开启 `MCP_ADMIN_UI_ENABLED=true`，不得直接暴露公网。未来接入正式 snapshot/provider 仍必须独立实现 admin RBAC、tenant binding、CSRF/Origin、版本/审批/审计；本原型不新增 header bypass、共享密钥、万能 admin token 或真实保存/发布/回滚。
+运行时静态 `/admin` 路由在 MCP bearer auth 之前，因此当前只接受本机回环访问，并且 `MCP_ADMIN_UI_ENABLED` 默认关闭。多人访问必须先接入批准的企业身份网关/访问控制，再独立实现管理端角色权限、租户绑定和来源校验；不得直接暴露公网。只读快照不返回客户端、租户、用户、接口地址、凭证、审计明细或业务正文，也不提供真实保存、发布或回滚。
 
 ## 最小检查
 
@@ -59,7 +59,7 @@ node apps/admin/self-check.mjs
 
 self-check 还会验证前端中文展示边界、技术字段不回显、三业务 API 卡字段、引用隐藏、旧快照缺新字段仍可校验、缺字段不造状态、工具到来源分组、PDF 未注册、原始工具顺序、未知工具保留、空数组不造节点，以及审批链缺步骤不标记为成功。
 
-静态服务器 smoke 应使用明确的 `?fixture=1` URL；正式模式的预期结果是显示 `正式快照不可用`，而不是展示演示数据。
+静态服务器 smoke 应使用明确的 `?fixture=1` URL；运行时不带该参数时读取只读正式快照，读取失败也不会展示演示数据。
 
 可选的本地静态预览：
 

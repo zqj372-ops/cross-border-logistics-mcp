@@ -40,10 +40,10 @@
 
 - `/admin` 静态路由在 `start.ts` 中发生于 MCP bearer auth 之前；`MCP_ADMIN_UI_ENABLED` 默认关闭，
   未显式开启时返回 blocked/404。构建固定包含四个静态资源，不代表运行时已经开放。
-- 当前控制台只有静态壳和固定 `503/unavailable` 的 snapshot 占位。只有在批准的企业身份网关/访问
+- 当前控制台提供本机回环可用的中文脱敏只读 snapshot，且默认关闭。多人访问只有在批准的企业身份网关/访问
   控制之后才可开启 `MCP_ADMIN_UI_ENABLED=true`，不得直接暴露公网；不新增 header bypass、共享密钥
   或万能 admin token。
-- 未来 snapshot/provider 接入必须另行完成 admin RBAC、tenant binding、CSRF/Origin、版本/审批/审计，
+- 多人管理入口仍必须另行完成 admin RBAC、tenant binding、CSRF/Origin、版本/审批/审计，
   不能把 MCP bearer auth 或静态文件可达性当作控制台授权。
 
 ## 证据
