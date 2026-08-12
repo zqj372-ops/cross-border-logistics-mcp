@@ -1,9 +1,11 @@
 # RFC：`quote.document.create` 报价 PDF 工具
 
-- **状态：** Proposed
+- **状态：** Superseded
 - **日期：** 2026-08-12
 - **影响范围：** 共享工具目录、Schema、RBAC、审计、PDF adapter、管理后台
 - **兼容性：** 纯新增；现有九个工具不改名、不改字段、不改状态语义
+
+> **已由 API-first 方案替代（2026-08-12）。** 本 RFC 保留为历史草案，不再作为当前执行依据；PDF 等待已核验的生产 OpenAPI/endpoint 后，按 [API-first 实施计划](../superpowers/plans/2026-08-12-api-first-integration-plan.md) 重新评估。
 
 ## 1. 动机
 

@@ -125,7 +125,7 @@ schema_version: string, required
 version: string, required
 origin: { warehouse_code: string, province: string }, required
 destination: { country: const CA, province: string|null, city: string|null, postal_code: string|null, address_type: commercial|residential|unknown, full_address_ref: OpaqueReference|null }, required
-cargo: { cargo_result_ref: string|null, billing_pallets: integer|null, weight_kg: Measurement|null, pieces: integer|null, package_types: string[] }, required
+cargo: { cargo_result_ref: string|null, billing_pallets: integer|null, weight_kg: Measurement|null, pieces: integer|null, package_types: string[], total_volume: Measurement(unit=m3|cbm)|null, optional }, required
 services: { appointment: boolean, liftgate: boolean, limited_access: boolean, remote_area: boolean }, required
 effective_at: YYYY-MM-DD, required
 ```
@@ -149,6 +149,7 @@ schema_version: string, required
 version: string, required
 rule_date: YYYY-MM-DD, required
 query_kind: exact_code|name_search|candidate_selection, required
+query: string, optional; trim 后 1–200 字
 query_code: string|null, optional
 product_description_ref: OpaqueReference|null, optional
 product_attributes: { material: string|null, use: string|null, origin_country: string|null, contains_steel_aluminum: boolean|null }, required
