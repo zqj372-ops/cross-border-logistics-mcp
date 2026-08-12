@@ -3,7 +3,7 @@
   --ink: #182635;
   --ink-soft: #334557;
   --muted: #5e7082;
-  --quiet: #718294;
+  --quiet: #5e7082;
   --canvas: #f3f6f8;
   --surface: #ffffff;
   --surface-soft: #f8fafb;
@@ -228,7 +228,7 @@ dialog:focus-visible {
 }
 
 .sidebar-heading .muted {
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .nav-list {
@@ -321,7 +321,7 @@ dialog:focus-visible {
   border-radius: var(--radius-small);
   background: var(--surface);
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .sidebar-note p {
@@ -566,7 +566,7 @@ code,
 
 .metric-label {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -580,7 +580,7 @@ code,
 
 .metric-detail {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .section-grid {
@@ -615,7 +615,7 @@ code,
 .card-head p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .callout {
@@ -643,7 +643,7 @@ code,
 
 .callout p {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .callout ul,
@@ -734,7 +734,7 @@ code,
 
 .data-table td {
   color: var(--ink-soft);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .data-table .primary-cell {
@@ -746,7 +746,7 @@ code,
   display: block;
   margin-top: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 400;
 }
 
@@ -766,7 +766,7 @@ code,
   border-radius: 6px;
   background: #f6f9fa;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -792,7 +792,7 @@ code,
 
 .field label {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 750;
 }
 
@@ -809,7 +809,7 @@ code,
 .field-help {
   margin: 0;
   color: var(--quiet);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .client-card-grid,
@@ -850,7 +850,7 @@ code,
 .role-card p {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .ref-list {
@@ -874,7 +874,7 @@ code,
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ink-soft);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .role-card {
@@ -915,7 +915,7 @@ code,
 
 .approval-summary p {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .step-list {
@@ -977,7 +977,7 @@ code,
 
 .step-detail {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .state-guide {
@@ -998,7 +998,7 @@ code,
 .state-guide-item p {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .loading-panel,
@@ -1143,7 +1143,7 @@ code,
   display: grid;
   gap: 5px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .diff-values strong {

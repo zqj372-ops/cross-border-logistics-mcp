@@ -7,7 +7,6 @@ const CONTENT_SECURITY_POLICY =
 const PERMISSIONS_POLICY = "camera=(), geolocation=(), microphone=(), payment=(), usb=()";
 
 const ASSETS = [
-  { path: "/admin", filename: "index.html", contentType: "text/html; charset=utf-8" },
   { path: "/admin/", filename: "index.html", contentType: "text/html; charset=utf-8" },
   { path: "/admin/styles.css", filename: "styles.css", contentType: "text/css; charset=utf-8" },
   { path: "/admin/app.js", filename: "app.js", contentType: "text/javascript; charset=utf-8" },
@@ -33,7 +32,6 @@ export interface AdminStaticHandlerOptions {
 }
 
 export interface AdminStaticHandler {
-  readonly available: boolean;
   handle(request: IncomingMessage, response: ServerResponse): boolean;
 }
 
@@ -65,22 +63,6 @@ function stateFor(options: AdminStaticHandlerOptions): AdminState {
 function pathFromRequest(request: IncomingMessage): string {
   const [path = "/"] = (request.url ?? "/").split("?", 1);
   return path;
-}
-
-function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code <= 0x1f || code === 0x7f;
-  });
-}
-
-function queryForRedirect(request: IncomingMessage): string | null {
-  try {
-    const url = new URL(request.url ?? "/", "http://admin.invalid");
-    return hasControlCharacter(url.search) ? null : url.search;
-  } catch {
-    return null;
-  }
 }
 
 function setSecurityHeaders(response: ServerResponse): void {
@@ -120,20 +102,6 @@ function sendJson(
   send(request, response, status, "application/json; charset=utf-8", JSON.stringify(body), allow);
 }
 
-function redirectToAdminSlash(request: IncomingMessage, response: ServerResponse): void {
-  const query = queryForRedirect(request);
-  if (query === null) {
-    sendJson(request, response, 400, { status: "blocked", reason: "invalid_admin_redirect_target" });
-    return;
-  }
-  setSecurityHeaders(response);
-  response.statusCode = 308;
-  response.setHeader("location", `/admin/${query}`);
-  response.setHeader("content-length", "0");
-  if (request.method !== "GET" && request.method !== "HEAD") request.resume();
-  response.end();
-}
-
 function isAdminPath(path: string): boolean {
   return path === "/admin" || path.startsWith("/admin/");
 }
@@ -147,7 +115,6 @@ function methodAllowed(request: IncomingMessage, response: ServerResponse, allow
 export function createAdminStaticHandler(options: AdminStaticHandlerOptions): AdminStaticHandler {
   const state = stateFor(options);
   return {
-    available: state.kind === "enabled",
     handle(request, response): boolean {
       const path = pathFromRequest(request);
       if (!isAdminPath(path)) return false;
@@ -162,9 +129,24 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
         sendJson(request, response, 503, { status: "unavailable", reason: "admin_ui_config_invalid" });
         return true;
       }
+      if (state.kind === "missing" && path === "/admin") {
+        sendJson(request, response, 503, { status: "unavailable", reason: "admin_ui_assets_missing" });
+        return true;
+      }
 
       if (path === "/admin") {
-        redirectToAdminSlash(request, response);
+        try {
+          const requested = new URL(request.url ?? "/", "http://admin.invalid");
+          const location = new URL("/admin/", "http://admin.invalid");
+          location.search = requested.search;
+          setSecurityHeaders(response);
+          response.statusCode = 308;
+          response.setHeader("location", `${location.pathname}${location.search}`);
+          response.setHeader("content-length", "0");
+          response.end();
+        } catch {
+          sendJson(request, response, 400, { status: "blocked", reason: "invalid_admin_redirect_target" });
+        }
         return true;
       }
 

@@ -1,22 +1,33 @@
-const ROLE_ORDER = [
-  "admin",
-  "sales",
-  "operator",
-  "customs_reviewer",
-  "finance",
-  "viewer",
-  "service",
-];
+const SNAPSHOT_OBJECT_FIELDS = ["tenant", "config", "actor", "health", "approvals"];
+const SNAPSHOT_ARRAY_FIELDS = ["clients", "roles", "tools", "sources", "audit"];
 
-const ROLE_LABELS = {
-  admin: "管理员",
-  sales: "销售",
-  operator: "运营",
-  customs_reviewer: "关务审核",
-  finance: "财务",
-  viewer: "查看者",
-  service: "后台服务",
-};
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function validateSnapshot(snapshot) {
+  if (!isRecord(snapshot)) throw new Error("快照必须是对象。");
+  if (typeof snapshot.schema_version !== "string" || snapshot.schema_version.trim() === "") {
+    throw new Error("快照缺少 schema_version，已拒绝使用。");
+  }
+  if (typeof snapshot.environment !== "string" || snapshot.environment.trim() === "") {
+    throw new Error("快照缺少 environment，已拒绝使用。");
+  }
+  for (const field of SNAPSHOT_OBJECT_FIELDS) {
+    if (!isRecord(snapshot[field])) throw new Error(`快照字段 ${field} 格式无效，已拒绝使用。`);
+  }
+  for (const field of SNAPSHOT_ARRAY_FIELDS) {
+    if (!Array.isArray(snapshot[field])) throw new Error(`快照字段 ${field} 格式无效，已拒绝使用。`);
+  }
+  for (const field of ["changes", "chain"]) {
+    if (!Array.isArray(snapshot.approvals[field])) {
+      throw new Error(`快照字段 approvals.${field} 格式无效，已拒绝使用。`);
+    }
+  }
+  return snapshot;
+}
+
+const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
 
 const STATUS_META = {
   loading: { label: "加载中", symbol: "…" },
@@ -44,7 +55,7 @@ const VIEW_META = {
   tools: {
     title: "工具权限",
     eyebrow: "RBAC allowlist",
-    description: "严格展示现有 7 个角色和 9 个 Phase 1 工具，不新增通用写入口。",
+    description: "只展示正式快照返回的角色和 Phase 1 工具，不新增通用写入口。",
   },
   adapters: {
     title: "数据源与适配器",
@@ -63,20 +74,23 @@ const VIEW_META = {
   },
 };
 
-const state = {
-  mode: new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
-  view: getViewFromHash(),
-  data: null,
-  loading: true,
-  error: null,
-  roleFilter: "all",
-  localDraft: null,
-};
+const state = isBrowser
+  ? {
+      mode: new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
+      view: getViewFromHash(),
+      data: null,
+      loading: true,
+      error: null,
+      roleFilter: "all",
+      localDraft: null,
+    }
+  : null;
 
-const content = document.querySelector("#content");
-const liveRegion = document.querySelector("#live-region");
-const main = document.querySelector("#main-content");
-const dialog = document.querySelector("#detail-dialog");
+const content = isBrowser ? document.querySelector("#content") : null;
+const liveRegion = isBrowser ? document.querySelector("#live-region") : null;
+const main = isBrowser ? document.querySelector("#main-content") : null;
+const dialog = isBrowser ? document.querySelector("#detail-dialog") : null;
+let dialogTrigger = null;
 
 function getViewFromHash() {
   const candidate = window.location.hash.slice(1);
@@ -111,7 +125,7 @@ function statusMarkup(status, label) {
 function roleLabel(role, data = state.data) {
   const roles = Array.isArray(data?.roles) ? data.roles : [];
   const record = roles.find((item) => item.key === role);
-  return display(record?.label ?? ROLE_LABELS[role] ?? role);
+  return display(record?.label || role);
 }
 
 function roleChips(roles, selectedRole = null) {
@@ -262,17 +276,18 @@ function renderClients(data) {
 
 function renderTools(data) {
   const tools = Array.isArray(data.tools) ? data.tools : [];
-  const roles = Array.isArray(data.roles) && data.roles.length ? data.roles : ROLE_ORDER.map((key) => ({ key, label: ROLE_LABELS[key] }));
+  const roles = Array.isArray(data.roles) ? data.roles : [];
+  const permissionDataReady = roles.length > 0 && tools.length > 0;
   const visibleTools = state.roleFilter === "all" ? tools : tools.filter((tool) => tool.roles?.includes(state.roleFilter));
   return `${pageHeader("tools")}
     ${modeBanner()}
-    <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup("ready", "固定 allowlist")}</div><p>下面的角色和工具来自平台 RBAC。写工具只有保存报价草稿和创建人工复核；没有 generic write 或通用提交按钮。</p></div>
+    <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup(permissionDataReady ? "ready" : "unavailable", permissionDataReady ? "快照授权" : "授权数据不可用")}</div><p>下面的角色和工具来自平台 RBAC。写工具只有保存报价草稿和创建人工复核；没有 generic write 或通用提交按钮。</p></div>
     <section class="panel" aria-labelledby="tool-table-title">
       <div class="card-head"><div><h2 id="tool-table-title">Phase 1 工具权限</h2><p>读/写 kind 只说明工具边界，不代表当前下游适配器已经就绪。</p></div><span class="status-pill status-neutral">${tools.length} 个工具</span></div>
-      <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${display(role.label ?? ROLE_LABELS[role.key])}</option>`).join("")}</select></div><p class="field-help">选中角色后只看它能使用的工具。</p></div>
+      <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${roleLabel(role.key)}</option>`).join("")}</select></div><p class="field-help">选中角色后只看它能使用的工具。</p></div>
       ${visibleTools.length ? `<div class="table-scroll" role="region" aria-label="工具权限表格，可横向滚动" tabindex="0"><table class="data-table table-wide"><thead><tr><th scope="col">工具名称</th><th scope="col">中文说明</th><th scope="col">permission</th><th scope="col">kind</th><th scope="col">角色授权</th></tr></thead><tbody>${visibleTools.map((tool) => `<tr><td><span class="primary-cell codeish">${display(tool.name)}</span></td><td>${display(tool.description)}<span class="sub-cell">${display(tool.label)}</span></td><td><span class="codeish">${display(tool.permission)}</span></td><td>${tool.kind === "write" ? statusMarkup("manual_review", "受控写入") : statusMarkup("ready", "只读")}</td><td>${roleChips(tool.roles, state.roleFilter === "all" ? null : state.roleFilter)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无匹配工具", "这个角色没有返回可用工具，不能自行补权限。")}
     </section>
-    <section class="panel" aria-labelledby="role-list-title"><div class="card-head"><div><h2 id="role-list-title">现有 7 个角色</h2><p>角色名称和代码固定；新增角色需要基线变更，不在本原型中创建。</p></div></div><div class="role-grid">${roles.map((role) => `<article class="role-card"><div class="role-card-head"><h3>${display(role.label ?? ROLE_LABELS[role.key])}</h3><span class="role-key codeish">${display(role.key)}</span></div><p>${display(role.description, "由服务端策略决定可见范围。")}</p></article>`).join("")}</div></section>`;
+    <section class="panel" aria-labelledby="role-list-title"><div class="card-head"><div><h2 id="role-list-title">角色授权</h2><p>角色名称和代码只来自当前快照；新增角色不在本原型中创建。</p></div></div>${roles.length ? `<div class="role-grid">${roles.map((role) => `<article class="role-card"><div class="role-card-head"><h3>${roleLabel(role.key)}</h3><span class="role-key codeish">${display(role.key)}</span></div><p>${display(role.description, "由服务端策略决定可见范围。")}</p></article>`).join("")}</div>` : emptyState("暂无角色授权数据", "正式快照没有返回角色，不能生成默认权限。")}</section>`;
 }
 
 function renderAdapters(data) {
@@ -386,6 +401,7 @@ function focusMain() {
 }
 
 function openDiffDialog() {
+  dialogTrigger = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
   const changes = state.data?.approvals?.changes;
   const body = document.querySelector("#dialog-body");
   if (!Array.isArray(changes) || changes.length === 0) {
@@ -402,6 +418,9 @@ function openDiffDialog() {
 function closeDialog() {
   if (typeof dialog.close === "function") dialog.close();
   else dialog.removeAttribute("open");
+  const trigger = dialogTrigger;
+  dialogTrigger = null;
+  queueMicrotask(() => trigger?.focus());
 }
 
 async function loadSnapshot() {
@@ -413,7 +432,7 @@ async function loadSnapshot() {
   if (state.mode === "fixture") {
     try {
       const module = await import("./fixture-data.js");
-      state.data = module.fixtureSnapshot;
+      state.data = validateSnapshot(module.fixtureSnapshot);
     } catch (error) {
       state.error = { message: `演示数据文件加载失败：${error instanceof Error ? error.message : "未知错误"}` };
     }
@@ -429,10 +448,7 @@ async function loadSnapshot() {
     });
     if (!response.ok) throw new Error(`同源快照返回 HTTP ${response.status}。`);
     const snapshot = await response.json();
-    if (!snapshot || typeof snapshot !== "object" || typeof snapshot.schema_version !== "string") {
-      throw new Error("快照缺少 schema_version，已拒绝使用。");
-    }
-    state.data = snapshot;
+    state.data = validateSnapshot(snapshot);
   } catch (error) {
     state.error = { message: error instanceof Error ? error.message : "同源快照请求失败。" };
   }
@@ -440,6 +456,7 @@ async function loadSnapshot() {
   render();
 }
 
+if (isBrowser) {
 document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target.closest("button, a") : null;
   if (!target) return;
@@ -496,3 +513,4 @@ dialog.addEventListener("cancel", (event) => {
 
 render();
 void loadSnapshot();
+}
