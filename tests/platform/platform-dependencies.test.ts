@@ -126,4 +126,26 @@ describe("platform dependency assembly", () => {
       reasons: ["platform_session_binding_store_unhealthy"],
     });
   });
+
+  it("checks and closes one shared durable provider once", async () => {
+    const health = vi.fn(() => Promise.resolve({ ready: true }));
+    const close = vi.fn(() => Promise.resolve());
+    const shared = {
+      ...durableAudit(),
+      ...durableIdempotency(),
+      ...durableBinding(),
+      health,
+      close,
+    } as DurableAuditRepository & DurableIdempotencyRepository & DurableSessionBindingStore;
+    const assembly = createProductionPlatformAssembly({
+      auditRepository: shared,
+      idempotencyRepository: shared,
+      sessionBindingStore: shared,
+    });
+
+    await expect(assembly.readiness()).resolves.toEqual({ ready: true, reasons: [] });
+    expect(health).toHaveBeenCalledTimes(1);
+    await assembly.close();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
 });

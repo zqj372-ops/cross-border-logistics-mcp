@@ -174,9 +174,12 @@ describe("built runtime smoke", () => {
         MCP_DATA_MODE: "production",
         MCP_JWT_ISSUER: "https://issuer.example.invalid/",
         MCP_JWT_AUDIENCE: "logistics-mcp-demo",
+        MCP_STATE_DB_PATH: resolve(layout, "platform.sqlite"),
+        MCP_INSTANCE_ID: "runtime-smoke-worker",
         MCP_ALLOWED_ORIGINS: "https://client.example.invalid",
         MCP_ALLOWED_HOSTS: "mcp.example.invalid",
         MCP_ALLOWED_OUTBOUND_HOSTS: "riskcustoms.example.invalid",
+        MCP_TRUSTED_PROXY_ADDRESSES: "127.0.0.1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -197,9 +200,8 @@ describe("built runtime smoke", () => {
       expect(readinessBody).toMatchObject({ status: "not_ready" });
       expect(readinessBody.reasons).toEqual(
         expect.arrayContaining([
-          "platform_audit_repository_missing",
+          "missing_mcp_jwks_url",
           "production_token_verifier_missing",
-          "production_adapter_source_missing",
         ]),
       );
       const unavailable = await fetch(`http://127.0.0.1:${port}/mcp`, {
@@ -283,7 +285,7 @@ describe("built runtime smoke", () => {
         reasons?: string[];
       };
       expect(readinessBody.status).toBe("not_ready");
-      expect(readinessBody.reasons).toContain("fixture_mode_not_production_ready");
+      expect(readinessBody.reasons).toEqual(["fixture_mode_not_production_ready"]);
       const admin = await fetch(`http://127.0.0.1:${port}/admin/?fixture=1`);
       expect(admin.status).toBe(200);
       expect(await admin.text()).toContain("跨境物流控制台");

@@ -141,7 +141,7 @@ describe("gateway composition modes", () => {
     await source.close();
   });
 
-  it("overrides a quote adapter supplied through a manually constructed production source", async () => {
+  it("overrides production write adapters supplied through a manually constructed source", async () => {
     const quoteFetch = vi.fn<FetchImplementation>();
     const fixtureAdapters = createFixtureAdapters();
     const adapterSource: ProductionAdapterSource = {
@@ -160,9 +160,33 @@ describe("gateway composition modes", () => {
 
     try {
       const result = await composition.adapters.quote.calculate(apiQuoteInput);
+      const review = await composition.adapters.review.previewTask({
+        schema_version: "2026-08-11.v1",
+        version: "review-request@test",
+        task_type: "quote",
+        priority: "high",
+        reason_codes: ["quote.zone_conflict"],
+        opaque_context_refs: [],
+        write_context: {
+          tenant_context: {
+            tenant_id: "tenant_demo_a",
+            actor_id: "sales_demo",
+            actor_role: "sales",
+            client_id: "client_demo",
+            session_id: "session_demo",
+          },
+          idempotency_key: "idem_review_disabled_123456",
+          operation_mode: "preview",
+          preview_ref: null,
+          approval: { required: false, status: "not_required", approval_id: null },
+        },
+      });
 
       expect(result.status).toBe("unavailable");
       expect(result.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
+      expect(review.status).toBe("unavailable");
+      expect(review.blockers?.map(({ code }) => code)).toContain("review.adapter_disabled");
+      expect(composition.adapters.review).not.toBe(fixtureAdapters.review);
       expect(quoteFetch).not.toHaveBeenCalled();
     } finally {
       await composition.close();

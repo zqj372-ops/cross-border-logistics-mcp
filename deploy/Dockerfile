@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM node:22.13.0-bookworm-slim AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -12,7 +12,7 @@ COPY vitest.config.ts .
 RUN npm run build
 RUN npm run typecheck
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22.13.0-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV MCP_PORT=8080
@@ -22,7 +22,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/docs/contracts ./docs/contracts
 
 RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
-  && chown -R mcp:mcp /app
+  && mkdir -p /var/lib/logistics-mcp \
+  && chown -R mcp:mcp /app /var/lib/logistics-mcp
 
 USER mcp
 EXPOSE 8080

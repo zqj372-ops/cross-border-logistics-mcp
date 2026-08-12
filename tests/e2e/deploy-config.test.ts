@@ -6,9 +6,9 @@ const root = resolve(import.meta.dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("safe deployment artifacts", () => {
-  it("defines a Node 22 multi-stage non-root image with a minimal runtime", () => {
+  it("defines a Node 22.13 multi-stage non-root image with a minimal runtime", () => {
     const dockerfile = read("deploy/Dockerfile");
-    expect(dockerfile).toMatch(/node:22/i);
+    expect(dockerfile.match(/node:22\.13\.0-bookworm-slim/g)).toHaveLength(2);
     expect(dockerfile).toMatch(/FROM .* AS build/i);
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
@@ -23,7 +23,7 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
   });
 
-  it("does not claim production JWT verification without an injected verifier", () => {
+  it("wires the production JWKS verifier and durable state provider", () => {
     const start = read("src/logistics_mcp/server/start.ts");
     const deployReadme = read("deploy/README.md");
     expect(start).toContain("MCP_JWT_ISSUER");
@@ -32,8 +32,10 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("fileURLToPath(import.meta.url)");
     expect(start).toContain("resolve");
     expect(start).toContain("createProductionComposition");
-    expect(deployReadme).toMatch(/no built-in JWT signature verifier|没有内置 JWT 签名验证器/i);
-    expect(deployReadme).toContain("/mcp` 请求在验证器接入前会被拒绝");
+    expect(start).toContain("createProductionTokenVerifier");
+    expect(start).toContain("SqliteProductionStore");
+    expect(deployReadme).toContain("JWKS");
+    expect(deployReadme).toContain("SQLite");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
@@ -46,6 +48,9 @@ describe("safe deployment artifacts", () => {
       "MCP_DATA_MODE",
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
+      "MCP_JWKS_URL",
+      "MCP_INSTANCE_ID",
+      "MCP_TRUSTED_PROXY_ADDRESSES",
       "MCP_ALLOWED_ORIGINS",
       "MCP_ALLOWED_HOSTS",
       "MCP_ALLOWED_OUTBOUND_HOSTS",
@@ -64,8 +69,11 @@ describe("safe deployment artifacts", () => {
       expect(compose).toContain(required);
     }
     expect(env).toContain("https://issuer.example.invalid/");
-    expect(env).toContain("tenant_demo");
-    expect(env).toContain("CHANGE_ME_IN_SECRET_STORE");
+    expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
+    expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
+    expect(compose).toContain("MCP_STATE_DB_PATH");
+    expect(compose).toMatch(/\/var\/lib\/logistics-mcp/);
+    expect(compose).toMatch(/volumes:/);
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
   });
 

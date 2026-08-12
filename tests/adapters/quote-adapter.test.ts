@@ -302,6 +302,10 @@ describe("quote draft lifecycle", () => {
     });
     expect(replay.data).toMatchObject({ operation_status: "already_committed" });
     expect(saveDraft).toHaveBeenCalledTimes(1);
+    expect(saveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotency_key: "idem_demo_quote_12345678" }),
+      expect.any(AbortSignal),
+    );
     expect(readDraft).toHaveBeenCalledTimes(1);
   });
 
@@ -345,6 +349,25 @@ describe("quote draft lifecycle", () => {
 
     expect(result.status).toBe("blocked");
     expect(result.blockers?.map((item) => item.code)).toContain("quote.approval_required");
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not cross the upstream write boundary after cancellation", async () => {
+    const { source, saveDraft } = createSource(lookupRecord());
+    const adapter = new ExistingQuoteAdapter({ source });
+    const preview = await adapter.previewDraft({
+      quote_result: quoteResult(),
+      target: { system: "existing_quote_system", record_kind: "draft" },
+      write_context: writeContext("preview", null),
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(adapter.commitDraft({
+      quote_result: quoteResult(),
+      target: { system: "existing_quote_system", record_kind: "draft" },
+      write_context: writeContext("commit", String(preview.data && preview.data.preview_ref)),
+    }, controller.signal)).rejects.toThrow();
     expect(saveDraft).not.toHaveBeenCalled();
   });
 

@@ -90,7 +90,7 @@ export function createPhase1Bundle(adapters: FixtureAdapters): Phase1Bundle {
       searchCanadaCustoms(adapters.customs, inputRecord(input)),
     "customs.ca.estimate": (input) =>
       estimateCanadaCustoms(adapters.customs, inputRecord(input)),
-    "quote.save_draft": (input) => {
+    "quote.save_draft": (input, _context, signal) => {
       const value = inputRecord(input);
       const writeContext = value.write_context;
       const writeContextRecord =
@@ -105,10 +105,10 @@ export function createPhase1Bundle(adapters: FixtureAdapters): Phase1Bundle {
           : "commit";
       return mode === "preview"
         ? adapters.quote.previewDraft(value)
-        : adapters.quote.commitDraft(value);
+        : adapters.quote.commitDraft(value, signal);
     },
-    "review.create_task": (input) =>
-      createReviewTask(adapters.review, inputRecord(input)),
+    "review.create_task": (input, _context, signal) =>
+      createReviewTask(adapters.review, inputRecord(input), signal),
   };
 
   const contracts: ToolContractMap = {

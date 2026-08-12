@@ -6,12 +6,15 @@
 
 ## 请求边界
 
-- HTTPS、Origin、Host 和 `Content-Type: application/json` 必须通过网关校验；请求体默认
+- HTTPS、Host 和 `Content-Type: application/json` 必须通过网关校验；浏览器提供 Origin 时
+  必须精确命中白名单，非浏览器 MCP 客户端可不提供 Origin。请求体默认
   上限 `32 KiB`，超限为 blocked/413。
-- Bearer token 由外部 verifier 验证签名后，再由网关校验 issuer、audience、sub、tenant、
+- Bearer token 由内置 RS256/JWKS verifier 验证签名后，再由网关校验 issuer、audience、sub、tenant、
   actor role、iat 和 exp；过期或未来 token blocked。
 - tenant/actor/roles/scopes/client/session 只来自认证 claims。输入中的同名字段不能覆盖
   会话；跨租户请求在 adapter 前拒绝。
+- 企业身份源必须在 staging 用脱敏短时 token 验证定制 claims 映射；JWKS
+  health 只证明公钥可用，不代表 claims 合同已验收。
 - 未注册工具和 Phase 1 禁止动作（发送、发布、订舱、通用写入、3D 装载布局）不进入
   下游 adapter。
 - 每个 session 绑定 tenant、actor、client、认证 session 和 context fingerprint；idle TTL、

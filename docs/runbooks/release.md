@@ -17,14 +17,16 @@ No automatic send, publish, or booking path is included.
    typecheck/lint；安全扫描必须无 Critical/Important。
 5. **image digest**：构建后记录不可变 image digest，不以 tag 作为唯一证据。
 6. **staging health/readiness**：只在批准的 staging URL 验证 `/healthz` 与 `/readyz`；health
-   只证明进程，readiness 必须反映 adapter/data status。
+   只证明进程，readiness 反映身份/JWKS/SQLite 等全局依赖；业务 API 状态要通过
+   对应工具和 `system.get_data_status` 另行验收。
 7. **RiskCustoms**：核对 `ready`、`test_data`、snapshot/release hash 和 release IDs；
    `ready=false` 原样保持 `unavailable`/`manual_review`，不得伪 ready。
 8. **write preview/commit**：只用隔离 fixture/sandbox 验证两个窄写工具的 preview、审批、
    commit、幂等和写后 readback；HTTP 成功码不等于业务成功。
 9. **audit review**：检查 audit_id、脱敏、tenant/actor、版本、状态、幂等 outcome 和
    readback status；审计失败必须 fail-closed。
-10. **client smoke**：使用假客户端身份检查 tools/list、五状态和 `system.get_data_status`；
+10. **client smoke**：先用实际企业身份源的脱敏短时 token 验证 claims 映射，再检查
+    tools/list、五状态和 `system.get_data_status`；
     确认 `sendable=false`/`theoretical_only=true` 不被客户端越界解释。
 11. **explicit approval**：由发布负责人、业务 owner、安全 owner 和运维 owner 明确批准，
     保存证据路径后才可进入另行授权的部署流程。

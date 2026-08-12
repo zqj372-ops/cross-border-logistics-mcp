@@ -11,8 +11,15 @@ export interface ManualTaskReadbackRecord {
 }
 
 export interface ManualTaskSource {
-  createTask(input: Record<string, unknown>): Promise<ManualTaskReadbackRecord>;
-  readTask(taskId: string, tenantId: string): Promise<ManualTaskReadbackRecord | null>;
+  createTask(
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<ManualTaskReadbackRecord>;
+  readTask(
+    taskId: string,
+    tenantId: string,
+    signal?: AbortSignal,
+  ): Promise<ManualTaskReadbackRecord | null>;
 }
 
 export interface ManualTaskAdapterOptions {
@@ -143,7 +150,10 @@ export class ManualTaskAdapter implements ReviewAdapter {
     };
   }
 
-  async commitTask(input: Record<string, unknown>): Promise<AdapterResult> {
+  async commitTask(
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult> {
     const parsed = this.validateInput(input, "commit");
     if (parsed.error !== null) return parsed.error;
     if (this.source === undefined) return this.disabled(input);
@@ -179,6 +189,8 @@ export class ManualTaskAdapter implements ReviewAdapter {
       return { ...existing.result, data: existingData };
     }
 
+    const activeSignal = signal ?? new AbortController().signal;
+    activeSignal.throwIfAborted();
     const created = await this.source.createTask({
       task_type: input.task_type,
       priority: input.priority,
@@ -186,8 +198,13 @@ export class ManualTaskAdapter implements ReviewAdapter {
       opaque_context_refs: input.opaque_context_refs,
       tenant_id: parsed.tenant,
       actor_id: actorId(input),
-    });
-    const readback = await this.source.readTask(created.task_id, parsed.tenant);
+      idempotency_key: parsed.key,
+    }, activeSignal);
+    const readback = await this.source.readTask(
+      created.task_id,
+      parsed.tenant,
+      activeSignal,
+    );
     if (
       readback === null ||
       readback.tenant_id !== parsed.tenant ||

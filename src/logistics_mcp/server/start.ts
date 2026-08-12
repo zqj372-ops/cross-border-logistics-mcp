@@ -1,11 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { realpathSync } from "node:fs";
+import { BlockList, isIP } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { AuthenticationError, type AuthClaims } from "../platform/context";
+import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
   createFixtureComposition,
+  createProductionApiAdapterSource,
   createProductionComposition,
   type GatewayComposition,
 } from "./composition";
@@ -14,6 +17,7 @@ import {
   createAdminStaticHandler,
   type AdminStaticHandler,
 } from "./admin-static";
+import { createProductionTokenVerifier } from "./production-token-verifier";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
@@ -43,14 +47,20 @@ async function readiness(
   composition: GatewayComposition,
 ): Promise<{ readonly ready: boolean; readonly reasons: readonly string[] }> {
   const dataMode = process.env.MCP_DATA_MODE ?? "production";
-  const required = [
-    "MCP_JWT_ISSUER",
-    "MCP_JWT_AUDIENCE",
-    "MCP_ALLOWED_ORIGINS",
-    "MCP_ALLOWED_HOSTS",
-    "MCP_ALLOWED_OUTBOUND_HOSTS",
-    "MCP_DATA_MODE",
-  ];
+  const required = dataMode === "production"
+    ? [
+        "MCP_JWT_ISSUER",
+        "MCP_JWT_AUDIENCE",
+        "MCP_JWKS_URL",
+        "MCP_STATE_DB_PATH",
+        "MCP_INSTANCE_ID",
+        "MCP_ALLOWED_ORIGINS",
+        "MCP_ALLOWED_HOSTS",
+        "MCP_ALLOWED_OUTBOUND_HOSTS",
+        "MCP_TRUSTED_PROXY_ADDRESSES",
+        "MCP_DATA_MODE",
+      ]
+    : ["MCP_DATA_MODE"];
   const missing = required.filter((name) => (process.env[name] ?? "").trim() === "");
   const reasons = [...missing.map((name) => `missing_${name.toLowerCase()}`)];
   if (dataMode !== "production") reasons.push("fixture_mode_not_production_ready");
@@ -97,6 +107,7 @@ function fixtureAuthenticatorFromEnvironment(): (token: string) => AuthClaims {
 async function toRequest(
   request: IncomingMessage,
   allowLoopbackHttp = false,
+  trustedProxy: (address: string | undefined) => boolean = () => false,
 ): Promise<Request> {
   const contentLength = request.headers["content-length"];
   if (Array.isArray(contentLength)) {
@@ -148,8 +159,10 @@ async function toRequest(
   if (loopbackFixture && headers.get("origin") === null) {
     headers.set("origin", `http://${host}`);
   }
-  const forwardedProto =
-    loopbackFixture || headers.get("x-forwarded-proto") === "https" ? "https" : "http";
+  const forwardedProto = loopbackFixture ||
+    (headers.get("x-forwarded-proto") === "https" && trustedProxy(request.socket.remoteAddress))
+    ? "https"
+    : "http";
   return new Request(`${forwardedProto}://${host}${request.url ?? "/mcp"}`, {
     method: request.method ?? "GET",
     headers,
@@ -168,6 +181,7 @@ async function handleRuntimeRequest(
   response: ServerResponse,
   composition: GatewayComposition,
   adminUi: AdminStaticHandler,
+  trustedProxy: (address: string | undefined) => boolean,
 ): Promise<void> {
     if (adminUi.handle(request, response)) return;
     const path = (request.url ?? "/").split("?", 1)[0];
@@ -189,7 +203,9 @@ async function handleRuntimeRequest(
     }
     try {
       await forward(
-        await composition.handler(await toRequest(request, composition.mode === "fixtures")),
+        await composition.handler(
+          await toRequest(request, composition.mode === "fixtures", trustedProxy),
+        ),
         response,
       );
     } catch (error) {
@@ -207,6 +223,35 @@ async function handleRuntimeRequest(
 
 export interface RuntimeServerOptions {
   readonly adminUi?: AdminStaticHandler;
+  readonly trustedProxyAddresses?: readonly string[];
+}
+
+function trustedProxyChecker(entries: readonly string[]): (address: string | undefined) => boolean {
+  const list = new BlockList();
+  for (const entry of entries) {
+    const [address, prefixText, ...extra] = entry.split("/");
+    const family = address === undefined ? 0 : isIP(address);
+    if (address === undefined || family === 0 || extra.length > 0) {
+      throw new Error("Trusted proxy entries must be IP addresses or CIDR subnets.");
+    }
+    const type = family === 4 ? "ipv4" : "ipv6";
+    if (prefixText === undefined) {
+      list.addAddress(address, type);
+      continue;
+    }
+    const prefix = Number(prefixText);
+    if (!Number.isSafeInteger(prefix) || prefix < 0 || prefix > (family === 4 ? 32 : 128)) {
+      throw new Error("Trusted proxy CIDR prefix is invalid.");
+    }
+    list.addSubnet(address, prefix, type);
+  }
+  return (address) => {
+    if (address === undefined) return false;
+    const family = isIP(address);
+    if (family !== 0 && list.check(address, family === 4 ? "ipv4" : "ipv6")) return true;
+    const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
+    return mapped !== undefined && list.check(mapped, "ipv4");
+  };
 }
 
 export function createRuntimeServer(
@@ -220,15 +265,42 @@ export function createRuntimeServer(
       staticDir: resolve(process.cwd(), "dist/admin"),
       ...(enabledSetting === undefined ? {} : { enabledSetting }),
     });
+  const trustedProxy = trustedProxyChecker(
+    options.trustedProxyAddresses ?? splitSetting("MCP_TRUSTED_PROXY_ADDRESSES", ""),
+  );
   return createServer(
     {
       headersTimeout: RUNTIME_HEADERS_TIMEOUT_MS,
       requestTimeout: RUNTIME_REQUEST_TIMEOUT_MS,
     },
     (request, response) => {
-    void handleRuntimeRequest(request, response, composition, adminUi);
+    void handleRuntimeRequest(request, response, composition, adminUi, trustedProxy);
     },
   );
+}
+
+export async function closeRuntimeServer(
+  server: ReturnType<typeof createServer>,
+  composition: GatewayComposition,
+): Promise<void> {
+  const serverClosed = new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+  let failed = false;
+  try {
+    await composition.close();
+  } catch {
+    failed = true;
+  }
+  server.closeAllConnections();
+  try {
+    await serverClosed;
+  } catch {
+    failed = true;
+  }
+  if (failed) {
+    throw new Error("The runtime could not close every resource cleanly.");
+  }
 }
 
 function makeComposition(): GatewayComposition {
@@ -236,11 +308,11 @@ function makeComposition(): GatewayComposition {
   const common = {
     allowedOrigins: splitSetting(
       "MCP_ALLOWED_ORIGINS",
-      mode === "fixtures" ? `http://127.0.0.1:${PORT}` : "https://client.example.invalid",
+      mode === "fixtures" ? `http://127.0.0.1:${PORT}` : "",
     ),
     allowedHosts: splitSetting(
       "MCP_ALLOWED_HOSTS",
-      mode === "fixtures" ? `127.0.0.1:${PORT}` : "mcp.example.invalid",
+      mode === "fixtures" ? `127.0.0.1:${PORT}` : "",
     ),
   };
   if (mode === "fixtures") {
@@ -254,9 +326,39 @@ function makeComposition(): GatewayComposition {
     throw new Error("MCP_DATA_MODE must be explicitly set to production or fixtures.");
   }
   const tokenPolicy = tokenPolicyFromEnvironment();
+  const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
+  const instanceId = process.env.MCP_INSTANCE_ID?.trim();
+  const jwksUrl = process.env.MCP_JWKS_URL?.trim();
+  const outboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
+  const store =
+    databasePath === undefined || databasePath.length === 0
+      ? undefined
+      : new SqliteProductionStore(databasePath);
+  const tokenVerifier =
+    tokenPolicy === undefined ||
+    jwksUrl === undefined ||
+    jwksUrl.length === 0 ||
+    outboundHosts.length === 0
+      ? undefined
+      : createProductionTokenVerifier({
+          jwksUrl,
+          allowedHosts: outboundHosts,
+        });
   return createProductionComposition({
     dataMode: "production",
     ...common,
+    adapterSource: createProductionApiAdapterSource(),
+    ...(store === undefined
+      ? {}
+      : {
+          auditRepository: store,
+          idempotencyRepository: store,
+          sessionBindingStore: store,
+        }),
+    ...(instanceId === undefined || instanceId.length === 0
+      ? {}
+      : { sessionOwnerId: instanceId }),
+    ...(tokenVerifier === undefined ? {} : { tokenVerifier }),
     ...(tokenPolicy === undefined ? {} : { tokenPolicy }),
   });
 }
@@ -279,12 +381,10 @@ if (isMainModule()) {
   const composition = makeComposition();
   const server = createRuntimeServer(composition);
   server.listen(PORT, process.env.MCP_DATA_MODE === "fixtures" ? "127.0.0.1" : "0.0.0.0");
-  const close = async () => {
-    await composition.close();
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error === undefined ? resolve() : reject(error)));
-    });
-  };
-  process.once("SIGTERM", () => void close().finally(() => process.exit(0)));
-  process.once("SIGINT", () => void close().finally(() => process.exit(0)));
+  const shutdown = () => void closeRuntimeServer(server, composition).then(
+    () => process.exit(0),
+    () => process.exit(1),
+  );
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }

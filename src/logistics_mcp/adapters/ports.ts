@@ -24,7 +24,7 @@ export interface FixtureInput {
 export interface QuoteAdapter {
   calculate(input: Record<string, unknown> | FixtureInput): Promise<AdapterResult>;
   previewDraft(input: Record<string, unknown>): Promise<AdapterResult>;
-  commitDraft(input: Record<string, unknown>): Promise<AdapterResult>;
+  commitDraft(input: Record<string, unknown>, signal?: AbortSignal): Promise<AdapterResult>;
   readDraft(input: Record<string, unknown>): Promise<AdapterResult>;
 }
 
@@ -44,7 +44,7 @@ export interface StatusAdapter {
 
 export interface ReviewAdapter {
   previewTask(input: Record<string, unknown>): Promise<AdapterResult>;
-  commitTask(input: Record<string, unknown>): Promise<AdapterResult>;
+  commitTask(input: Record<string, unknown>, signal?: AbortSignal): Promise<AdapterResult>;
   readTask(input: Record<string, unknown>): Promise<AdapterResult>;
 }
 

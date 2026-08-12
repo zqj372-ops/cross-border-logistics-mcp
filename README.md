@@ -15,10 +15,11 @@
 | 能力 | 当前状态 |
 | --- | --- |
 | quote API adapter | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed；保留上游副作用 warning |
-| RiskCustoms search adapter | 已实现；先检查 `/api/status`，再按 ready gate 调用 `/api/query`，保留真实 `query.sources` release |
+| RiskCustoms search adapter | 已实现 status→query 和失败闭合；当前生产服务仍缺少机器到机器认证合同，未接入生产组合 |
 | `customs.ca.estimate` | `unavailable`；尚无已核验生产 API 合同 |
 | PDF/文档能力 | 未注册；等待 OpenAPI、认证、输入/输出、写后读回和副作用合同 |
-| 生产组合 | 默认 fail-closed；仍要求真实 token verifier、durable audit/idempotency/session binding 和服务端 adapter source |
+| 生产写工具 | `quote.save_draft` 和 `review.create_task` 固定 `unavailable`；上游未提供同一幂等键、取消和状态读回合同前不注入写源 |
+| 生产平台 | 已接入 RS256/JWKS 令牌验证、SQLite audit/idempotency/session binding 和会话所有者校验；缺配置仍 fail-closed |
 
 ## 架构边界
 
@@ -66,7 +67,7 @@ flowchart LR
 - 上游 503、超时或 RiskCustoms `ready=false` 只关闭 affected tools，不关闭本地工具或其他可用 API。
 - quote 当前工具路径保持 `unavailable`/fail-closed；未获生产启用资格前不伪造可发送结果。
 - customs estimate 当前固定 `unavailable`；`quote.save_draft` 仍等生产草稿 API 的完整写后读回合同。
-- 生产组合的身份、durable audit/idempotency/session binding 或真实 token verifier 缺失时，全局保持 fail-closed。
+- 生产组合的 JWKS、issuer/audience、SQLite 状态库或会话所有者配置缺失时，全局保持 fail-closed。
 
 ## 开发入口
 
