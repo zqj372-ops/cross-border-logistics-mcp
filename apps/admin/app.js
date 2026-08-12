@@ -1,0 +1,498 @@
+const ROLE_ORDER = [
+  "admin",
+  "sales",
+  "operator",
+  "customs_reviewer",
+  "finance",
+  "viewer",
+  "service",
+];
+
+const ROLE_LABELS = {
+  admin: "管理员",
+  sales: "销售",
+  operator: "运营",
+  customs_reviewer: "关务审核",
+  finance: "财务",
+  viewer: "查看者",
+  service: "后台服务",
+};
+
+const STATUS_META = {
+  loading: { label: "加载中", symbol: "…" },
+  empty: { label: "暂无记录", symbol: "—" },
+  error: { label: "加载失败", symbol: "×" },
+  unavailable: { label: "不可用", symbol: "×" },
+  blocked: { label: "已阻断", symbol: "!" },
+  manual_review: { label: "人工复核", symbol: "!" },
+  needs_input: { label: "需要补充", symbol: "!" },
+  ready: { label: "已就绪", symbol: "✓" },
+  success: { label: "成功", symbol: "✓" },
+};
+
+const VIEW_META = {
+  overview: {
+    title: "总览",
+    eyebrow: "系统状态",
+    description: "先看网关是否在线、哪些依赖可用，以及当前配置为什么还不能发布。",
+  },
+  clients: {
+    title: "客户端接入",
+    eyebrow: "接入边界",
+    description: "管理 ChatGPT、Codex 和企业助手的身份元数据；这里只展示引用，不显示原始凭证。",
+  },
+  tools: {
+    title: "工具权限",
+    eyebrow: "RBAC allowlist",
+    description: "严格展示现有 7 个角色和 9 个 Phase 1 工具，不新增通用写入口。",
+  },
+  adapters: {
+    title: "数据源与适配器",
+    eyebrow: "权威来源引用",
+    description: "查看 Quote Engine、RiskCustoms、精选知识、状态和复核任务的引用与就绪状态。",
+  },
+  approvals: {
+    title: "审批与发布",
+    eyebrow: "draft → validate → approval → publish",
+    description: "浏览脱敏差异和审批链；正式写操作必须经过校验、审批和写后读回。",
+  },
+  audit: {
+    title: "审计日志",
+    eyebrow: "可追溯记录",
+    description: "只展示 actor、租户、动作、结果、原因、版本和 trace id，敏感原文不进入日志。",
+  },
+};
+
+const state = {
+  mode: new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
+  view: getViewFromHash(),
+  data: null,
+  loading: true,
+  error: null,
+  roleFilter: "all",
+  localDraft: null,
+};
+
+const content = document.querySelector("#content");
+const liveRegion = document.querySelector("#live-region");
+const main = document.querySelector("#main-content");
+const dialog = document.querySelector("#detail-dialog");
+
+function getViewFromHash() {
+  const candidate = window.location.hash.slice(1);
+  return Object.hasOwn(VIEW_META, candidate) ? candidate : "overview";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
+}
+
+function display(value, fallback = "—") {
+  if (value === undefined || value === null || value === "") return fallback;
+  return escapeHtml(value);
+}
+
+function safeStatus(status) {
+  return Object.hasOwn(STATUS_META, status) ? status : "empty";
+}
+
+function statusMarkup(status, label) {
+  const key = safeStatus(status);
+  const meta = STATUS_META[key];
+  return `<span class="status-pill status-${key}"><span class="status-icon" aria-hidden="true">${meta.symbol}</span>${escapeHtml(label ?? meta.label)}</span>`;
+}
+
+function roleLabel(role, data = state.data) {
+  const roles = Array.isArray(data?.roles) ? data.roles : [];
+  const record = roles.find((item) => item.key === role);
+  return display(record?.label ?? ROLE_LABELS[role] ?? role);
+}
+
+function roleChips(roles, selectedRole = null) {
+  if (!Array.isArray(roles) || roles.length === 0) return statusMarkup("empty", "没有授权角色");
+  return `<div class="role-chips">${roles.map((role) => `<span class="role-chip${selectedRole === role ? " is-selected" : ""}">${roleLabel(role)}</span>`).join("")}</div>`;
+}
+
+function metricCard(label, value, detail, status, icon) {
+  return `<article class="metric-card">
+    <div class="metric-top">
+      <span class="metric-label">${escapeHtml(label)}</span>
+      <span class="metric-icon" data-icon="${escapeHtml(icon)}" aria-hidden="true"></span>
+    </div>
+    <div class="metric-value">${display(value)}</div>
+    <div class="metric-detail">${statusMarkup(status)} ${display(detail, "")}</div>
+  </article>`;
+}
+
+function pageHeader(view, actions = "") {
+  const meta = VIEW_META[view];
+  return `<div class="page-header">
+    <div>
+      <span class="eyebrow">${escapeHtml(meta.eyebrow)}</span>
+      <h1>${escapeHtml(meta.title)}</h1>
+      <p>${escapeHtml(meta.description)}</p>
+    </div>
+    ${actions ? `<div class="page-actions">${actions}</div>` : ""}
+  </div>`;
+}
+
+function modeBanner() {
+  if (state.mode === "fixture") {
+    return `<div class="callout callout-warning" role="status">
+      <div class="callout-head"><h2>演示数据</h2>${statusMarkup("manual_review", "未连接正式后台")}</div>
+      <p>当前由 URL 的 <code>?fixture=1</code> 明确启用演示快照。发布、回滚和保存到服务器已禁用；本地差异只在浏览器中预览，未持久化。</p>
+    </div>`;
+  }
+  return `<div class="callout callout-info" role="status">
+    <div class="callout-head"><h2>正式快照入口</h2>${statusMarkup("unavailable", "仅同源 API")}</div>
+    <p>页面只请求 <code>GET /admin/api/v1/snapshot</code>。请求失败会保持不可用，不会回退到演示数据或内置默认配置。</p>
+  </div>`;
+}
+
+function emptyState(title, detail) {
+  return `<div class="empty-state" data-state="empty">
+    ${statusMarkup("empty")}
+    <h2>${escapeHtml(title)}</h2>
+    <p>${escapeHtml(detail)}</p>
+  </div>`;
+}
+
+function renderLoading() {
+  return `<section class="loading-panel" data-state="loading" aria-labelledby="loading-title">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    ${statusMarkup("loading")}
+    <h1 id="loading-title">加载中</h1>
+    <p>正在读取控制台快照，请稍候。</p>
+  </section>`;
+}
+
+function renderError() {
+  const message = state.error?.message ?? "正式后台快照暂时不能读取。";
+  return `<section class="error-panel" data-state="unavailable" aria-labelledby="error-title">
+    ${statusMarkup("error", "加载失败")}
+    <h1 id="error-title">正式快照不可用</h1>
+    <p>${escapeHtml(message)}</p>
+    <p>请检查同源后台是否提供 <code>GET /admin/api/v1/snapshot</code>；本页不会自动切换到演示数据。</p>
+    <button class="button button-secondary" type="button" data-action="retry"><span class="button-icon" data-icon="refresh" aria-hidden="true"></span>重新读取</button>
+  </section>`;
+}
+
+function renderSourceTable(sources, withActions = false) {
+  if (!Array.isArray(sources) || sources.length === 0) return emptyState("暂无适配器记录", "正式快照没有返回数据源，不能用相似名称补齐。");
+  return `<div class="table-scroll" role="region" aria-label="数据源和适配器表格" tabindex="0">
+    <table class="data-table">
+      <thead><tr><th scope="col">数据源</th><th scope="col">endpoint_ref</th><th scope="col">secret_ref</th><th scope="col">source version</th><th scope="col">就绪状态</th>${withActions ? "<th scope=\"col\">本地操作</th>" : ""}</tr></thead>
+      <tbody>${sources.map((source) => `<tr>
+        <td><span class="primary-cell">${display(source.label ?? source.name)}</span><span class="sub-cell">${display(source.type)}</span></td>
+        <td><span class="codeish">${display(source.endpoint_ref)}</span></td>
+        <td><span class="codeish">${display(source.secret_ref)}</span><span class="sub-cell">只显示引用，不显示原始凭证</span></td>
+        <td><span class="codeish">${display(source.source_version)}</span></td>
+        <td>${statusMarkup(source.readiness)}<span class="sub-cell">${display(source.reason)}</span></td>
+        ${withActions ? `<td><button class="button button-secondary" type="button" data-action="edit-source" data-source="${escapeHtml(source.name)}"><span class="button-icon" data-icon="edit" aria-hidden="true"></span>生成本地草稿</button></td>` : ""}
+      </tr>`).join("")}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderOverview(data) {
+  const health = data.health ?? {};
+  const config = data.config ?? {};
+  const approvals = data.approvals ?? {};
+  const blockers = Array.isArray(data.blockers) ? data.blockers : [];
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const pendingCount = Array.isArray(approvals.changes) ? approvals.changes.filter((change) => change.status !== "ready").length : 0;
+  const chain = Array.isArray(approvals.chain) ? approvals.chain : [];
+  const legend = Array.isArray(data.status_legend) ? data.status_legend : [];
+
+  return `${pageHeader("overview", `<button class="button button-secondary" type="button" data-action="retry"><span class="button-icon" data-icon="refresh" aria-hidden="true"></span>重新读取</button>`)}
+    ${modeBanner()}
+    <div class="metric-grid" aria-label="核心状态">
+      ${metricCard("进程健康（/healthz）", health.healthz?.value, health.healthz?.detail, health.healthz?.status ?? "empty", "overview")}
+      ${metricCard("发布就绪（/readyz）", health.readyz?.value, health.readyz?.detail, health.readyz?.status ?? "empty", "approval")}
+      ${metricCard("当前发布版本", config.current_version, `最近发布：${display(config.last_published_at)}`, "manual_review", "adapter")}
+      ${metricCard("待处理项", `${pendingCount} 项`, "需要人工确认或补充信息", pendingCount > 0 ? "needs_input" : "ready", "audit")}
+    </div>
+    <div class="callout callout-warning" role="alert">
+      <div class="callout-head"><h2>当前阻断原因</h2>${statusMarkup("blocked")}</div>
+      ${blockers.length ? `<ul>${blockers.map((item) => `<li>${display(item)}</li>`).join("")}</ul>` : `<p>暂无阻断说明；仍应以正式快照和写后读回为准。</p>`}
+    </div>
+    <div class="section-grid section-grid-wide">
+      <section class="panel" aria-labelledby="overview-sources-title">
+        <div class="card-head"><div><h2 id="overview-sources-title">数据源就绪情况</h2><p>状态 success 不等于业务数据可发布；RiskCustoms 必须保留 ready 门禁。</p></div><span class="status-pill status-neutral">${sources.length} 个来源</span></div>
+        ${renderSourceTable(sources)}
+      </section>
+      <section class="panel" aria-labelledby="approval-chain-title">
+        <div class="card-head"><div><h2 id="approval-chain-title">发布门槛</h2><p>每一步都要有版本、审批和读回证据。</p></div>${statusMarkup(approvals.validation?.status ?? "empty")}</div>
+        ${chain.length ? `<ol class="step-list">${chain.map((item) => `<li class="step-item" data-status="${safeStatus(item.status)}"><span class="step-title">${display(item.label)}</span><span>${statusMarkup(item.status)}</span><span class="step-detail">${display(item.detail)}</span></li>`).join("")}</ol>` : emptyState("暂无审批链", "正式快照没有返回审批步骤。")}
+      </section>
+      <section class="panel panel-full" aria-labelledby="status-guide-title">
+        <div class="card-head"><div><h2 id="status-guide-title">状态说明</h2><p>文字、图标和颜色同时表达状态，不靠颜色单独判断。</p></div></div>
+        <div class="state-guide">${legend.length ? legend.map((item) => `<div class="state-guide-item"><div>${statusMarkup(item.key, item.label)}</div><p>${display(item.detail)}</p></div>`).join("") : emptyState("暂无状态说明", "正式快照没有返回状态文案。")}</div>
+      </section>
+    </div>`;
+}
+
+function renderClients(data) {
+  const clients = Array.isArray(data.clients) ? data.clients : [];
+  return `${pageHeader("clients")}
+    ${modeBanner()}
+    <section class="panel" aria-labelledby="clients-table-title">
+      <div class="card-head"><div><h2 id="clients-table-title">已登记客户端</h2><p>issuer / audience / allowed origins 是接入校验信息；原始凭证永不在此显示。</p></div>${statusMarkup(clients.length ? "ready" : "empty", clients.length ? "仅元数据" : "暂无客户端")}</div>
+      ${clients.length ? `<div class="client-card-grid">${clients.map((client) => `<article class="client-card">
+        <div class="client-card-head"><div><h3>${display(client.name)}</h3><p class="codeish">${display(client.client_id)}</p></div>${statusMarkup(client.check?.status ?? "empty")}</div>
+        <dl class="ref-list">
+          <div class="ref-row"><dt>issuer</dt><dd class="codeish">${display(client.issuer)}</dd></div>
+          <div class="ref-row"><dt>audience</dt><dd class="codeish">${display(client.audience)}</dd></div>
+          <div class="ref-row"><dt>allowed origins</dt><dd>${Array.isArray(client.allowed_origins) && client.allowed_origins.length ? client.allowed_origins.map((origin) => `<span class="codeish">${display(origin)}</span>`).join("<br />") : statusMarkup("blocked", "未登记")}</dd></div>
+        </dl>
+        <p><strong>最近校验：</strong>${display(client.check?.checked_at)}<br />${display(client.check?.detail)}</p>
+      </article>`).join("")}</div>` : emptyState("暂无客户端接入记录", "没有快照数据时不自动生成 client_id 或允许来源。")}
+    </section>
+    <div class="section-grid">
+      <section class="panel" aria-labelledby="client-rule-title"><div class="card-head"><div><h2 id="client-rule-title">接入规则</h2><p>客户端不是业务角色，actor 和租户必须由服务端认证后绑定。</p></div></div><ul class="plain-list"><li>只显示 client_id、issuer、audience 和允许来源。</li><li>租户、actor、角色和会话不能由客户端自报。</li><li>校验失败显示 blocked 或 manual_review，不静默放行。</li></ul></section>
+      <section class="panel" aria-labelledby="client-secret-title"><div class="card-head"><div><h2 id="client-secret-title">凭证边界</h2><p>页面不收集、不保存、不回显原始凭证。</p></div>${statusMarkup("blocked", "原始凭证隐藏")}</div><p class="muted">适配器只使用服务端注入的最小权限引用；控制台展示时也只保留 opaque reference。</p></section>
+    </div>`;
+}
+
+function renderTools(data) {
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const roles = Array.isArray(data.roles) && data.roles.length ? data.roles : ROLE_ORDER.map((key) => ({ key, label: ROLE_LABELS[key] }));
+  const visibleTools = state.roleFilter === "all" ? tools : tools.filter((tool) => tool.roles?.includes(state.roleFilter));
+  return `${pageHeader("tools")}
+    ${modeBanner()}
+    <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup("ready", "固定 allowlist")}</div><p>下面的角色和工具来自平台 RBAC。写工具只有保存报价草稿和创建人工复核；没有 generic write 或通用提交按钮。</p></div>
+    <section class="panel" aria-labelledby="tool-table-title">
+      <div class="card-head"><div><h2 id="tool-table-title">Phase 1 工具权限</h2><p>读/写 kind 只说明工具边界，不代表当前下游适配器已经就绪。</p></div><span class="status-pill status-neutral">${tools.length} 个工具</span></div>
+      <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${display(role.label ?? ROLE_LABELS[role.key])}</option>`).join("")}</select></div><p class="field-help">选中角色后只看它能使用的工具。</p></div>
+      ${visibleTools.length ? `<div class="table-scroll" role="region" aria-label="工具权限表格，可横向滚动" tabindex="0"><table class="data-table table-wide"><thead><tr><th scope="col">工具名称</th><th scope="col">中文说明</th><th scope="col">permission</th><th scope="col">kind</th><th scope="col">角色授权</th></tr></thead><tbody>${visibleTools.map((tool) => `<tr><td><span class="primary-cell codeish">${display(tool.name)}</span></td><td>${display(tool.description)}<span class="sub-cell">${display(tool.label)}</span></td><td><span class="codeish">${display(tool.permission)}</span></td><td>${tool.kind === "write" ? statusMarkup("manual_review", "受控写入") : statusMarkup("ready", "只读")}</td><td>${roleChips(tool.roles, state.roleFilter === "all" ? null : state.roleFilter)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无匹配工具", "这个角色没有返回可用工具，不能自行补权限。")}
+    </section>
+    <section class="panel" aria-labelledby="role-list-title"><div class="card-head"><div><h2 id="role-list-title">现有 7 个角色</h2><p>角色名称和代码固定；新增角色需要基线变更，不在本原型中创建。</p></div></div><div class="role-grid">${roles.map((role) => `<article class="role-card"><div class="role-card-head"><h3>${display(role.label ?? ROLE_LABELS[role.key])}</h3><span class="role-key codeish">${display(role.key)}</span></div><p>${display(role.description, "由服务端策略决定可见范围。")}</p></article>`).join("")}</div></section>`;
+}
+
+function renderAdapters(data) {
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const localDraft = state.localDraft;
+  return `${pageHeader("adapters")}
+    ${modeBanner()}
+    ${localDraft ? `<div class="callout callout-info" role="status"><div class="callout-head"><h2>本地草稿已生成</h2>${statusMarkup("needs_input", "未持久化")}</div><p>已在浏览器中记录“${display(localDraft)}”的预览意图；没有请求正式后台，也没有修改权威数据。</p><div class="button-row"><button class="button button-secondary" type="button" data-action="clear-local-draft">清除本地草稿</button></div></div>` : ""}
+    <section class="panel" aria-labelledby="adapter-table-title">
+      <div class="card-head"><div><h2 id="adapter-table-title">适配器引用</h2><p>只保存 endpoint_ref、secret_ref、source version 和 readiness；不复制报价、关税或业务记录。</p></div>${statusMarkup(sources.length ? "ready" : "empty", sources.length ? "引用清单" : "暂无来源")}</div>
+      ${renderSourceTable(sources, true)}
+    </section>
+    <div class="section-grid">
+      <section class="panel" aria-labelledby="adapter-boundary-title"><div class="card-head"><div><h2 id="adapter-boundary-title">权威边界</h2><p>专业词旁边给出操作含义。</p></div></div><dl class="key-value-list"><div class="key-value-row"><dt>Quote Engine</dt><dd>报价仍由现有报价系统计算；MCP 只读取版本或保存不可发送草稿。</dd></div><div class="key-value-row"><dt>RiskCustoms</dt><dd>关务仍由 RiskCustoms 提供；ready=false 时必须显示不可用或人工复核。</dd></div><div class="key-value-row"><dt>确定性工具</dt><dd>货物、分泡和装柜由代码计算；AI 只能解释或预填。</dd></div></dl></section>
+      <section class="panel" aria-labelledby="adapter-failure-title"><div class="card-head"><div><h2 id="adapter-failure-title">失败处理</h2><p>没有可靠来源就停在当前状态。</p></div>${statusMarkup("unavailable")}</div><ul class="plain-list"><li>端点不可达：unavailable（不可用）。</li><li>版本或租户边界不清：manual_review（人工复核）。</li><li>权限或阶段禁止：blocked（已阻断）。</li><li>不使用地图、聊天或相似记录补齐权威数据。</li></ul></section>
+    </div>`;
+}
+
+function renderApprovals(data) {
+  const approvals = data.approvals ?? {};
+  const changes = Array.isArray(approvals.changes) ? approvals.changes : [];
+  const chain = Array.isArray(approvals.chain) ? approvals.chain : [];
+  const draft = approvals.draft ?? {};
+  return `${pageHeader("approvals", `<button class="button button-secondary" type="button" data-action="preview-diff"><span class="button-icon" data-icon="preview" aria-hidden="true"></span>预览差异</button>`)}
+    ${modeBanner()}
+    <section class="panel" aria-labelledby="approval-workflow-title">
+      <div class="card-head"><div><h2 id="approval-workflow-title">草稿到发布</h2><p>preview 不写外部系统；commit 必须通过审批并完成写后读回。</p></div>${statusMarkup(approvals.validation?.status ?? "empty")}</div>
+      <div class="approval-layout">
+        <div class="approval-summary"><span class="eyebrow">当前草稿</span><h3 class="codeish">${display(draft.version)}</h3><p>创建人：${display(draft.owner)}</p><p>创建时间：${display(draft.created_at)}</p><p>${display(draft.persistence, "持久化状态未知")}</p><div class="button-row"><button class="button button-primary" type="button" data-action="preview-diff"><span class="button-icon" data-icon="preview" aria-hidden="true"></span>查看本地差异</button><button class="button button-secondary" type="button" disabled title="未连接正式后台；发布接口尚未提供" aria-disabled="true">发布到正式</button></div></div>
+        <ol class="step-list" aria-label="审批链">${chain.length ? chain.map((item) => `<li class="step-item" data-status="${safeStatus(item.status)}"><span class="step-title">${display(item.label)}</span><span>${statusMarkup(item.status)}</span><span class="step-detail">${display(item.detail)}</span></li>`).join("") : `<li>${emptyState("暂无审批链", "没有快照数据时不创建默认审批人。")}</li>`}</ol>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="diff-table-title"><div class="card-head"><div><h2 id="diff-table-title">草稿差异</h2><p>差异仅为演示引用和状态，不包含价格、税务材料、地址或原始凭证。</p></div>${statusMarkup(changes.length ? "manual_review" : "empty", changes.length ? `${changes.length} 项待确认` : "暂无差异")}</div>${changes.length ? `<div class="table-scroll" role="region" aria-label="草稿差异表格" tabindex="0"><table class="data-table"><thead><tr><th scope="col">配置路径</th><th scope="col">变更前</th><th scope="col">变更后</th><th scope="col">校验结果</th></tr></thead><tbody>${changes.map((change) => `<tr><td class="codeish">${display(change.path)}</td><td>${display(change.before)}</td><td>${display(change.after)}</td><td>${statusMarkup(change.status)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无草稿差异", "没有差异时不自动生成发布内容。")}</section>
+    <div class="callout callout-warning" role="alert"><div class="callout-head"><h2>真实操作仍被禁用</h2>${statusMarkup("blocked", "fixture / 未接入")}</div><p>“发布到正式”“回滚版本”“保存到服务器”需要未来的 draft → validate/preview → approval → publish → readback/rollback API。本任务不伪造成功。</p><div class="button-row"><button class="button button-secondary" type="button" disabled title="未连接正式后台；回滚接口尚未提供" aria-disabled="true">回滚正式版本</button></div></div>`;
+}
+
+function renderAudit(data) {
+  const entries = Array.isArray(data.audit) ? data.audit : [];
+  return `${pageHeader("audit")}
+    ${modeBanner()}
+    <section class="panel" aria-labelledby="audit-table-title">
+      <div class="card-head"><div><h2 id="audit-table-title">审计事件</h2><p>只保留脱敏关联字段；完整地址、报价明细、税务材料和凭证不写入普通日志。</p></div>${statusMarkup(entries.length ? "ready" : "empty", entries.length ? `${entries.length} 条记录` : "暂无记录")}</div>
+      ${entries.length ? `<div class="table-scroll" role="region" aria-label="审计日志表格" tabindex="0"><table class="data-table table-wide"><thead><tr><th scope="col">actor</th><th scope="col">tenant</th><th scope="col">action</th><th scope="col">result</th><th scope="col">reason</th><th scope="col">config version</th><th scope="col">trace id</th></tr></thead><tbody>${entries.map((entry) => `<tr><td class="codeish">${display(entry.actor)}</td><td class="codeish">${display(entry.tenant)}</td><td class="codeish">${display(entry.action)}</td><td>${statusMarkup(entry.result)}</td><td>${display(entry.reason)}</td><td class="codeish">${display(entry.config_version)}</td><td class="codeish">${display(entry.trace_id)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无审计记录", "没有快照数据时不创建假日志，也不会猜测操作结果。")}
+    </section>
+    <section class="panel" aria-labelledby="audit-rule-title"><div class="card-head"><div><h2 id="audit-rule-title">日志最小化</h2><p>审计关联足够追责，但不把客户内容变成日志副本。</p></div>${statusMarkup("ready", "脱敏摘要")}</div><div class="state-guide"><div class="state-guide-item"><strong>保留</strong><p>tenant、actor、client、tool、版本、状态、reason code、trace id。</p></div><div class="state-guide-item"><strong>不保留</strong><p>客户地址、报价明细、税务材料全文、原始聊天和凭证。</p></div><div class="state-guide-item"><strong>写入失败</strong><p>审计或读回失败时转 manual_review，不报告假成功。</p></div></div></section>`;
+}
+
+function renderView() {
+  if (state.loading) return renderLoading();
+  if (state.error) return renderError();
+  if (!state.data) return renderError();
+  switch (state.view) {
+    case "clients":
+      return renderClients(state.data);
+    case "tools":
+      return renderTools(state.data);
+    case "adapters":
+      return renderAdapters(state.data);
+    case "approvals":
+      return renderApprovals(state.data);
+    case "audit":
+      return renderAudit(state.data);
+    case "overview":
+    default:
+      return renderOverview(state.data);
+  }
+}
+
+function updateContext() {
+  const data = state.data;
+  const tenantName = document.querySelector("#tenant-name");
+  const environment = document.querySelector("#environment-badge");
+  const configVersion = document.querySelector("#config-version");
+  const actorName = document.querySelector("#actor-name");
+  const actorRole = document.querySelector("#actor-role");
+  const footerMode = document.querySelector("#footer-mode");
+  tenantName.textContent = data?.tenant?.name ?? (state.loading ? "读取中" : "未连接");
+  environment.innerHTML = state.loading
+    ? statusMarkup("loading")
+    : state.mode === "fixture"
+      ? statusMarkup("manual_review", "演示数据")
+      : data
+        ? statusMarkup("ready", "正式快照")
+        : statusMarkup("unavailable", "未连接");
+  configVersion.textContent = data?.config?.current_version ?? "—";
+  actorName.textContent = data?.actor?.name ?? "未认证";
+  actorRole.textContent = data?.actor?.role ? roleLabel(data.actor.role) : "—";
+  footerMode.textContent = state.mode === "fixture" ? "演示数据 · 未连接正式后台" : "正式快照 · 失败闭合";
+}
+
+function updateNav() {
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    const active = button.dataset.view === state.view;
+    button.classList.toggle("is-active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+}
+
+function render(announce = false) {
+  updateContext();
+  updateNav();
+  content.innerHTML = renderView();
+  content.setAttribute("aria-busy", String(state.loading));
+  document.querySelector("#app").dataset.state = state.loading ? "loading" : state.error ? "unavailable" : "ready";
+  if (announce) liveRegion.textContent = `${VIEW_META[state.view].title}已打开`;
+}
+
+function focusMain() {
+  main.focus({ preventScroll: true });
+}
+
+function openDiffDialog() {
+  const changes = state.data?.approvals?.changes;
+  const body = document.querySelector("#dialog-body");
+  if (!Array.isArray(changes) || changes.length === 0) {
+    body.innerHTML = emptyState("暂无差异", "没有快照差异时不生成发布内容。");
+  } else {
+    body.innerHTML = `<p class="muted">以下差异只在浏览器本地展示，未保存到服务器：</p><ul class="diff-list">${changes.map((change) => `<li class="diff-item"><span class="diff-path codeish">${display(change.path)}</span><div class="diff-values"><span>变更前：<strong>${display(change.before)}</strong></span><span>变更后：<strong>${display(change.after)}</strong></span></div><div>${statusMarkup(change.status)}</div></li>`).join("")}</ul>`;
+  }
+  document.querySelector("#dialog-title").textContent = "草稿差异（本地预览）";
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+  queueMicrotask(() => document.querySelector("[data-action=close-dialog]")?.focus());
+}
+
+function closeDialog() {
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+async function loadSnapshot() {
+  state.loading = true;
+  state.error = null;
+  state.data = null;
+  render();
+
+  if (state.mode === "fixture") {
+    try {
+      const module = await import("./fixture-data.js");
+      state.data = module.fixtureSnapshot;
+    } catch (error) {
+      state.error = { message: `演示数据文件加载失败：${error instanceof Error ? error.message : "未知错误"}` };
+    }
+    state.loading = false;
+    render();
+    return;
+  }
+
+  try {
+    const response = await fetch("/admin/api/v1/snapshot", {
+      headers: { accept: "application/json" },
+      credentials: "same-origin",
+    });
+    if (!response.ok) throw new Error(`同源快照返回 HTTP ${response.status}。`);
+    const snapshot = await response.json();
+    if (!snapshot || typeof snapshot !== "object" || typeof snapshot.schema_version !== "string") {
+      throw new Error("快照缺少 schema_version，已拒绝使用。");
+    }
+    state.data = snapshot;
+  } catch (error) {
+    state.error = { message: error instanceof Error ? error.message : "同源快照请求失败。" };
+  }
+  state.loading = false;
+  render();
+}
+
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target.closest("button, a") : null;
+  if (!target) return;
+  const view = target.dataset.view;
+  if (view) {
+    event.preventDefault();
+    state.view = view;
+    window.history.replaceState(null, "", `#${view}`);
+    render(true);
+    focusMain();
+    return;
+  }
+
+  switch (target.dataset.action) {
+    case "retry":
+      void loadSnapshot();
+      break;
+    case "preview-diff":
+      openDiffDialog();
+      break;
+    case "close-dialog":
+      closeDialog();
+      break;
+    case "edit-source":
+      state.localDraft = target.dataset.source ?? "适配器";
+      render(true);
+      break;
+    case "clear-local-draft":
+      state.localDraft = null;
+      render(true);
+      break;
+    default:
+      break;
+  }
+});
+
+document.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement) || !target.matches("[data-role-filter]")) return;
+  state.roleFilter = target.value;
+  render();
+});
+
+window.addEventListener("hashchange", () => {
+  state.view = getViewFromHash();
+  render(true);
+  focusMain();
+});
+
+dialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeDialog();
+});
+
+render();
+void loadSnapshot();
