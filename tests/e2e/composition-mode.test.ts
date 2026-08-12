@@ -35,7 +35,7 @@ const customsSearchInput = {
   rule_date: API_DATE,
   query_kind: "name_search",
   query: "synthetic widget",
-  product_attributes: { material: "synthetic" },
+  product_attributes: { material: "synthetic", origin_country: "CN" },
   selected_hs6: null,
 };
 

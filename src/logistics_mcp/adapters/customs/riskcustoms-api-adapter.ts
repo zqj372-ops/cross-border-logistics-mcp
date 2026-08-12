@@ -148,12 +148,15 @@ function validIdentifier(value: string): boolean {
   return IDENTIFIER.test(value);
 }
 
-function statusData(value: z.infer<typeof statusResponseSchema>): Record<string, unknown> {
+function statusData(
+  value: z.infer<typeof statusResponseSchema>,
+  testData: boolean,
+): Record<string, unknown> {
   return {
     version: `data-status@${API_VERSION}`,
     system: "riskcustoms",
     ready: value.ready,
-    test_data: false,
+    test_data: testData,
     evaluated_at: value.evaluatedAt,
     last_source_check_at: value.lastSourceCheckAt,
     reasons: [...value.reasons],
@@ -277,7 +280,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
           "RiskCustoms returned a status outside its verified contract.",
         );
       }
-      const data = statusData(parsed.data);
+      const data = statusData(parsed.data, !parsed.data.ready);
       if (!dataStatusSchema.safeParse(data).success) {
         return failure(
           "unavailable",
@@ -330,6 +333,29 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
         "rule_date",
       );
     }
+    const attributes = input.product_attributes;
+    const originCountry =
+      typeof attributes === "object" &&
+      attributes !== null &&
+      !Array.isArray(attributes)
+        ? (attributes as Record<string, unknown>).origin_country
+        : undefined;
+    if (originCountry === undefined || originCountry === null || originCountry === "") {
+      return failure(
+        "needs_input",
+        "customs.origin_country_required",
+        "The product origin country is required for the current RiskCustoms contract.",
+        "product_attributes.origin_country",
+      );
+    }
+    if (originCountry !== "CN") {
+      return failure(
+        "unavailable",
+        "customs.origin_not_supported",
+        "The current RiskCustoms contract supports China-origin goods only.",
+        "product_attributes.origin_country",
+      );
+    }
     const unavailable = this.available();
     if (unavailable !== null) return unavailable;
 
@@ -364,7 +390,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
           "RiskCustoms ready=false; no query was attempted.",
           "data_status.ready",
         ),
-        data: emptySearchData(input, statusData(status)),
+        data: emptySearchData(input, statusData(status, true)),
         warnings: [
           notice(
             "customs.no_fallback",
@@ -441,7 +467,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
         if (value === null) continue;
         if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return null;
         if (typeof value === "number" && !Number.isFinite(value)) return null;
-        attributes[key] = value;
+        attributes[key === "origin_country" ? "originCountry" : key] = value;
       }
     }
     const selectedHs6 = input.selected_hs6;
@@ -542,7 +568,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
         candidates: candidates.values,
         next_questions: response.nextQuestion === null ? [] : [response.nextQuestion.label],
         data_status: {
-          ...statusData(response.dataStatus),
+          ...statusData(response.dataStatus, false),
           release_ids: sourceResult.releaseIds,
         },
       };

@@ -200,7 +200,7 @@ function searchInput(overrides: Record<string, unknown> = {}): Record<string, un
     product_attributes: {
       material: null,
       use: "fixture-use",
-      origin_country: null,
+      origin_country: "CN",
       contains_steel_aluminum: false,
     },
     selected_hs6: "123456",
@@ -264,7 +264,7 @@ describe("RiskCustoms API CustomsAdapter", () => {
       product_attributes: {
         material: null,
         use: "fixture-use",
-        origin_country: null,
+        origin_country: "CN",
         contains_steel_aluminum: false,
         secret_token: "do-not-send",
       },
@@ -290,6 +290,7 @@ describe("RiskCustoms API CustomsAdapter", () => {
       selectedHs6: "123456",
       attributes: {
         use: "fixture-use",
+        originCountry: "CN",
         contains_steel_aluminum: false,
       },
     });
@@ -336,10 +337,14 @@ describe("RiskCustoms API CustomsAdapter", () => {
   });
 
   it("maps status into dataStatus without inventing release ids", async () => {
-    const fake = fakeFetch([{ body: status({ ready: false, reasons: ["fixture_pending"] }) }]);
+    const fake = fakeFetch([
+      { body: status({ ready: false, reasons: ["fixture_pending"] }) },
+      { body: status() },
+    ]);
     const customs = adapter(fake);
 
     const response = await customs.getStatus({ rule_date: RULE_DATE });
+    const readyResponse = await customs.getStatus({ rule_date: RULE_DATE });
 
     expect(response.status).toBe("success");
     dataStatusSchema.parse(response.data);
@@ -347,13 +352,14 @@ describe("RiskCustoms API CustomsAdapter", () => {
       version: "data-status@riskcustoms-api.v1",
       system: "riskcustoms",
       ready: false,
-      test_data: false,
+      test_data: true,
       evaluated_at: "2026-08-12T00:00:00.000Z",
       last_source_check_at: "2026-08-12T00:00:00.000Z",
       reasons: ["fixture_pending"],
       release_ids: [],
     });
-    expect(fake.calls).toHaveLength(1);
+    expect(readyResponse.data).toMatchObject({ ready: true, test_data: false });
+    expect(fake.calls).toHaveLength(2);
   });
 
   it("maps only CA candidates/results, deduplicates, preserves reasons and next question", async () => {
@@ -443,6 +449,38 @@ describe("RiskCustoms API CustomsAdapter", () => {
       expect(response.status).toBe("unavailable");
       expect(response.blockers?.length).toBeGreaterThan(0);
     }
+  });
+
+  it("requires the currently supported China origin before any HTTP call", async () => {
+    const fake = fakeFetch([]);
+    const customs = adapter(fake);
+
+    const missing = await customs.search(searchInput({
+      product_attributes: {
+        material: null,
+        use: "fixture-use",
+        origin_country: null,
+        contains_steel_aluminum: false,
+      },
+    }));
+    const unsupported = await customs.search(searchInput({
+      product_attributes: {
+        material: null,
+        use: "fixture-use",
+        origin_country: "US",
+        contains_steel_aluminum: false,
+      },
+    }));
+
+    expect(missing.status).toBe("needs_input");
+    expect(missing.blockers?.map((item) => item.code)).toContain(
+      "customs.origin_country_required",
+    );
+    expect(unsupported.status).toBe("unavailable");
+    expect(unsupported.blockers?.map((item) => item.code)).toContain(
+      "customs.origin_not_supported",
+    );
+    expect(fake.calls).toHaveLength(0);
   });
 
   it.each([
