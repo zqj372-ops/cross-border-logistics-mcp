@@ -1,0 +1,63 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_contract_quote_v2_manual_review",
+  "status": "manual_review",
+  "data": {
+    "version": "quote-result@2026-08-13.v2",
+    "quote_id": "quote-contract-v2-manual-001",
+    "quote_status": "manual_review",
+    "currency": "USD",
+    "total": null,
+    "line_items": [],
+    "rule_version": "quote-preview-rule@fixture",
+    "data_version": "quote-preview-data@fixture",
+    "sendable": false,
+    "valid_from": "2026-08-13",
+    "valid_to": "2026-08-13",
+    "source_ref_ids": ["src:quote:v2:fixture"],
+    "tenant": "tenant-contract-demo",
+    "effective_date": "2026-08-13",
+    "ready": true,
+    "test_data": false,
+    "origin": "canonical-origin-demo",
+    "billing_pallets": null,
+    "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "service_version": "quote-service@fixture",
+    "contract_version": "quote-preview-contract@2026-08-13",
+    "release_id": "quote-release-fixture",
+    "release_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "published_at": "2026-08-13T00:00:00Z"
+  },
+  "source_refs": [
+    {
+      "source_id": "src:quote:v2:fixture",
+      "source_type": "fixture",
+      "system": "quote-v2-contract-fixture",
+      "locator": "fixture://quote-v2/manual-review",
+      "version": "quote-preview-fixture@2026-08-13",
+      "retrieved_at": "2026-08-13T00:00:00Z",
+      "authority": "supporting",
+      "content_hash": "sha256:quotev2fixture01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [
+    {
+      "code": "quote.not_sendable",
+      "message": "契约示例不可发送或发布。",
+      "severity": "warning",
+      "field": null
+    }
+  ],
+  "blockers": [
+    {
+      "code": "quote.manual_review_required",
+      "message": "契约示例需要人工复核。",
+      "severity": "error",
+      "field": null
+    }
+  ],
+  "calculation_trace": [],
+  "review_status": "manual_review",
+  "audit_id": "audit_contract_quote_v2_manual"
+}

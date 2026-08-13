@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-envelope-v2.schema.json",
+  "title": "AI 报价 v2 response envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "status", "data", "source_refs", "assumptions", "warnings", "blockers", "calculation_trace", "review_status", "audit_id"],
+  "properties": {
+    "schema_version": { "const": "2026-08-11.v1" },
+    "request_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "status": { "type": "string", "enum": ["success", "needs_input", "manual_review", "blocked", "unavailable"] },
+    "data": {
+      "description": "v2 quote result or null when no result is safe to expose.",
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-result-v2.schema.json" }
+      ]
+    },
+    "source_refs": {
+      "type": "array",
+      "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/SourceRef" },
+      "uniqueItems": true
+    },
+    "assumptions": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Notice" } },
+    "warnings": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Notice" } },
+    "blockers": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Notice" } },
+    "calculation_trace": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/CalculationStep" } },
+    "review_status": { "type": "string", "enum": ["not_required", "pending", "approved", "rejected", "manual_review"] },
+    "audit_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }
+  },
+  "oneOf": [
+    {
+      "required": ["status", "data", "source_refs", "calculation_trace"],
+      "properties": {
+        "status": { "const": "success" },
+        "source_refs": { "type": "array", "minItems": 1 },
+        "calculation_trace": { "type": "array", "minItems": 1 },
+        "data": {
+          "allOf": [
+            { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-result-v2.schema.json" },
+            {
+              "$comment": "仅作 quote_status refinement；v2 $ref 已封闭对象，allOf 合并后仍不接受未知字段。",
+              "type": "object",
+              "additionalProperties": true,
+              "properties": { "quote_status": { "const": "calculated" } }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "$comment": "manual_review + data=null 仅用于零调用业务门禁；不得伪造报价、发布或来源证据。",
+      "required": ["status", "data", "source_refs", "calculation_trace"],
+      "properties": {
+        "status": { "const": "manual_review" },
+        "data": { "type": "null" },
+        "source_refs": { "type": "array", "maxItems": 0 },
+        "calculation_trace": { "type": "array", "maxItems": 0 }
+      }
+    },
+    {
+      "required": ["status", "data", "source_refs"],
+      "properties": {
+        "status": { "const": "manual_review" },
+        "source_refs": { "type": "array", "minItems": 1 },
+        "data": {
+          "allOf": [
+            { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-result-v2.schema.json" },
+            {
+              "$comment": "仅作 quote_status refinement；v2 $ref 已封闭对象，allOf 合并后仍不接受未知字段。",
+              "type": "object",
+              "additionalProperties": true,
+              "properties": { "quote_status": { "enum": ["manual_review", "not_calculable"] } }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "required": ["status", "data"],
+      "properties": {
+        "status": { "enum": ["unavailable", "blocked", "needs_input"] },
+        "data": { "type": "null" }
+      }
+    }
+  ]
+}
