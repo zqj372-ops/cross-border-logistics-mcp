@@ -234,6 +234,11 @@ describe("Streamable HTTP security boundary", () => {
 
     expect(response.status).toBe(200);
     expect(body.result?.protocolVersion).toBe("2025-03-26");
+    expect(body.result?.instructions).toContain("成功（success）");
+    expect(body.result?.instructions).toContain("需补充（needs_input）");
+    expect(body.result?.instructions).toContain("人工复核（manual_review）");
+    expect(body.result?.instructions).toContain("已阻止（blocked）");
+    expect(body.result?.instructions).toContain("暂不可用（unavailable）");
     expect(body.result?.instructions).toContain("写操作必须按预览→审批→提交→读回执行");
     expect(body.result?.instructions).toContain("sendable=false");
     expect(body.result?.instructions?.length).toBeLessThanOrEqual(512);

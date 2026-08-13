@@ -91,7 +91,7 @@ class RequestSecurityError extends Error {}
 class RequestTimeoutError extends Error {}
 
 const SERVER_INSTRUCTIONS =
-  "本服务仅用于公司内部跨境物流。必须按 success、needs_input、manual_review、blocked、unavailable 处理结果；不得把人工复核、阻断或不可用解释为成功。写操作必须按预览→审批→提交→读回执行。工具结果声明 sendable=false 或 theoretical_only=true 时，不得发送报价、订舱或当作实际装载方案。不得跨租户查询，不得用模型推测替代缺失的报价、关税、版本或来源。";
+  "本服务仅用于公司内部跨境物流。结果状态：成功（success）、需补充（needs_input）、人工复核（manual_review）、已阻止（blocked）、暂不可用（unavailable）；不得把人工复核、已阻止或暂不可用解释为成功。写操作必须按预览→审批→提交→读回执行。工具结果声明 sendable=false 或 theoretical_only=true 时，不得发送报价、订舱或当作实际装载方案。不得跨租户查询，不得用模型推测替代缺失的报价、关税、版本或来源。";
 
 const CLOSED_WORLD_TOOLS = new Set([
   "knowledge.search_curated",
