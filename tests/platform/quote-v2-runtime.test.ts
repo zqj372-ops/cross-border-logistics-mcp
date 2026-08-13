@@ -243,7 +243,7 @@ describe("quote v2 runtime envelope contract", () => {
     }
   });
 
-  it("keeps fixture quote calculation unavailable while retaining fixture draft ports", async () => {
+  it("routes fixture quote risk services to review while retaining fixture draft ports", async () => {
     const composition = createFixtureComposition({ dataMode: "fixtures" });
     const definition = composition.definitions.find(
       (candidate) => candidate.name === QUOTE_TOOL,
@@ -251,28 +251,51 @@ describe("quote v2 runtime envelope contract", () => {
     if (definition === undefined) throw new Error("quote definition missing");
 
     try {
-      for (const input of [
+      const unavailable = await executeRegisteredTool(
+        definition,
         quoteInput(),
-        quoteInput({ limitedAccess: true }),
-        quoteInput({ remoteArea: true }),
-      ]) {
-        const result = await executeRegisteredTool(
-          definition,
-          input,
-          context,
-          {
-            requestId: "req_fixture_quote_v2_unavailable",
-            auditId: "audit_fixture_quote_v2_unavailable",
-          },
-        );
+        context,
+        {
+          requestId: "req_fixture_quote_v2_unavailable",
+          auditId: "audit_fixture_quote_v2_unavailable",
+        },
+      );
+      expect(unavailable.status).toBe("unavailable");
+      expect(unavailable.data).toBeNull();
+      expect(unavailable.source_refs).toEqual([]);
+      expect(unavailable.calculation_trace).toEqual([]);
+      expect(JSON.stringify(unavailable)).not.toMatch(
+        /ready|test_data|amount|release|snapshot|authoritative/i,
+      );
 
-        expect(result.status).toBe("unavailable");
-        expect(result.data).toBeNull();
-        expect(result.source_refs).toEqual([]);
-        expect(result.calculation_trace).toEqual([]);
-        expect(JSON.stringify(result)).not.toMatch(
-          /ready|test_data|amount|release|snapshot|authoritative/i,
-        );
+      for (const [input, field] of [
+        [quoteInput({ limitedAccess: true }), "services.limited_access"],
+        [quoteInput({ remoteArea: true }), "services.remote_area"],
+      ] as const) {
+        const result = await executeRegisteredTool(definition, input, context, {
+          requestId: "req_fixture_quote_v2_manual_review",
+          auditId: "audit_fixture_quote_v2_manual_review",
+        });
+
+        expect(result).toMatchObject({
+          status: "manual_review",
+          data: null,
+          source_refs: [],
+          calculation_trace: [],
+          review_status: "manual_review",
+          warnings: [{
+            code: "quote.zero_upstream_call",
+            message: "limited_access 或 remote_area 门禁不发起上游报价调用。",
+            severity: "warning",
+            field,
+          }],
+          blockers: [{
+            code: "quote.manual_review_required",
+            message: "该服务门禁需要人工复核，不能伪造报价、发布或来源证据。",
+            severity: "error",
+            field,
+          }],
+        });
       }
 
       await expect(composition.adapters.quote.previewDraft({})).resolves.toMatchObject({

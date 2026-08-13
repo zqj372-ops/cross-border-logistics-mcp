@@ -335,8 +335,37 @@ export function createFixtureComposition(
   const adapters: FixtureAdapters = {
     ...fixtureAdapters,
     quote: {
-      calculate: (input, context, signal) =>
-        disabledQuote.calculate(input, context, signal),
+      calculate: async (input, context, signal) => {
+        const parsed = quoteV2InputSchema.safeParse(input);
+        const reviewField =
+          parsed.success && parsed.data.services.limited_access
+            ? "services.limited_access"
+            : parsed.success && parsed.data.services.remote_area
+              ? "services.remote_area"
+              : null;
+        if (reviewField !== null) {
+          return {
+            status: "manual_review",
+            data: null,
+            sourceRefs: [],
+            warnings: [{
+              code: "quote.zero_upstream_call",
+              message: "limited_access 或 remote_area 门禁不发起上游报价调用。",
+              severity: "warning" as const,
+              field: reviewField,
+            }],
+            blockers: [{
+              code: "quote.manual_review_required",
+              message: "该服务门禁需要人工复核，不能伪造报价、发布或来源证据。",
+              severity: "error" as const,
+              field: reviewField,
+            }],
+            calculationTrace: [],
+            reviewStatus: "manual_review",
+          };
+        }
+        return disabledQuote.calculate(input, context, signal);
+      },
       previewDraft: (input) => fixtureQuote.previewDraft(input),
       commitDraft: (input, signal) => fixtureQuote.commitDraft(input, signal),
       readDraft: (input) => fixtureQuote.readDraft(input),
