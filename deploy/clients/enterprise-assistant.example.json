@@ -1,10 +1,13 @@
 {
-  "template_status": "示意模板/待管理员验证",
-  "client": "enterprise-assistant",
-  "client_id": "client_demo",
-  "tenant_id": "tenant_demo",
-  "mcp_endpoint": "https://mcp.example.invalid/mcp",
-  "auth": { "scheme": "Bearer", "token_source": "enterprise_identity_provider" },
+  "template_status": "企业助手对接清单/不可直接导入",
+  "importable": false,
+  "endpoint": "https://mcp.example.invalid/mcp",
+  "transport": "Streamable HTTP",
+  "authentication": {
+    "scheme": "Bearer",
+    "token_source": "企业身份平台短期令牌",
+    "identity_source": "服务端校验后注入，客户端不提供租户或操作人身份"
+  },
   "allowed_tools": [
     "cargo.calculate",
     "container.plan_summary",
@@ -16,12 +19,9 @@
     "system.get_data_status",
     "review.create_task"
   ],
-  "state_policy": {
-    "success": "render versioned data and trace",
-    "needs_input": "ask only for listed blockers",
-    "manual_review": "handoff with reason, source and owner",
-    "unavailable": "show unavailable; do not substitute a value",
-    "blocked": "show policy denial; do not retry by another tool",
+  "safety": {
+    "write_tools_require_approval": true,
+    "unavailable_is_not_success": true,
     "sendable": false,
     "theoretical_only": true
   }

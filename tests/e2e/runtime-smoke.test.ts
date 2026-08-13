@@ -351,6 +351,7 @@ describe("built runtime smoke", () => {
       );
       await client.connect(transport as Transport);
       expect(transport.sessionId).toBeTruthy();
+      expect(client.getInstructions()).toContain("写操作必须按预览→审批→提交→读回执行");
 
       const toolList = await client.listTools();
       expect(toolList.tools.map((tool) => tool.name).sort()).toEqual([
@@ -364,6 +365,12 @@ describe("built runtime smoke", () => {
         "review.create_task",
         "system.get_data_status",
       ].sort());
+      expect(toolList.tools.every((tool) =>
+        tool.inputSchema.$schema === "https://json-schema.org/draft/2020-12/schema" &&
+        tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
+      )).toBe(true);
+      expect(toolList.tools.find((tool) => tool.name === "quote.save_draft")?.annotations)
+        .toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
 
       const cargo = structured(await client.callTool({
         name: "cargo.calculate",

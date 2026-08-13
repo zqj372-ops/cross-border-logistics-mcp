@@ -229,11 +229,25 @@ describe("Streamable HTTP security boundary", () => {
     const handle = makeHandler();
     const response = await handle(makeRequest(initializeBody));
     const body = (await response.json()) as {
-      result?: { protocolVersion?: string };
+      result?: { protocolVersion?: string; instructions?: string };
     };
 
     expect(response.status).toBe(200);
     expect(body.result?.protocolVersion).toBe("2025-03-26");
+    expect(body.result?.instructions).toContain("写操作必须按预览→审批→提交→读回执行");
+    expect(body.result?.instructions).toContain("sendable=false");
+    expect(body.result?.instructions?.length).toBeLessThanOrEqual(512);
+    const toolsResponse = await handle(makeRequest(
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { "mcp-session-id": response.headers.get("mcp-session-id") ?? "" },
+    ));
+    const toolsBody = (await toolsResponse.json()) as {
+      result?: { tools?: Array<{ inputSchema?: { $schema?: string } }> };
+    };
+    expect(toolsBody.result?.tools?.every((tool) =>
+      tool.inputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
+    )).toBe(true);
+    await handle.close();
   });
 
   it("removes a new session when the SDK rejects initialize", async () => {

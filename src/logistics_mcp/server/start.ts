@@ -5,10 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { AuthenticationError, type AuthClaims } from "../platform/context";
-import {
-  getToolPolicy,
-  type PhaseOneToolName,
-} from "../platform/rbac";
+import { getToolPolicy, type PhaseOneToolName } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
   createFixtureComposition,
@@ -73,48 +70,6 @@ async function readiness(
   const uniqueReasons = [...new Set(reasons)];
   return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
 }
-
-const TOOL_PRESENTATION: Record<
-  PhaseOneToolName,
-  { readonly label: string; readonly description: string }
-> = {
-  "knowledge.search_curated": {
-    label: "精选知识搜索",
-    description: "只查询经过审核的当前操作资料。",
-  },
-  "system.get_data_status": {
-    label: "数据状态查询",
-    description: "读取已接入来源的就绪状态和版本证据。",
-  },
-  "cargo.calculate": {
-    label: "货物与分泡计算",
-    description: "计算体积、体积重、分泡和计费重。",
-  },
-  "container.plan_summary": {
-    label: "装柜摘要计算",
-    description: "汇总理论容量、运营目标和超限提醒。",
-  },
-  "quote.canada_final_mile.calculate": {
-    label: "加拿大尾程报价",
-    description: "通过受控接口获取加拿大尾程报价。",
-  },
-  "customs.ca.search": {
-    label: "加拿大关务候选查询",
-    description: "查询海关编码候选和待补充问题。",
-  },
-  "customs.ca.estimate": {
-    label: "加拿大税费估算",
-    description: "正式估算接口约定完成前保持不可用。",
-  },
-  "quote.save_draft": {
-    label: "保存报价草稿",
-    description: "正式草稿接口和写后读回完成前保持不可用。",
-  },
-  "review.create_task": {
-    label: "创建人工复核任务",
-    description: "正式任务接口和写后读回完成前保持不可用。",
-  },
-};
 
 const ROLE_PRESENTATION = {
   admin: ["管理员", "管理平台授权和审计边界。"],
@@ -238,7 +193,8 @@ async function adminRuntimeSnapshot(
     })),
     tools: composition.definitions.map((definition) => ({
       name: definition.name,
-      ...TOOL_PRESENTATION[definition.name],
+      label: definition.title,
+      description: definition.description,
       kind: definition.kind,
       roles: [...getToolPolicy(definition.name).roles],
       availability:

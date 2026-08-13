@@ -16,6 +16,7 @@ import {
 } from "../platform/security";
 import {
   createEnvelope,
+  envelopeSchema,
   type EnvelopeStatus,
   type ResponseEnvelope,
 } from "../platform/envelope";
@@ -88,6 +89,17 @@ class BodyTooLargeError extends Error {}
 class InvalidJsonError extends Error {}
 class RequestSecurityError extends Error {}
 class RequestTimeoutError extends Error {}
+
+const SERVER_INSTRUCTIONS =
+  "本服务仅用于公司内部跨境物流。必须按 success、needs_input、manual_review、blocked、unavailable 处理结果；不得把人工复核、阻断或不可用解释为成功。写操作必须按预览→审批→提交→读回执行。工具结果声明 sendable=false 或 theoretical_only=true 时，不得发送报价、订舱或当作实际装载方案。不得跨租户查询，不得用模型推测替代缺失的报价、关税、版本或来源。";
+
+const CLOSED_WORLD_TOOLS = new Set([
+  "knowledge.search_curated",
+  "cargo.calculate",
+  "container.plan_summary",
+]);
+
+const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -606,14 +618,24 @@ function registerMcpTools(
   idempotencyRepository: IdempotencyRepository,
   requestSignals: AsyncLocalStorage<AbortSignal>,
 ): void {
-  const missingContractInputSchema = z.record(z.string(), z.unknown());
+  const missingContractInputSchema = z.object({}).catchall(z.unknown());
+  const outputSchema = envelopeSchema.meta({ $schema: JSON_SCHEMA_2020_12 });
   for (const definition of definitions) {
     server.registerTool(
       definition.name,
       {
-        title: definition.name,
-        description: `Phase 1 ${definition.kind} tool; domain schema is ${definition.inputSchemaId}.`,
-        inputSchema: definition.inputSchema ?? missingContractInputSchema,
+        title: definition.title,
+        description: definition.description,
+        inputSchema: (definition.inputSchema ?? missingContractInputSchema).meta({
+          $schema: JSON_SCHEMA_2020_12,
+        }),
+        outputSchema,
+        annotations: {
+          readOnlyHint: definition.kind === "read",
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: !CLOSED_WORLD_TOOLS.has(definition.name),
+        },
       },
       async (input) => {
         const requestId = requestIdForCall();
@@ -737,10 +759,10 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
         void sessionBindingStore?.delete(closedSessionId).catch(() => undefined);
       },
     });
-    const server = new McpServer({
-      name: "cross-border-logistics-mcp",
-      version: "0.1.0",
-    });
+    const server = new McpServer(
+      { name: "cross-border-logistics-mcp", version: "0.1.0" },
+      { instructions: SERVER_INSTRUCTIONS },
+    );
     const requestIdForCall = () => `req_${randomUUID()}`;
     registerMcpTools(
       server,
