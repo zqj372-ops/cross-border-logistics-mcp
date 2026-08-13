@@ -132,7 +132,7 @@ function isUncertain(error: HttpAdapterError): boolean {
 }
 
 function remainingMs(deadline: number): number {
-  return Math.max(0, deadline - Date.now());
+  return Math.max(0, Math.floor(deadline - globalThis.performance.now()));
 }
 
 export class QuotePdfApiAdapter {
@@ -166,7 +166,7 @@ export class QuotePdfApiAdapter {
     if (signal?.aborted) {
       return { ok: false, failure: failure("unavailable", "pdf.request_aborted", false) };
     }
-    const deadline = Date.now() + this.timeoutMs;
+    const deadline = globalThis.performance.now() + this.timeoutMs;
     const authorization = await this.authorization(context, deadline, signal);
     if (typeof authorization !== "string") return { ok: false, failure: authorization };
 
@@ -204,7 +204,7 @@ export class QuotePdfApiAdapter {
     if (!DOCUMENT_REF.test(documentRef)) {
       return { ok: false, failure: failure("manual_review", "pdf.document_ref_invalid", false) };
     }
-    const deadline = Date.now() + this.timeoutMs;
+    const deadline = globalThis.performance.now() + this.timeoutMs;
     const authorization = await this.authorization(context, deadline, signal);
     if (typeof authorization !== "string") return { ok: false, failure: authorization };
     const timeoutMs = remainingMs(deadline);

@@ -483,9 +483,8 @@ describe("quote API v2 adapter", () => {
   });
 
   it("keeps the calculate deadline across header resolution and the upstream request", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     try {
-      vi.setSystemTime(0);
       const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
       const headerProvider = vi.fn(async () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 8));
@@ -505,6 +504,27 @@ describe("quote API v2 adapter", () => {
       expect(settledAfterDeadline).toBe(true);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([900, 1_100])("uses monotonic time when the wall clock moves to %s", async (wallTime) => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const wallClock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const fetchImpl = vi.fn<FetchImplementation>(() => Promise.resolve(new Response(JSON.stringify(upstreamResponse()))));
+      const headerProvider = vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 8));
+        wallClock.mockReturnValue(wallTime);
+        return { "X-API-Key": "synthetic-api-key" };
+      });
+      const request = adapter(fetchImpl, { headerProvider, timeoutMs: 10 }).calculate(quoteInput(), context);
+
+      await vi.advanceTimersByTimeAsync(8);
+      await expect(request).resolves.toMatchObject({ status: "success" });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      wallClock.mockRestore();
       vi.useRealTimers();
     }
   });

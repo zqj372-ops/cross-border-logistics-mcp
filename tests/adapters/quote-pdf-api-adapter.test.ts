@@ -304,9 +304,8 @@ describe("quote PDF API adapter", () => {
   });
 
   it("bounds a POST replay by the remaining deadline", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     try {
-      vi.setSystemTime(0);
       let calls = 0;
       const fetchImpl = vi.fn<FetchImplementation>(() => {
         calls += 1;
@@ -350,9 +349,8 @@ describe("quote PDF API adapter", () => {
   });
 
   it("does not replay after credential time consumes the single POST deadline", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     try {
-      vi.setSystemTime(0);
       const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
       const credentialProvider = vi.fn(async () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 8));
@@ -375,9 +373,8 @@ describe("quote PDF API adapter", () => {
   });
 
   it("uses the remaining GET budget after credential resolution", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     try {
-      vi.setSystemTime(0);
       const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
       const credentialProvider = vi.fn(async () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 8));
@@ -400,6 +397,56 @@ describe("quote PDF API adapter", () => {
       expect(settledAfterDeadline).toBe(true);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not extend a pending POST deadline when the wall clock moves backwards", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const wallClock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
+      const request = adapter(fetchImpl, { timeoutMs: 10 }).post(body, "commit-key-123456", context);
+
+      await vi.advanceTimersByTimeAsync(9);
+      wallClock.mockReturnValue(900);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(120);
+
+      const result = await request;
+      expect(result).toMatchObject({
+        ok: false,
+        failure: { kind: "manual_review", dispatched: true },
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      wallClock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not shorten a POST deadline when the wall clock moves forwards", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const wallClock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      let calls = 0;
+      const fetchImpl = vi.fn<FetchImplementation>(() => {
+        calls += 1;
+        return calls === 1
+          ? new Promise<Response>((resolve) => {
+              setTimeout(() => resolve(new Response("{", { status: 200 })), 9);
+            })
+          : Promise.resolve(response(metadata, 200));
+      });
+      const request = adapter(fetchImpl, { timeoutMs: 10 }).post(body, "commit-key-123456", context);
+
+      wallClock.mockReturnValue(1_100);
+      await vi.advanceTimersByTimeAsync(9);
+
+      await expect(request).resolves.toMatchObject({ ok: true, status: 200, metadata });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      wallClock.mockRestore();
       vi.useRealTimers();
     }
   });

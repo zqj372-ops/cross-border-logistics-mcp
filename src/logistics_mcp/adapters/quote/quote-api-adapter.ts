@@ -515,7 +515,7 @@ function trace(response: AvailableResponse, sourceId: string): CalculationStep {
 }
 
 function remainingMs(deadline: number): number {
-  return Math.max(0, deadline - Date.now());
+  return Math.max(0, Math.floor(deadline - globalThis.performance.now()));
 }
 
 export class QuoteApiAdapter extends ExistingQuoteAdapter {
@@ -548,7 +548,7 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     context?: ExecutionContext,
     signal?: AbortSignal,
   ): Promise<AdapterResult> {
-    const deadline = Date.now() + this.requestTimeoutMs;
+    const deadline = globalThis.performance.now() + this.requestTimeoutMs;
     if (!this.enabled) {
       return unavailable(
         "quote.adapter_disabled",
