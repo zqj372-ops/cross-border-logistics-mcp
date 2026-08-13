@@ -207,6 +207,17 @@ describe("quote PDF API adapter", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("does not replay a control-character idempotency key rejected before dispatch", async () => {
+    const fetchImpl = vi.fn<FetchImplementation>();
+    const result = await adapter(fetchImpl).post(body, "commit-key-\u0000", context);
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "unavailable", dispatched: false },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("replays bad JSON from a successful POST once, but not malformed known errors", async () => {
     let calls = 0;
     const fetchImpl = vi.fn<FetchImplementation>(() => {
