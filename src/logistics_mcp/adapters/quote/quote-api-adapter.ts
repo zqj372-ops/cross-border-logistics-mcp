@@ -514,6 +514,10 @@ function trace(response: AvailableResponse, sourceId: string): CalculationStep {
   };
 }
 
+function remainingMs(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
+
 export class QuoteApiAdapter extends ExistingQuoteAdapter {
   private readonly client: FetchJsonClient;
   private readonly enabled: boolean;
@@ -544,6 +548,7 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     context?: ExecutionContext,
     signal?: AbortSignal,
   ): Promise<AdapterResult> {
+    const deadline = Date.now() + this.requestTimeoutMs;
     if (!this.enabled) {
       return unavailable(
         "quote.adapter_disabled",
@@ -578,7 +583,7 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
 
     let response: unknown;
     try {
-      response = await this.withRequestSignal(signal, async (requestSignal) => {
+      response = await this.withRequestSignal(signal, deadline, async (requestSignal) => {
         const headers = await this.headerProvider!(context, requestSignal);
         const sanitizedHeaders = apiKeyHeaders(headers);
         if (requestSignal.aborted) {
@@ -587,7 +592,11 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
         if (sanitizedHeaders === null) {
           throw new HttpAdapterError("upstream_request_invalid", "The quote preview API-key header is invalid.");
         }
-        return this.client.post(QUOTE_PATH, prepared.body, sanitizedHeaders, requestSignal, [422, 503]);
+        const timeoutMs = remainingMs(deadline);
+        if (timeoutMs <= 0) {
+          throw new HttpAdapterError("upstream_timeout", "The quote preview request exceeded its deadline.");
+        }
+        return this.client.post(QUOTE_PATH, prepared.body, sanitizedHeaders, requestSignal, [422, 503], timeoutMs);
       });
     } catch (error: unknown) {
       return this.mapHttpFailure(error);
@@ -843,10 +852,15 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
 
   private async withRequestSignal<T>(
     callerSignal: AbortSignal | undefined,
+    deadline: number,
     operation: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     if (callerSignal?.aborted) {
       throw new HttpAdapterError("upstream_aborted", "The quote preview request was aborted.");
+    }
+    const timeoutMs = remainingMs(deadline);
+    if (timeoutMs <= 0) {
+      throw new HttpAdapterError("upstream_timeout", "The quote preview request exceeded its deadline.");
     }
     const controller = new AbortController();
     let rejectCancellation: ((error: HttpAdapterError) => void) | undefined;
@@ -861,7 +875,7 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     const timer = setTimeout(() => {
       controller.abort();
       rejectCancellation?.(new HttpAdapterError("upstream_timeout", "The quote preview request exceeded its deadline."));
-    }, this.requestTimeoutMs);
+    }, timeoutMs);
     try {
       return await Promise.race([operation(controller.signal), cancellation]);
     } finally {

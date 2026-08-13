@@ -482,6 +482,33 @@ describe("quote API v2 adapter", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("keeps the calculate deadline across header resolution and the upstream request", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
+      const headerProvider = vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 8));
+        return { "X-API-Key": "synthetic-api-key" };
+      });
+      const request = adapter(fetchImpl, { headerProvider, timeoutMs: 10 }).calculate(quoteInput(), context);
+      let settledAtDeadline = false;
+      const observed = request.then(() => {
+        settledAtDeadline = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      const settledAfterDeadline = settledAtDeadline;
+      await vi.advanceTimersByTimeAsync(40);
+      await observed;
+
+      expect(settledAfterDeadline).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("projects a calculated 200 response with exact source and sum evidence", async () => {
     const result = await adapter(responseFetch(upstreamResponse())).calculate(quoteInput(), context);
 

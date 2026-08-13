@@ -26,6 +26,7 @@ export interface FetchJsonClient {
     headers?: Readonly<Record<string, string>>,
     signal?: AbortSignal,
     allowedStatuses?: readonly number[],
+    timeoutMs?: number,
   ): Promise<unknown>;
   post(
     path: string,
@@ -33,6 +34,7 @@ export interface FetchJsonClient {
     headers?: Readonly<Record<string, string>>,
     signal?: AbortSignal,
     allowedStatuses?: readonly number[],
+    timeoutMs?: number,
   ): Promise<unknown>;
 }
 
@@ -234,6 +236,7 @@ export function createFetchJsonClient(
     headers: Readonly<Record<string, string>> | undefined,
     signal: AbortSignal | undefined,
     allowedStatuses: readonly number[] | undefined,
+    timeoutOverrideMs: number | undefined,
   ): Promise<unknown> {
     if (options.enabled !== true) {
       throw new HttpAdapterError(
@@ -244,6 +247,10 @@ export function createFetchJsonClient(
     if (signal?.aborted) {
       throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
     }
+    const requestTimeoutMs = validatePositiveInteger(
+      timeoutOverrideMs ?? timeoutMs,
+      "timeoutMs",
+    );
     const controller = new AbortController();
     let rejectCallerAbort: ((error: HttpAdapterError) => void) | undefined;
     const callerAbort = signal === undefined
@@ -294,7 +301,7 @@ export function createFetchJsonClient(
               "The upstream request exceeded the configured timeout.",
             ),
           );
-        }, timeoutMs);
+        }, requestTimeoutMs);
       });
       const abortables = [timeout, ...(callerAbort === null ? [] : [callerAbort])];
       let fetchPromise: Promise<Response>;
@@ -382,9 +389,9 @@ export function createFetchJsonClient(
   }
 
   return {
-    get: (path, headers, signal, allowedStatuses) =>
-      request("GET", path, undefined, headers, signal, allowedStatuses),
-    post: (path, body, headers, signal, allowedStatuses) =>
-      request("POST", path, body, headers, signal, allowedStatuses),
+    get: (path, headers, signal, allowedStatuses, requestTimeoutMs) =>
+      request("GET", path, undefined, headers, signal, allowedStatuses, requestTimeoutMs),
+    post: (path, body, headers, signal, allowedStatuses, requestTimeoutMs) =>
+      request("POST", path, body, headers, signal, allowedStatuses, requestTimeoutMs),
   };
 }

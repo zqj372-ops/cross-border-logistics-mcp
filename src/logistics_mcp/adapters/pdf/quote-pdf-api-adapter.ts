@@ -131,6 +131,10 @@ function isUncertain(error: HttpAdapterError): boolean {
   );
 }
 
+function remainingMs(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
+
 export class QuotePdfApiAdapter {
   private readonly client: FetchJsonClient;
   private readonly enabled: boolean;
@@ -162,16 +166,23 @@ export class QuotePdfApiAdapter {
     if (signal?.aborted) {
       return { ok: false, failure: failure("unavailable", "pdf.request_aborted", false) };
     }
-    const authorization = await this.authorization(context, signal);
+    const deadline = Date.now() + this.timeoutMs;
+    const authorization = await this.authorization(context, deadline, signal);
     if (typeof authorization !== "string") return { ok: false, failure: authorization };
 
-    const first = await this.postOnce(body, idempotencyKey, authorization, signal);
+    const first = await this.postOnce(body, idempotencyKey, authorization, deadline, signal);
     if (first.ok || !first.uncertain) return first.result;
     if (signal?.aborted) {
       return { ok: false, failure: failure("manual_review", "pdf.post_unknown_after_abort", true) };
     }
+    if (remainingMs(deadline) <= 0) {
+      return {
+        ok: false,
+        failure: failure("manual_review", "pdf.post_result_unknown", true, first.result.failure.upstreamStatus),
+      };
+    }
 
-    const replay = await this.postOnce(body, idempotencyKey, authorization, signal);
+    const replay = await this.postOnce(body, idempotencyKey, authorization, deadline, signal);
     if (replay.ok) return replay.result;
     return {
       ok: false,
@@ -193,8 +204,13 @@ export class QuotePdfApiAdapter {
     if (!DOCUMENT_REF.test(documentRef)) {
       return { ok: false, failure: failure("manual_review", "pdf.document_ref_invalid", false) };
     }
-    const authorization = await this.authorization(context, signal);
+    const deadline = Date.now() + this.timeoutMs;
+    const authorization = await this.authorization(context, deadline, signal);
     if (typeof authorization !== "string") return { ok: false, failure: authorization };
+    const timeoutMs = remainingMs(deadline);
+    if (timeoutMs <= 0) {
+      return { ok: false, failure: failure("unavailable", "pdf.get_timeout", false) };
+    }
 
     try {
       const response = await this.client.get(
@@ -202,6 +218,7 @@ export class QuotePdfApiAdapter {
         { Authorization: authorization },
         signal,
         [200, 401, 403, 404, 500, 503],
+        timeoutMs,
       );
       if (!isAllowedStatusResponse(response)) {
         return { ok: false, failure: failure("manual_review", "pdf.get_contract_invalid", true) };
@@ -230,12 +247,15 @@ export class QuotePdfApiAdapter {
 
   private async authorization(
     context: ExecutionContext,
+    deadline: number,
     signal?: AbortSignal,
   ): Promise<string | QuotePdfFailure> {
     if (signal?.aborted) return failure("unavailable", "pdf.request_aborted", false);
     if (this.credentialProvider === undefined) {
       return failure("blocked", "pdf.credential_missing", false);
     }
+    const timeoutMs = remainingMs(deadline);
+    if (timeoutMs <= 0) return failure("unavailable", "pdf.credential_timeout", false);
     const providerController = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let rejectCallerAbort: ((error: HttpAdapterError) => void) | undefined;
@@ -264,7 +284,7 @@ export class QuotePdfApiAdapter {
       timer = setTimeout(() => {
         providerController.abort();
         reject(new HttpAdapterError("upstream_timeout", "The credential request exceeded the configured timeout."));
-      }, this.timeoutMs);
+      }, timeoutMs);
     });
     try {
       const value = await Promise.race([
@@ -294,11 +314,20 @@ export class QuotePdfApiAdapter {
     body: Record<string, unknown>,
     idempotencyKey: string,
     authorization: string,
+    deadline: number,
     signal?: AbortSignal,
   ): Promise<
     | { readonly ok: true; readonly result: Extract<QuotePdfPostResult, { ok: true }> }
     | { readonly ok: false; readonly uncertain: boolean; readonly result: Extract<QuotePdfPostResult, { ok: false }> }
   > {
+    const timeoutMs = remainingMs(deadline);
+    if (timeoutMs <= 0) {
+      return {
+        ok: false,
+        uncertain: false,
+        result: { ok: false, failure: failure("unavailable", "pdf.post_timeout", false) },
+      };
+    }
     try {
       const response = await this.client.post(
         POST_PATH,
@@ -306,6 +335,7 @@ export class QuotePdfApiAdapter {
         { Authorization: authorization, "Idempotency-Key": idempotencyKey },
         signal,
         [200, 201, 400, 401, 403, 404, 409, 413, 500, 503],
+        timeoutMs,
       );
       if (!isAllowedStatusResponse(response)) {
         return {

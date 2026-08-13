@@ -271,13 +271,14 @@ describe("quote PDF API adapter", () => {
 
   it("replays one uncertain POST with the identical body and key, but never after caller abort", async () => {
     const calls: Array<{ body: string | undefined; key: string | undefined }> = [];
-    const first = new Promise<Response>(() => undefined);
     const fetchImpl = vi.fn<FetchImplementation>((_input, init) => {
       calls.push({
         body: typeof init?.body === "string" ? init.body : undefined,
         key: new Headers(init?.headers).get("idempotency-key") ?? undefined,
       });
-      return calls.length === 1 ? first : Promise.resolve(response(metadata, 200));
+      return calls.length === 1
+        ? Promise.resolve(new Response("{", { status: 200 }))
+        : Promise.resolve(response(metadata, 200));
     });
     const recovered = await adapter(fetchImpl, { timeoutMs: 5 }).post(body, "commit-key-123456", context);
 
@@ -302,12 +303,105 @@ describe("quote PDF API adapter", () => {
     expect(abortCalls).toHaveBeenCalledTimes(1);
   });
 
+  it("bounds a POST replay by the remaining deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      let calls = 0;
+      const fetchImpl = vi.fn<FetchImplementation>(() => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(new Response("{", { status: 200 })), 6);
+          });
+        }
+        return new Promise<Response>(() => undefined);
+      });
+      const request = adapter(fetchImpl, { timeoutMs: 10 }).post(body, "commit-key-123456", context);
+      let settledAtDeadline = false;
+      const observed = request.then(() => {
+        settledAtDeadline = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      const settledAfterDeadline = settledAtDeadline;
+      await vi.advanceTimersByTimeAsync(40);
+      await observed;
+
+      expect(settledAfterDeadline).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("fails closed when the second uncertain POST is still unknown", async () => {
-    const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
+    let calls = 0;
+    const fetchImpl = vi.fn<FetchImplementation>(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(new Response("{", { status: 200 }))
+        : new Promise<Response>(() => undefined);
+    });
     const result = await adapter(fetchImpl, { timeoutMs: 5 }).post(body, "commit-key-123456", context);
 
     expect(result).toMatchObject({ ok: false, failure: { kind: "manual_review", dispatched: true } });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replay after credential time consumes the single POST deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
+      const credentialProvider = vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 8));
+        return "Bearer fixture-pdf-token";
+      });
+      const request = adapter(fetchImpl, { credentialProvider, timeoutMs: 10 }).post(
+        body,
+        "commit-key-123456",
+        context,
+      );
+
+      await vi.advanceTimersByTimeAsync(40);
+      const result = await request;
+
+      expect(result).toMatchObject({ ok: false, failure: { kind: "manual_review", dispatched: true } });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the remaining GET budget after credential resolution", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const fetchImpl = vi.fn<FetchImplementation>(() => new Promise<Response>(() => undefined));
+      const credentialProvider = vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 8));
+        return "Bearer fixture-pdf-token";
+      });
+      const request = adapter(fetchImpl, { credentialProvider, timeoutMs: 10 }).get(
+        metadata.document_ref,
+        context,
+      );
+      let settledAtDeadline = false;
+      const observed = request.then(() => {
+        settledAtDeadline = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      const settledAfterDeadline = settledAtDeadline;
+      await vi.advanceTimersByTimeAsync(40);
+      await observed;
+
+      expect(settledAfterDeadline).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bounds a hanging credential provider by timeout and caller abort without fetching", async () => {
