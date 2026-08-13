@@ -226,7 +226,15 @@ describe("Streamable HTTP security boundary", () => {
   });
 
   it("uses the SDK Streamable HTTP transport for an allowed initialize request", async () => {
-    const handle = makeHandler();
+    const handle = makeHandler({
+      contracts: {
+        "cargo.calculate": {
+          inputSchema: z.object({}).catchall(z.unknown()),
+          validateOutput: () => undefined,
+          outputSchema: z.object({ custom_marker: z.string() }).strict(),
+        },
+      },
+    });
     const response = await handle(makeRequest(initializeBody));
     const body = (await response.json()) as {
       result?: { protocolVersion?: string; instructions?: string };
@@ -247,11 +255,34 @@ describe("Streamable HTTP security boundary", () => {
       { "mcp-session-id": response.headers.get("mcp-session-id") ?? "" },
     ));
     const toolsBody = (await toolsResponse.json()) as {
-      result?: { tools?: Array<{ inputSchema?: { $schema?: string } }> };
+      result?: {
+        tools?: Array<{
+          name?: string;
+          inputSchema?: { $schema?: string };
+          outputSchema?: {
+            $schema?: string;
+            properties?: Record<string, unknown>;
+          };
+        }>;
+      };
     };
     expect(toolsBody.result?.tools?.every((tool) =>
       tool.inputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
     )).toBe(true);
+    const cargoTool = toolsBody.result?.tools?.find(
+      (tool) => tool.name === "cargo.calculate",
+    );
+    const statusTool = toolsBody.result?.tools?.find(
+      (tool) => tool.name === "system.get_data_status",
+    );
+    expect(cargoTool?.outputSchema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: { custom_marker: { type: "string" } },
+    });
+    expect(statusTool?.outputSchema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: { schema_version: { const: "2026-08-11.v1" } },
+    });
     await handle.close();
   });
 

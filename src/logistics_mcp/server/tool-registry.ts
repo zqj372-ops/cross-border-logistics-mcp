@@ -95,6 +95,7 @@ export type DomainToolHandler = (
 export interface ToolContract {
   readonly inputSchema: ZodType;
   readonly validateOutput: (data: EnvelopeData) => void;
+  readonly outputSchema?: ZodType;
 }
 
 export type ToolContractMap = Partial<Record<PhaseOneToolName, ToolContract>>;
@@ -111,6 +112,7 @@ export interface ToolDefinition {
   readonly handler?: DomainToolHandler;
   readonly inputSchema?: ZodType;
   readonly validateOutput?: (data: EnvelopeData) => void;
+  readonly outputSchema?: ZodType;
 }
 
 export interface ToolExecutionMetadata {
@@ -207,6 +209,9 @@ export function registerPhaseOneTools(
         : {
             inputSchema: contract.inputSchema,
             validateOutput: contract.validateOutput,
+            ...(contract.outputSchema === undefined
+              ? {}
+              : { outputSchema: contract.outputSchema }),
           }),
     };
   });
@@ -363,6 +368,24 @@ function validateToolOutput(
   }
 }
 
+function validateOutputEnvelope(
+  definition: ToolDefinition,
+  envelope: unknown,
+): ResponseEnvelope {
+  let validated: ResponseEnvelope;
+  try {
+    validated = validateEnvelope(envelope);
+  } catch {
+    throw new ToolContractValidationError();
+  }
+  try {
+    definition.outputSchema?.parse(validated);
+  } catch {
+    throw new ToolContractValidationError();
+  }
+  return validated;
+}
+
 function validateWriteOutcome(
   request: WriteRequest,
   outcome: DomainToolOutcome,
@@ -470,7 +493,7 @@ export async function executeRegisteredToolWithResult(
         throw new IdempotencyStateError();
       }
       return {
-        envelope: validateEnvelope(reservation.record.result),
+        envelope: validateOutputEnvelope(definition, reservation.record.result),
         idempotencyOutcome: "replayed",
       };
     }
@@ -507,7 +530,10 @@ export async function executeRegisteredToolWithResult(
       ? {}
       : { reviewStatus: outcome.reviewStatus }),
   };
-  const envelope = createEnvelope(envelopeInput);
+  const envelope = validateOutputEnvelope(
+    definition,
+    createEnvelope(envelopeInput),
+  );
 
   if (writeRequest !== null && reservation !== undefined) {
     metadata.signal?.throwIfAborted();

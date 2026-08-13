@@ -629,7 +629,9 @@ function registerMcpTools(
         inputSchema: (definition.inputSchema ?? missingContractInputSchema).meta({
           $schema: JSON_SCHEMA_2020_12,
         }),
-        outputSchema,
+        outputSchema: (definition.outputSchema ?? outputSchema).meta({
+          $schema: JSON_SCHEMA_2020_12,
+        }),
         annotations: {
           readOnlyHint: definition.kind === "read",
           destructiveHint: false,
