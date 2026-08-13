@@ -243,9 +243,44 @@ const successAlreadyCommitted = structuredClone(successEnvelope);
 successAlreadyCommitted.data = alreadyCommittedResult;
 validate(quotePdfEnvelopeSchemaId, successAlreadyCommitted);
 
-const successWithPreview = structuredClone(successEnvelope);
-successWithPreview.data = previewResult;
-validate(quotePdfEnvelopeSchemaId, successWithPreview);
+const previewEnvelope = {
+  schema_version: "2026-08-11.v1",
+  request_id: "req_quote_create_pdf_preview_001",
+  status: "success",
+  data: previewResult,
+  source_refs: [sourceRefs[0]],
+  assumptions: [],
+  warnings: [{
+    code: "quote.preview.candidate_hash",
+    message: "稳定 preview_ref 已生成，未执行外部写入。",
+    severity: "info",
+    field: null,
+  }],
+  blockers: [],
+  calculation_trace: [{
+    step_id: "step:quote-create-candidate",
+    operation: "hash_authoritative_quote_candidate",
+    inputs: [],
+    result: "preview_ref created; no external write dispatched",
+    source_ref_ids: [sourceRefs[0].source_id],
+  }],
+  review_status: "not_required",
+  audit_id: "audit_quote_create_pdf_preview_001",
+};
+validate(quotePdfEnvelopeSchemaId, previewEnvelope);
+const previewEvidenceJson = JSON.stringify({
+  source_refs: previewEnvelope.source_refs,
+  calculation_trace: previewEnvelope.calculation_trace,
+}).toLowerCase();
+for (const forbidden of ["pdf", "readback", "document"]) {
+  assert.equal(previewEvidenceJson.includes(forbidden), false, `preview evidence contains ${forbidden}`);
+}
+assert.deepEqual(
+  previewEnvelope.source_refs.map(({ source_id }) => source_id).filter((id) => id.includes("pdf")),
+  [],
+);
+assert.ok(successEnvelope.source_refs.some(({ source_id }) => source_id === "src:pdf:readback:001"));
+assert.ok(successEnvelope.calculation_trace.some(({ source_ref_ids }) => source_ref_ids.includes("src:pdf:readback:001")));
 
 const successWithPendingApproval = structuredClone(successEnvelope);
 successWithPendingApproval.data.approval.status = "pending";
