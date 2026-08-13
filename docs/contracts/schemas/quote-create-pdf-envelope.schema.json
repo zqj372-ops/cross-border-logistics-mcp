@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-create-pdf-envelope.schema.json",
+  "title": "Quote PDF response envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "status", "data", "source_refs", "assumptions", "warnings", "blockers", "calculation_trace", "review_status", "audit_id"],
+  "properties": {
+    "schema_version": { "const": "2026-08-11.v1" },
+    "request_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "status": { "type": "string", "enum": ["success", "needs_input", "manual_review", "blocked", "unavailable"] },
+    "data": { "oneOf": [{ "type": "null" }, { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/write-result-v2.schema.json" }] },
+    "source_refs": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/SourceRef" }, "uniqueItems": true },
+    "assumptions": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Notice" } },
+    "warnings": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Notice" } },
+    "blockers": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Notice" } },
+    "calculation_trace": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/CalculationStep" } },
+    "review_status": { "type": "string", "enum": ["not_required", "pending", "approved", "rejected", "manual_review"] },
+    "audit_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }
+  }
+}

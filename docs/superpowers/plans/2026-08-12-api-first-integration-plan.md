@@ -10,7 +10,7 @@
 - MCP 只负责输入校验、租户/RBAC、安全 HTTP、字段映射、失败闭合、来源和审计证据；价格、关务数据和业务记录仍由上游权威系统负责。
 - 报价 API 自身存在审计/任务副作用，因此不能描述为“纯只读”；`notify_email=false`、`notify_wecom=false` 只关闭通知，不消除上游副作用。合法响应结果固定带 warning `quote.upstream_side_effects`。
 - 单个业务 API 故障只能关闭依赖它的工具；不得因为报价、RiskCustoms 或 PDF 任一依赖不可达而让 `/mcp` 全局失败。
-- `customs.ca.estimate` 保持 `unavailable`；PDF 在生产 API 合同核验前不实现、不注册。
+- `customs.ca.estimate` 保持 `unavailable`；`quote.create_pdf` 共享契约已定义，但在 production qualification 前不实现、不注册。
 
 ## 2. 已确认的 API 合同
 
@@ -19,7 +19,7 @@
 | AI 报价 | `POST /quotes/zone-calculate`；请求必须有 `cbm`；`notify_email` 和 `notify_wecom` 必须为 `false`；响应字段已核验，缺口见下 | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试；经 10A 审查发现生产合同阻塞，当前工具路径保持 `unavailable`/fail-closed；合法响应保留 `quote.upstream_side_effects` warning | 实际 base URL、认证 header、输入映射、业务版本/有效期和副作用明细仍须用隔离合同核验 |
 | RiskCustoms 状态 | `GET /api/status`；DataStatus 仅有 `evaluatedAt`、`lastSourceCheckAt`、`ready`、`reasons` | 每次 `customs.ca.search` 先检查 status 的 `ready`、`reasons`；不在 status 阶段检查 `testData` | 服务间认证和部署配置须用隔离合同核验 |
 | RiskCustoms 查询 | `POST /api/query`；`query` 必须是 trim 后 1–200 字符；响应再检查 `dataStatus.ready=true`、`testData=false` 和完整 `sources.releaseId` | 仅发送显式 `customs.query`；缺失时 `needs_input`，不从 `query_code`、opaque ref 或属性猜造自然语言 | 完整错误/challenge/限流语义及认证，须用隔离合同核验 |
-| PDF | 暂无已核验生产 API 合同 | 工具保持未注册/`unavailable` | 等待 OpenAPI 或 endpoint、认证、输入输出、读回和副作用合同 |
+| PDF | 隔离核验 AI Quote `/quotes/zone-preview` v2 只读来源、PDF `/v2/quote-pdfs` 的 USD lines、`sendable=false`、tenant+Idempotency-Key replay 和 201/200 后 metadata GET；当前仅 loopback HTTP | `quote.create_pdf` 只完成 contract-only，保持未注册/disabled | HTTPS+allowlist、tenant credential、正式 POST/GET 错误语义、staging replay/readback 和 deadline |
 
 报价 response 已核验字段为：`quote_id`、`source_type`、`confidence`、`postal_code`、`preferred_city`、`postal_prefix`、`city`、`province`、`origin`、`zone`、`billing_pallets`、`pallet_breakdown`、`base_price_usd`、`fuel_usd`、`accessorials`、`total_price_usd`、`risk_tags`、`manual_review_required`、`matched_rule`、`matched_by`、`candidate_count`、`match_trace`、`sales_note`、`internal_note`。该响应没有 `rule_version`、`data_version`、`valid_from`、`valid_to`。
 
@@ -55,7 +55,7 @@ RiskCustoms 查询只有在 status 的 `ready=true`，且 POST `/api/query` 响�
 | `quote_api_auth_secret_ref` | 报价服务认证 secret 的受控引用 |
 | `riskcustoms_api_base_url_ref` | RiskCustoms base URL 的受控引用 |
 | `riskcustoms_api_auth_secret_ref` | RiskCustoms 服务认证 secret 的受控引用 |
-| `pdf_api_base_url_ref`、`pdf_api_auth_secret_ref` | PDF API 待合同核验；未核验前不得配置为可用 |
+| `pdf_api_base_url_ref`、`pdf_api_auth_secret_ref` | `quote.create_pdf` 的受控 PDF API 引用；当前 loopback HTTP 不满足生产资格，未验收前不得配置为可用 |
 
 租户到上游身份的映射由服务端完成；客户端不得传上游账户、token、base URL 或 secret reference 以外的凭证内容。
 
@@ -66,7 +66,8 @@ RiskCustoms 查询只有在 status 的 `ready=true`，且 POST `/api/query` 响�
 | 缺 `total_volume`/`cbm`、缺显式 `query`、trim 后 query 为空或超过 200 | `needs_input` | 返回字段路径；零上游调用 |
 | 输入/响应字段冲突、报价真实版本/有效期缺失、RiskCustoms releaseId 不完整或 hash 不一致 | `manual_review` | 保留可验证的来源和 blocker，不输出伪成功 |
 | 缺认证、跨租户、SSRF/非 allowlist、通知覆盖、越权或试图调用未注册 PDF | `blocked` | 安全门禁先拒绝，零上游调用 |
-| API 超时/5xx、RiskCustoms status `ready=false`、query 响应 `dataStatus.ready=false`/`testData=true`、状态/查询来源缺失、PDF 合同未核验 | `unavailable` | 只关闭相关工具，不影响 `/mcp` 和其他已就绪工具 |
+| API 5xx、RiskCustoms status `ready=false`、query 响应 `dataStatus.ready=false`/`testData=true`、状态/查询来源缺失、PDF dispatch 前连接失败或 production qualification 未完成 | `unavailable` | 只关闭相关工具，不影响 `/mcp` 和其他已就绪工具 |
+| PDF 已 dispatch 后 response timeout/unknown、POST 丢响应、GET 404 或 identity/hash/version mismatch | `manual_review` | 可能已写入；按同 key recovery/readback 处理，不盲目重发 |
 | 合同、来源、权限和响应字段均通过校验 | `success` / `manual_review` | 报价当前保持 `unavailable`/fail-closed；待三项生产合同问题闭合后才重新评估，关务仍是候选，不是正式归类 |
 
 ## 7. 分步实施：11A → 11E
@@ -96,13 +97,13 @@ RiskCustoms 查询只有在 status 的 `ready=true`，且 POST `/api/query` 响�
 
 1. `createProductionApiAdapterSource` 当前只允许显式注入经核验的 RiskCustoms 适配器；quote 在生产组合中强制保持失败闭合，PDF 不注册。缺少获准适配器时返回结构化不可用。
 2. source health 只表示本地结构/生命周期可用；单一上游故障只让对应工具不可用，平台依赖缺失才阻断全局。
-3. 不注册 PDF，直到 OpenAPI/endpoint、认证、响应和写后读回合同完成；PDF 只通过未来已核验生产 API 的窄适配器接入。
+3. `quote.create_pdf` 只通过未来已核验生产 API 的窄适配器接入；必须先完成 AI Quote candidate hash、PDF HTTPS+allowlist、tenant credential、POST/replay/GET exact readback、`sendable=false`/version 校验和 deadline，当前不注册。
 
 ### 11E：验收与发布决策（生产资格阻塞）
 
 1. 已用 fake HTTP 覆盖 source health 不探测上游、quote/customs 局部故障和缺少适配器的 fail-closed 状态。
 2. HTTP adapter/local 组合证据已收集，但 quote 仍因 10A 的三项生产合同阻塞保持 `unavailable`/fail-closed；未获生产启用资格。
-3. 若真实 PDF API 合同仍未提供，明确保持阻塞，不注册工具、不声称生产接通。
+3. 当前 PDF 只有 loopback HTTP 证据；若 HTTPS、allowlist、tenant credential、staging POST/replay/GET exact readback 或 deadline 任一缺失，明确保持 contract-only/disabled，不注册工具、不声称生产接通。
 
 ## 8. 验收命令
 
@@ -115,5 +116,7 @@ npm run typecheck
 npm run lint
 git diff --check
 ```
+
+本基线另运行 `node docs/contracts/quote-create-pdf-contract.test.mjs`；该自包含负测尚未接入 `npm run validate:schemas`，由任务 06 接线后纳入正式 gate。旧 `write-result.schema.json` 和旧 examples 数量保持不变。
 
 11B–11E 额外通过相关 `tests/adapters`、`tests/domains`、`tests/e2e` 的 fixture/fake-HTTP 测试，并复核无真实 URL、token、客户数据和生产网络请求。

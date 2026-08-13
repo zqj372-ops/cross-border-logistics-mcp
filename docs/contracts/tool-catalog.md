@@ -22,6 +22,7 @@
 | `customs.ca.search` | 查询加拿大 HS 候选、税目、措施和缺失问题 | 读 | `tariff:read` | RiskCustoms 候选和来源/有效期映射 | 把候选变正式归类、绕过 ready gate |
 | `customs.ca.estimate` | 预留进口税估算工具；当前无已核验生产 API 合同 | 读/试算 | `tariff:estimate` | 固定 `unavailable`，不拼造税额 | 正式报关结论、补造税率/SIMA |
 | `quote.save_draft` | 保存经授权报价系统的报价草稿 | 写（窄） | `quote:draft_write` | 当前固定 `unavailable`；只有生产草稿 API 合同、审批和写后读回齐全后才可启用 | 发布、发送、覆盖历史报价、改价格/Zone |
+| `quote.create_pdf` | 从当前权威报价创建不可发送的内部 PDF 草稿 | 写（窄、非破坏） | `quote:pdf_write` | `write`/idempotent/open-world；preview 只形成服务端候选 hash，commit 只投影权威 USD lines 并 exact readback；当前 contract-only/disabled | 下载、发送、发布、删除、覆盖、模板、状态查询、模型提供金额/line items |
 | `review.create_task` | 创建一个人工复核任务 | 写（窄） | `review:create_task` | 任务字段、原因码、opaque context、读回可确认 | 自动解决复核、自动上线规则 |
 
 ## 逐项契约
@@ -231,9 +232,30 @@ trade_treatment: string|null, required
 - 当前无已核验生产 API 合同，工具固定返回 `unavailable` 且零 HTTP 请求；Schema 与注册保留，不拼造税额。
 - 后续只有在生产 estimate API 合同、认证、来源版本和失败映射核验完成后，才评估 `needs_input`、`manual_review` 或 `success` 的实际映射。
 
-### PDF / 文档能力（未注册）
+### `quote.create_pdf`（契约已定义，当前未注册）
 
-尚无已核验 PDF API 合同；未注册任何 `pdf.*` 工具，不以本地实现替代。
+这是唯一的 PDF 创建工具；不新增 `pdf.download`、`pdf.send`、`pdf.template` 或 `pdf.status`。它是 `write`、non-destructive、idempotent、open-world 工具，权限为 `quote:pdf_write`，允许角色为 `admin`、`sales`、`operator`。当前只完成共享契约，runtime 不注册、不调用。
+
+**输入 Schema：** `quote-create-pdf-request.schema.json`
+
+```text
+schema_version: 2026-08-11.v1, required
+quote_request: quote-request-v2.schema.json, required
+presentation: { customer_display_name: string, 1–200 }, required
+write_context: common.schema.json#/$defs/WriteContext, required
+```
+
+根、`presentation` 和所有新增 object 均为 `additionalProperties=false`。`quote_request` 直接引用现有 quote v2 请求，模型不能传 `total`、`line_items`、金额、logo、path、html、url、公开 `tenant_id` 或其他未声明字段；完整地址、附件和敏感正文只能使用既有 opaque reference。网关请求体上限为 32 KiB。
+
+**输出 Schema：** `write-result-v2.schema.json`（`$id` 为 `2026-08-13`，`version=write-result@2026-08-13.v2`，operation 固定为 `quote.create_pdf`）；外层使用 `quote-create-pdf-envelope.schema.json`。旧 `write-result.schema.json` 的 `$id`、字节和 operation 接受集合不变，不建立 PDF 结果大 Schema。preview 返回 `operation_status=previewed`、opaque `preview_ref`、`record_id=null` 和无 readback；commit success 返回 `operation_status=committed` 或已知重放的 `already_committed`，`record_id` 为 PDF document reference，`readback_evidence.verified=true`。
+
+**Preview → commit：** preview 只调用 AI Quote `/quotes/zone-preview` v2，形成服务端 candidate hash，零 PDF POST，不把金额/line items 回显模型。commit 必须同 tenant、request、presentation、`preview_ref` 且 approval 为 approved；服务端重新调用 AI Quote，候选或发布 evidence 漂移为 `manual_review`。只有重新得到权威 quote success 后，服务端才投影权威 USD line items，并固定内部 `sendable=false`。
+
+Preview 和 commit 必须使用不同的平台幂等键：preview 用 `P`，commit 用 `C`，`P ≠ C`；只有 commit 的 `C` 原样转发为 PDF `Idempotency-Key`，同一 commit retry 复用 `C` 和同一 body。201/200 后必须 GET metadata 并精确核对 tenant、request/presentation、candidate/quote hash、version、`sendable=false` 和 document reference；只有 exact readback 才 success。dispatch 前连接失败为 `unavailable`；已 dispatch 后 response timeout/unknown、POST 丢响应、GET 404 或 identity/hash/version mismatch 为 `manual_review`，不能盲目重复未知写入。
+
+**状态：** 输入错误为 `needs_input`；权限/审批/tenant/credential/409 为 `blocked`；Quote 的 `needs_input`/`manual_review`/`unavailable` 原样保留；PDF 400/413 为 `unavailable`，401/403 为 `blocked`，503 或 dispatch 前连接失败为 `unavailable`，已 dispatch 后 response timeout/unknown 为 `manual_review`。outer source refs/trace 必须同时闭合 AI Quote 权威证据和 PDF GET readback 证据。
+
+**生产资格：** 当前只核验到 loopback HTTP，production 默认 disabled。当前 composition 实际为 10s，start 的 15s 未传入 composition；后续 task02 必须让 start 显式传入单一约 30s absolute deadline，composition/adapter 各阶段共享 remaining、不能每阶段重置，task06 再用 re-quote、renderer 8s、一次恢复和 GET 验收它。只有 AI Quote 正式 API、PDF HTTPS+allowlist、tenant credential、staging POST/replay/GET exact readback、该 deadline 和平台失败闭合全部验收后，才可由后续适配任务实现和注册。不在 MCP 本地生成或保存 PDF 权威记录。
 
 ### `quote.save_draft`
 

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-create-pdf-request.schema.json",
+  "title": "Quote PDF creation request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "quote_request", "presentation", "write_context"],
+  "properties": {
+    "schema_version": { "const": "2026-08-11.v1" },
+    "quote_request": {
+      "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-request-v2.schema.json"
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["customer_display_name"],
+      "properties": {
+        "customer_display_name": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "write_context": {
+      "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/WriteContext"
+    }
+  }
+}
