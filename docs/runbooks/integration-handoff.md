@@ -1,8 +1,12 @@
 # Integration handoff
 
-当前候选分支已经整合平台、货物、装柜、失败闭合适配器、编译产物运行时和中文脱敏后台。
-本地尚未配置明确的 GitHub remote，因此当前证据不包括 GitHub CI 或部署成功；在取得批准的
-staging 证据前不连接现有生产系统。真实跨系统 endpoint、tenant mapping、认证、
+当前 `main` 已经整合平台、货物、装柜、失败闭合适配器、编译产物运行时、
+中文脱敏后台和多客户端 MCP 元数据。本地 `main` 跟踪 GitHub 私有仓库
+`zqj372-ops/cross-border-logistics-mcp`。截至 2026-08-13，远程 `main` 的
+[持续验证](https://github.com/zqj372-ops/cross-border-logistics-mcp/actions/runs/31662490464)
+已通过编译、全量测试、类型检查、代码规范、契约校验、演示发布门禁、容器配置和
+候选镜像构建。这些证据不代表业务 API 或生产部署已验收；在取得批准的 staging
+证据前不连接现有生产系统。真实跨系统 endpoint、tenant mapping、认证、
 RiskCustoms estimate 和写后读 API 均为“待适配验证”。
 当前 `start.ts` 已接入 RS256/JWKS 签名验证和 issuer/audience/短时 token policy；
 JWKS 主机必须在 HTTPS 出站白名单。生产身份源还必须经 staging 验证能提供
