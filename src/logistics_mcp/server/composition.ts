@@ -126,6 +126,7 @@ export interface ProductionCompositionOptions
   readonly tokenVerifier?: ProductionTokenVerifier;
   readonly adapterSource?: ProductionAdapterSource;
   readonly quotePdfEnabled?: boolean;
+  readonly quotePdfConfigurationInvalid?: boolean;
   readonly sessionBindingStore?: DurableSessionBindingStore;
   readonly sessionOwnerId?: string;
 }
@@ -613,6 +614,9 @@ export function createProductionComposition(
       : []),
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
     ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
+    ...(options.quotePdfConfigurationInvalid === true
+      ? ["production_quote_pdf_configuration_invalid"]
+      : []),
   ];
   const quotePdfConfigured = options.quotePdfEnabled === true &&
     hasQuotePdfPort(providedAdapters.quotePdf) &&

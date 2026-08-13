@@ -4,7 +4,7 @@ import { BlockList, isIP } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { AuthenticationError, type AuthClaims } from "../platform/context";
+import { AuthenticationError, type AuthClaims, type ExecutionContext } from "../platform/context";
 import { getToolPolicy, type PhaseOneToolName } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
@@ -12,28 +12,114 @@ import {
   createProductionApiAdapterSource,
   createProductionComposition,
   type GatewayComposition,
+  type ProductionAdapterSource,
 } from "./composition";
-import type { ShortLivedTokenValidationOptions } from "../platform/security";
+import {
+  assertAllowedOutboundUrl,
+  type ShortLivedTokenValidationOptions,
+} from "../platform/security";
 import {
   createAdminStaticHandler,
   type AdminStaticHandler,
 } from "./admin-static";
 import { createProductionTokenVerifier } from "./production-token-verifier";
+import type { FetchImplementation } from "../adapters/http-client";
+import { QuotePdfApiAdapter } from "../adapters/pdf/quote-pdf-api-adapter";
+import { createQuotePdfProductionSource } from "../adapters/production-source";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
 export const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
+const QUOTE_PDF_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
+const QUOTE_PDF_MAX_TOKEN_LENGTH = 4096;
+type Environment = Readonly<Record<string, string | undefined>>;
 
 class RuntimeBodyTooLargeError extends Error {}
 class RuntimeRequestError extends Error {}
 
-function splitSetting(name: string, fallback: string): string[] {
-  const value = process.env[name] ?? fallback;
+function splitSetting(
+  name: string,
+  fallback: string,
+  environment: Environment = process.env,
+): string[] {
+  const value = environment[name] ?? fallback;
   return value
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+export interface QuotePdfStartupOptions {
+  readonly adapterSource?: ProductionAdapterSource;
+  readonly quotePdfEnabled?: true;
+  readonly quotePdfConfigurationInvalid?: true;
+}
+
+export interface QuotePdfStartupFactoryOptions {
+  readonly env?: Environment;
+  readonly fetchImpl?: FetchImplementation;
+}
+
+function invalidQuotePdfConfiguration(): QuotePdfStartupOptions {
+  return { quotePdfConfigurationInvalid: true };
+}
+
+function validBearerToken(value: string | undefined): value is string {
+  const hasForbiddenCharacter = value === undefined
+    ? true
+    : [...value].some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint <= 0x1f || codePoint === 0x7f || /\s/u.test(character);
+      });
+  return value !== undefined &&
+    value.length > 0 &&
+    value.length <= QUOTE_PDF_MAX_TOKEN_LENGTH &&
+    !hasForbiddenCharacter;
+}
+
+export function createQuotePdfStartupOptions(
+  baseSource: ProductionAdapterSource,
+  options: QuotePdfStartupFactoryOptions = {},
+): QuotePdfStartupOptions {
+  const environment = options.env ?? process.env;
+  if ((environment.MCP_QUOTE_PDF_ENABLED ?? "").trim() !== "true") return {};
+
+  const baseUrl = environment.MCP_QUOTE_PDF_BASE_URL?.trim();
+  const allowedHosts = splitSetting("MCP_QUOTE_PDF_ALLOWED_HOSTS", "", environment);
+  const tenantId = environment.MCP_QUOTE_PDF_TENANT_ID;
+  const bearerToken = environment.MCP_QUOTE_PDF_BEARER_TOKEN;
+  if (
+    baseUrl === undefined ||
+    allowedHosts.length === 0 ||
+    tenantId === undefined ||
+    !QUOTE_PDF_IDENTIFIER.test(tenantId) ||
+    !validBearerToken(bearerToken)
+  ) {
+    return invalidQuotePdfConfiguration();
+  }
+
+  try {
+    assertAllowedOutboundUrl(baseUrl, allowedHosts);
+    const adapter = new QuotePdfApiAdapter({
+      baseUrl,
+      allowedHosts,
+      enabled: true,
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+      credentialProvider: (context: ExecutionContext, signal: AbortSignal) => {
+        if (signal.aborted || context.tenantId !== tenantId) {
+          throw new Error("The configured PDF credential is unavailable for this tenant.");
+        }
+        return `Bearer ${bearerToken}`;
+      },
+    });
+    const source = createQuotePdfProductionSource(baseSource, { quotePdf: adapter });
+    return source.ok
+      ? { adapterSource: source.source, quotePdfEnabled: true }
+      : invalidQuotePdfConfiguration();
+  } catch {
+    return invalidQuotePdfConfiguration();
+  }
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -497,10 +583,13 @@ function makeComposition(): GatewayComposition {
           jwksUrl,
           allowedHosts: outboundHosts,
         });
+  const baseAdapterSource = createProductionApiAdapterSource();
+  const quotePdfOptions = createQuotePdfStartupOptions(baseAdapterSource);
   return createProductionComposition({
     dataMode: "production",
     ...common,
-    adapterSource: createProductionApiAdapterSource(),
+    ...quotePdfOptions,
+    adapterSource: quotePdfOptions.adapterSource ?? baseAdapterSource,
     ...(store === undefined
       ? {}
       : {
