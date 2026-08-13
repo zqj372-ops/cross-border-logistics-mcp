@@ -392,9 +392,19 @@ export function createProductionComposition(
     options.adapterSource,
   );
   const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
+  const disabledQuote = new ExistingQuoteAdapter();
+  const providedQuote = options.adapterSource?.adapters.quote;
   const adapters: FixtureAdapters = {
     ...providedAdapters,
-    quote: new ExistingQuoteAdapter(),
+    quote: providedQuote === undefined
+      ? disabledQuote
+      : {
+          calculate: (input, context, signal) =>
+            providedQuote.calculate(input, context, signal),
+          previewDraft: (input) => disabledQuote.previewDraft(input),
+          commitDraft: (input, signal) => disabledQuote.commitDraft(input, signal),
+          readDraft: (input) => disabledQuote.readDraft(input),
+        },
     review: new ManualTaskAdapter(),
   };
   const tools = compositionTools(adapters);
