@@ -232,6 +232,7 @@ describe("Phase 1 tool registry", () => {
         result: request.result,
         expiresAt: Date.now() + 60_000,
       }),
+      release: () => Promise.resolve(),
       get: () => Promise.resolve(null),
     };
     const tool = registerPhaseOneTools(

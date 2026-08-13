@@ -171,19 +171,29 @@ describe("Streamable HTTP security boundary", () => {
   it("propagates timeout cancellation before a write handler commits", async () => {
     let writes = 0;
     const key = "idem_http_timeout_123456";
+    const idempotencyRepository = new MemoryIdempotencyRepository();
+    let handlerSettled!: () => void;
+    const handlerSettledPromise = new Promise<void>((resolve) => {
+      handlerSettled = resolve;
+    });
     const handle = makeHandler({
       maxBodyBytes: 2048,
       requestTimeoutMs: 20,
+      idempotencyRepository,
       authenticate: () => ({
         ...validClaims(),
         scopes: ["quote:calculate", "quote:draft_write"],
       }),
       handlers: {
         "quote.save_draft": async (_input, _context, signal) => {
-          await new Promise((resolve) => setTimeout(resolve, 60));
-          signal?.throwIfAborted();
-          writes += 1;
-          return { status: "unavailable", data: null };
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            signal?.throwIfAborted();
+            writes += 1;
+            return { status: "unavailable", data: null };
+          } finally {
+            handlerSettled();
+          }
         },
       },
       contracts: {
@@ -220,8 +230,12 @@ describe("Streamable HTTP security boundary", () => {
     }, { "mcp-session-id": sessionId ?? "" }));
 
     expect(response.status).toBe(504);
-    await new Promise((resolve) => setTimeout(resolve, 70));
+    await handlerSettledPromise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(writes).toBe(0);
+    await expect(
+      idempotencyRepository.get("tenant_demo", "quote.save_draft", key),
+    ).resolves.toBeNull();
     await handle.close();
   });
 

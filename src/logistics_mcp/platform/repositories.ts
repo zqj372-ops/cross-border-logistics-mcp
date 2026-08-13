@@ -64,6 +64,14 @@ export interface IdempotencyCommitRequest {
   readonly recordId?: string | null;
 }
 
+export interface IdempotencyReleaseRequest {
+  readonly tenantId: string;
+  readonly tool: string;
+  readonly key: string;
+  readonly requestHash: string;
+  readonly expectedExpiresAt: number;
+}
+
 export interface IdempotencyReserveResult {
   readonly replayed: boolean;
   readonly inProgress: boolean;
@@ -75,6 +83,7 @@ export interface IdempotencyRepository {
     request: IdempotencyReserveRequest,
   ): Promise<IdempotencyReserveResult>;
   commit(request: IdempotencyCommitRequest): Promise<IdempotencyRecord>;
+  release(request: IdempotencyReleaseRequest): Promise<void>;
   get(
     tenantId: string,
     tool: string,

@@ -24,6 +24,7 @@ import type {
   AuditEvent,
   IdempotencyCommitRequest,
   IdempotencyRecord,
+  IdempotencyReleaseRequest,
   IdempotencyReserveRequest,
   IdempotencyReserveResult,
 } from "./repositories";
@@ -124,7 +125,10 @@ function requiredInteger(
 }
 
 function assertIdempotencyRequest(
-  request: IdempotencyReserveRequest | IdempotencyCommitRequest,
+  request:
+    | IdempotencyReserveRequest
+    | IdempotencyCommitRequest
+    | IdempotencyReleaseRequest,
 ): void {
   if (
     request.tenantId.length === 0 ||
@@ -132,6 +136,12 @@ function assertIdempotencyRequest(
     request.requestHash.length === 0 ||
     request.key.length < 16 ||
     request.key.length > 200
+  ) {
+    throw new IdempotencyStateError();
+  }
+  if (
+    "expectedExpiresAt" in request &&
+    !Number.isSafeInteger(request.expectedExpiresAt)
   ) {
     throw new IdempotencyStateError();
   }
@@ -650,6 +660,24 @@ export class SqliteProductionStore
         recordId: request.recordId ?? null,
         result: structuredClone(request.result),
       };
+    });
+  }
+
+  async release(request: IdempotencyReleaseRequest): Promise<void> {
+    await Promise.resolve();
+    assertIdempotencyRequest(request);
+    this.transaction(() => {
+      this.openDatabase()
+        .prepare(
+          "DELETE FROM idempotency_records WHERE tenant_id = ? AND tool = ? AND idempotency_key = ? AND request_hash = ? AND status = 'reserved' AND expires_at = ?",
+        )
+        .run(
+          request.tenantId,
+          request.tool,
+          request.key,
+          request.requestHash,
+          request.expectedExpiresAt,
+        );
     });
   }
 

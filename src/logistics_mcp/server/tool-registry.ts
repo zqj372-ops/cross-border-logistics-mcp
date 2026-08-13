@@ -25,6 +25,7 @@ import {
 } from "../platform/idempotency";
 import type {
   AuditEvent,
+  IdempotencyRecord,
   IdempotencyRepository,
 } from "../platform/repositories";
 import type { ZodType } from "zod";
@@ -477,79 +478,109 @@ export async function executeRegisteredToolWithResult(
       ? parseWriteRequest(input, context, definition.name)
       : null;
   let idempotencyOutcome: AuditEvent["idempotency_outcome"] = "not_applicable";
-  let reservation:
-    | Awaited<ReturnType<IdempotencyRepository["reserve"]>>
-    | undefined;
-  if (writeRequest !== null) {
-    if (metadata.idempotencyRepository === undefined) {
-      throw new IdempotencyRequiredError();
+  let requestHash: string | null = null;
+  let reservedRecord: IdempotencyRecord | undefined;
+  const releaseReservation = async (): Promise<void> => {
+    const record = reservedRecord;
+    reservedRecord = undefined;
+    if (
+      record === undefined ||
+      writeRequest === null ||
+      requestHash === null ||
+      metadata.idempotencyRepository === undefined
+    ) {
+      return;
     }
-    reservation = await metadata.idempotencyRepository.reserve({
+    await metadata.idempotencyRepository.release({
       tenantId: context.tenantId,
       tool: definition.name,
       key: writeRequest.idempotencyKey,
-      requestHash: hashPayload(input),
+      requestHash,
+      expectedExpiresAt: record.expiresAt,
     });
-    metadata.signal?.throwIfAborted();
-    if (reservation.replayed) {
-      if (reservation.record.status !== "committed" || reservation.record.result === null) {
-        throw new IdempotencyStateError();
-      }
-      return {
-        envelope: validateOutputEnvelope(definition, reservation.record.result),
-        idempotencyOutcome: "replayed",
-      };
-    }
-    if (reservation.inProgress) {
-      throw new IdempotencyInProgressError();
-    }
-    idempotencyOutcome = "reserved";
-  }
-
-  const outcome = await definition.handler(input, context, metadata.signal);
-  metadata.signal?.throwIfAborted();
-  validateToolOutput(definition, outcome);
-  if (writeRequest !== null) {
-    validateWriteOutcome(writeRequest, outcome);
-  }
-
-  const envelopeInput: CreateEnvelopeInput = {
-    requestId: metadata.requestId,
-    auditId: metadata.auditId,
-    status: outcome.status,
-    data: outcome.data,
-    ...(outcome.sourceRefs === undefined
-      ? {}
-      : { sourceRefs: outcome.sourceRefs }),
-    ...(outcome.assumptions === undefined
-      ? {}
-      : { assumptions: outcome.assumptions }),
-    ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
-    ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
-    ...(outcome.calculationTrace === undefined
-      ? {}
-      : { calculationTrace: outcome.calculationTrace }),
-    ...(outcome.reviewStatus === undefined
-      ? {}
-      : { reviewStatus: outcome.reviewStatus }),
   };
-  const envelope = validateOutputEnvelope(
-    definition,
-    createEnvelope(envelopeInput),
-  );
 
-  if (writeRequest !== null && reservation !== undefined) {
-    metadata.signal?.throwIfAborted();
-    await metadata.idempotencyRepository!.commit({
-      tenantId: context.tenantId,
-      tool: definition.name,
-      key: writeRequest.idempotencyKey,
-      requestHash: hashPayload(input),
-      result: envelope,
-    });
+  try {
+    if (writeRequest !== null) {
+      if (metadata.idempotencyRepository === undefined) {
+        throw new IdempotencyRequiredError();
+      }
+      requestHash = hashPayload(input);
+      const reservation = await metadata.idempotencyRepository.reserve({
+        tenantId: context.tenantId,
+        tool: definition.name,
+        key: writeRequest.idempotencyKey,
+        requestHash,
+      });
+      if (reservation.replayed) {
+        if (reservation.record.status !== "committed" || reservation.record.result === null) {
+          throw new IdempotencyStateError();
+        }
+        return {
+          envelope: validateOutputEnvelope(definition, reservation.record.result),
+          idempotencyOutcome: "replayed",
+        };
+      }
+      if (reservation.inProgress) {
+        throw new IdempotencyInProgressError();
+      }
+      reservedRecord = reservation.record;
+      idempotencyOutcome = "reserved";
+      metadata.signal?.throwIfAborted();
+    }
+
+    const outcome = await definition.handler(input, context, metadata.signal);
+    validateToolOutput(definition, outcome);
+    if (writeRequest !== null) {
+      validateWriteOutcome(writeRequest, outcome);
+    }
+
+    const envelopeInput: CreateEnvelopeInput = {
+      requestId: metadata.requestId,
+      auditId: metadata.auditId,
+      status: outcome.status,
+      data: outcome.data,
+      ...(outcome.sourceRefs === undefined
+        ? {}
+        : { sourceRefs: outcome.sourceRefs }),
+      ...(outcome.assumptions === undefined
+        ? {}
+        : { assumptions: outcome.assumptions }),
+      ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
+      ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
+      ...(outcome.calculationTrace === undefined
+        ? {}
+        : { calculationTrace: outcome.calculationTrace }),
+      ...(outcome.reviewStatus === undefined
+        ? {}
+        : { reviewStatus: outcome.reviewStatus }),
+    };
+    const envelope = validateOutputEnvelope(
+      definition,
+      createEnvelope(envelopeInput),
+    );
+
+    if (writeRequest !== null && reservedRecord !== undefined) {
+      if (envelope.status === "success") {
+        if (requestHash === null) throw new IdempotencyStateError();
+        await metadata.idempotencyRepository!.commit({
+          tenantId: context.tenantId,
+          tool: definition.name,
+          key: writeRequest.idempotencyKey,
+          requestHash,
+          result: envelope,
+        });
+        reservedRecord = undefined;
+      } else {
+        await releaseReservation();
+      }
+    }
+
+    return { envelope, idempotencyOutcome };
+  } catch (error: unknown) {
+    await releaseReservation();
+    throw error;
   }
-
-  return { envelope, idempotencyOutcome };
 }
 
 export async function executeRegisteredTool(

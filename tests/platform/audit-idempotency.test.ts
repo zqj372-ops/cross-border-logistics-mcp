@@ -104,6 +104,55 @@ describe("idempotency repository", () => {
     expect(replayReservation.record.result).toEqual(firstCommit.result);
   });
 
+  it("does not let a stale release delete a replacement reservation", async () => {
+    let now = 1_000;
+    const store = new MemoryIdempotencyRepository(100, () => now);
+    const request = {
+      tenantId: "tenant_demo",
+      tool: "quote.save_draft",
+      key: "idem_release_stale_001",
+      requestHash: "hash_release",
+    };
+
+    const first = await store.reserve(request);
+    now = first.record.expiresAt;
+    const replacement = await store.reserve(request);
+
+    await expect(
+      store.release({
+        ...request,
+        expectedExpiresAt: first.record.expiresAt,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(store.get(request.tenantId, request.tool, request.key)).resolves.toMatchObject({
+      status: "reserved",
+      expiresAt: replacement.record.expiresAt,
+    });
+  });
+
+  it("never releases a committed record", async () => {
+    const store = new MemoryIdempotencyRepository();
+    const request = {
+      tenantId: "tenant_demo",
+      tool: "quote.save_draft",
+      key: "idem_release_committed_001",
+      requestHash: "hash_release_committed",
+    };
+    const reservation = await store.reserve(request);
+    await store.commit({ ...request, result: { committed: true } });
+
+    await expect(
+      store.release({
+        ...request,
+        expectedExpiresAt: reservation.record.expiresAt,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(store.get(request.tenantId, request.tool, request.key)).resolves.toMatchObject({
+      status: "committed",
+      result: { committed: true },
+    });
+  });
+
   it("rejects a different request hash for the same tenant/tool/key", async () => {
     const store = new MemoryIdempotencyRepository();
 
