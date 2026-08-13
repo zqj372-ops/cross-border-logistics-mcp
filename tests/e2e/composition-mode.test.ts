@@ -32,13 +32,7 @@ const RISK_CUSTOMS_IDENTITY = {
   releaseHash: "b".repeat(64),
 };
 
-const apiQuoteInput = quoteInput({
-  effective_at: API_DATE,
-  cargo: {
-    ...(quoteInput().cargo as Record<string, unknown>),
-    total_volume: { value: "1.25", unit: "cbm" },
-  },
-});
+const apiQuoteInput = quoteInput({ effective_at: API_DATE });
 
 const customsSearchInput = {
   rule_date: API_DATE,
@@ -169,7 +163,10 @@ function quoteApi(fetchImpl: FetchImplementation): QuoteApiAdapter {
     enabled: true,
     fetchImpl,
     clock: () => new Date(API_TIME),
-    originByWarehouse: { "fixture-warehouse": "toronto" },
+    originByTenantWarehouse: {
+      [securityClaims.tenant_id]: { "fixture-warehouse": "toronto" },
+    },
+    headerProvider: () => ({ "X-API-Key": "fixture-api-key" }),
   });
 }
 
@@ -355,7 +352,9 @@ describe("gateway composition modes", () => {
   });
 
   it("overrides production write adapters supplied through a manually constructed source", async () => {
-    const quoteFetch = vi.fn<FetchImplementation>();
+    const quoteFetch = vi.fn<FetchImplementation>(() =>
+      Promise.reject(new Error("synthetic quote network failure")),
+    );
     const fixtureAdapters = createFixtureAdapters();
     const adapterSource: ProductionAdapterSource = {
       kind: "adapter_source",
@@ -372,7 +371,7 @@ describe("gateway composition modes", () => {
     });
 
     try {
-      const result = await composition.adapters.quote.calculate(apiQuoteInput);
+      const result = await composition.adapters.quote.calculate(apiQuoteInput, serverContext());
       const review = await composition.adapters.review.previewTask({
         schema_version: "2026-08-11.v1",
         version: "review-request@test",
@@ -396,11 +395,11 @@ describe("gateway composition modes", () => {
       });
 
       expect(result.status).toBe("unavailable");
-      expect(result.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
+      expect(result.blockers?.map(({ code }) => code)).toContain("quote.upstream_unavailable");
       expect(review.status).toBe("unavailable");
       expect(review.blockers?.map(({ code }) => code)).toContain("review.adapter_disabled");
       expect(composition.adapters.review).not.toBe(fixtureAdapters.review);
-      expect(quoteFetch).not.toHaveBeenCalled();
+      expect(quoteFetch).toHaveBeenCalledTimes(1);
     } finally {
       await composition.close();
     }

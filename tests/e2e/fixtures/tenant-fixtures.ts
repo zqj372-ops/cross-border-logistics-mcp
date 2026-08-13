@@ -219,7 +219,7 @@ export function containerInput(overrides: Record<string, unknown> = {}): Record<
 export function quoteInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schema_version: "2026-08-11.v1",
-    version: "quote-request@fixture-1",
+    version: "quote-request@2026-08-13.v2",
     origin: { warehouse_code: "fixture-warehouse", province: "ON" },
     destination: {
       country: "CA",
@@ -231,19 +231,57 @@ export function quoteInput(overrides: Record<string, unknown> = {}): Record<stri
     },
     cargo: {
       cargo_result_ref: null,
-      billing_pallets: 2,
+      explicit_pallet_count: 2,
+      longest_side: { value: "1.20", unit: "m" },
+      is_stackable: false,
       weight_kg: { value: "100", unit: "kg" },
       pieces: 2,
       package_types: ["pallet"],
+      total_volume: { value: "1.25", unit: "cbm" },
     },
     services: {
       appointment: true,
       liftgate: false,
+      pallet_jack: true,
+      detention_minutes: 0,
       limited_access: false,
       remote_area: false,
     },
     effective_at: "2026-08-11",
     ...overrides,
+  };
+}
+
+export function legacyQuoteDraftResult(): Record<string, unknown> {
+  const sourceRefId = "src:quote:legacy:fixture";
+  return {
+    version: "quote-result@2026-08-11.v1",
+    quote_id: "quote-legacy-fixture-001",
+    quote_status: "calculated",
+    currency: "USD",
+    total: { amount: "135.80", currency: "USD" },
+    line_items: [
+      {
+        line_id: "line:quote:legacy-base",
+        label: "Canada final-mile base price",
+        amount: { amount: "123.45", currency: "USD" },
+        pricing_basis: "fixture",
+        source_ref_ids: [sourceRefId],
+      },
+      {
+        line_id: "line:quote:legacy-fuel",
+        label: "Fuel surcharge",
+        amount: { amount: "12.35", currency: "USD" },
+        pricing_basis: "fixture",
+        source_ref_ids: [sourceRefId],
+      },
+    ],
+    rule_version: "zone-rule-fixture@1",
+    data_version: "zone-price-fixture@1",
+    sendable: false,
+    valid_from: "2026-08-11T00:00:00Z",
+    valid_to: "2026-08-31T23:59:59Z",
+    source_ref_ids: [sourceRefId],
   };
 }
 

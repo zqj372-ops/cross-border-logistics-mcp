@@ -13,6 +13,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   cargoInput,
   containerInput,
+  legacyQuoteDraftResult,
   quoteInput,
 } from "./fixtures/tenant-fixtures";
 
@@ -393,12 +394,15 @@ describe("built runtime smoke", () => {
         name: "quote.canada_final_mile.calculate",
         arguments: quoteInput(),
       }));
-      expect(quote.status).toBe("success");
-      expect(quote.data).toMatchObject({
-        quote_status: "calculated",
-        sendable: false,
-      });
-      expect(quote.source_refs?.length).toBeGreaterThan(0);
+      expect(quote.status).toBe("unavailable");
+      expect(quote.data).toBeNull();
+      expect(quote.source_refs).toEqual([]);
+      expect(quote.calculation_trace).toEqual([]);
+      expect(quote.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "quote.adapter_disabled" }),
+        ]),
+      );
 
       const customsSearch = structured(await client.callTool({
         name: "customs.ca.search",
@@ -446,7 +450,7 @@ describe("built runtime smoke", () => {
       const quoteDraftBase = {
         schema_version: "2026-08-11.v1",
         version: "quote-save@fixture-1",
-        quote_result: quote.data,
+        quote_result: legacyQuoteDraftResult(),
         target: { system: "existing_quote_system", record_kind: "draft" },
       };
       const crossTenant = await client.callTool({

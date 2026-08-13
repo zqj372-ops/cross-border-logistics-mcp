@@ -6,6 +6,7 @@ import {
   containerInput,
   createFixtureHarness,
   initialize,
+  legacyQuoteDraftResult,
   quoteInput,
   writeContext,
 } from "./fixtures/tenant-fixtures";
@@ -144,23 +145,56 @@ describe("Phase 1 integrated fixture gateway", () => {
     }
   });
 
-  it("keeps quote address type and container theory-only boundaries explicit", async () => {
+  it("keeps quote fail-closed and container theory-only boundaries explicit", async () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
-      const missingAddressType = await callTool(
+      const unavailableQuote = await callTool(
         harness,
         sessionId,
         "quote.canada_final_mile.calculate",
-        quoteInput({
-          destination: {
-            ...(quoteInput().destination as Record<string, unknown>),
-            address_type: "unknown",
-          },
-        }),
+        quoteInput(),
       );
-      expect(missingAddressType.status).toBe("needs_input");
-      expect(missingAddressType.data).toBeNull();
+      expect(unavailableQuote.status).toBe("unavailable");
+      expect(unavailableQuote.data).toBeNull();
+      expect(unavailableQuote.source_refs).toEqual([]);
+      expect(unavailableQuote.calculation_trace).toEqual([]);
+      expect(unavailableQuote.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "quote.adapter_disabled" }),
+        ]),
+      );
+
+      for (const field of ["limited_access", "remote_area"] as const) {
+        const services = quoteInput().services as Record<string, unknown>;
+        const manualReview = await callTool(
+          harness,
+          sessionId,
+          "quote.canada_final_mile.calculate",
+          quoteInput({ services: { ...services, [field]: true } }),
+        );
+        expect(manualReview.status).toBe("manual_review");
+        expect(manualReview.data).toBeNull();
+        expect(manualReview.source_refs).toEqual([]);
+        expect(manualReview.calculation_trace).toEqual([]);
+        expect(manualReview.review_status).toBe("manual_review");
+        expect(manualReview.warnings).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "quote.zero_upstream_call",
+              field: `services.${field}`,
+            }),
+          ]),
+        );
+        expect(manualReview.blockers).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "quote.manual_review_required",
+              field: `services.${field}`,
+            }),
+          ]),
+        );
+      }
 
       const theoretical = await callTool(
         harness,
@@ -237,14 +271,12 @@ describe("Phase 1 integrated fixture gateway", () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
-      const quote = await callTool(harness, sessionId, "quote.canada_final_mile.calculate", quoteInput());
-      expect(quote.status).toBe("success");
       const previewKey = "idem_fixture_quote_preview_001";
       const commitKey = "idem_fixture_quote_commit_001";
       const previewInput = {
         schema_version: schemaVersion,
         version: "quote-save@fixture-1",
-        quote_result: quote.data,
+        quote_result: legacyQuoteDraftResult(),
         target: { system: "existing_quote_system", record_kind: "draft" },
         write_context: writeContext("tenant_demo_a", "preview", null, previewKey),
       };
