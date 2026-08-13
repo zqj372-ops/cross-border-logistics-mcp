@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAdminStaticHandler } from "../../src/logistics_mcp/server/admin-static";
 import {
   createFixtureComposition,
+  createProductionApiAdapterSource,
   createProductionComposition,
 } from "../../src/logistics_mcp/server/composition";
 import { createRuntimeServer } from "../../src/logistics_mcp/server/start";
@@ -31,9 +32,12 @@ async function makeAssets(names: readonly string[] = Object.keys(ASSETS)): Promi
 
 async function listen(
   composition: Parameters<typeof createRuntimeServer>[0],
-  adminUi: ReturnType<typeof createAdminStaticHandler>,
+  adminUi?: ReturnType<typeof createAdminStaticHandler>,
 ): Promise<{ readonly server: Server; readonly baseUrl: string }> {
-  const server = createRuntimeServer(composition, { adminUi });
+  const server = createRuntimeServer(
+    composition,
+    adminUi === undefined ? {} : { adminUi },
+  );
   await new Promise<void>((resolvePromise, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolvePromise());
@@ -44,6 +48,31 @@ async function listen(
     throw new Error("Admin static test server did not expose an address.");
   }
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+async function readDefaultPdfSource(
+  composition: Parameters<typeof createRuntimeServer>[0],
+): Promise<Record<string, unknown>> {
+  const previousEnabled = process.env.MCP_ADMIN_UI_ENABLED;
+  const previousMode = process.env.MCP_DATA_MODE;
+  process.env.MCP_ADMIN_UI_ENABLED = "true";
+  process.env.MCP_DATA_MODE = "production";
+  const { server, baseUrl } = await listen(composition);
+  try {
+    const response = await fetch(`${baseUrl}/admin/api/v1/snapshot`);
+    expect(response.status).toBe(200);
+    const snapshot = await response.json() as { sources: Array<Record<string, unknown>> };
+    const source = snapshot.sources.find((candidate) => candidate.business_key === "pdf");
+    if (source === undefined) throw new Error("PDF source is missing from the admin snapshot.");
+    return source;
+  } finally {
+    await closeServer(server);
+    await composition.close();
+    if (previousEnabled === undefined) delete process.env.MCP_ADMIN_UI_ENABLED;
+    else process.env.MCP_ADMIN_UI_ENABLED = previousEnabled;
+    if (previousMode === undefined) delete process.env.MCP_DATA_MODE;
+    else process.env.MCP_DATA_MODE = previousMode;
+  }
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -313,6 +342,13 @@ describe("admin static runtime boundary", () => {
       expect((snapshot.tools as unknown[])).toHaveLength(10);
       expect((snapshot.roles as unknown[])).toHaveLength(7);
       expect((snapshot.sources as unknown[])).toHaveLength(3);
+      const pdfSource = (snapshot.sources as Array<Record<string, unknown>>)
+        .find((source) => source.business_key === "pdf");
+      expect(pdfSource).toMatchObject({
+        affected_tools: ["quote.create_pdf"],
+        readiness: "unavailable",
+        registration_status: "工具已登记，正式连接未启用",
+      });
       expect(body).not.toMatch(
         /https?:\/\/|Bearer|token|secret|password|client_id|tenant_id|actor_id|request_id|audit_id|source_id|endpoint_ref|secret_ref|MCP_/i,
       );
@@ -330,6 +366,51 @@ describe("admin static runtime boundary", () => {
       if (previousMode === undefined) delete process.env.MCP_DATA_MODE;
       else process.env.MCP_DATA_MODE = previousMode;
     }
+  });
+
+  it.each([
+    ["disabled", "工具已登记，正式连接未启用", {}],
+    ["configuration_invalid", "工具已登记，正式配置不完整", { quotePdfStartupFailure: "configuration_invalid" }],
+    ["adapter_source_invalid", "工具已登记，正式适配器不可用", { quotePdfStartupFailure: "adapter_source_invalid" }],
+  ] as const)("projects PDF startup state %s without sensitive values", async (_state, registrationStatus, extra) => {
+    const composition = createProductionComposition({
+      dataMode: "production",
+      ...extra,
+    } as unknown as Parameters<typeof createProductionComposition>[0]);
+    const pdfSource = await readDefaultPdfSource(composition);
+    expect(pdfSource).toMatchObject({
+      affected_tools: ["quote.create_pdf"],
+      readiness: "unavailable",
+      registration_status: registrationStatus,
+    });
+    expect(JSON.stringify(pdfSource)).not.toMatch(
+      /https?:\/\/|Bearer|token|secret|password|client_id|tenant_id|actor_id|request_id|audit_id|hash|ref|MCP_/i,
+    );
+  });
+
+  it("projects a configured PDF source as pending live verification", async () => {
+    const base = createProductionApiAdapterSource();
+    const composition = createProductionComposition({
+      dataMode: "production",
+      quotePdfEnabled: true,
+      adapterSource: {
+        ...base,
+        adapters: {
+          ...base.adapters,
+          quotePdf: {
+            post: () => Promise.reject(new Error("test port must not be called")),
+            get: () => Promise.reject(new Error("test port must not be called")),
+          },
+        },
+      },
+    } as unknown as Parameters<typeof createProductionComposition>[0]);
+    const pdfSource = await readDefaultPdfSource(composition);
+    expect(pdfSource).toMatchObject({
+      affected_tools: ["quote.create_pdf"],
+      readiness: "unavailable",
+      registration_status: "工具已登记，正式连接已配置，仍需当前健康与写后读回验证",
+    });
+    expect(JSON.stringify(pdfSource)).not.toMatch(/ready|connected|https?:\/\/|token|secret|hash|ref/i);
   });
 
   it("fails closed for invalid settings and incomplete assets", async () => {

@@ -96,6 +96,12 @@ export interface ProductionApiAdapterSourceOptions {
 }
 
 export type CompositionMode = "fixtures" | "production";
+export type QuotePdfStartupFailure = "configuration_invalid" | "adapter_source_invalid";
+export type QuotePdfStartupStatus =
+  | "disabled"
+  | "configuration_invalid"
+  | "adapter_source_invalid"
+  | "configured";
 
 export interface GatewayCompositionOptions {
   readonly dataMode: CompositionMode;
@@ -126,8 +132,7 @@ export interface ProductionCompositionOptions
   readonly tokenVerifier?: ProductionTokenVerifier;
   readonly adapterSource?: ProductionAdapterSource;
   readonly quotePdfEnabled?: boolean;
-  readonly quotePdfConfigurationInvalid?: boolean;
-  readonly quotePdfAdapterSourceInvalid?: boolean;
+  readonly quotePdfStartupFailure?: QuotePdfStartupFailure;
   readonly sessionBindingStore?: DurableSessionBindingStore;
   readonly sessionOwnerId?: string;
 }
@@ -140,6 +145,7 @@ export interface GatewayComposition {
   readonly handlers: ToolHandlerMap;
   readonly contracts: ToolContractMap;
   readonly definitions: readonly ToolDefinition[];
+  readonly quotePdfStartupStatus: QuotePdfStartupStatus;
   readonly handler: McpHttpHandler;
   readonly readiness: (signal?: AbortSignal) => Promise<PlatformReadiness>;
   readonly close: () => Promise<void>;
@@ -408,6 +414,7 @@ function buildComposition(
   handler: McpHttpHandler,
   readiness: (signal?: AbortSignal) => Promise<PlatformReadiness>,
   closeExtra: () => Promise<void> = () => Promise.resolve(),
+  quotePdfStartupStatus: QuotePdfStartupStatus = "disabled",
 ): GatewayComposition {
   if (options.dataMode !== mode) {
     throw new Error(
@@ -424,6 +431,7 @@ function buildComposition(
     handlers: tools.handlers,
     contracts: tools.contracts,
     definitions,
+    quotePdfStartupStatus,
     handler,
     readiness,
     close: async () => {
@@ -615,16 +623,21 @@ export function createProductionComposition(
       : []),
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
     ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
-    ...(options.quotePdfConfigurationInvalid === true
+    ...(options.quotePdfStartupFailure === "configuration_invalid"
       ? ["production_quote_pdf_configuration_invalid"]
       : []),
-    ...(options.quotePdfAdapterSourceInvalid === true
+    ...(options.quotePdfStartupFailure === "adapter_source_invalid"
       ? ["production_adapter_source_invalid"]
       : []),
   ];
   const quotePdfConfigured = options.quotePdfEnabled === true &&
     hasQuotePdfPort(providedAdapters.quotePdf) &&
     structuralReasons.length === 0;
+  const quotePdfStartupStatus: QuotePdfStartupStatus =
+    options.quotePdfStartupFailure ??
+    (options.quotePdfEnabled === true && hasQuotePdfPort(providedAdapters.quotePdf)
+      ? "configured"
+      : "disabled");
 
   const readiness = async (signal?: AbortSignal): Promise<PlatformReadiness> => {
     let platformState: PlatformReadiness;
@@ -699,6 +712,7 @@ export function createProductionComposition(
         throw new Error("A production composition dependency could not be closed.");
       }
     },
+    quotePdfStartupStatus,
   );
 }
 

@@ -65,6 +65,19 @@ describe("quote PDF startup configuration", () => {
     expect(createQuotePdfStartupOptions(base, { env: disabledEnvironment })).toEqual({});
   });
 
+  it("does not add a PDF startup reason while disabled", async () => {
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource: createProductionApiAdapterSource(),
+    });
+    try {
+      const readiness = await composition.readiness();
+      expect(readiness.reasons.filter((reason) => reason.includes("quote_pdf"))).toEqual([]);
+    } finally {
+      await composition.close();
+    }
+  });
+
   it("fails closed for every required enabled setting without exposing values", () => {
     const required = [
       "MCP_QUOTE_PDF_BASE_URL",
@@ -78,7 +91,7 @@ describe("quote PDF startup configuration", () => {
       const values = environment();
       delete values[name];
       const result = createQuotePdfStartupOptions(base, { env: values });
-      expect(result).toEqual({ quotePdfConfigurationInvalid: true });
+      expect(result).toEqual({ quotePdfStartupFailure: "configuration_invalid" });
       expect(JSON.stringify(result)).not.toContain(token);
     }
   });
@@ -94,7 +107,7 @@ describe("quote PDF startup configuration", () => {
       createProductionApiAdapterSource(),
       { env: environment({ MCP_QUOTE_PDF_BASE_URL: baseUrl, MCP_QUOTE_PDF_ALLOWED_HOSTS: allowedHosts }) },
     );
-    expect(result).toEqual({ quotePdfConfigurationInvalid: true });
+    expect(result).toEqual({ quotePdfStartupFailure: "configuration_invalid" });
   });
 
   it.each([
@@ -104,7 +117,7 @@ describe("quote PDF startup configuration", () => {
     expect(createQuotePdfStartupOptions(
       createProductionApiAdapterSource(),
       { env: environment({ MCP_QUOTE_PDF_TENANT_ID: tenantId }) },
-    )).toEqual({ quotePdfConfigurationInvalid: true });
+    )).toEqual({ quotePdfStartupFailure: "configuration_invalid" });
   });
 
   it.each(["", "a".repeat(4097), "token with spaces", "token\nwith-control"]) (
@@ -113,7 +126,7 @@ describe("quote PDF startup configuration", () => {
       expect(createQuotePdfStartupOptions(
         createProductionApiAdapterSource(),
         { env: environment({ MCP_QUOTE_PDF_BEARER_TOKEN: bearerToken }) },
-      )).toEqual({ quotePdfConfigurationInvalid: true });
+      )).toEqual({ quotePdfStartupFailure: "configuration_invalid" });
     },
   );
 
@@ -129,7 +142,7 @@ describe("quote PDF startup configuration", () => {
     const result = createQuotePdfStartupOptions(base, { env: environment(), fetchImpl });
 
     expect(result.quotePdfEnabled).toBe(true);
-    expect(result.quotePdfConfigurationInvalid).toBeUndefined();
+    expect(result).not.toHaveProperty("quotePdfStartupFailure");
     expect(result.adapterSource?.adapters.quote).toBe(base.adapters.quote);
     expect(result.adapterSource?.adapters.customs).toBe(base.adapters.customs);
     expect(Object.hasOwn(result.adapterSource?.adapters ?? {}, "quotePdf")).toBe(true);
@@ -194,7 +207,7 @@ describe("quote PDF startup configuration", () => {
   it("keeps an invalid enabled config unavailable and blocks readiness with the standard reason", async () => {
     const composition = createProductionComposition({
       dataMode: "production",
-      quotePdfConfigurationInvalid: true,
+      quotePdfStartupFailure: "configuration_invalid",
     });
     try {
       await expect(composition.readiness()).resolves.toMatchObject({ ready: false });
@@ -218,8 +231,7 @@ describe("quote PDF startup configuration", () => {
     } as unknown as Parameters<typeof createQuotePdfStartupOptions>[0];
     const startup = createQuotePdfStartupOptions(malformedBase, { env: environment() });
 
-    expect(startup).toEqual({ quotePdfAdapterSourceInvalid: true });
-    expect(startup.quotePdfConfigurationInvalid).toBeUndefined();
+    expect(startup).toEqual({ quotePdfStartupFailure: "adapter_source_invalid" });
 
     const composition = createProductionComposition({
       dataMode: "production",
@@ -237,6 +249,21 @@ describe("quote PDF startup configuration", () => {
         status: "unavailable",
         data: null,
       });
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it("maps one startup failure to one PDF readiness reason", async () => {
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource: createProductionApiAdapterSource(),
+      quotePdfStartupFailure: "adapter_source_invalid",
+    } as unknown as Parameters<typeof createProductionComposition>[0]);
+    try {
+      const readiness = await composition.readiness();
+      expect(readiness.reasons.filter((reason) => reason.includes("quote_pdf") || reason.includes("adapter_source")))
+        .toEqual(["production_adapter_source_invalid"]);
     } finally {
       await composition.close();
     }

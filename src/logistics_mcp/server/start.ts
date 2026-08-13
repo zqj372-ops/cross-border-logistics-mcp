@@ -13,6 +13,8 @@ import {
   createProductionComposition,
   type GatewayComposition,
   type ProductionAdapterSource,
+  type QuotePdfStartupFailure,
+  type QuotePdfStartupStatus,
 } from "./composition";
 import {
   assertAllowedOutboundUrl,
@@ -53,8 +55,7 @@ function splitSetting(
 export interface QuotePdfStartupOptions {
   readonly adapterSource?: ProductionAdapterSource;
   readonly quotePdfEnabled?: true;
-  readonly quotePdfConfigurationInvalid?: true;
-  readonly quotePdfAdapterSourceInvalid?: true;
+  readonly quotePdfStartupFailure?: QuotePdfStartupFailure;
 }
 
 export interface QuotePdfStartupFactoryOptions {
@@ -63,11 +64,11 @@ export interface QuotePdfStartupFactoryOptions {
 }
 
 function invalidQuotePdfConfiguration(): QuotePdfStartupOptions {
-  return { quotePdfConfigurationInvalid: true };
+  return { quotePdfStartupFailure: "configuration_invalid" };
 }
 
 function invalidQuotePdfAdapterSource(): QuotePdfStartupOptions {
-  return { quotePdfAdapterSourceInvalid: true };
+  return { quotePdfStartupFailure: "adapter_source_invalid" };
 }
 
 function validBearerToken(value: string | undefined): value is string {
@@ -206,7 +207,40 @@ function adminBlocker(reason: string): string {
   return "存在未通过的运行门槛，技术信息已隐藏。";
 }
 
-function businessSources(mode: GatewayComposition["mode"]): readonly Record<string, unknown>[] {
+function quotePdfRegistrationStatus(status: QuotePdfStartupStatus): string {
+  switch (status) {
+    case "disabled":
+      return "工具已登记，正式连接未启用";
+    case "configuration_invalid":
+      return "工具已登记，正式配置不完整";
+    case "adapter_source_invalid":
+      return "工具已登记，正式适配器不可用";
+    case "configured":
+      return "工具已登记，正式连接已配置，仍需当前健康与写后读回验证";
+    default:
+      return "工具已登记，正式连接状态未知，暂不可用";
+  }
+}
+
+function quotePdfSourceReason(status: QuotePdfStartupStatus): string {
+  switch (status) {
+    case "disabled":
+      return "正式连接未启用，相关工具保持不可用。";
+    case "configuration_invalid":
+      return "正式配置未通过启动校验，相关工具保持不可用。";
+    case "adapter_source_invalid":
+      return "正式适配器未通过结构校验，相关工具保持不可用。";
+    case "configured":
+      return "仍需当前健康检查与写后读回验证，暂不视为正式可用。";
+    default:
+      return "正式连接状态未知，相关工具保持不可用。";
+  }
+}
+
+function businessSources(
+  mode: GatewayComposition["mode"],
+  quotePdfStartupStatus: QuotePdfStartupStatus = "disabled",
+): readonly Record<string, unknown>[] {
   const fixture = mode === "fixtures";
   const common = {
     category: "business_api",
@@ -243,13 +277,15 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
     },
     {
       ...common,
+      readiness: "unavailable",
       name: "pdf_api",
       label: "报价单服务",
       business_key: "pdf",
-      affected_tools: [],
-      registration_status: "未登记工具",
+      affected_tools: ["quote.create_pdf"],
+      registration_status: quotePdfRegistrationStatus(quotePdfStartupStatus),
       business_version_evidence: "尚未提供可核验的服务端接口约定。",
-      blocker: "缺少服务端接口地址、身份认证、输入输出和文件读回约定。",
+      reason: quotePdfSourceReason(quotePdfStartupStatus),
+      blocker: "当前未完成正式健康、认证和写后读回验收。",
     },
   ];
 }
@@ -298,7 +334,7 @@ async function adminRuntimeSnapshot(
           ? "ready"
           : "unavailable",
     })),
-    sources: businessSources(composition.mode),
+    sources: businessSources(composition.mode, composition.quotePdfStartupStatus),
     approvals: {
       validation: {
         status: "blocked",
