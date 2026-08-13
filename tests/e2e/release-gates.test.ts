@@ -58,6 +58,7 @@ describe("non-production release gates", () => {
   it("requires and propagates the quote v2 contract gate", () => {
     const script = read("deploy/scripts/check-release.sh");
     expect(script).toContain("node docs/contracts/quote-v2-contract.test.mjs");
+    expect(script).toContain("node docs/contracts/quote-create-pdf-contract.test.mjs");
 
     const bin = mkdtempSync(join(tmpdir(), "logistics-mcp-release-gate-"));
     const fakeNode = join(bin, "node");
@@ -77,6 +78,30 @@ exec '${realNode}' "$@"
         env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
       });
       expect(result.status).toBe(91);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates the quote PDF contract gate", () => {
+    const bin = mkdtempSync(join(tmpdir(), "logistics-mcp-release-pdf-gate-"));
+    const fakeNode = join(bin, "node");
+    const realNode = process.execPath.replaceAll("'", "'\\''");
+    writeFileSync(fakeNode, `#!/bin/sh
+if [ "$1" = "docs/contracts/quote-create-pdf-contract.test.mjs" ]; then
+  exit 92
+fi
+exec '${realNode}' "$@"
+`);
+    chmodSync(fakeNode, 0o755);
+
+    try {
+      const result = spawnSync("bash", ["deploy/scripts/check-release.sh", "--fixture-only"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(92);
     } finally {
       rmSync(bin, { recursive: true, force: true });
     }

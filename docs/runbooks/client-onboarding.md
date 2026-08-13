@@ -17,10 +17,11 @@ Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人
 
 ## 工具与状态
 
-冻结的九个工具是：`cargo.calculate`、`container.plan_summary`、
-`quote.canada_final_mile.calculate`、`quote.save_draft`、`customs.ca.search`、
-`customs.ca.estimate`、`knowledge.search_curated`、`system.get_data_status`、
-`review.create_task`。不存在 `commit_operation`、send、publish、booking 或通用写工具。
+已登记的十个工具是：`cargo.calculate`、`container.plan_summary`、
+`quote.canada_final_mile.calculate`、`quote.create_pdf`、`quote.save_draft`、
+`customs.ca.search`、`customs.ca.estimate`、`knowledge.search_curated`、
+`system.get_data_status`、`review.create_task`。报价单工具当前不可用，正式连接未启用；
+不存在 `commit_operation`、send、publish、booking 或通用写工具。
 
 客户端必须按统一 envelope 处理：
 
@@ -33,10 +34,10 @@ Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人
 
 ## 接入 smoke
 
-1. 管理员使用假 endpoint 和短期身份在 staging 获取工具列表，确认只有九个工具。
+1. 管理员使用既有示例地址和短期身份在 staging 获取工具列表，确认十个已登记工具及报价单工具的不可用状态。
 2. 调用 `system.get_data_status`，核对 RiskCustoms `ready`、`test_data` 和 release IDs。
 3. 运行 cargo/quote 查询和一个 `needs_input` 负例；确认金额/重量带单位和版本。
-4. 只在批准的 fixture/sandbox 中验证 `quote.save_draft` 与 `review.create_task` 的
-   preview→approval→commit→readback；不得发送、发布、订舱或写生产。
+4. 只在批准的 fixture/sandbox 中验证写工具的 preview→approval→commit→readback；
+   `quote.create_pdf` 仅验证不可发送的报价单结果和精确读回边界，不得发送、发布、订舱或写生产。
 5. 保存响应、审计 ID、工具版本和管理员批准记录；ChatGPT Work 插件和
    企业助手必须在 staging 通过身份、权限、审批和状态处理验收后再开放。

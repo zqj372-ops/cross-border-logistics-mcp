@@ -19,7 +19,7 @@ import {
   createRuntimeServer,
 } from "../../src/logistics_mcp/server/start";
 import { createProductionTokenVerifier } from "../../src/logistics_mcp/server/production-token-verifier";
-import { cargoInput } from "./fixtures/tenant-fixtures";
+import { cargoInput, quotePdfInput } from "./fixtures/tenant-fixtures";
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -76,7 +76,7 @@ describe("production platform runtime", () => {
       actor_id: "sales_demo",
       actor_role: "sales",
       roles: ["sales"],
-      scopes: ["system:read", "quote:calculate"],
+      scopes: ["system:read", "quote:calculate", "quote:pdf_write"],
       client_id: "codex-production-test",
       session_id: "auth-session-production-test",
     })
@@ -141,7 +141,15 @@ describe("production platform runtime", () => {
         tenantId: "tenant_demo_a",
         ownerId: "production-test-worker",
       });
-      expect((await client.listTools()).tools).toHaveLength(9);
+      expect((await client.listTools()).tools).toHaveLength(10);
+      const unavailablePdf = await client.callTool({
+        name: "quote.create_pdf",
+        arguments: quotePdfInput("preview", "pdf_production_disabled_001"),
+      });
+      expect(unavailablePdf.structuredContent).toMatchObject({
+        status: "unavailable",
+        data: null,
+      });
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),

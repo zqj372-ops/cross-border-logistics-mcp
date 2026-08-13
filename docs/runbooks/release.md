@@ -12,7 +12,7 @@ No automatic send, publish, or booking path is included.
    `MCP_ADMIN_UI_ENABLED` 默认关闭。
 2. **non-empty backup**：在任何 staging/生产变更前，生成非空备份清单，记录配置、审计
    依赖、现有系统回滚点和已应用 migration；不把密钥正文写入清单。
-3. **Schema**：运行 Draft 2020-12 Schema 和全部示例校验，确认九工具/五状态契约未漂移。
+3. **Schema**：运行 Draft 2020-12 Schema 和全部示例校验，确认十工具/五状态契约未漂移。
 4. **full tests**：运行 platform、cargo、container、adapters、domains、e2e 全测试以及
    typecheck/lint；安全扫描必须无 Critical/Important。
 5. **image digest**：构建后记录不可变 image digest，不以 tag 作为唯一证据。
@@ -21,8 +21,8 @@ No automatic send, publish, or booking path is included.
    对应工具和 `system.get_data_status` 另行验收。
 7. **RiskCustoms**：核对 `ready`、`test_data`、snapshot/release hash 和 release IDs；
    `ready=false` 原样保持 `unavailable`/`manual_review`，不得伪 ready。
-8. **write preview/commit**：只用隔离 fixture/sandbox 验证两个窄写工具的 preview、审批、
-   commit、幂等和写后 readback；HTTP 成功码不等于业务成功。
+8. **write preview/commit**：只用隔离 fixture/sandbox 验证已登记写工具的 preview、审批、
+   commit、幂等和写后 readback；报价单仍保持不可发送，HTTP 成功码不等于业务成功。
 9. **audit review**：检查 audit_id、脱敏、tenant/actor、版本、状态、幂等 outcome 和
    readback status；审计失败必须 fail-closed。
 10. **client smoke**：先用实际企业身份源的脱敏短时 token 验证 claims 映射，再检查

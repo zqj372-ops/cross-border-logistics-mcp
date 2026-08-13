@@ -97,7 +97,7 @@ const distCleanup = files.build.indexOf('rmSync("dist"');
 const assetValidation = files.build.indexOf("statSync(path)");
 assert.ok(distCleanup >= 0 && distCleanup < assetValidation, "build must clear dist before asset validation");
 assert.equal(fixtureSnapshot.roles.length, 7);
-assert.equal(fixtureSnapshot.tools.length, 9);
+assert.equal(fixtureSnapshot.tools.length, 10);
 assert.ok(fixtureSnapshot.tools.every((tool) => tool.kind === "read" || tool.kind === "write"));
 const businessSources = fixtureSnapshot.sources.filter((source) => source.category === "business_api");
 assert.deepEqual(
@@ -117,8 +117,10 @@ assert.match(businessSources.find((source) => source.business_key === "customs")
 assert.deepEqual(businessSources.find((source) => source.business_key === "customs").affected_tools, ["customs.ca.search", "customs.ca.estimate"]);
 assert.equal(businessSources.find((source) => source.business_key === "customs").registration_status, "工具约定已注册，接口连接未启用");
 assert.match(businessSources.find((source) => source.business_key === "customs").reason, /当前接口未提供正式税额估算/);
-assert.equal(businessSources.find((source) => source.business_key === "pdf").registration_status, "未注册");
-assert.match(businessSources.find((source) => source.business_key === "pdf").blocker, /接口说明/);
+assert.equal(businessSources.find((source) => source.business_key === "pdf").registration_status, "已登记，正式连接未启用/不可用");
+assert.deepEqual(businessSources.find((source) => source.business_key === "pdf").affected_tools, ["quote.create_pdf"]);
+assert.match(businessSources.find((source) => source.business_key === "pdf").reason, /接口已完成.*正式HTTPS地址.*租户凭证验证/);
+assert.match(businessSources.find((source) => source.business_key === "pdf").blocker, /正式连接未启用/);
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /请求智能报价服务/);
 assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /不可用.*失败闭合/);
 assert.doesNotMatch(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").description, /已版本化规则/);
@@ -129,6 +131,9 @@ assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draf
 assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.canada_final_mile.calculate").availability, "unavailable");
 assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "customs.ca.estimate").availability, "unavailable");
 assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.save_draft").availability, "unavailable");
+assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.create_pdf").label, "生成内部报价单");
+assert.match(fixtureSnapshot.tools.find((tool) => tool.name === "quote.create_pdf").description, /正式连接未启用.*不可用/);
+assert.equal(fixtureSnapshot.tools.find((tool) => tool.name === "quote.create_pdf").availability, "unavailable");
 assert.ok(fixtureSnapshot.sources.filter((source) => source.secret_ref).every((source) => source.secret_ref.startsWith("secret_ref:")));
 assert.ok(!JSON.stringify(fixtureSnapshot).match(/eyJ|Bearer\s|sk-[A-Za-z0-9]/));
 const visibleFixtureText = [
@@ -164,7 +169,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   architecture.toolGroups.find((group) => group.key === "billing").tools.map((tool) => tool.name),
-  ["cargo.calculate", "quote.canada_final_mile.calculate", "quote.save_draft"],
+  ["cargo.calculate", "quote.canada_final_mile.calculate", "quote.save_draft", "quote.create_pdf"],
 );
 assert.deepEqual(
   architecture.toolGroups.find((group) => group.key === "platform").tools.map((tool) => tool.name),
@@ -176,7 +181,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   architecture.executionGroups.find((group) => group.key === "external").tools.map((tool) => tool.name),
-  ["quote.canada_final_mile.calculate", "customs.ca.search", "customs.ca.estimate"],
+  ["quote.canada_final_mile.calculate", "customs.ca.search", "customs.ca.estimate", "quote.create_pdf"],
 );
 assert.deepEqual(
   architecture.supportingTools.map((tool) => tool.name),
@@ -191,8 +196,11 @@ assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft")
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").sourceReadiness, "");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.save_draft").availability, "unavailable");
 assert.match(architectureNodeStatus(architecture.tools.find((tool) => tool.name === "quote.save_draft"), "tool"), /不可用/);
+assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf").sourceBusinessKey, "pdf");
+assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf").sourceReadiness, "unavailable");
+assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf").availability, "unavailable");
 assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").readiness, "unavailable");
-assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").registrationStatus, "未注册");
+assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").registrationStatus, "已登记，正式连接未启用/不可用");
 assert.ok(!fixtureSnapshot.tools.some((tool) => tool.name.startsWith("pdf.")));
 assert.equal(architecture.approvalLifecycle.find((stage) => stage.key === "publish").status, "empty");
 assert.equal(architecture.approvalLifecycle.find((stage) => stage.key === "approval").status, "blocked");

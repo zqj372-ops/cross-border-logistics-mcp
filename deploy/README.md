@@ -29,7 +29,7 @@ session binding store，以及带 health lifecycle 的 token verifier 和 produc
 ## health 与 readiness
 
 - `GET /healthz` 只证明 Node 进程能响应，不代表适配器、数据发布或写端点可用。
-- `GET /readyz` 只反映身份、SQLite 和生产组合的全局可用性。报价、关务等未启用的
+- `GET /readyz` 只反映身份、SQLite 和生产组合的全局可用性。报价、报价单、关务等未启用的
   业务 API 按工具返回 `unavailable`，不阻断本地 `cargo`/`container`；RiskCustoms
   `ready=false` 绝不能被映射成工具成功。
 - SDK server/transport 只存在当前进程；SQLite 仅保存脱敏 session binding metadata。

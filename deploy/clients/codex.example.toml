@@ -12,6 +12,7 @@ enabled_tools = [
   "cargo.calculate",
   "container.plan_summary",
   "quote.canada_final_mile.calculate",
+  "quote.create_pdf",
   "quote.save_draft",
   "customs.ca.search",
   "customs.ca.estimate",

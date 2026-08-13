@@ -17,6 +17,7 @@ test -s "$ROOT_DIR/docs/runbooks/release.md"
 test -s "$ROOT_DIR/docs/runbooks/rollback.md"
 
 node docs/contracts/quote-v2-contract.test.mjs
+node docs/contracts/quote-create-pdf-contract.test.mjs
 
 ROOT_DIR="$ROOT_DIR" node --import tsx/esm --input-type=module -e '
   import { validateContractSchemas } from "./src/logistics_mcp/platform/validate-contracts.ts";

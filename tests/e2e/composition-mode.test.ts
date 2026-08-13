@@ -414,7 +414,8 @@ describe("gateway composition modes", () => {
     });
     try {
       expect(composition.dataMode).toBe("production");
-      expect(composition.definitions).toHaveLength(9);
+      expect(composition.definitions).toHaveLength(10);
+      expect(composition.definitions.map(({ name }) => name)).toContain("quote.create_pdf");
       expect(composition.adapters.quote).not.toBe(composition.adapters.status);
 
       const context = parseExecutionContext(securityClaims);

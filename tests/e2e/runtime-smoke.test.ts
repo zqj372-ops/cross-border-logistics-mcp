@@ -15,6 +15,7 @@ import {
   containerInput,
   legacyQuoteDraftResult,
   quoteInput,
+  quotePdfInput,
 } from "./fixtures/tenant-fixtures";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -362,16 +363,28 @@ describe("built runtime smoke", () => {
         "customs.ca.search",
         "knowledge.search_curated",
         "quote.canada_final_mile.calculate",
+        "quote.create_pdf",
         "quote.save_draft",
         "review.create_task",
         "system.get_data_status",
       ].sort());
       expect(toolList.tools.every((tool) =>
         tool.inputSchema.$schema === "https://json-schema.org/draft/2020-12/schema" &&
-        tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
+        tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema" &&
+        tool.outputSchema?.type === "object" &&
+        tool.outputSchema?.additionalProperties === false
       )).toBe(true);
       expect(toolList.tools.find((tool) => tool.name === "quote.save_draft")?.annotations)
         .toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+      expect(toolList.tools.find((tool) => tool.name === "quote.create_pdf")).toMatchObject({
+        title: "创建报价 PDF",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      });
 
       const cargo = structured(await client.callTool({
         name: "cargo.calculate",
@@ -403,6 +416,12 @@ describe("built runtime smoke", () => {
           expect.objectContaining({ code: "quote.adapter_disabled" }),
         ]),
       );
+
+      const pdf = structured(await client.callTool({
+        name: "quote.create_pdf",
+        arguments: quotePdfInput("preview", "pdf_runtime_disabled_001"),
+      }));
+      expect(pdf).toMatchObject({ status: "unavailable", data: null });
 
       const customsSearch = structured(await client.callTool({
         name: "customs.ca.search",
