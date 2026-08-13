@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import addFormats from "ajv-formats";
+import Ajv2020 from "ajv/dist/2020.js";
 
 import {
   createFixtureComposition,
@@ -247,6 +249,50 @@ describe("quote v2 runtime envelope contract", () => {
     expect(result.data).toMatchObject({ quote_status: "calculated" });
     expect(result.source_refs.map((source) => source.source_id)).toEqual([SOURCE_ID]);
     expect(result.calculation_trace[0]?.source_ref_ids).toEqual([SOURCE_ID]);
+  });
+
+  it("exposes structural v2 branches to Draft 2020-12 validators", () => {
+    const outputJsonSchema = quoteContract.outputSchema!.toJSONSchema({ target: "draft-2020-12" });
+    const ajv = new Ajv2020({ strict: true });
+    addFormats(ajv);
+    const validator = ajv.compile(outputJsonSchema);
+    const valid = {
+      schema_version: "2026-08-11.v1",
+      request_id: "req_schema_001",
+      status: "success",
+      data: quoteData(),
+      source_refs: [sourceRef(SOURCE_ID)],
+      assumptions: [],
+      warnings: [],
+      blockers: [],
+      calculation_trace: [{ ...trace(), source_ref_ids: [] }],
+      review_status: "not_required",
+      audit_id: "audit_schema_001",
+    };
+
+    expect(() => quoteContract.outputSchema!.parse(valid)).not.toThrow();
+    expect(validator(valid), JSON.stringify(validator.errors)).toBe(true);
+    expect(outputJsonSchema.anyOf ?? outputJsonSchema.oneOf).toBeDefined();
+    expect(
+      validator({
+        ...valid,
+        data: quoteData("manual_review"),
+      }),
+    ).toBe(false);
+    expect(
+      validator({
+        ...valid,
+        status: "manual_review",
+        blockers: [blocker()],
+      }),
+    ).toBe(false);
+    expect(
+      validator({
+        ...valid,
+        status: "unavailable",
+        data: quoteData(),
+      }),
+    ).toBe(false);
   });
 
   it("executes manual review with v2 manual data and evidence", async () => {

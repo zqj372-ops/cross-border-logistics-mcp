@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import {
   createFixturePlatformDependencies,
@@ -169,50 +171,68 @@ interface CompositionTools {
 
 function compositionTools(adapters: FixtureAdapters): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
-  const quoteV2EnvelopeSchema = envelopeSchema
-    .extend({ data: quoteV2ResultSchema.nullable() })
+  const calculatedQuoteDataSchema = quoteV2ResultSchema.and(
+    z.object({ quote_status: z.literal("calculated") }).passthrough(),
+  );
+  const manualQuoteDataSchema = quoteV2ResultSchema.and(
+    z.object({
+      quote_status: z.enum(["manual_review", "not_calculable"]),
+    }).passthrough(),
+  );
+  const quoteV2EnvelopeSchema = z
+    .union([
+      envelopeSchema.extend({
+        status: z.literal("success"),
+        data: calculatedQuoteDataSchema,
+        source_refs: envelopeSchema.shape.source_refs.min(1),
+        calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+      }),
+      envelopeSchema.extend({
+        status: z.literal("manual_review"),
+        data: z.null(),
+        source_refs: envelopeSchema.shape.source_refs.max(0),
+        calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+      }),
+      envelopeSchema.extend({
+        status: z.literal("manual_review"),
+        data: manualQuoteDataSchema,
+        source_refs: envelopeSchema.shape.source_refs.min(1),
+      }),
+      envelopeSchema.extend({
+        status: z.enum(["needs_input", "blocked", "unavailable"]),
+        data: z.null(),
+        source_refs: envelopeSchema.shape.source_refs.max(0),
+        calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+      }),
+    ])
     .superRefine((envelope, refinement) => {
-    const sourceIds = envelope.source_refs.map((source) => source.source_id);
-    const traceIds = envelope.calculation_trace.flatMap((step) => step.source_ref_ids);
-    const data = envelope.data;
-    const dataSourceIds =
-      data !== null && Array.isArray(data.source_ref_ids) &&
-      data.source_ref_ids.every((value): value is string => typeof value === "string")
-        ? data.source_ref_ids
-        : [];
-    const lineSourceIds =
-      data !== null && Array.isArray(data.line_items)
-        ? data.line_items.flatMap((line) =>
-            typeof line === "object" && line !== null &&
-            Array.isArray((line as Record<string, unknown>).source_ref_ids)
-              ? ((line as Record<string, unknown>).source_ref_ids as unknown[]).filter(
-                  (value): value is string => typeof value === "string",
-                )
-              : [],
-          )
-        : [];
-    const union = [...new Set([...dataSourceIds, ...lineSourceIds, ...traceIds])];
-    const sameSourceSet =
-      new Set(sourceIds).size === sourceIds.length &&
-      union.length === sourceIds.length &&
-      union.every((sourceId) => sourceIds.includes(sourceId));
+      const sourceIds = envelope.source_refs.map((source) => source.source_id);
+      const traceIds = envelope.calculation_trace.flatMap(
+        (step) => step.source_ref_ids,
+      );
+      const data = envelope.data;
+      const dataSourceIds = data?.source_ref_ids ?? [];
+      const lineSourceIds = data?.line_items.flatMap(
+        (line) => line.source_ref_ids,
+      ) ?? [];
+      const union = [
+        ...new Set([...dataSourceIds, ...lineSourceIds, ...traceIds]),
+      ];
+      const sameSourceSet =
+        new Set(sourceIds).size === sourceIds.length &&
+        union.length === sourceIds.length &&
+        union.every((sourceId) => sourceIds.includes(sourceId));
 
-    if (envelope.status === "success") {
-      if (data === null || data.quote_status !== "calculated" || sourceIds.length === 0 || traceIds.length === 0) {
-        refinement.addIssue({ code: "custom", message: "calculated success requires data, source_refs, and calculation_trace" });
+      if (
+        (data !== null || sourceIds.length > 0 || traceIds.length > 0) &&
+        !sameSourceSet
+      ) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote source IDs must match the outer source refs exactly",
+        });
       }
-    } else if (envelope.status === "manual_review" && data !== null) {
-      if (!(["manual_review", "not_calculable"] as readonly unknown[]).includes(data.quote_status) || sourceIds.length === 0) {
-        refinement.addIssue({ code: "custom", message: "manual quote data requires manual status and source_refs" });
-      }
-    } else if (data !== null || sourceIds.length !== 0 || traceIds.length !== 0) {
-      refinement.addIssue({ code: "custom", message: "empty quote outcomes cannot carry data or evidence" });
-    }
-
-    if ((data !== null || sourceIds.length > 0 || traceIds.length > 0) && !sameSourceSet) {
-      refinement.addIssue({ code: "custom", message: "quote source IDs must match the outer source refs exactly" });
-    }
-  });
+    });
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,
     "cargo.calculate": cargoToolHandler,
