@@ -340,8 +340,27 @@ describe("admin static runtime boundary", () => {
         audit: [],
       });
       expect((snapshot.tools as unknown[])).toHaveLength(10);
+      expect(Object.fromEntries(
+        (snapshot.tools as Array<Record<string, unknown>>)
+          .map((tool) => [tool.name, tool.availability]),
+      )).toEqual({
+        "knowledge.search_curated": "unavailable",
+        "system.get_data_status": "unavailable",
+        "cargo.calculate": "ready",
+        "container.plan_summary": "ready",
+        "quote.canada_final_mile.calculate": "unavailable",
+        "customs.ca.search": "unavailable",
+        "customs.ca.estimate": "unavailable",
+        "quote.save_draft": "unavailable",
+        "quote.create_pdf": "unavailable",
+        "review.create_task": "unavailable",
+      });
       expect((snapshot.roles as unknown[])).toHaveLength(7);
       expect((snapshot.sources as unknown[])).toHaveLength(3);
+      expect((snapshot.sources as Array<Record<string, unknown>>)
+        .map((source) => source.business_key)
+        .sort())
+        .toEqual(["customs", "pdf", "quote"]);
       const pdfSource = (snapshot.sources as Array<Record<string, unknown>>)
         .find((source) => source.business_key === "pdf");
       expect(pdfSource).toMatchObject({

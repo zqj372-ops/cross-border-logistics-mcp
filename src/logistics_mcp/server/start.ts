@@ -330,7 +330,7 @@ async function adminRuntimeSnapshot(
       kind: definition.kind,
       roles: [...getToolPolicy(definition.name).roles],
       availability:
-        fixture || (state.ready && LOCAL_TOOL_NAMES.has(definition.name))
+        LOCAL_TOOL_NAMES.has(definition.name) && (fixture || state.ready)
           ? "ready"
           : "unavailable",
     })),
