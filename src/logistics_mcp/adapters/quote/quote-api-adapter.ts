@@ -57,6 +57,16 @@ const lineItemSchema = z
     source_ref_ids: z.array(identifierSchema).min(1),
   })
   .strict();
+const emptyFeesSchema = z
+  .record(z.string().min(1), feeSchema)
+  .refine((value) => Object.keys(value).length === 0);
+const calculatedFeesSchema = z
+  .object({
+    base: feeSchema,
+    fuel: feeSchema,
+    total: feeSchema,
+  })
+  .catchall(feeSchema);
 
 const availableBaseSchema = z
   .object({
@@ -98,6 +108,7 @@ const calculatedResponseSchema = availableBaseSchema
     status: z.literal("quoted"),
     manual_review_required: z.literal(false),
     quote_status: z.literal("calculated"),
+    fees: calculatedFeesSchema,
     total: feeSchema,
     line_items: z.array(lineItemSchema).min(1),
     billing_pallets: z.number().int().min(1),
@@ -109,11 +120,112 @@ const manualResponseSchema = availableBaseSchema
     status: z.literal("manual_required"),
     manual_review_required: z.literal(true),
     quote_status: z.enum(["manual_review", "not_calculable"]),
+    fees: emptyFeesSchema,
     total: z.null(),
     line_items: z.array(lineItemSchema).max(0),
     billing_pallets: z.number().int().min(1).nullable(),
   })
   .strict();
+
+const quoteV2ResultBaseSchema = z
+  .object({
+    version: z.literal(AVAILABLE_VERSION),
+    quote_id: identifierSchema,
+    currency: z.string().regex(/^[A-Z]{3}$/u),
+    rule_version: versionSchema,
+    data_version: versionSchema,
+    sendable: z.literal(false),
+    valid_from: dateSchema,
+    valid_to: dateSchema,
+    source_ref_ids: z.array(identifierSchema).min(1),
+    tenant: identifierSchema,
+    effective_date: dateSchema,
+    ready: z.literal(true),
+    test_data: z.literal(false),
+    origin: identifierSchema,
+    snapshot_hash: z.string().regex(/^sha256:[A-Fa-f0-9]{64}$/u),
+    service_version: versionSchema,
+    contract_version: z.literal(CONTRACT_VERSION),
+    release_id: identifierSchema,
+    release_hash: z.string().regex(/^sha256:[A-Fa-f0-9]{64}$/u),
+    published_at: dateTimeSchema,
+  })
+  .strict();
+
+const quoteV2CalculatedResultSchema = quoteV2ResultBaseSchema
+  .extend({
+    quote_status: z.literal("calculated"),
+    total: feeSchema,
+    line_items: z.array(lineItemSchema).min(1),
+    billing_pallets: z.number().int().min(1),
+  })
+  .strict();
+
+const quoteV2ManualResultSchema = quoteV2ResultBaseSchema
+  .extend({
+    quote_status: z.enum(["manual_review", "not_calculable"]),
+    total: z.null(),
+    line_items: z.array(lineItemSchema).max(0),
+    billing_pallets: z.number().int().min(1).nullable(),
+  })
+  .strict();
+
+function uniqueStrings(value: readonly string[]): boolean {
+  return new Set(value).size === value.length;
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return uniqueStrings(left) && uniqueStrings(right) &&
+    leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value));
+}
+
+export const quoteV2ResultSchema = z
+  .discriminatedUnion("quote_status", [
+    quoteV2CalculatedResultSchema,
+    quoteV2ManualResultSchema,
+  ])
+  .superRefine((value, refinement) => {
+    if (!uniqueStrings(value.source_ref_ids)) {
+      refinement.addIssue({ code: "custom", message: "source_ref_ids must be unique", path: ["source_ref_ids"] });
+    }
+    if (value.release_hash !== value.snapshot_hash) {
+      refinement.addIssue({ code: "custom", message: "release_hash must equal snapshot_hash", path: ["release_hash"] });
+    }
+    if (value.valid_from > value.valid_to) {
+      refinement.addIssue({ code: "custom", message: "valid_from must not be after valid_to", path: ["valid_from"] });
+    }
+    if (value.effective_date < value.valid_from || value.effective_date > value.valid_to) {
+      refinement.addIssue({ code: "custom", message: "effective_date must be within the validity window", path: ["effective_date"] });
+    }
+    if (value.quote_status === "calculated") {
+      if (value.total === null || value.line_items.length === 0 || value.billing_pallets < 1) {
+        refinement.addIssue({ code: "custom", message: "calculated results require total, line_items, and billing_pallets", path: ["quote_status"] });
+        return;
+      }
+      const lineIds = value.line_items.map((line) => line.line_id);
+      if (!uniqueStrings(lineIds)) {
+        refinement.addIssue({ code: "custom", message: "line_ids must be unique", path: ["line_items"] });
+      }
+      const lineSum = value.line_items.reduce(
+        (sum, line) => sum.add(new Decimal(line.amount.amount)),
+        new Decimal(0),
+      );
+      if (!lineSum.eq(new Decimal(value.total.amount))) {
+        refinement.addIssue({ code: "custom", message: "line item amounts must sum to total", path: ["line_items"] });
+      }
+      for (const [index, line] of value.line_items.entries()) {
+        if (!sameStringSet(line.source_ref_ids, value.source_ref_ids)) {
+          refinement.addIssue({ code: "custom", message: "line source_ref_ids must equal top-level source_ref_ids", path: ["line_items", index, "source_ref_ids"] });
+        }
+      }
+      return;
+    }
+    if (value.total !== null || value.line_items.length !== 0) {
+      refinement.addIssue({ code: "custom", message: "non-calculated results require null total and empty line_items", path: ["quote_status"] });
+    }
+  });
 
 const availableResponseSchema = z.discriminatedUnion("quote_status", [
   calculatedResponseSchema,
@@ -168,11 +280,21 @@ const opaqueReferenceSchema = z
 const positiveMeasurement = <Unit extends readonly [string, ...string[]]>(units: Unit) =>
   z
     .object({
-      value: z.string().regex(POSITIVE_DECIMAL_RE),
+      value: z
+        .string()
+        .max(MAX_DECIMAL_LENGTH)
+        .regex(POSITIVE_DECIMAL_RE)
+        .refine(hasAtMostDecimalDigits),
       unit: z.enum(units),
     })
     .strict();
-const quoteInputSchema = z
+
+function hasAtMostDecimalDigits(value: string): boolean {
+  const [integerPart, fractionalPart = ""] = value.split(".");
+  return (integerPart ?? "").length + fractionalPart.length <= MAX_DECIMAL_DIGITS;
+}
+
+export const quoteV2InputSchema = z
   .object({
     schema_version: z.literal("2026-08-11.v1"),
     version: z.literal(REQUEST_VERSION),
@@ -218,7 +340,7 @@ const quoteInputSchema = z
   })
   .strict();
 
-type QuoteInput = z.infer<typeof quoteInputSchema>;
+type QuoteInput = z.infer<typeof quoteV2InputSchema>;
 type AvailableResponse = z.infer<typeof availableResponseSchema>;
 
 export type QuoteApiHeaderProvider = (
@@ -235,7 +357,7 @@ export interface QuoteApiAdapterOptions {
   readonly maxResponseBytes?: number;
   readonly headerProvider?: QuoteApiHeaderProvider;
   readonly clock?: () => Date;
-  readonly originByWarehouse?: Readonly<Record<string, string>>;
+  readonly originByTenantWarehouse?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -335,6 +457,20 @@ function calculatedEvidenceMatches(response: AvailableResponse, sourceId: string
   );
 }
 
+function calculatedFeesMatch(response: AvailableResponse): boolean {
+  if (response.quote_status !== "calculated") return true;
+  const base = response.fees.base;
+  const fuel = response.fees.fuel;
+  const feesTotal = response.fees.total;
+  if (base === undefined || fuel === undefined || feesTotal === undefined) return false;
+  const total = new Decimal(feesTotal.amount);
+  const nonTotalSum = Object.entries(response.fees).reduce(
+    (sum, [name, fee]) => (name === "total" ? sum : sum.add(new Decimal(fee.amount))),
+    new Decimal(0),
+  );
+  return total.eq(new Decimal(response.total.amount)) && nonTotalSum.eq(total);
+}
+
 function datesMatch(response: AvailableResponse, expectedTenant: string, expectedOrigin: string, expectedDate: string): boolean {
   return (
     response.tenant === expectedTenant &&
@@ -379,9 +515,11 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
   private readonly enabled: boolean;
   private readonly headerProvider: QuoteApiHeaderProvider | undefined;
   private readonly responseClock: () => Date;
-  private readonly originByWarehouse: Readonly<Record<string, string>>;
+  private readonly originByTenantWarehouse: Readonly<Record<string, Readonly<Record<string, string>>>>;
   private readonly requestTimeoutMs: number;
 
+  constructor(options: QuoteApiAdapterOptions);
+  constructor(options: QuoteApiAdapterOptions & Record<string, unknown>);
   constructor(options: QuoteApiAdapterOptions) {
     super(options.clock === undefined ? {} : { clock: options.clock });
     this.client = createFetchJsonClient({
@@ -395,7 +533,7 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     this.enabled = options.enabled === true;
     this.headerProvider = options.headerProvider;
     this.responseClock = options.clock ?? (() => new Date());
-    this.originByWarehouse = options.originByWarehouse ?? {};
+    this.originByTenantWarehouse = options.originByTenantWarehouse ?? {};
     this.requestTimeoutMs = options.timeoutMs ?? 10_000;
   }
 
@@ -440,13 +578,14 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     try {
       response = await this.withRequestSignal(signal, async (requestSignal) => {
         const headers = await this.headerProvider!(context, requestSignal);
+        const sanitizedHeaders = apiKeyHeaders(headers);
         if (requestSignal.aborted) {
           throw new HttpAdapterError("upstream_aborted", "The quote preview request was aborted.");
         }
-        if (!hasApiKey(headers)) {
+        if (sanitizedHeaders === null) {
           throw new HttpAdapterError("upstream_request_invalid", "The quote preview API-key header is invalid.");
         }
-        return this.client.post(QUOTE_PATH, prepared.body, headers, requestSignal, [503]);
+        return this.client.post(QUOTE_PATH, prepared.body, sanitizedHeaders, requestSignal, [503]);
       });
     } catch (error: unknown) {
       return this.mapHttpFailure(error);
@@ -483,11 +622,17 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
         "The quote preview response price evidence could not be verified.",
       );
     }
+    if (!calculatedFeesMatch(parsed.data)) {
+      return unavailable(
+        "quote.upstream_contract_invalid",
+        "The quote preview response fee evidence could not be verified.",
+      );
+    }
 
     try {
       const retrievedAt = this.responseClock().toISOString();
       const source = sourceRef(sourceId, parsed.data.quote_version, response, retrievedAt);
-      const data: Record<string, unknown> = {
+      const dataCandidate: Record<string, unknown> = {
         version: AVAILABLE_VERSION,
         quote_id: parsed.data.quote_id,
         quote_status: parsed.data.quote_status,
@@ -513,6 +658,14 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
         release_hash: parsed.data.release_hash,
         published_at: parsed.data.published_at,
       };
+      const dataResult = quoteV2ResultSchema.safeParse(dataCandidate);
+      if (!dataResult.success) {
+        return unavailable(
+          "quote.result_projection_invalid",
+          "The quote preview response could not be projected to the verified v2 result shape.",
+        );
+      }
+      const data = dataResult.data;
       const step = trace(parsed.data, sourceId);
       if (parsed.data.quote_status === "calculated") {
         return {
@@ -559,44 +712,13 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     }
   }
 
-  override previewDraft(input: Record<string, unknown>): Promise<AdapterResult> {
-    void input;
-    return Promise.resolve(
-      unavailable(
-        "quote.adapter_disabled",
-        "Quote draft writes remain disabled for the preview adapter.",
-      ),
-    );
-  }
-
-  override commitDraft(input: Record<string, unknown>, signal?: AbortSignal): Promise<AdapterResult> {
-    void input;
-    void signal;
-    return Promise.resolve(
-      unavailable(
-        "quote.adapter_disabled",
-        "Quote draft writes remain disabled for the preview adapter.",
-      ),
-    );
-  }
-
-  override readDraft(input: Record<string, unknown>): Promise<AdapterResult> {
-    void input;
-    return Promise.resolve(
-      unavailable(
-        "quote.adapter_disabled",
-        "Quote draft reads remain disabled for the preview adapter.",
-      ),
-    );
-  }
-
   private prepareRequest(
     input: Record<string, unknown>,
     context: ExecutionContext,
   ):
     | { readonly body: Record<string, unknown>; readonly expectedOrigin: string; readonly effectiveDate: string }
     | { readonly result: AdapterResult } {
-    const parsed = quoteInputSchema.safeParse(input);
+    const parsed = quoteV2InputSchema.safeParse(input);
     if (!parsed.success) {
       return {
         result: needsInput(
@@ -613,11 +735,17 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
     }
 
     const inputValue: QuoteInput = parsed.data;
-    const configuredOrigin = Object.prototype.hasOwnProperty.call(
-      this.originByWarehouse,
+    const tenantMappings = Object.prototype.hasOwnProperty.call(
+      this.originByTenantWarehouse,
+      context.tenantId,
+    )
+      ? this.originByTenantWarehouse[context.tenantId]
+      : undefined;
+    const configuredOrigin = tenantMappings !== undefined && Object.prototype.hasOwnProperty.call(
+      tenantMappings,
       inputValue.origin.warehouse_code,
     )
-      ? this.originByWarehouse[inputValue.origin.warehouse_code]
+      ? tenantMappings[inputValue.origin.warehouse_code]
       : undefined;
     const expectedOrigin = typeof configuredOrigin === "string"
       ? configuredOrigin.trim().toLowerCase()
@@ -750,7 +878,11 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
   }
 }
 
-function hasApiKey(headers: Readonly<Record<string, string>>): boolean {
-  const value = new Headers(headers).get("x-api-key");
-  return value !== null && value.length > 0 && !/\s/u.test(value);
+function apiKeyHeaders(value: unknown): Readonly<Record<string, string>> | null {
+  if (!isRecord(value)) return null;
+  const matches = Object.entries(value).filter(([name]) => name.toLowerCase() === "x-api-key");
+  if (matches.length !== 1) return null;
+  const apiKey = matches[0]?.[1];
+  if (typeof apiKey !== "string" || apiKey.length === 0 || /\s/u.test(apiKey)) return null;
+  return { "X-API-Key": apiKey };
 }

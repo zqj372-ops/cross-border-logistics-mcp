@@ -3,8 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import { createFixtureAdapters } from "../../src/logistics_mcp/adapters/fixture-client";
 import { createPhase1Bundle } from "../../src/logistics_mcp/adapters/phase1-bundle";
 import type { FetchImplementation } from "../../src/logistics_mcp/adapters/http-client";
+import { writeResultSchema } from "../../src/logistics_mcp/adapters/contracts";
+import {
+  executeRegisteredToolWithResult,
+  registerPhaseOneTools,
+} from "../../src/logistics_mcp/server/tool-registry";
+import { MemoryIdempotencyRepository } from "../../src/logistics_mcp/platform/idempotency";
 import {
   QuoteApiAdapter,
+  quoteV2InputSchema,
+  quoteV2ResultSchema,
   type QuoteApiAdapterOptions,
 } from "../../src/logistics_mcp/adapters/quote/quote-api-adapter";
 import type { ExecutionContext } from "../../src/logistics_mcp/platform/context";
@@ -83,6 +91,49 @@ function withOrigin(warehouseCode: string): Record<string, unknown> {
   return {
     ...input,
     origin: { warehouse_code: warehouseCode, province: "ON" },
+  };
+}
+
+function draftInput(
+  operationMode: "preview" | "commit",
+  previewRef: string | null,
+  idempotencyKey: string,
+): Record<string, unknown> {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "quote-save@fixture-1",
+    quote_result: {
+      version: "quote-result@fixture-1",
+      quote_id: "quote-demo-001",
+      quote_status: "calculated",
+      currency: "USD",
+      total: { amount: "143.80", currency: "USD" },
+      line_items: [],
+      rule_version: "zone-rule-fixture-1",
+      data_version: "zone-price-fixture-1",
+      sendable: false,
+      valid_from: "2026-08-01T00:00:00Z",
+      valid_to: "2026-08-31T23:59:59Z",
+      source_ref_ids: ["src:quote:fixture:1"],
+    },
+    target: { system: "existing_quote_system", record_kind: "draft" },
+    write_context: {
+      tenant_context: {
+        tenant_id: context.tenantId,
+        actor_id: context.actorId,
+        actor_role: context.role,
+        client_id: context.clientId,
+        session_id: context.sessionId,
+      },
+      idempotency_key: idempotencyKey,
+      operation_mode: operationMode,
+      preview_ref: previewRef,
+      approval: {
+        required: operationMode === "commit",
+        status: operationMode === "commit" ? "approved" : "not_required",
+        approval_id: operationMode === "commit" ? "approval:disabled" : null,
+      },
+    },
   };
 }
 
@@ -192,7 +243,9 @@ function adapter(
     baseUrl: BASE_URL,
     allowedHosts: ALLOWED_HOSTS,
     enabled: true,
-    originByWarehouse: { "fixture-warehouse": "toronto" },
+    originByTenantWarehouse: {
+      [context.tenantId]: { "fixture-warehouse": "toronto" },
+    },
     headerProvider: () => ({ "X-API-Key": "synthetic-api-key" }),
     fetchImpl,
     clock: () => new Date("2026-08-12T12:00:00Z"),
@@ -207,7 +260,10 @@ describe("quote API v2 adapter", () => {
     const callerSignal = new AbortController().signal;
     const provider = vi.fn((_context: ExecutionContext, signal?: AbortSignal) => ({
       "X-API-Key": "synthetic-api-key",
-      ...(signal === undefined ? {} : { "X-Signal-Present": "true" }),
+      Authorization: "Bearer provider-must-not-forward",
+      "X-Tenant-Id": "tenant-must-not-forward",
+      "X-Custom": "custom-must-not-forward",
+      ...(signal === undefined ? {} : { "X-Signal-Present": "provider-only" }),
     }));
     const fetchImpl = vi.fn<FetchImplementation>((_input, init) => {
       if (typeof init?.body !== "string") throw new Error("expected JSON request body");
@@ -249,9 +305,28 @@ describe("quote API v2 adapter", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get("x-api-key"))
       .toBe("synthetic-api-key");
+    const forwardedHeaders = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers);
+    expect(forwardedHeaders.get("authorization")).toBeNull();
+    expect(forwardedHeaders.get("x-tenant-id")).toBeNull();
+    expect(forwardedHeaders.get("x-custom")).toBeNull();
+    expect(forwardedHeaders.get("x-signal-present")).toBeNull();
     expect(requestSignal).toBeInstanceOf(AbortSignal);
     expect(provider.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
     expect(JSON.stringify(result)).not.toContain("synthetic-api-key");
+  });
+
+  it.each([
+    ["missing API key", { Authorization: "Bearer no-api-key" }],
+    ["duplicate API key names", { "X-API-Key": "one", "x-api-key": "two" }],
+  ] as const)("fails closed without fetching for %s", async (_label, headers) => {
+    const fetchImpl = vi.fn<FetchImplementation>();
+    const result = await adapter(fetchImpl, {
+      headerProvider: () => headers,
+    }).calculate(quoteInput(), context);
+
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("does not call upstream for missing context, invalid v2 evidence, or an unmapped warehouse", async () => {
@@ -262,6 +337,8 @@ describe("quote API v2 adapter", () => {
       ["zero volume", withCargo({ total_volume: { value: "0.000", unit: "cbm" } }), context],
       ["zero weight", withCargo({ weight_kg: { value: "0", unit: "kg" } }), context],
       ["zero longest side", withCargo({ longest_side: { value: "0", unit: "cm" } }), context],
+      ["decimal digit limit", withCargo({ total_volume: { value: "1".repeat(24), unit: "cbm" } }), context],
+      ["decimal length limit", withCargo({ total_volume: { value: "1".repeat(25), unit: "cbm" } }), context],
       ["piece count maximum", withCargo({ pieces: 100001 }), context],
       ["pallet count maximum", withCargo({ explicit_pallet_count: 10001 }), context],
       ["detention maximum", withServices({ detention_minutes: 10081 }), context],
@@ -277,6 +354,77 @@ describe("quote API v2 adapter", () => {
       expect(result.data, label).toBeNull();
     }
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("scopes warehouse origins to the execution tenant and rejects prototype keys", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn<FetchImplementation>((_input, init) => {
+      if (typeof init?.body !== "string") throw new Error("expected JSON request body");
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      requestBodies.push(body);
+      return Promise.resolve(
+        new Response(JSON.stringify(upstreamResponse({
+          origin: body.origin,
+          tenant: body.tenant_id,
+        }))),
+      );
+    });
+    const tenantB = { ...context, tenantId: "tenant_b" };
+    const scoped = adapter(fetchImpl, {
+      originByTenantWarehouse: {
+        [context.tenantId]: { "fixture-warehouse": "toronto" },
+        [tenantB.tenantId]: { "fixture-warehouse": "calgary" },
+      },
+    });
+
+    await expect(scoped.calculate(quoteInput(), context)).resolves.toMatchObject({ status: "success" });
+    await expect(scoped.calculate(quoteInput(), tenantB)).resolves.toMatchObject({ status: "success" });
+    expect(requestBodies.map((body) => body.origin)).toEqual(["toronto", "calgary"]);
+    expect(requestBodies.map((body) => body.tenant_id)).toEqual([context.tenantId, tenantB.tenantId]);
+
+    const unknownTenant = { ...context, tenantId: "tenant_c" };
+    const unavailable = await scoped.calculate(quoteInput(), unknownTenant);
+    expect(unavailable.status).toBe("needs_input");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    const prototypeKey = await adapter(vi.fn<FetchImplementation>(), {
+      originByTenantWarehouse: { [context.tenantId]: {} },
+    }).calculate(withOrigin("toString"), context);
+    expect(prototypeKey.status).toBe("needs_input");
+  });
+
+  it("exports the v2 runtime schemas and parses the projected result", async () => {
+    expect(quoteV2InputSchema.safeParse(quoteInput()).success).toBe(true);
+    const result = await adapter(responseFetch(upstreamResponse())).calculate(quoteInput(), context);
+
+    expect(result.status).toBe("success");
+    const validData = quoteV2ResultSchema.parse(result.data);
+    expect(validData).not.toHaveProperty("fees");
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
+      release_hash: `sha256:${"b".repeat(64)}`,
+    }).success).toBe(false);
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
+      effective_date: "2027-01-01",
+    }).success).toBe(false);
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
+      source_ref_ids: [SOURCE_ID, SOURCE_ID],
+    }).success).toBe(false);
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
+      total: { amount: "114.99", currency: "USD" },
+    }).success).toBe(false);
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
+      line_items: validData.line_items.map((line, index) => index === 0
+        ? { ...line, source_ref_ids: ["src:quote:snapshot:b"] }
+        : line),
+    }).success).toBe(false);
+
+    const manual = await adapter(responseFetch(manualResponse())).calculate(quoteInput(), context);
+    expect(quoteV2ResultSchema.safeParse(manual.data).success).toBe(true);
   });
 
   it.each([
@@ -432,6 +580,23 @@ describe("quote API v2 adapter", () => {
     ["test data", { test_data: true }],
     ["contract", { contract_version: "quote-zone.v1" }],
     ["available version", { version: "quote-result@fixture-1" }],
+    ["missing base fee", { fees: { fuel: fee("10.00"), total: fee("115.00") } }],
+    ["fee component sum", {
+      fees: {
+        base: fee("100.00"),
+        fuel: fee("10.00"),
+        appointment_fee: fee("6.00"),
+        total: fee("115.00"),
+      },
+    }],
+    ["fee total", {
+      fees: {
+        base: fee("100.00"),
+        fuel: fee("10.00"),
+        appointment_fee: fee("5.00"),
+        total: fee("116.00"),
+      },
+    }],
     ["release hash", { release_hash: "sha256:" + "b".repeat(64) }],
     ["quote version", { quote_version: "release-20260812-a:wrong:data" }],
     ["source id", { source_ref_ids: ["src:quote:snapshot:" + "b".repeat(64)] }],
@@ -463,23 +628,92 @@ describe("quote API v2 adapter", () => {
     expect(result.sourceRefs).toEqual([]);
   });
 
+  it("rejects non-empty fees on an available manual response", async () => {
+    const result = await adapter(responseFetch(manualResponse({ fees: { base: fee("100.00") } })))
+      .calculate(quoteInput(), context);
+
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+  });
+
   it("stays disabled by default and keeps draft writes disabled", async () => {
     const fetchImpl = vi.fn<FetchImplementation>();
     const disabled = new QuoteApiAdapter({
       baseUrl: BASE_URL,
       allowedHosts: ALLOWED_HOSTS,
-      originByWarehouse: { "fixture-warehouse": "toronto" },
+      originByTenantWarehouse: {
+        [context.tenantId]: { "fixture-warehouse": "toronto" },
+      },
       fetchImpl,
     });
 
-    await expect(disabled.calculate(quoteInput(), context)).resolves.toMatchObject({
+  await expect(disabled.calculate(quoteInput(), context)).resolves.toMatchObject({
       status: "unavailable",
       data: null,
     });
-    await expect(disabled.commitDraft({})).resolves.toMatchObject({
+    await expect(disabled.commitDraft(draftInput("commit", "preview:quote:disabled", "idem_disabled_quote_123456"))).resolves.toMatchObject({
       status: "unavailable",
-      data: null,
+      data: { operation_status: "rejected" },
     });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps disabled draft preview, commit, and read structured through the registered contract", async () => {
+    const fetchImpl = vi.fn<FetchImplementation>();
+    const quote = adapter(fetchImpl);
+    const bundle = createPhase1Bundle({ ...createFixtureAdapters(), quote });
+    const definition = registerPhaseOneTools(bundle.handlers, bundle.contracts).find(
+      (candidate) => candidate.name === "quote.save_draft",
+    );
+    if (definition === undefined) throw new Error("quote.save_draft was not registered");
+    const writeContext = { ...context, scopes: [...context.scopes, "quote:draft_write"] };
+    const repository = new MemoryIdempotencyRepository();
+
+    const preview = await executeRegisteredToolWithResult(
+      definition,
+      draftInput("preview", null, "idem_quote_disabled_preview_1"),
+      writeContext,
+      {
+        requestId: "req:quote:disabled:preview",
+        auditId: "audit:quote:disabled:preview",
+        idempotencyRepository: repository,
+      },
+    );
+    expect(preview.envelope.status).toBe("unavailable");
+    expect(preview.envelope.data).toMatchObject({
+      operation: "quote.save_draft",
+      operation_status: "rejected",
+    });
+    writeResultSchema.parse(preview.envelope.data);
+
+    const commit = await executeRegisteredToolWithResult(
+      definition,
+      draftInput("commit", "preview:quote:disabled", "idem_quote_disabled_commit_1"),
+      writeContext,
+      {
+        requestId: "req:quote:disabled:commit",
+        auditId: "audit:quote:disabled:commit",
+        idempotencyRepository: repository,
+      },
+    );
+    expect(commit.envelope.status).toBe("unavailable");
+    expect(commit.envelope.data).toMatchObject({
+      operation: "quote.save_draft",
+      operation_status: "rejected",
+    });
+    writeResultSchema.parse(commit.envelope.data);
+
+    const read = await quote.readDraft({
+      record_id: "draft:disabled",
+      tenant_id: context.tenantId,
+      write_context: draftInput("preview", null, "idem_quote_disabled_read_1").write_context,
+    });
+    expect(read.status).toBe("unavailable");
+    expect(read.data).toMatchObject({
+      operation: "quote.save_draft",
+      operation_status: "rejected",
+    });
+    writeResultSchema.parse(read.data);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
