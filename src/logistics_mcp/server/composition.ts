@@ -269,20 +269,46 @@ function compositionTools(adapters: FixtureAdapters): CompositionTools {
     }),
     envelopeSchema.extend({
       status: z.enum(["needs_input", "manual_review", "blocked", "unavailable"]),
-      data: quoteCreatePdfWriteResultSchema.nullable(),
+      data: z.null(),
       blockers: envelopeSchema.shape.blockers.min(1),
     }),
   ]);
   const quotePdfEnvelopeSchema = envelopeSchema
     .extend({ data: quoteCreatePdfWriteResultSchema.nullable() })
     .superRefine((envelope, refinement) => {
-      if (
-        envelope.status === "success" &&
-        !quotePdfEnvelopeBranches.safeParse(envelope).success
-      ) {
+      if (!quotePdfEnvelopeBranches.safeParse(envelope).success) {
         refinement.addIssue({
           code: "custom",
           message: "quote PDF success must contain a valid preview or commit result",
+        });
+      }
+      if (envelope.status !== "success") return;
+      const sourceIds = envelope.source_refs.map((source) => source.source_id);
+      const data = envelope.data as Record<string, unknown>;
+      const readback = data.readback_evidence;
+      const rawDataIds = data.source_ref_ids;
+      const dataIds = Array.isArray(rawDataIds)
+        ? rawDataIds.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+      const rawReadbackIds = typeof readback === "object" && readback !== null && !Array.isArray(readback)
+        ? (readback as Record<string, unknown>).source_ref_ids
+        : null;
+      const readbackIds = Array.isArray(rawReadbackIds)
+        ? rawReadbackIds.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+      const referencedIds = [
+        ...dataIds,
+        ...readbackIds,
+        ...envelope.calculation_trace.flatMap((step) => step.source_ref_ids),
+      ];
+      const referencedSet = new Set(referencedIds);
+      const sourceIdsClosed = new Set(sourceIds).size === sourceIds.length &&
+        referencedSet.size === sourceIds.length &&
+        [...referencedSet].every((sourceId) => sourceIds.includes(sourceId));
+      if (!sourceIdsClosed) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote PDF source IDs must match the outer source refs exactly",
         });
       }
     })
@@ -454,7 +480,7 @@ export function createFixtureComposition(
     idempotencyRepository: platform.idempotencyRepository,
     sessionRegistry: platform.sessionRegistry,
     maxBodyBytes: options.maxBodyBytes ?? 32 * 1024,
-    requestTimeoutMs: options.requestTimeoutMs ?? 10_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
     requireHttps: true,
   });
   return buildComposition(
@@ -568,7 +594,7 @@ export function createProductionComposition(
           sessionBindingStore: platform.dependencies.sessionBindingStore,
           sessionOwnerId: options.sessionOwnerId!,
           maxBodyBytes: options.maxBodyBytes ?? 32 * 1024,
-          requestTimeoutMs: options.requestTimeoutMs ?? 10_000,
+          requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
           requireHttps: true,
         });
 

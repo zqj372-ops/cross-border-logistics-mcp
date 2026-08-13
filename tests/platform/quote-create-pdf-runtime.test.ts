@@ -100,19 +100,20 @@ function request(body: unknown, sessionId?: string): Request {
   });
 }
 
-function livePdfOutcome(input: unknown, mismatch = false): DomainToolOutcome {
+function livePdfOutcome(input: unknown, mode: "normal" | "mismatch" | "non_success_data" | "unknown_trace" | "unknown_data" | "extra_source" | "empty_trace" = "normal"): DomainToolOutcome {
   const value = input as {
     write_context: {
       idempotency_key: string;
       operation_mode: "preview" | "commit";
       preview_ref: string | null;
+      approval: { approval_id: string | null };
     };
   };
   const writeContext = value.write_context;
   const sourceId = writeContext.operation_mode === "preview"
     ? "src:quote:platform-live"
     : "src:pdf:platform-live";
-  const operationStatus = mismatch
+  const operationStatus = mode === "mismatch"
     ? "previewed"
     : writeContext.operation_mode === "preview"
       ? "previewed"
@@ -148,7 +149,7 @@ function livePdfOutcome(input: unknown, mismatch = false): DomainToolOutcome {
           approval: {
             required: true,
             status: "approved",
-            approval_id: "approval:platform-live",
+            approval_id: writeContext.approval.approval_id,
           },
         },
     sourceRefs: [{
@@ -160,13 +161,24 @@ function livePdfOutcome(input: unknown, mismatch = false): DomainToolOutcome {
       retrieved_at: "2026-08-14T00:00:00Z",
       authority: "authoritative",
       content_hash: null,
-    }],
+    }, ...(mode === "extra_source" ? [{
+      source_id: "src:extra:outer",
+      source_type: "opaque_reference" as const,
+      system: "quote-pdf-api",
+      locator: "opaque://extra-outer",
+      version: "quote-pdf@extra-outer",
+      retrieved_at: "2026-08-14T00:00:00Z",
+      authority: "authoritative" as const,
+      content_hash: null,
+    }] : [])],
     calculationTrace: [{
       step_id: "step:quote:platform-live",
       operation: "preserve PDF evidence",
       inputs: [],
       result: "verified",
-      source_ref_ids: [sourceId],
+      source_ref_ids: mode === "unknown_trace"
+        ? [sourceId, "src:unknown:trace"]
+        : mode === "empty_trace" ? [] : [sourceId],
       rounding: null,
     }],
   };
@@ -292,14 +304,53 @@ describe("quote.create_pdf platform registration", () => {
         "quote.create_pdf": (input) => {
           const key = (input as { write_context: { idempotency_key: string } })
             .write_context.idempotency_key;
-          const outcome = livePdfOutcome(input, key === "pdf_sdk_mismatch_001");
-          if (key !== "pdf_sdk_bad_data_001" || outcome.data === null) {
-            return outcome;
+          const mode = key === "pdf_sdk_mismatch_001"
+            ? "mismatch"
+            : key === "pdf_sdk_bad_data_001"
+              ? "normal"
+              : key === "pdf_sdk_approval_mismatch_001"
+                ? "normal"
+                : key === "pdf_sdk_non_success_data_001"
+                  ? "non_success_data"
+                  : key === "pdf_sdk_unknown_trace_001"
+                    ? "unknown_trace"
+                    : key === "pdf_sdk_unknown_data_001"
+                      ? "unknown_data"
+                    : key === "pdf_sdk_extra_source_001"
+                        ? "extra_source"
+                        : key === "pdf_sdk_empty_trace_001"
+                          ? "empty_trace"
+                        : "normal";
+          const outcome = livePdfOutcome(input, mode);
+          if (key === "pdf_sdk_bad_data_001" && outcome.data !== null) {
+            return { ...outcome, data: { ...outcome.data, unexpected: true } };
           }
-          return {
-            ...outcome,
-            data: { ...outcome.data, unexpected: true },
-          };
+          if (key === "pdf_sdk_approval_mismatch_001" && outcome.data !== null) {
+            return {
+              ...outcome,
+              data: {
+                ...outcome.data,
+                approval: { required: true, status: "approved", approval_id: "approval:other" },
+              },
+            };
+          }
+          if (key === "pdf_sdk_non_success_data_001") {
+            return {
+              ...outcome,
+              status: "manual_review",
+              blockers: [{ code: "fixture.manual_review", message: "manual review", severity: "error" as const }],
+            };
+          }
+          if (key === "pdf_sdk_unknown_data_001" && outcome.data !== null && outcome.data.readback_evidence !== null) {
+            return {
+              ...outcome,
+              data: {
+                ...outcome.data,
+                readback_evidence: { ...outcome.data.readback_evidence, source_ref_ids: ["src:unknown:data"] },
+              },
+            };
+          }
+          return outcome;
         },
       },
       contracts: composition.contracts,
@@ -354,7 +405,16 @@ describe("quote.create_pdf platform registration", () => {
         },
       });
 
-      const unknownRoot = await call(4, {
+      const emptyTraceCommit = await call(4, pdfInput("commit", "pdf_sdk_empty_trace_001"));
+      const emptyTraceBody = await emptyTraceCommit.json() as {
+        result?: { structuredContent?: Record<string, unknown> };
+      };
+      expect(emptyTraceBody.result?.structuredContent).toMatchObject({
+        status: "success",
+        data: { operation_status: "committed" },
+      });
+
+      const unknownRoot = await call(5, {
         ...pdfInput("preview", "pdf_sdk_unknown_001"),
         unexpected: true,
       });
@@ -367,7 +427,7 @@ describe("quote.create_pdf platform registration", () => {
           unknownBody.result?.structuredContent?.status !== "success",
       ).toBe(true);
 
-      const badData = await call(5, pdfInput("preview", "pdf_sdk_bad_data_001"));
+      const badData = await call(6, pdfInput("preview", "pdf_sdk_bad_data_001"));
       const badDataBody = await badData.json() as {
         result?: { structuredContent?: Record<string, unknown> };
       };
@@ -376,7 +436,7 @@ describe("quote.create_pdf platform registration", () => {
         data: null,
       });
 
-      const mismatch = await call(6, pdfInput("commit", "pdf_sdk_mismatch_001"));
+      const mismatch = await call(7, pdfInput("commit", "pdf_sdk_mismatch_001"));
       const mismatchBody = await mismatch.json() as {
         result?: { structuredContent?: Record<string, unknown> };
       };
@@ -384,6 +444,39 @@ describe("quote.create_pdf platform registration", () => {
         status: "manual_review",
         data: null,
       });
+
+      const approvalMismatch = await call(8, pdfInput("commit", "pdf_sdk_approval_mismatch_001"));
+      const approvalMismatchBody = await approvalMismatch.json() as {
+        result?: { structuredContent?: Record<string, unknown> };
+      };
+      expect(approvalMismatchBody.result?.structuredContent).toMatchObject({
+        status: "manual_review",
+        data: null,
+      });
+
+      const nonSuccessData = await call(9, pdfInput("preview", "pdf_sdk_non_success_data_001"));
+      const nonSuccessDataBody = await nonSuccessData.json() as {
+        result?: { structuredContent?: Record<string, unknown> };
+      };
+      expect(nonSuccessDataBody.result?.structuredContent).toMatchObject({
+        status: "manual_review",
+        data: null,
+      });
+
+      for (const [id, key] of [
+        [10, "pdf_sdk_unknown_trace_001"],
+        [11, "pdf_sdk_unknown_data_001"],
+        [12, "pdf_sdk_extra_source_001"],
+      ] as const) {
+        const invalidEvidence = await call(id, pdfInput("commit", key));
+        const invalidEvidenceBody = await invalidEvidence.json() as {
+          result?: { structuredContent?: Record<string, unknown> };
+        };
+        expect(invalidEvidenceBody.result?.structuredContent).toMatchObject({
+          status: "manual_review",
+          data: null,
+        });
+      }
     } finally {
       await handler.close();
       await composition.close();

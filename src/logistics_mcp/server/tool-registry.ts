@@ -228,10 +228,18 @@ export function registerPhaseOneTools(
   });
 }
 
+interface WriteApproval {
+  readonly required: boolean;
+  readonly status: string;
+  readonly approvalId: string | null;
+}
+
 interface WriteRequest {
+  readonly toolName: PhaseOneToolName;
   readonly idempotencyKey: string;
   readonly operationMode: "preview" | "commit";
   readonly previewRef: string | null;
+  readonly approval: WriteApproval;
 }
 
 type WriteToolName =
@@ -381,10 +389,21 @@ function parseWriteRequest(
     );
   }
 
+  const parsedApproval: WriteApproval = {
+    required: approval.required,
+    status: typeof approval.status === "string" ? approval.status : "",
+    approvalId:
+      typeof approval.approval_id === "string" || approval.approval_id === null
+        ? approval.approval_id
+        : null,
+  };
+
   return {
+    toolName,
     idempotencyKey,
     operationMode,
     previewRef: typeof previewRef === "string" ? previewRef : null,
+    approval: parsedApproval,
   };
 }
 
@@ -393,6 +412,9 @@ function validateToolOutput(
   outcome: DomainToolOutcome,
 ): void {
   if (outcome.status === "success" && outcome.data === null) {
+    throw new ToolContractValidationError();
+  }
+  if (definition.name === "quote.create_pdf" && outcome.status !== "success" && outcome.data !== null) {
     throw new ToolContractValidationError();
   }
   if (outcome.data === null) {
@@ -443,6 +465,21 @@ function validateWriteOutcome(
       "manual_review",
       "The write result idempotency key does not match the request.",
     );
+  }
+  if (request.toolName === "quote.create_pdf") {
+    const approval = outcome.data.approval;
+    if (
+      !isRecord(approval) ||
+      approval.required !== request.approval.required ||
+      approval.status !== request.approval.status ||
+      approval.approval_id !== request.approval.approvalId
+    ) {
+      throw writeContractError(
+        "write_result.approval_mismatch",
+        "manual_review",
+        "The write result approval does not match the request.",
+      );
+    }
   }
   if (request.operationMode === "preview") {
     if (
