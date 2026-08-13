@@ -32,6 +32,20 @@ SQLite binding store。
 关务每次走 status→query；PDF 走 POST→GET readback 并只返回 opaque ref/hash。
 详细跟踪见 [生产激活 Issue](https://github.com/zqj372-ops/cross-border-logistics-mcp/issues/2)。
 
+## Quote PDF 配置交接
+
+正式接线只接受五个服务端变量：`MCP_QUOTE_PDF_ENABLED`、`MCP_QUOTE_PDF_BASE_URL`、
+`MCP_QUOTE_PDF_ALLOWED_HOSTS`、`MCP_QUOTE_PDF_TENANT_ID` 和
+`MCP_QUOTE_PDF_BEARER_TOKEN`。默认 `MCP_QUOTE_PDF_ENABLED=false`；后四项在 disabled
+时可以为空，启用时由 `start.ts` 严格校验。地址必须是 HTTPS 非 loopback，主机必须精确命中
+allowlist；tenant 是单公司服务端映射；Bearer 只由 secret manager 注入，客户端不提供
+URL、token、tenant 或 actor。
+
+PDF adapter 固定使用 `/v2/quote-pdfs` POST 和 document readback GET；base URL 的 path/query
+会被固定路径覆盖，建议只填 origin。应用不做 DNS pinning，解析后的目的 IP 防护由 egress
+proxy/firewall 负责。启用证据必须包含 Quote preview、PDF POST `201/200`、同 key replay
+恢复、GET exact readback、`sendable=false` 以及跨租户零请求；否则保持 unavailable/disabled。
+
 ## 精确验证命令
 
 ```bash

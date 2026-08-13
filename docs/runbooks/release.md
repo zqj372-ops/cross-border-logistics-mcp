@@ -23,6 +23,8 @@ No automatic send, publish, or booking path is included.
    `ready=false` 原样保持 `unavailable`/`manual_review`，不得伪 ready。
 8. **write preview/commit**：只用隔离 fixture/sandbox 验证已登记写工具的 preview、审批、
    commit、幂等和写后 readback；报价单仍保持不可发送，HTTP 成功码不等于业务成功。
+   `quote.create_pdf` 还必须验证 Quote preview → PDF POST `201/200`/同 key replay → GET
+   exact readback、跨租户零请求和 `sendable=false`；未取得完整 staging 证据时保持默认关闭。
 9. **audit review**：检查 audit_id、脱敏、tenant/actor、版本、状态、幂等 outcome 和
    readback status；审计失败必须 fail-closed。
 10. **client smoke**：先用实际企业身份源的脱敏短时 token 验证 claims 映射，再检查
@@ -38,6 +40,13 @@ docker compose --env-file deploy/env.example -f deploy/compose.yml config
 ```
 
 `--fixture-only` 只做本地只读/隔离验证，不访问网络、不打印密钥，也不启动容器。
+
+Quote PDF 的五个运行时变量为 `MCP_QUOTE_PDF_ENABLED`、`MCP_QUOTE_PDF_BASE_URL`、
+`MCP_QUOTE_PDF_ALLOWED_HOSTS`、`MCP_QUOTE_PDF_TENANT_ID` 和
+`MCP_QUOTE_PDF_BEARER_TOKEN`。Compose 用空默认值透传可选配置，enabled 默认 false；
+只有显式启用且 HTTPS/非 loopback/精确 allowlist/单公司 tenant/secret injection 与 staging
+写后读回证据全部通过，才可由另行批准的变更启用。不要把 URL、token、tenant 或 actor 写入
+客户端模板、镜像参数、label 或日志。
 
 Admin 控制台的静态路由在 MCP bearer auth 之前。只有在批准的企业身份网关/访问控制之后才允许
 开启 `MCP_ADMIN_UI_ENABLED=true`，不能直接公网暴露。当前只读 snapshot 仅允许本机回环访问且不返回

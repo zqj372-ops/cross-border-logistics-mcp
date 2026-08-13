@@ -41,6 +41,7 @@ describe("state-aware client examples", () => {
       expect(content).toContain("https://mcp.example.invalid/mcp");
       expect(content).not.toMatch(/(?:sk-|ghp_|AIza|-----BEGIN|Bearer\s+[A-Za-z0-9_-]{20,})/i);
       expect(content).not.toMatch(/commit_operation|send_quote|publish|booking\.submit/i);
+      expect(content).not.toMatch(/MCP_QUOTE_PDF|v2\/quote-pdfs|tenant_id|actor_id/i);
     }
   });
 

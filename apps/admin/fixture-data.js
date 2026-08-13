@@ -219,7 +219,7 @@ export const fixtureSnapshot = {
       last_checked_at: "2026-08-12 09:32",
       last_success_at: null,
       affected_tools: ["quote.create_pdf"],
-      registration_status: "已登记，正式连接未启用/不可用",
+      registration_status: "工具已登记，正式连接未启用",
       readiness: "unavailable",
       reason: "接口已完成，等待正式HTTPS地址与租户凭证验证。",
       blocker: "正式连接未启用；不发起外部请求，也不显示报价单内容。",

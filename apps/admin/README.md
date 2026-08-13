@@ -37,7 +37,7 @@ GET /admin/api/v1/snapshot
 - 页面只展示接口、凭证和版本证据是否已配置；不展示具体引用值、版本号、原始凭证、客户内容、报价明细或税务材料。
 - 一个业务 API 不可达只关闭其 `affected_tools`；只有身份、审计、session 等平台基础设施故障才影响全局 `/readyz`，来源卡不会被汇总为整个 MCP 健康。
 - 角色和 Phase 1 工具只按已校验快照中的平台 RBAC 展示；快照缺失时不生成默认权限，不能从页面新增 generic write。
-- `#architecture` 只把已校验快照中的 clients、tools、sources 和 `approvals.chain` 画成静态关系：clients → MCP 控制层 → 两类执行 → sources。本地确定性执行明确列出货物和装柜计算；外部接口窄适配明确关联智能报价、关务查询和报价单；报价单来源虽已登记但不可用，不生成可用连接。未知/空/异常名称仍保留在平台支持/其他工具中。
+- `#architecture` 只把已校验快照中的 clients、tools、sources 和 `approvals.chain` 画成静态关系：clients → MCP 控制层 → 两类执行 → sources。本地确定性执行明确列出货物和装柜计算；外部接口窄适配明确关联智能报价、关务查询和报价单；报价单来源显示“工具已登记，正式连接未启用”，但不可用且不生成可用连接。未知/空/异常名称仍保留在平台支持/其他工具中。
 - 结构图不证明真实网络连通、认证已接通或正式配置生效；tool allowlist、client check、source readiness、approval 状态分别展示，不汇总为“系统健康”或“可发布”。节点详情只显示脱敏字段，`secret_ref` 仅作引用，实际 endpoint、凭证、客户内容和下游响应不显示。
 - 真实写操作必须经过 `draft → validate/preview → approval → publish → readback/rollback`；本原型没有正式写 API，因此不伪造成功。
 

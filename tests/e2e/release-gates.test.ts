@@ -106,4 +106,25 @@ exec '${realNode}' "$@"
       rmSync(bin, { recursive: true, force: true });
     }
   });
+
+  it("documents disabled-by-default quote PDF deployment gates", () => {
+    const deployReadme = read("deploy/README.md");
+    const env = read("deploy/env.example");
+    const compose = read("deploy/compose.yml");
+    for (const name of [
+      "MCP_QUOTE_PDF_ENABLED",
+      "MCP_QUOTE_PDF_BASE_URL",
+      "MCP_QUOTE_PDF_ALLOWED_HOSTS",
+      "MCP_QUOTE_PDF_TENANT_ID",
+      "MCP_QUOTE_PDF_BEARER_TOKEN",
+    ]) {
+      expect(deployReadme).toContain(name);
+      expect(env).toContain(name);
+      expect(compose).toContain(name);
+    }
+    expect(deployReadme).toMatch(/HTTPS.*allowlist|allowlist.*HTTPS/i);
+    expect(deployReadme).toMatch(/preview[\s\S]*POST[\s\S]*GET|POST[\s\S]*GET[\s\S]*readback/i);
+    expect(deployReadme).toMatch(/cross.?tenant.*zero|跨租户.*零请求/i);
+    expect(deployReadme).toMatch(/默认.*false|false.*默认/i);
+  });
 });

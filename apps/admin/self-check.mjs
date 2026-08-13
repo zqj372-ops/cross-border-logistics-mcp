@@ -118,7 +118,7 @@ assert.match(businessSources.find((source) => source.business_key === "customs")
 assert.deepEqual(businessSources.find((source) => source.business_key === "customs").affected_tools, ["customs.ca.search", "customs.ca.estimate"]);
 assert.equal(businessSources.find((source) => source.business_key === "customs").registration_status, "工具约定已注册，接口连接未启用");
 assert.match(businessSources.find((source) => source.business_key === "customs").reason, /当前接口未提供正式税额估算/);
-assert.equal(businessSources.find((source) => source.business_key === "pdf").registration_status, "已登记，正式连接未启用/不可用");
+assert.equal(businessSources.find((source) => source.business_key === "pdf").registration_status, "工具已登记，正式连接未启用");
 assert.deepEqual(businessSources.find((source) => source.business_key === "pdf").affected_tools, ["quote.create_pdf"]);
 assert.match(businessSources.find((source) => source.business_key === "pdf").reason, /接口已完成.*正式HTTPS地址.*租户凭证验证/);
 assert.match(businessSources.find((source) => source.business_key === "pdf").blocker, /正式连接未启用/);
@@ -201,13 +201,13 @@ assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf")
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf").sourceReadiness, "unavailable");
 assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf").availability, "unavailable");
 assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").readiness, "unavailable");
-assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").registrationStatus, "已登记，正式连接未启用/不可用");
+assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").registrationStatus, "工具已登记，正式连接未启用");
 assert.ok(!fixtureSnapshot.tools.some((tool) => tool.name.startsWith("pdf.")));
 
 const renderedViews = ["overview", "clients", "tools", "adapters", "architecture", "approvals", "audit"];
 const renderedFixtureHtml = renderedViews.map((view) => renderSnapshotForSelfCheck(fixtureSnapshot, view)).join("\n");
 assert.match(renderedFixtureHtml, /生成内部报价单/);
-assert.match(renderedFixtureHtml, /已登记，正式连接未启用\/不可用/);
+assert.match(renderedFixtureHtml, /工具已登记，正式连接未启用/);
 assert.match(renderedFixtureHtml, /10 个工具/);
 
 const maliciousSnapshot = {

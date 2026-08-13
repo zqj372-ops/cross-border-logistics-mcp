@@ -20,7 +20,8 @@ Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人
 已登记的十个工具是：`cargo.calculate`、`container.plan_summary`、
 `quote.canada_final_mile.calculate`、`quote.create_pdf`、`quote.save_draft`、
 `customs.ca.search`、`customs.ca.estimate`、`knowledge.search_curated`、
-`system.get_data_status`、`review.create_task`。报价单工具当前不可用，正式连接未启用；
+`system.get_data_status`、`review.create_task`。报价单工具当前显示“工具已登记，正式连接未启用”，
+仍不可用且失败闭合；
 不存在 `commit_operation`、send、publish、booking 或通用写工具。
 
 客户端必须按统一 envelope 处理：
@@ -41,3 +42,7 @@ Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人
    `quote.create_pdf` 仅验证不可发送的报价单结果和精确读回边界，不得发送、发布、订舱或写生产。
 5. 保存响应、审计 ID、工具版本和管理员批准记录；ChatGPT Work 插件和
    企业助手必须在 staging 通过身份、权限、审批和状态处理验收后再开放。
+
+客户端模板只列出 `quote.create_pdf` 工具，不配置 PDF URL、Bearer、tenant 或 actor；五个
+`MCP_QUOTE_PDF_*` 变量只属于服务端部署环境。正式启用仍需 Quote preview、PDF POST/replay、
+GET exact readback、跨租户零请求和中文 admin 状态验收。
