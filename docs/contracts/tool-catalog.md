@@ -240,14 +240,17 @@ trade_treatment: string|null, required
 
 ```text
 schema_version: 2026-08-11.v1, required
+version: quote-create-pdf-request@2026-08-14.v1, required
 quote_request: quote-request-v2.schema.json, required
 presentation: { customer_display_name: string, 1–200 }, required
-write_context: common.schema.json#/$defs/WriteContext, required
+write_context: { idempotency_key, operation_mode, preview_ref, approval }, required
 ```
 
-根、`presentation` 和所有新增 object 均为 `additionalProperties=false`。`quote_request` 直接引用现有 quote v2 请求，模型不能传 `total`、`line_items`、金额、logo、path、html、url、公开 `tenant_id` 或其他未声明字段；完整地址、附件和敏感正文只能使用既有 opaque reference。网关请求体上限为 32 KiB。
+根、`presentation`、`write_context`、approval 和所有新增 object 均为 `additionalProperties=false`。`write_context` 是本工具专属闭合对象，不是含 `tenant_context` 的 common `WriteContext`；preview 时 `preview_ref=null`，commit 时 `preview_ref` 必须为 Identifier 且 approval 必须为 `required=true/status=approved/approval_id=Identifier`。`quote_request` 直接引用现有 quote v2 请求，模型不能传 `total`、`line_items`、金额、logo、path、html、url、公开 `tenant_id` 或其他未声明字段；wrapper 也不接受 `tenant_context`、`tenant_id`、`actor_id`、`client_id`、`session_id`。网关请求体上限为 32 KiB。
 
-**输出 Schema：** `write-result-v2.schema.json`（`$id` 为 `2026-08-13`，`version=write-result@2026-08-13.v2`，operation 固定为 `quote.create_pdf`）；外层使用 `quote-create-pdf-envelope.schema.json`。旧 `write-result.schema.json` 的 `$id`、字节和 operation 接受集合不变，不建立 PDF 结果大 Schema。preview 返回 `operation_status=previewed`、opaque `preview_ref`、`record_id=null` 和无 readback；commit success 返回 `operation_status=committed` 或已知重放的 `already_committed`，`record_id` 为 PDF document reference，`readback_evidence.verified=true`。
+task02 必须从服务端认证的 `ExecutionContext` 注入并校验 tenant、actor、client、session 和 RBAC；不得从客户端 wrapper 读取身份字段。旧 `quote.save_draft` 等 legacy 工具的旧 `WriteContext` 语义保持不变，不适用于 `quote.create_pdf`。
+
+**输出 Schema：** `write-result-v2.schema.json`（`$id` 为 `2026-08-13`，`version=write-result@2026-08-13.v2`，operation 固定为 `quote.create_pdf`）；外层使用 `quote-create-pdf-envelope.schema.json`。旧 `write-result.schema.json` 的 `$id`、字节和 operation 接受集合不变，不建立 PDF 结果大 Schema。Schema 条件强制 previewed 为 `record_id=null/readback=null`，committed/already_committed 为 Identifier 和 `readback_evidence.verified=true`；success envelope 必须有非空 data、source_refs、calculation_trace 且无 blockers。preview 返回 `operation_status=previewed`、opaque `preview_ref`；commit success 返回 `operation_status=committed` 或已知重放的 `already_committed`，`record_id` 为 PDF document reference。
 
 **Preview → commit：** preview 只调用 AI Quote `/quotes/zone-preview` v2，形成服务端 candidate hash，零 PDF POST，不把金额/line items 回显模型。commit 必须同 tenant、request、presentation、`preview_ref` 且 approval 为 approved；服务端重新调用 AI Quote，候选或发布 evidence 漂移为 `manual_review`。只有重新得到权威 quote success 后，服务端才投影权威 USD line items，并固定内部 `sendable=false`。
 
@@ -259,7 +262,7 @@ Preview 和 commit 必须使用不同的平台幂等键：preview 用 `P`，comm
 
 ### `quote.save_draft`
 
-这是唯一允许保存报价系统草稿的 Phase 1 工具之一，目标系统必须是经发布且通过合同核验的报价系统草稿/记录边界；当前没有已核验的生产写端点。
+这是唯一允许保存报价系统草稿的 Phase 1 工具之一，目标系统必须是经发布且通过合同核验的报价系统草稿/记录边界；当前没有已核验的生产写端点。以下旧 `WriteContext` 仅适用于该 legacy 工具，不适用于 `quote.create_pdf`。
 
 **当前状态**
 

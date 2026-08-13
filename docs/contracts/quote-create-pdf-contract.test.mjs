@@ -43,13 +43,6 @@ const quoteRequest = readJson(join(contractsDir, "examples", "v2", "quote-reques
 const previewIdempotencyKey = "idem-preview-key-001";
 const commitIdempotencyKey = "idem-commit-key-001";
 const writeContext = {
-  tenant_context: {
-    tenant_id: "tenant_demo",
-    actor_id: "actor_sales",
-    actor_role: "sales",
-    client_id: "client_demo",
-    session_id: "session_demo",
-  },
   idempotency_key: previewIdempotencyKey,
   operation_mode: "preview",
   preview_ref: null,
@@ -58,6 +51,7 @@ const writeContext = {
 
 const request = {
   schema_version: "2026-08-11.v1",
+  version: "quote-create-pdf-request@2026-08-14.v1",
   quote_request: quoteRequest,
   presentation: { customer_display_name: "Example Customer" },
   write_context: writeContext,
@@ -80,6 +74,18 @@ const commitRetryRequest = structuredClone(commitRequest);
 assert.equal(commitRetryRequest.write_context.idempotency_key, commitIdempotencyKey);
 assert.equal(commitRequest.write_context.idempotency_key, commitIdempotencyKey);
 
+const previewWithRef = structuredClone(request);
+previewWithRef.write_context.preview_ref = "preview:quote-pdf:unexpected";
+rejects(requestSchemaId, previewWithRef);
+
+const commitWithoutPreview = structuredClone(commitRequest);
+commitWithoutPreview.write_context.preview_ref = null;
+rejects(requestSchemaId, commitWithoutPreview);
+
+const commitUnapproved = structuredClone(commitRequest);
+commitUnapproved.write_context.approval.status = "pending";
+rejects(requestSchemaId, commitUnapproved);
+
 for (const field of ["total", "line_items", "logo", "path", "html", "url"]) {
   const invalid = structuredClone(request);
   invalid.quote_request[field] = field === "line_items" ? [] : "forbidden";
@@ -89,6 +95,18 @@ for (const field of ["total", "line_items", "logo", "path", "html", "url"]) {
 const invalidPresentation = structuredClone(request);
 invalidPresentation.presentation.logo = "forbidden";
 rejects(requestSchemaId, invalidPresentation);
+
+for (const [field, value] of [
+  ["tenant_context", { tenant_id: "tenant_demo", actor_id: "actor_sales" }],
+  ["tenant_id", "tenant_must_be_server_injected"],
+  ["actor_id", "actor_must_be_server_injected"],
+  ["client_id", "client_must_be_server_injected"],
+  ["session_id", "session_must_be_server_injected"],
+]) {
+  const invalid = structuredClone(request);
+  invalid.write_context[field] = value;
+  rejects(requestSchemaId, invalid);
+}
 
 const invalidTopLevel = structuredClone(request);
 invalidTopLevel.tenant_id = "tenant_must_be_server_injected";
@@ -117,6 +135,29 @@ const writeResult = {
 };
 validate(writeResultV2SchemaId, writeResult);
 rejects(writeResultV1SchemaId, writeResult);
+
+const previewResult = structuredClone(writeResult);
+previewResult.operation_status = "previewed";
+previewResult.record_id = null;
+previewResult.readback_evidence = null;
+validate(writeResultV2SchemaId, previewResult);
+
+const alreadyCommittedResult = structuredClone(writeResult);
+alreadyCommittedResult.operation_status = "already_committed";
+validate(writeResultV2SchemaId, alreadyCommittedResult);
+
+const committedWithoutRecord = structuredClone(writeResult);
+delete committedWithoutRecord.record_id;
+rejects(writeResultV2SchemaId, committedWithoutRecord);
+
+const committedWithoutReadback = structuredClone(writeResult);
+delete committedWithoutReadback.readback_evidence;
+rejects(writeResultV2SchemaId, committedWithoutReadback);
+
+const unverifiedCommitted = structuredClone(writeResult);
+unverifiedCommitted.readback_evidence.verified = false;
+rejects(writeResultV2SchemaId, unverifiedCommitted);
+
 validate(
   writeResultV1SchemaId,
   readJson(join(contractsDir, "examples", "success-quote-save-draft.json")).data,
@@ -146,7 +187,7 @@ const sourceRefs = [
     authority: "authoritative",
   },
 ];
-validate(quotePdfEnvelopeSchemaId, {
+const successEnvelope = {
   schema_version: "2026-08-11.v1",
   request_id: "req_quote_create_pdf_001",
   status: "success",
@@ -169,6 +210,23 @@ validate(quotePdfEnvelopeSchemaId, {
   }],
   review_status: "not_required",
   audit_id: "audit_quote_create_pdf_001",
-});
+};
+validate(quotePdfEnvelopeSchemaId, successEnvelope);
+
+const successWithoutData = structuredClone(successEnvelope);
+successWithoutData.data = null;
+rejects(quotePdfEnvelopeSchemaId, successWithoutData);
+
+const successWithoutSourceRefs = structuredClone(successEnvelope);
+successWithoutSourceRefs.source_refs = [];
+rejects(quotePdfEnvelopeSchemaId, successWithoutSourceRefs);
+
+const successWithoutTrace = structuredClone(successEnvelope);
+successWithoutTrace.calculation_trace = [];
+rejects(quotePdfEnvelopeSchemaId, successWithoutTrace);
+
+const successWithBlocker = structuredClone(successEnvelope);
+successWithBlocker.blockers = [successEnvelope.warnings[0]];
+rejects(quotePdfEnvelopeSchemaId, successWithBlocker);
 
 console.log("quote.create_pdf contract checks passed");

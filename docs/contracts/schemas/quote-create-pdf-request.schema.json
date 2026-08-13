@@ -4,9 +4,10 @@
   "title": "Quote PDF creation request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "quote_request", "presentation", "write_context"],
+  "required": ["schema_version", "version", "quote_request", "presentation", "write_context"],
   "properties": {
     "schema_version": { "const": "2026-08-11.v1" },
+    "version": { "const": "quote-create-pdf-request@2026-08-14.v1" },
     "quote_request": {
       "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-request-v2.schema.json"
     },
@@ -19,7 +20,57 @@
       }
     },
     "write_context": {
-      "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/WriteContext"
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "operation_mode", "preview_ref", "approval"],
+      "properties": {
+        "idempotency_key": { "type": "string", "minLength": 16, "maxLength": 200 },
+        "operation_mode": { "type": "string", "enum": ["preview", "commit"] },
+        "preview_ref": {
+          "oneOf": [
+            { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+            { "type": "null" }
+          ]
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required", "status", "approval_id"],
+          "properties": {
+            "required": { "type": "boolean" },
+            "status": { "type": "string", "enum": ["not_required", "pending", "approved", "rejected"] },
+            "approval_id": {
+              "oneOf": [
+                { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+                { "type": "null" }
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["operation_mode"], "properties": { "operation_mode": { "const": "preview" } } },
+          "then": { "properties": { "preview_ref": { "type": "null" } } }
+        },
+        {
+          "if": { "required": ["operation_mode"], "properties": { "operation_mode": { "const": "commit" } } },
+          "then": {
+            "properties": {
+              "preview_ref": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+              "approval": {
+                "type": "object",
+                "required": ["required", "status", "approval_id"],
+                "properties": {
+                  "required": { "const": true },
+                  "status": { "const": "approved" },
+                  "approval_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

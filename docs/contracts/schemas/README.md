@@ -13,6 +13,6 @@
 
 报价 v1 的 `quote-result.schema.json`、旧 `envelope.schema.json` 与历史示例继续保留。报价 v2 使用独立的 `quote-request-v2.schema.json`、`quote-result-v2.schema.json` 和 `quote-envelope-v2.schema.json`；v2 data 只接受 `ready=true`、`test_data=false` 的 active manifest，`valid_from`/`valid_to` 是必需非空 Date；v2 输出的 release hash 必须由 adapter 校验与 snapshot hash 相等，ready=false 不进入 quote data。旧 envelope `$id` 不引用 v2。
 
-`quote.create_pdf` 使用独立的 `quote-create-pdf-request.schema.json`、`write-result-v2.schema.json` 和 `quote-create-pdf-envelope.schema.json`；它们使用 `2026-08-13` 的新 `$id`，不扩展旧 `write-result.schema.json` 或旧 `envelope.schema.json` 的接受集合。PDF 输出只复用既有 WriteContext、ReadbackEvidence 和 write-result 字段。
+`quote.create_pdf` 使用独立的 `quote-create-pdf-request.schema.json`、`write-result-v2.schema.json` 和 `quote-create-pdf-envelope.schema.json`；它们使用新 `$id`，不扩展旧 `write-result.schema.json` 或旧 `envelope.schema.json` 的接受集合。PDF request 的 `write_context` 是本地闭合对象，不含 `tenant_context`；输出只复用既有 ApprovalState、ReadbackEvidence、Identifier 和 write-result 字段。
 
 `CargoLine` 的三种重量证据 `unit_weight`、`piece_weights`、`line_total_weight` 通过 `oneOf` 互斥；三者都缺失时 Schema 允许承载不完整输入，但工具必须返回 `needs_input` 或 `manual_review`，不能计算出可信金额。

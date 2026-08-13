@@ -33,24 +33,30 @@
 
 ## 3. 输入契约
 
-公开输入只有以下四个字段，根和所有新增 object 都是 Draft 2020-12 `additionalProperties: false`：
+公开输入只有以下五个字段，根和所有新增 object 都是 Draft 2020-12 `additionalProperties: false`：
 
 ```json
 {
   "schema_version": "2026-08-11.v1",
+  "version": "quote-create-pdf-request@2026-08-14.v1",
   "quote_request": "现有 quote-request-v2 对象",
   "presentation": {
     "customer_display_name": "1..200 字符"
   },
-  "write_context": "现有 common.schema.json#/$defs/WriteContext"
+  "write_context": {
+    "idempotency_key": "平台幂等键",
+    "operation_mode": "preview | commit",
+    "preview_ref": "null 或 opaque Identifier",
+    "approval": "工具专属最小审批对象"
+  }
 }
 ```
 
-`quote_request` 直接 `$ref` 现有 `quote-request-v2.schema.json`，因此模型不能传 `total`、`line_items`、金额、logo、path、html、url 或任何 quote v2 未声明字段；不能传公开 `tenant_id`。完整地址、logo、附件和敏感正文没有 inline 入口。`customer_display_name` 是唯一公开展示文本，长度为 1–200；不接受 logo、模板、文件路径、HTML、URL 或地址正文。
+`version` 固定为 `quote-create-pdf-request@2026-08-14.v1`。`quote_request` 直接 `$ref` 现有 `quote-request-v2.schema.json`，因此模型不能传 `total`、`line_items`、金额、logo、path、html、url 或任何 quote v2 未声明字段；wrapper 也不公开 `tenant_id`、`actor_id`、`client_id`、`session_id` 或 `tenant_context`。完整地址、logo、附件和敏感正文没有 inline 入口。`customer_display_name` 是唯一公开展示文本，长度为 1–200；不接受 logo、模板、文件路径、HTML、URL 或地址正文。
 
 网关在进入适配器前拒绝总请求体超过 32 KiB。该大小门禁是请求边界而非业务字段，不能通过 Schema 中新增宽松字段绕过。
 
-`write_context` 复用现有 `WriteContext`，包括服务端校验的 tenant context、平台 idempotency key、preview/commit、preview ref 和 approval。客户端 tenant/actor 只作为待校验值，服务端上下文才是权威。
+`write_context` 是本工具 wrapper 内定义的闭合对象，只含平台 idempotency key、`operation_mode`、`preview_ref` 和最小 approval；它不复用含 `tenant_context` 的 common `WriteContext`。`preview` 时 `preview_ref` 必须为 `null`；`commit` 时必须是 Identifier，且 approval 必须为 `required=true`、`status=approved`、`approval_id` 为 Identifier。后续 task02 必须从服务端认证的 `ExecutionContext` 注入并校验 tenant、actor、client、session 和 RBAC；不得从客户端 wrapper 读取这些身份字段。旧 `quote.save_draft` 等 legacy 工具继续使用旧 `WriteContext`，不受本输入版本改变。
 
 ## 4. Preview → commit
 
@@ -63,7 +69,7 @@
 
 ### Commit
 
-1. `operation_mode=commit` 必须绑定同一 tenant、原始 quote request、presentation 和 `preview_ref`，并通过服务端校验的 `approval.status=approved` 与 `approval_id`。
+1. `operation_mode=commit` 必须绑定服务端 `ExecutionContext` 中的同一 tenant、原始 quote request、presentation 和 `preview_ref`，并通过服务端校验的 `approval.status=approved` 与 `approval_id`；这些身份不来自客户端 wrapper。
 2. 服务端重新调用 AI Quote `/quotes/zone-preview` v2，不信任 preview 中缓存的金额或 line items。候选 hash、tenant、request、presentation、Quote release/snapshot/version 任一漂移均返回 `manual_review`，零 PDF POST。
 3. 仅在重新读取的 Quote 仍为可用权威 success 后，由服务端投影 quote 的 authoritative USD line items，并固定内部草稿字段 `sendable=false`。金额、line items、logo、path、html、url 都不来自模型输入。
 4. Preview 和 commit 使用两个不同的平台幂等键：preview 使用 `P`，commit 使用 `C`，且 `P ≠ C`。只有 commit 的 `C` 才能原样作为 PDF `Idempotency-Key` 转发；同一 commit 重试必须复用 `C` 和同一投影 body，不能把 `P` 用于 commit，也不能在重试时新生成 `C`。两者都由平台按完整输入分别做幂等关联。
@@ -112,14 +118,14 @@ production 默认 disabled。只有以下证据全部具备，才可由后续任
 
 ### 客户端迁移
 
-1. 只发送 `schema_version`、完整 `quote_request`、`presentation.customer_display_name` 和既有 `write_context`。
+1. 只发送 `schema_version`、`version=quote-create-pdf-request@2026-08-14.v1`、完整 `quote_request`、`presentation.customer_display_name` 和本工具专属 `write_context`；tenant/actor/client/session 由平台 `ExecutionContext` 注入。
 2. Preview 只保存 opaque `preview_ref`；不期待金额或 PDF URL 出现在模型可见结果中。
 3. Commit 必须复用绑定的 tenant/request/presentation/preview ref，且提供 approved approval；处理 `manual_review`/`unavailable`/`blocked`，不得自动降级。
 4. 将 `record_id` 解释为 PDF document reference；仅在 `readback_evidence.verified=true` 时展示内部草稿创建成功。
 
 ### 本基线验证
 
-- `node docs/contracts/quote-create-pdf-contract.test.mjs` 覆盖合法 preview/commit、拒绝 quote 输出/敏感字段/tenant 覆盖、旧 write-result v1 不接受新 operation、新 write-result-v2 和完整 success envelope。该自包含负测暂未接入 `npm run validate:schemas`，任务 06 接线后需纳入正式 gate。
+- `node docs/contracts/quote-create-pdf-contract.test.mjs` 覆盖合法 preview/commit、`P ≠ C`、工具专属输入生命周期、拒绝 quote 输出/敏感字段/tenant/actor 注入、旧 write-result v1 不接受新 operation、write-result v2 生命周期和 success envelope 证据闭合。该自包含负测暂未接入 `npm run validate:schemas`，任务 06 接线后需纳入正式 gate。
 - `npm run validate:schemas` 负责现有官方 envelope examples 和所有 Schema 编译；不增加旧 examples 数量。
 - `git diff --check` 必须通过；本分支不修改 `package.json`、源码、测试、deploy 或 runbooks。
 

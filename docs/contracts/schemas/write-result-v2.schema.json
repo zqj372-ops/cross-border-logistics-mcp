@@ -14,5 +14,29 @@
     "readback_evidence": { "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/ReadbackEvidence" }, { "type": "null" }] },
     "idempotency_key": { "type": "string", "minLength": 16, "maxLength": 200 },
     "approval": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/ApprovalState" }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["operation_status"], "properties": { "operation_status": { "const": "previewed" } } },
+      "then": {
+        "properties": {
+          "record_id": { "type": "null" },
+          "readback_evidence": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "required": ["operation_status"], "properties": { "operation_status": { "enum": ["committed", "already_committed"] } } },
+      "then": {
+        "properties": {
+          "record_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+          "readback_evidence": {
+            "type": "object",
+            "required": ["verified"],
+            "properties": { "verified": { "const": true } }
+          }
+        }
+      }
+    }
+  ]
 }
