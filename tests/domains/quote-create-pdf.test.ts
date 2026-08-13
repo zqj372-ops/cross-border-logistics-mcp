@@ -13,7 +13,8 @@ import type { ExecutionContext } from "../../src/logistics_mcp/platform/context"
 import type { AdapterResult } from "../../src/logistics_mcp/adapters/ports";
 import type { QuotePdfMetadata } from "../../src/logistics_mcp/adapters/pdf/quote-pdf-api-adapter";
 import { hashPayload } from "../../src/logistics_mcp/platform/idempotency";
-import { phase1ToolNames } from "../../src/logistics_mcp/adapters/phase1-bundle";
+import { createFixtureAdapters } from "../../src/logistics_mcp/adapters/fixture-client";
+import { createPhase1Bundle, phase1ToolNames } from "../../src/logistics_mcp/adapters/phase1-bundle";
 
 const context: ExecutionContext = {
   tenantId: "tenant_pdf_fixture",
@@ -625,7 +626,7 @@ describe("quote.create_pdf domain", () => {
     expect(failedCommit).toMatchObject({ status: "unavailable", data: null });
   });
 
-  it("maps GET identity mismatch to manual_review and remains unregistered", async () => {
+  it("maps GET identity mismatch to manual_review and wires the phase-one handler", async () => {
     const mismatchedPdf = pdfPort({
       get: vi.fn(() => Promise.resolve({
         ok: true as const,
@@ -661,6 +662,56 @@ describe("quote.create_pdf domain", () => {
       context,
     );
     expect(result).toMatchObject({ status: "manual_review", data: null });
-    expect(phase1ToolNames).not.toContain("quote.create_pdf");
+    expect(phase1ToolNames).toContain("quote.create_pdf");
+  });
+
+  it("uses injected quote and PDF ports through the phase-one bundle", async () => {
+    const pdf = pdfPort();
+    const quote = quoteAdapter([
+      { status: "success", data: quoteData(), sourceRefs: [sourceRef], calculationTrace: [quoteTrace] },
+      { status: "success", data: quoteData(), sourceRefs: [sourceRef], calculationTrace: [quoteTrace] },
+    ]);
+    const bundle = createPhase1Bundle({
+      ...createFixtureAdapters(),
+      quote,
+      quotePdf: pdf,
+    });
+    const handler = bundle.handlers["quote.create_pdf"];
+    const signal = new AbortController().signal;
+
+    const preview = await handler(input("preview", "preview-key-123456"), context, signal);
+    expect(preview.status).toBe("success");
+    const previewRef = (preview.data as Record<string, unknown>).preview_ref as string;
+    expect(pdf.postMock).not.toHaveBeenCalled();
+
+    const committed = await handler(
+      input("commit", "commit-key-123456", previewRef),
+      context,
+      signal,
+    );
+    expect(committed.status).toBe("success");
+    expect(pdf.postMock).toHaveBeenCalledTimes(1);
+    expect(pdf.getMock).toHaveBeenCalledTimes(1);
+    expect(quote.calculateMock).toHaveBeenCalledTimes(2);
+    expect(quote.calculateMock).toHaveBeenNthCalledWith(1, expect.anything(), context, signal);
+    expect(pdf.postMock).toHaveBeenCalledWith(expect.anything(), "commit-key-123456", context, signal);
+    expect(pdf.getMock).toHaveBeenCalledWith(expect.any(String), context, signal);
+  });
+
+  it("keeps the default bundle unavailable without a PDF source", async () => {
+    const adapters = createFixtureAdapters();
+    const pdfPost = vi.spyOn(adapters.quotePdf!, "post");
+    const pdfGet = vi.spyOn(adapters.quotePdf!, "get");
+    const bundle = createPhase1Bundle(adapters);
+
+    const result = await bundle.handlers["quote.create_pdf"](
+      input("preview", "preview-key-123456"),
+      context,
+    );
+
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(pdfPost).not.toHaveBeenCalled();
+    expect(pdfGet).not.toHaveBeenCalled();
   });
 });

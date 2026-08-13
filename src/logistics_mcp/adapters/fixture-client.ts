@@ -1,5 +1,6 @@
 import type { SourceRef } from "../platform/envelope";
 import type { FixtureAdapters } from "./ports";
+import type { QuotePdfPort } from "../domains/quote/create-pdf";
 import {
   ExistingQuoteAdapter,
   type QuoteDraftReadbackRecord,
@@ -338,11 +339,24 @@ function reviewSource(): ManualTaskSource {
 
 export interface FixtureAdapterOptions {
   readonly customsFixture?: "customs-ready" | "customs-not-ready";
+  readonly quotePdf?: QuotePdfPort;
 }
+
+export const unavailableQuotePdfPort: QuotePdfPort = {
+  post: () => Promise.resolve({
+    ok: false,
+    failure: { kind: "unavailable", code: "pdf.adapter_disabled", dispatched: false },
+  }),
+  get: () => Promise.resolve({
+    ok: false,
+    failure: { kind: "unavailable", code: "pdf.adapter_disabled", dispatched: false },
+  }),
+};
 
 export function createFixtureAdapters(options: FixtureAdapterOptions = {}): FixtureAdapters {
   return {
     quote: new ExistingQuoteAdapter({ source: quoteSource() }),
+    quotePdf: options.quotePdf ?? unavailableQuotePdfPort,
     customs: new RiskCustomsAdapter({
       source: customsSource(options.customsFixture ?? "customs-ready"),
     }),

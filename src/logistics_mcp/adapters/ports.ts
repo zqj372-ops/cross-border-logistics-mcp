@@ -7,6 +7,7 @@ import type {
   SourceRef,
 } from "../platform/envelope";
 import type { ExecutionContext } from "../platform/context";
+import type { QuotePdfPort } from "../domains/quote/create-pdf";
 
 export interface AdapterResult<TData extends EnvelopeData = EnvelopeData> {
   readonly status: EnvelopeStatus;
@@ -67,6 +68,7 @@ export interface ReviewAdapter {
 
 export interface FixtureAdapters {
   readonly quote: QuoteAdapter;
+  readonly quotePdf?: QuotePdfPort;
   readonly customs: CustomsAdapter;
   readonly knowledge: KnowledgeAdapter;
   readonly status: StatusAdapter;

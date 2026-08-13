@@ -3,7 +3,7 @@ import type {
   ToolContract,
 } from "../server/tool-registry";
 import type { FixtureAdapters } from "./ports";
-import { createFixtureAdapters } from "./fixture-client";
+import { createFixtureAdapters, unavailableQuotePdfPort } from "./fixture-client";
 import {
   canadaFinalMileInputSchema,
   canadaFinalMileOutputValidator,
@@ -38,6 +38,11 @@ import { searchCanadaCustoms } from "../domains/customs/ca-search";
 import { searchCuratedKnowledge } from "../domains/knowledge/search-curated";
 import { getSystemDataStatus } from "../domains/status/data-status";
 import { createReviewTask } from "../domains/review/create-task";
+import {
+  createQuotePdf,
+  quoteCreatePdfInputSchema,
+  quoteCreatePdfWriteResultSchema,
+} from "../domains/quote/create-pdf";
 
 export const phase1ToolNames = [
   "knowledge.search_curated",
@@ -46,6 +51,7 @@ export const phase1ToolNames = [
   "customs.ca.search",
   "customs.ca.estimate",
   "quote.save_draft",
+  "quote.create_pdf",
   "review.create_task",
 ] as const;
 
@@ -107,6 +113,14 @@ export function createPhase1Bundle(adapters: FixtureAdapters): Phase1Bundle {
         ? adapters.quote.previewDraft(value)
         : adapters.quote.commitDraft(value, signal);
     },
+    "quote.create_pdf": (input, context, signal) =>
+      createQuotePdf(
+        adapters.quote,
+        adapters.quotePdf ?? unavailableQuotePdfPort,
+        input,
+        context,
+        signal,
+      ),
     "review.create_task": (input, _context, signal) =>
       createReviewTask(adapters.review, inputRecord(input), signal),
   };
@@ -135,6 +149,10 @@ export function createPhase1Bundle(adapters: FixtureAdapters): Phase1Bundle {
     "quote.save_draft": contract(
       quoteSaveDraftInputSchema,
       (data) => writeResultSchema.parse(data),
+    ),
+    "quote.create_pdf": contract(
+      quoteCreatePdfInputSchema,
+      (data) => quoteCreatePdfWriteResultSchema.parse(data),
     ),
     "review.create_task": contract(
       reviewCreateTaskInputSchema,

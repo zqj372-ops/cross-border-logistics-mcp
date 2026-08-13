@@ -139,7 +139,7 @@ function tool(name: string, handlers = phase1ToolHandlers, contracts = phase1Too
 }
 
 describe("Task 05 Phase 1 bundle", () => {
-  it("contains exactly the seven assigned tools and binds every handler and contract", () => {
+  it("contains exactly the eight assigned tools and binds every handler and contract", () => {
     const expected = [
       "knowledge.search_curated",
       "system.get_data_status",
@@ -148,6 +148,7 @@ describe("Task 05 Phase 1 bundle", () => {
       "customs.ca.estimate",
       "quote.save_draft",
       "review.create_task",
+      "quote.create_pdf",
     ].sort();
     expect([...phase1ToolNames].sort()).toEqual(expected);
     expect(Object.keys(phase1ToolHandlers).sort()).toEqual(expected);
@@ -438,7 +439,7 @@ describe("Task 05 Phase 1 bundle", () => {
 
   it("builds the assigned bundle without mutating the shared registry", () => {
     const bundle = createPhase1Bundle(createFixtureAdapters());
-    expect(Object.keys(bundle.handlers)).toHaveLength(7);
-    expect(Object.keys(bundle.contracts)).toHaveLength(7);
+    expect(Object.keys(bundle.handlers)).toHaveLength(8);
+    expect(Object.keys(bundle.contracts)).toHaveLength(8);
   });
 });
