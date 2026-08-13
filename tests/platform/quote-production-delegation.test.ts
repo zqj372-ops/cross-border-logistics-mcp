@@ -338,4 +338,14 @@ describe("production quote delegation", () => {
       expect(await response.json()).toMatchObject({ status: "unavailable" });
     });
   });
+
+  it("fails closed for a null adapter source without throwing during close", async () => {
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource: null as unknown as ProductionAdapterSource,
+    });
+
+    await expect(composition.readiness()).resolves.toMatchObject({ ready: false });
+    await expect(composition.close()).resolves.toBeUndefined();
+  });
 });
