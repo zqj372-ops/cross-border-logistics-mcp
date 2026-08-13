@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
+import { parseExecutionContext, type ExecutionContext } from "../../src/logistics_mcp/platform/context";
 import type { FetchImplementation } from "../../src/logistics_mcp/adapters/http-client";
 import { RiskCustomsApiAdapter } from "../../src/logistics_mcp/adapters/customs/riskcustoms-api-adapter";
 import { QuoteApiAdapter } from "../../src/logistics_mcp/adapters/quote/quote-api-adapter";
@@ -22,6 +22,15 @@ import { securityClaims } from "./fixtures/security-fixtures";
 
 const API_DATE = "2026-08-12";
 const API_TIME = `${API_DATE}T00:00:00.000Z`;
+const RISK_CUSTOMS_IDENTITY = {
+  contractVersion: "riskcustoms-query.v1",
+  serviceVersion: "riskcustoms-service.fixture-1",
+  publishedAt: "2026-08-11T00:00:00.000Z",
+  supportedOperations: ["status", "query"],
+  releaseIds: ["release-ca-1"],
+  snapshotHash: "a".repeat(64),
+  releaseHash: "b".repeat(64),
+};
 
 const apiQuoteInput = quoteInput({
   effective_at: API_DATE,
@@ -39,13 +48,118 @@ const customsSearchInput = {
   selected_hs6: null,
 };
 
-function riskCustomsStatus(ready: boolean): Record<string, unknown> {
+function serverContext(): ExecutionContext {
+  return parseExecutionContext({
+    ...securityClaims,
+    scopes: [...securityClaims.scopes, "tariff:read"],
+  });
+}
+
+function riskCustomsStatus(
+  ready: boolean,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
+    ...RISK_CUSTOMS_IDENTITY,
     evaluatedAt: API_TIME,
     lastSourceCheckAt: ready ? API_TIME : null,
     ready,
+    testData: false,
     reasons: ready ? [] : ["fixture_not_ready"],
+    ...overrides,
   };
+}
+
+function riskCustomsSource(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "source-ca-1",
+    releaseId: "release-ca-1",
+    artifactId: "artifact-ca-1",
+    authority: "official",
+    dataset: "ca-tariff",
+    edition: "fixture-edition",
+    revision: "fixture-revision",
+    officialUrl: "https://official.example.invalid/ca-tariff/release-ca-1",
+    publishedAt: "2026-01-01",
+    effectiveFrom: "2026-01-01",
+    effectiveTo: null,
+    retrievedAt: API_TIME,
+    sourceLocator: "fixture://riskcustoms/source-ca-1",
+    ...overrides,
+  };
+}
+
+function riskCustomsCandidate(
+  country: "CN" | "US" | "CA",
+  sourceId: string,
+  code: string,
+): Record<string, unknown> {
+  const legalName = { language: "en", text: "Synthetic fixture", sourceId };
+  return {
+    candidateId: `candidate-${country}-${code}`,
+    country,
+    code,
+    displayCode: code,
+    codeDigits: code.length,
+    parentCode: null,
+    hierarchy: [{
+      code,
+      displayCode: code,
+      codeDigits: code.length,
+      legalNames: [legalName],
+    }],
+    legalNames: [legalName],
+    chineseExplanation: {
+      translationId: `translation-${country}-${code}`,
+      text: "Synthetic fixture explanation",
+      status: "machine",
+      basedOnSourceIds: [sourceId],
+    },
+    classificationReason: "Synthetic classification reason",
+    classificationSourceIds: [sourceId],
+    status: "candidate",
+    hs6: code.length === 6 ? code : null,
+  };
+}
+
+function riskCustomsResult(
+  country: "CN" | "US" | "CA",
+  sourceId: string,
+  code: string,
+): Record<string, unknown> {
+  return {
+    ...riskCustomsCandidate(country, sourceId, code),
+    rates: [],
+    confirmedTotalPercent: null,
+    documents: [],
+    measures: [],
+    warnings: [],
+  };
+}
+
+function riskCustomsQuery(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...RISK_CUSTOMS_IDENTITY,
+    queryId: "query-fixture-1",
+    mode: "name_search",
+    ruleDate: API_DATE,
+    selectedHs6: null,
+    nextQuestion: null,
+    candidates: [riskCustomsCandidate("CA", "source-ca-1", "123456")],
+    results: [],
+    sources: [riskCustomsSource()],
+    dataStatus: riskCustomsStatus(true),
+    testData: false,
+    ...overrides,
+  };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status });
+}
+
+function requestUrl(input: string | URL | Request): string {
+  return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 }
 
 function quoteApi(fetchImpl: FetchImplementation): QuoteApiAdapter {
@@ -59,13 +173,22 @@ function quoteApi(fetchImpl: FetchImplementation): QuoteApiAdapter {
   });
 }
 
-function customsApi(fetchImpl: FetchImplementation): RiskCustomsApiAdapter {
+type AuthorizationProvider = (
+  context: ExecutionContext,
+  signal?: AbortSignal,
+) => string | Promise<string>;
+
+function customsApi(
+  fetchImpl: FetchImplementation,
+  authorizationProvider: AuthorizationProvider = () => "m2m-test-value",
+): RiskCustomsApiAdapter {
   return new RiskCustomsApiAdapter({
     baseUrl: "https://riskcustoms.example.invalid",
     allowedHosts: ["riskcustoms.example.invalid"],
     enabled: true,
     productionConnector: true,
     fetchImpl,
+    authorizationProvider,
     clock: () => new Date(API_TIME),
   });
 }
@@ -82,9 +205,10 @@ describe("gateway composition modes", () => {
     await source.close();
 
     const missing = createProductionApiAdapterSource();
+    const context = serverContext();
     const [quote, customs] = await Promise.all([
       missing.adapters.quote.calculate(apiQuoteInput),
-      missing.adapters.customs.search(customsSearchInput),
+      missing.adapters.customs.search(customsSearchInput, context),
     ]);
     expect(quote.status).toBe("unavailable");
     expect(quote.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
@@ -105,7 +229,7 @@ describe("gateway composition modes", () => {
       source.adapters.quote.calculate(apiQuoteInput),
       cargoToolHandler(cargoInput(), context),
       containerPlanSummaryHandler(containerInput(), context),
-      source.adapters.customs.getStatus({ rule_date: API_DATE }),
+      source.adapters.customs.getStatus({ rule_date: API_DATE }, context),
     ]);
 
     expect(quote.status).toBe("unavailable");
@@ -117,15 +241,16 @@ describe("gateway composition modes", () => {
   });
 
   it("keeps RiskCustoms ready=false scoped while local handlers stay usable", async () => {
-    const customsFetch = vi.fn<FetchImplementation>(() =>
-      Promise.resolve(new Response(JSON.stringify(riskCustomsStatus(false)))),
-    );
+    const customsFetch = vi.fn<FetchImplementation>(() => Promise.resolve(jsonResponse({
+      ...riskCustomsStatus(false),
+      error: { code: "data_not_ready", message: "publication pending" },
+    }, 503)));
     const source = createProductionApiAdapterSource({
       customs: customsApi(customsFetch),
     });
     const context = parseExecutionContext(securityClaims);
     const [customs, quote, cargo, container] = await Promise.all([
-      source.adapters.customs.search(customsSearchInput),
+      source.adapters.customs.search(customsSearchInput, context),
       source.adapters.quote.calculate(apiQuoteInput),
       cargoToolHandler(cargoInput(), context),
       containerPlanSummaryHandler(containerInput(), context),
@@ -133,12 +258,100 @@ describe("gateway composition modes", () => {
 
     expect(customs.status).toBe("unavailable");
     expect(customs.blockers?.map(({ code }) => code)).toContain("customs.ready_false");
-    expect(customs.data).toMatchObject({ data_status: { ready: false } });
+    expect(customs.data).toMatchObject({
+      data_status: {
+        ready: false,
+        test_data: false,
+        release_ids: ["release-ca-1"],
+      },
+    });
+    expect(customsFetch).toHaveBeenCalledTimes(1);
     expect(quote.status).toBe("unavailable");
     expect(quote.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
     expect(cargo.status).toBe("success");
     expect(container.status).toBe("success");
     await source.close();
+  });
+
+  it("passes server execution context to M2M and projects the CA result through the inclusive source date", async () => {
+    const customsFetch = vi.fn<FetchImplementation>()
+      .mockResolvedValueOnce(jsonResponse(riskCustomsStatus(true)))
+      .mockResolvedValueOnce(jsonResponse(riskCustomsQuery({
+        candidates: [
+          riskCustomsCandidate("CN", "source-cn-1", "123456"),
+          riskCustomsCandidate("US", "source-us-1", "234567"),
+          riskCustomsCandidate("CA", "source-ca-candidate", "345678"),
+        ],
+        results: [{
+          ...riskCustomsResult("CA", "source-ca-result", "345678"),
+          status: "confirmed",
+        }],
+        sources: [
+          riskCustomsSource({ id: "source-cn-1" }),
+          riskCustomsSource({ id: "source-us-1" }),
+          riskCustomsSource({ id: "source-ca-candidate" }),
+          riskCustomsSource({ id: "source-ca-result", effectiveTo: API_DATE }),
+        ],
+      })));
+    const authorizationProvider = vi.fn<AuthorizationProvider>(() => "m2m-test-value");
+    const source = createProductionApiAdapterSource({
+      customs: customsApi(customsFetch, authorizationProvider),
+    });
+    const context = serverContext();
+
+    const result = await source.adapters.customs.search(customsSearchInput, context);
+
+    expect(result.status).toBe("success");
+    expect(result.data).toMatchObject({
+      jurisdiction: "CA",
+      candidates: [{ hs_code: "345678", classification_status: "confirmed" }],
+    });
+    expect(result.sourceRefs).toHaveLength(2);
+    expect(authorizationProvider).toHaveBeenCalledTimes(2);
+    expect(authorizationProvider).toHaveBeenNthCalledWith(1, context, expect.any(AbortSignal));
+    expect(authorizationProvider).toHaveBeenNthCalledWith(2, context, expect.any(AbortSignal));
+    expect(customsFetch.mock.calls.map(([url, init]) => [init?.method, requestUrl(url)])).toEqual([
+      ["GET", "https://riskcustoms.example.invalid/api/m2m/status?ruleDate=2026-08-12"],
+      ["POST", "https://riskcustoms.example.invalid/api/m2m/query"],
+    ]);
+    for (const [, init] of customsFetch.mock.calls) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer m2m-test-value");
+      expect(headers.get("x-tenant-id")).toBe(context.tenantId);
+    }
+    const queryBodyRaw = customsFetch.mock.calls[1]?.[1]?.body;
+    if (typeof queryBodyRaw !== "string") throw new Error("M2M query body was not JSON text");
+    const queryBody = JSON.parse(queryBodyRaw) as Record<string, unknown>;
+    expect(queryBody).not.toHaveProperty("tenant_id");
+    await source.close();
+  });
+
+  it("keeps a query 503 fail-closed after a ready status", async () => {
+    const customsFetch = vi.fn<FetchImplementation>()
+      .mockResolvedValueOnce(jsonResponse(riskCustomsStatus(true)))
+      .mockResolvedValueOnce(jsonResponse({
+        error: { code: "data_not_ready", message: "query changed" },
+      }, 503));
+    const source = createProductionApiAdapterSource({
+      customs: customsApi(customsFetch),
+    });
+
+    const result = await source.adapters.customs.search(customsSearchInput, serverContext());
+
+    expect(result.status).toBe("unavailable");
+    expect(result.blockers?.map(({ code }) => code)).toContain("customs.query_unavailable");
+    expect(JSON.stringify(result)).not.toContain("query changed");
+    expect(customsFetch).toHaveBeenCalledTimes(2);
+    await source.close();
+  });
+
+  it("keeps customs estimate unavailable without an HTTP call", async () => {
+    const customsFetch = vi.fn<FetchImplementation>();
+    const result = await customsApi(customsFetch).estimate({ rule_date: API_DATE }, serverContext());
+
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(customsFetch).not.toHaveBeenCalled();
   });
 
   it("overrides production write adapters supplied through a manually constructed source", async () => {
@@ -212,7 +425,7 @@ describe("gateway composition modes", () => {
       expect(quote.status).toBe("unavailable");
       expect(quote.data).toBeNull();
 
-      const customs = await composition.adapters.customs.getStatus({ fixture: "ignored" });
+      const customs = await composition.adapters.customs.getStatus({ rule_date: API_DATE }, context);
       expect(customs.status).toBe("unavailable");
       expect(JSON.stringify(customs)).toContain("customs.adapter_disabled");
     } finally {
