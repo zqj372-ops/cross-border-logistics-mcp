@@ -84,8 +84,8 @@ export function createPhase1Bundle(adapters: FixtureAdapters): Phase1Bundle {
       searchCuratedKnowledge(adapters.knowledge, inputRecord(input)),
     "system.get_data_status": (input) =>
       getSystemDataStatus(adapters.status, inputRecord(input)),
-    "quote.canada_final_mile.calculate": (input) =>
-      calculateCanadaFinalMile(adapters.quote, inputRecord(input)),
+    "quote.canada_final_mile.calculate": (input, context, signal) =>
+      calculateCanadaFinalMile(adapters.quote, inputRecord(input), context, signal),
     "customs.ca.search": (input, context, signal) =>
       searchCanadaCustoms(adapters.customs, inputRecord(input), context, signal),
     "customs.ca.estimate": (input, context, signal) =>
