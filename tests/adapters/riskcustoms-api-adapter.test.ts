@@ -583,7 +583,7 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
 
   it.each([
     ["future", { effectiveFrom: "2026-08-13", effectiveTo: null }],
-    ["expired", { effectiveFrom: "2026-01-01", effectiveTo: RULE_DATE }],
+    ["expired", { effectiveFrom: "2026-01-01", effectiveTo: "2026-08-11" }],
   ] as const)("fails closed for a %s classification source", async (_name, dates) => {
     const fake = fakeFetch([
       { body: statusResponse() },
@@ -594,6 +594,18 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     const response = await customs.search(searchInput(), context);
 
     expect(response.status).not.toBe("success");
+  });
+
+  it("keeps a classification source effective through its inclusive end date", async () => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({ sources: [source({ effectiveTo: RULE_DATE })] }) },
+    ]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput(), context);
+
+    expect(response.status).toBe("success");
   });
 
   it("rejects HTTPS source URLs with userinfo without echoing credentials", async () => {

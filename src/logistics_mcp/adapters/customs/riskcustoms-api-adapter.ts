@@ -898,7 +898,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
         !releaseIds.includes(source.releaseId) ||
         !validIdentifier(source.releaseId) ||
         source.effectiveFrom > ruleDate ||
-        (source.effectiveTo !== null && ruleDate >= source.effectiveTo)
+        (source.effectiveTo !== null && ruleDate > source.effectiveTo)
       ) return null;
       const sourceRef: SourceRef = {
         source_id: sourceRefId(source.id),
