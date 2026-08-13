@@ -10,7 +10,7 @@
 
 - `cargo`、`container` 在 MCP 内做本地确定性计算：CBM、体积重、分泡、计费重和理论/运营装柜摘要。
 - AI 报价、RiskCustoms、PDF/文档的目标形态是通过现有生产 API 的窄适配器接入；上游继续拥有业务规则和数据。
-- 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合，`quote.create_pdf` 仅有共享契约，未注册且 production 默认 disabled。
+- 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合，`quote.create_pdf` 已登记为第10个工具，但默认 handler unavailable 且 production 默认 disabled。
 
 非目标：不在 MCP 内重做报价或关务引擎，不在本地生成文档，不把上游业务记录复制成 MCP 主表，不发送/发布报价，不形成正式报关结论，不订舱或提供通用写入口。
 
@@ -39,7 +39,7 @@ MCP 是访问控制和契约边界，不是报价、关务或文档权威库。�
 | RiskCustoms status | `GET /api/status` | 只使用 `ready`、`reasons` 等状态字段 | adapter 已实现；每次 search 先检查 status |
 | RiskCustoms search | `POST /api/query`；只发送显式 trim 后 query | 校验 query 响应 ready、非 test data、真实 `query.sources.releaseId` 和来源 hash | adapter 已实现；ready=false 或来源不完整为 `unavailable`/`manual_review` |
 | customs estimate | 尚无已核验生产估算 API | 不拼造税额或正式结论 | 固定 `unavailable` |
-| PDF/文档 | `quote.create_pdf` RFC/wrapper/`write-result-v2` 已定义；隔离核验 AI Quote `/quotes/zone-preview` v2、PDF `/v2/quote-pdfs` 的 USD lines、`sendable=false`、tenant+Idempotency-Key replay 和 201/200 后 metadata GET；当前仅 loopback HTTP | 仅允许后续窄适配器 preview→candidate hash→approved commit→PDF exact readback；不在本地生成/存储文档 | contract-only；未注册，production disabled |
+| PDF/文档 | `quote.create_pdf` RFC/wrapper/`write-result-v2` 已定义；隔离核验 AI Quote `/quotes/zone-preview` v2、PDF `/v2/quote-pdfs` 的 USD lines、`sendable=false`、tenant+Idempotency-Key replay 和 201/200 后 metadata GET；当前仅 loopback HTTP | 仅允许后续窄适配器 preview→candidate hash→approved commit→PDF exact readback；不在本地生成/存储文档 | 已登记受控写工具；默认 handler unavailable，production disabled |
 
 上表中的路径是已确认的 API contract 形状，不是生产 URL。实际 base URL、服务认证、租户到上游身份映射和副作用仍需隔离合同核验；代码只接受运行时注入的受控引用。
 
@@ -91,7 +91,7 @@ client request
 
 - Quote API 503 时，quote 工具返回 `unavailable`；cargo/container 仍可计算，customs search 不因该故障被禁用。
 - RiskCustoms status 返回 `ready=false` 时，customs search 返回 `unavailable`；quote 和本地工具继续按各自依赖运行。
-- PDF production qualification 缺失只使 `quote.create_pdf` 保持 contract-only/disabled/未注册，不改变平台身份、审计或本地计算的边界；不以 loopback HTTP 证据声称 production ready。
+- PDF production qualification 缺失只使 `quote.create_pdf` 保持 contract-only、handler unavailable、disabled，不改变平台身份、审计或本地计算的边界；不以 loopback HTTP 证据声称 production ready。
 - 平台 token verifier、durable audit、idempotency 或 session binding 缺失，才允许全局 readiness 失败。
 
 ## 6. 租户、身份与密钥边界
@@ -118,7 +118,7 @@ client request
 - 工具：只展示中文名称、操作类型、当前可用性、受影响来源和角色授权；内部工具名与权限码均隐藏；
 - 结果与审计：只展示中文状态、原因和脱敏证据摘要；请求、审计、来源、版本和哈希标识不回显具体值；
 - 写操作：只展示预览、审批、幂等和写后读回状态；预览引用、记录标识和内部审批标识均隐藏；
-- 系统结构：只展示中文业务节点及关系；报价单能力显示“未注册”，不展示内部代码、路径或接口地址。
+- 系统结构：只展示中文业务节点及关系；报价单能力显示“已登记，正式连接未启用/不可用”，不展示内部代码、路径或接口地址。
 
 后台不显示原始 token、密码、base URL、客户地址、报价明细、税务材料、原始聊天或下游响应全文；fixture 视图必须有明确“演示数据 / 未连接正式后台”标记。
 
@@ -127,7 +127,7 @@ client request
 - source readiness 只展示注入状态、生命周期状态和最近请求证据，不把单个业务 API 失败汇总成平台故障。
 - tool 状态必须同时显示 status、reason、affected source 和是否允许继续调用，颜色不能单独表达结论。
 - quote 的 `manual_review`、`sendable=false` 和副作用 warning 必须可见；不能用“报价成功”覆盖证据缺口。
-- customs estimate 固定显示 unavailable；PDF 显示 contract-only/disabled/未注册，直到 HTTPS、tenant credential、合同、replay/GET exact readback 和 deadline 证据齐全。
+- customs estimate 固定显示 unavailable；PDF 显示“已登记，正式连接未启用/不可用”，并保持 contract-only/disabled，直到 HTTPS、tenant credential、合同、replay/GET exact readback 和 deadline 证据齐全。
 
 ## 8. 激活清单与验收
 
@@ -136,7 +136,7 @@ client request
 1. 平台身份、tenant binding、RBAC、durable audit/idempotency/session binding 和安全出站策略已由服务端注入并通过负面测试。
 2. quote HTTP 适配器仅通过 fake HTTP/local 核验请求响应映射与失败闭合；真实接口地址、认证、租户映射、业务副作用、CBM/origin 映射及版本有效期仍待合同核验，生产工具路径保持 `unavailable`/fail-closed。
 3. RiskCustoms 已隔离核验 status/query、ready/test data/release/source 关联；estimate 仍固定 unavailable。
-4. `quote.save_draft` 的生产草稿 API preview/approval/commit/readback 合同未齐全前保持 disabled；`quote.create_pdf` 虽已有共享契约，仍须完成 AI Quote 正式 API、PDF HTTPS+allowlist、tenant credential、staging POST/replay/GET exact readback、sendable/hash/version 校验和 deadline 验收后才可注册。
+4. `quote.save_draft` 的生产草稿 API preview/approval/commit/readback 合同未齐全前保持 disabled；`quote.create_pdf` 虽已登记，仍须完成 AI Quote 正式 API、PDF HTTPS+allowlist、tenant credential、staging POST/replay/GET exact readback、sendable/hash/version 校验和 deadline 验收后才可启用。
 
 ### 验收证据
 
