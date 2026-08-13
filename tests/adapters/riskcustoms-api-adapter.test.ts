@@ -159,6 +159,32 @@ function candidate(overrides: Record<string, unknown> = {}): Record<string, unkn
   };
 }
 
+function jurisdictionCandidate(
+  country: "CN" | "US" | "CA",
+  sourceId: string,
+  code: string,
+): Record<string, unknown> {
+  return {
+    ...candidate({ code }),
+    candidateId: `candidate-${country}-${code}`,
+    country,
+    hierarchy: [{
+      code,
+      displayCode: code,
+      codeDigits: code.length,
+      legalNames: [legalName(sourceId)],
+    }],
+    legalNames: [legalName(sourceId)],
+    chineseExplanation: {
+      translationId: `translation-${country}-${code}`,
+      text: "Synthetic fixture explanation",
+      status: "machine",
+      basedOnSourceIds: [sourceId],
+    },
+    classificationSourceIds: [sourceId],
+  };
+}
+
 function rateLine(sourceId: string): Record<string, unknown> {
   return {
     id: `rate-${sourceId}`,
@@ -312,7 +338,7 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
       "content-type": "application/json",
       "x-tenant-id": "tenant_server_a",
     });
-    expect(authorizationProvider).toHaveBeenCalledWith(context);
+    expect(authorizationProvider).toHaveBeenCalledWith(context, expect.any(AbortSignal));
     expect(JSON.stringify(fake.calls)).not.toContain("client-supplied-tenant");
     expect(JSON.stringify(response)).not.toContain("m2m-test-value");
   });
@@ -338,6 +364,74 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
 
     expect(status.status).toBe("blocked");
     expect(query.status).toBe("blocked");
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("cancels a pending authorization provider on caller abort without fetching", async () => {
+    const fake = fakeFetch([]);
+    let providerSignal: AbortSignal | undefined;
+    const authorizationProvider = vi.fn((_context: ExecutionContext, signal?: AbortSignal) => {
+      providerSignal = signal;
+      return new Promise<string>(() => undefined);
+    });
+    const customs = adapter(fake, { authorizationProvider, timeoutMs: 1_000 });
+    const controller = new AbortController();
+    const pending = customs.getStatus({ rule_date: RULE_DATE }, context, controller.signal);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(authorizationProvider).toHaveBeenCalledWith(context, expect.any(AbortSignal));
+    controller.abort();
+    const response = await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("caller abort did not settle")), 100)),
+    ]);
+
+    expect(response.status).toBe("unavailable");
+    expect(providerSignal?.aborted).toBe(true);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("times out a pending authorization provider without fetching", async () => {
+    const fake = fakeFetch([]);
+    let providerSignal: AbortSignal | undefined;
+    const authorizationProvider = vi.fn((_context: ExecutionContext, signal?: AbortSignal) => {
+      providerSignal = signal;
+      return new Promise<string>(() => undefined);
+    });
+    const customs = adapter(fake, { authorizationProvider, timeoutMs: 5 });
+    const startedAt = Date.now();
+    const response = await Promise.race([
+      customs.getStatus({ rule_date: RULE_DATE }, context),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("provider timeout did not settle")), 100)),
+    ]);
+
+    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(response.status).toBe("unavailable");
+    expect(providerSignal?.aborted).toBe(true);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("cancels a pending search authorization provider without fetching", async () => {
+    const fake = fakeFetch([]);
+    let providerSignal: AbortSignal | undefined;
+    const authorizationProvider = vi.fn((_context: ExecutionContext, signal?: AbortSignal) => {
+      providerSignal = signal;
+      return new Promise<string>(() => undefined);
+    });
+    const customs = adapter(fake, { authorizationProvider, timeoutMs: 1_000 });
+    const controller = new AbortController();
+    const pending = customs.search(searchInput(), context, controller.signal);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(authorizationProvider).toHaveBeenCalledWith(context, expect.any(AbortSignal));
+    controller.abort();
+    const response = await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("search abort did not settle")), 100)),
+    ]);
+
+    expect(response.status).toBe("unavailable");
+    expect(providerSignal?.aborted).toBe(true);
     expect(fake.calls).toHaveLength(0);
   });
 
@@ -373,6 +467,69 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
         release_ids: ["release-ca-1"],
       },
     });
+  });
+
+  it("projects only CA candidates from a multi-jurisdiction M2M response", async () => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({
+        candidates: [
+          jurisdictionCandidate("CN", "source-cn-1", "123456"),
+          jurisdictionCandidate("US", "source-us-1", "234567"),
+          jurisdictionCandidate("CA", "source-ca-candidate", "345678"),
+        ],
+        results: [{
+          ...jurisdictionCandidate("CA", "source-ca-result", "345678"),
+          status: "confirmed",
+          rates: [],
+          confirmedTotalPercent: null,
+          documents: [],
+          measures: [],
+          warnings: [],
+        }],
+        sources: [
+          source({ id: "source-cn-1" }),
+          source({ id: "source-us-1" }),
+          source({ id: "source-ca-candidate" }),
+          source({ id: "source-ca-result" }),
+        ],
+      }) },
+    ]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput(), context);
+
+    expect(response.status).toBe("success");
+    expect((response.data as { candidates: Array<{ hs_code: string }> }).candidates).toEqual([
+      expect.objectContaining({ hs_code: "345678", classification_status: "confirmed" }),
+    ]);
+    expect(response.sourceRefs).toHaveLength(2);
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("fails closed when a multi-jurisdiction response has no CA result or candidate", async () => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({
+        candidates: [jurisdictionCandidate("CN", "source-cn-1", "123456")],
+        results: [{
+          ...jurisdictionCandidate("US", "source-us-1", "234567"),
+          rates: [],
+          confirmedTotalPercent: null,
+          documents: [],
+          measures: [],
+          warnings: [],
+        }],
+        sources: [source({ id: "source-cn-1" }), source({ id: "source-us-1" })],
+      }) },
+    ]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput(), context);
+
+    expect(response.status).toBe("unavailable");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.ca_results_missing");
+    expect(fake.calls).toHaveLength(2);
   });
 
   it("maps a valid status with independent readiness facts and identity evidence", async () => {

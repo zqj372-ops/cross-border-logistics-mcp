@@ -19,6 +19,7 @@ import {
 
 const API_VERSION = "riskcustoms-m2m.v1";
 const CONTRACT_VERSION = "riskcustoms-query.v1";
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const HEX_HASH = /^[a-f0-9]{64}$/u;
 
@@ -382,6 +383,7 @@ export interface RiskCustomsApiAdapterOptions {
   readonly fetchImpl?: FetchImplementation;
   readonly authorizationProvider?: (
     context: ExecutionContext,
+    signal?: AbortSignal,
   ) => string | Promise<string>;
   readonly clock?: () => Date;
   readonly timeoutMs?: number;
@@ -555,11 +557,13 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
   private readonly clock: () => Date;
   private readonly productionConnector: boolean;
   private readonly configurationBlocked: boolean;
+  private readonly requestTimeoutMs: number;
 
   constructor(options?: RiskCustomsApiAdapterOptions) {
     this.authorizationProvider = options?.authorizationProvider;
     this.clock = options?.clock ?? (() => new Date());
     this.productionConnector = options?.productionConnector === true;
+    this.requestTimeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     if (options === undefined || options.enabled !== true || !this.productionConnector) {
       this.client = null;
       this.configurationBlocked = false;
@@ -598,7 +602,10 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     const unavailable = this.available();
     if (unavailable !== null) return unavailable;
     try {
-      const response = await this.fetchStatus(input.rule_date, context!, signal);
+      const ruleDate = input.rule_date;
+      const response = await this.withRequestSignal(signal, (requestSignal) =>
+        this.fetchStatus(ruleDate, context!, requestSignal),
+      );
       const parsed = parseStatusResponse(response);
       if (parsed === null) {
         return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
@@ -665,22 +672,24 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     if (unavailable !== null) return unavailable;
 
     try {
-      const statusResponse = parseStatusResponse(await this.fetchStatus(ruleDate, context!, signal));
-      if (statusResponse === null) {
-        return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
-      }
-      const mapped = mappedStatus(statusResponse.value);
-      if (mapped === null) {
-        return failure("unavailable", "customs.status_mapping_invalid", "RiskCustoms status could not be mapped to the MCP contract.");
-      }
-      const gateFailure = this.readinessFailure(input, statusResponse.value, mapped.data, mapped.sourceRef);
-      if (gateFailure !== null) return gateFailure;
-      const body = this.queryBody(input, query, ruleDate);
-      if (body === null) {
-        return failure("needs_input", "customs.attributes_invalid", "Product attributes must contain only explicit scalar values.", "product_attributes");
-      }
-      const response = await this.fetchQuery(body, context!, signal);
-      return this.mapResponse(input, ruleDate, response, statusResponse.value, mapped.sourceRef);
+      return await this.withRequestSignal(signal, async (requestSignal) => {
+        const statusResponse = parseStatusResponse(await this.fetchStatus(ruleDate, context!, requestSignal));
+        if (statusResponse === null) {
+          return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
+        }
+        const mapped = mappedStatus(statusResponse.value);
+        if (mapped === null) {
+          return failure("unavailable", "customs.status_mapping_invalid", "RiskCustoms status could not be mapped to the MCP contract.");
+        }
+        const gateFailure = this.readinessFailure(input, statusResponse.value, mapped.data, mapped.sourceRef);
+        if (gateFailure !== null) return gateFailure;
+        const body = this.queryBody(input, query, ruleDate);
+        if (body === null) {
+          return failure("needs_input", "customs.attributes_invalid", "Product attributes must contain only explicit scalar values.", "product_attributes");
+        }
+        const response = await this.fetchQuery(body, context!, requestSignal);
+        return this.mapResponse(input, ruleDate, response, statusResponse.value, mapped.sourceRef);
+      });
     } catch (error: unknown) {
       return this.mapHttpFailure(error, "query");
     }
@@ -710,9 +719,9 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     return null;
   }
 
-  private async headers(context: ExecutionContext): Promise<Readonly<Record<string, string>>> {
+  private async headers(context: ExecutionContext, signal: AbortSignal): Promise<Readonly<Record<string, string>>> {
     if (this.authorizationProvider === undefined) throw new Error("authorization unavailable");
-    const token = await this.authorizationProvider(context);
+    const token = await this.authorizationProvider(context, signal);
     if (typeof token !== "string" || token.length === 0 || /\s/u.test(token)) throw new Error("authorization invalid");
     return {
       Authorization: `Bearer ${token}`,
@@ -720,17 +729,46 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     };
   }
 
-  private async fetchStatus(ruleDate: string, context: ExecutionContext, signal?: AbortSignal): Promise<unknown> {
+  private async withRequestSignal<T>(
+    callerSignal: AbortSignal | undefined,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    if (callerSignal?.aborted) {
+      throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
+    }
+    const controller = new AbortController();
+    let rejectCancellation: ((error: HttpAdapterError) => void) | undefined;
+    const cancellation = new Promise<never>((_, reject) => {
+      rejectCancellation = reject;
+    });
+    const abort = (): void => {
+      controller.abort(callerSignal?.reason);
+      rejectCancellation?.(new HttpAdapterError("upstream_aborted", "The upstream request was aborted."));
+    };
+    callerSignal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => {
+      controller.abort();
+      rejectCancellation?.(new HttpAdapterError("upstream_timeout", "The upstream request exceeded the configured timeout."));
+    }, this.requestTimeoutMs);
+    try {
+      return await Promise.race([operation(controller.signal), cancellation]);
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", abort);
+    }
+  }
+
+  private async fetchStatus(ruleDate: string, context: ExecutionContext, signal: AbortSignal): Promise<unknown> {
     return this.client!.get(
       `/api/m2m/status?ruleDate=${encodeURIComponent(ruleDate)}`,
-      await this.headers(context),
+      await this.headers(context, signal),
       signal,
       [503],
     );
   }
 
-  private async fetchQuery(body: Record<string, unknown>, context: ExecutionContext, signal?: AbortSignal): Promise<unknown> {
-    return this.client!.post("/api/m2m/query", body, await this.headers(context), signal);
+  private async fetchQuery(body: Record<string, unknown>, context: ExecutionContext, signal: AbortSignal): Promise<unknown> {
+    return this.client!.post("/api/m2m/query", body, await this.headers(context, signal), signal);
   }
 
   private mapHttpFailure(error: unknown, operation: "status" | "query"): AdapterResult {
@@ -836,9 +874,12 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
       : requestedHs6 === undefined || requestedHs6 === null || response.selectedHs6 === requestedHs6;
     if (!modeMatches || !selectedHs6Matches) return failure("manual_review", "customs.response_correlation_mismatch", "RiskCustoms response mode or selected HS6 does not match the request.");
 
-    const responseValues = [...response.candidates, ...response.results];
-    if (responseValues.some((value) => value.country !== "CA")) {
-      return failure("manual_review", "customs.jurisdiction_mismatch", "RiskCustoms returned a classification outside the Canada query scope.");
+    const caResults = response.results.filter((value) => value.country === "CA");
+    const responseValues = caResults.length > 0
+      ? caResults
+      : response.candidates.filter((value) => value.country === "CA");
+    if (responseValues.length === 0) {
+      return failure("unavailable", "customs.ca_results_missing", "RiskCustoms returned no Canada classification to project.");
     }
     const classificationSourceIds = new Set(responseValues.flatMap(candidateSourceIds));
     const sourceResult = this.mapSources(
