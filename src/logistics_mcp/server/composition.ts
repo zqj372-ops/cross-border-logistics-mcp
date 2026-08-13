@@ -139,7 +139,7 @@ export interface GatewayComposition {
   readonly contracts: ToolContractMap;
   readonly definitions: readonly ToolDefinition[];
   readonly handler: McpHttpHandler;
-  readonly readiness: () => Promise<PlatformReadiness>;
+  readonly readiness: (signal?: AbortSignal) => Promise<PlatformReadiness>;
   readonly close: () => Promise<void>;
 }
 
@@ -153,6 +153,20 @@ function hasQuotePdfPort(value: unknown): value is QuotePdfPort {
   return typeof value === "object" && value !== null &&
     typeof (value as { post?: unknown }).post === "function" &&
     typeof (value as { get?: unknown }).get === "function";
+}
+
+function hasProductionAdapterSet(value: unknown): value is FixtureAdapters {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const hasMethods = (candidate: unknown, methods: readonly string[]) =>
+    typeof candidate === "object" && candidate !== null &&
+    methods.every((method) => typeof (candidate as Record<string, unknown>)[method] === "function");
+  return hasMethods(record.quote, ["calculate", "previewDraft", "commitDraft", "readDraft"]) &&
+    hasMethods(record.customs, ["getStatus", "search", "estimate"]) &&
+    hasMethods(record.knowledge, ["searchCurated"]) &&
+    hasMethods(record.status, ["getDataStatus"]) &&
+    hasMethods(record.review, ["previewTask", "commitTask", "readTask"]) &&
+    (record.quotePdf === undefined || hasQuotePdfPort(record.quotePdf));
 }
 
 function productionAdapters(
@@ -188,7 +202,7 @@ interface CompositionTools {
 function compositionTools(
   adapters: FixtureAdapters,
   quotePdfEnabled = false,
-  quotePdfReady: () => boolean = () => true,
+  quotePdfReady: (signal?: AbortSignal) => Promise<boolean> = () => Promise.resolve(true),
 ): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
   const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
@@ -345,9 +359,16 @@ function compositionTools(
   });
   const quotePdfHandler: DomainToolHandler =
     quotePdfEnabled && hasQuotePdfPort(adapters.quotePdf)
-      ? (input, context, signal) => quotePdfReady()
-        ? bundle.handlers["quote.create_pdf"](input, context, signal)
-        : quotePdfUnavailableHandler(input, context, signal)
+      ? async (input, context, signal) => {
+          try {
+            if (!await quotePdfReady(signal)) {
+              return quotePdfUnavailableHandler(input, context, signal);
+            }
+          } catch {
+            return quotePdfUnavailableHandler(input, context, signal);
+          }
+          return bundle.handlers["quote.create_pdf"](input, context, signal);
+        }
       : quotePdfUnavailableHandler;
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,
@@ -383,7 +404,7 @@ function buildComposition(
   adapters: FixtureAdapters,
   tools: CompositionTools,
   handler: McpHttpHandler,
-  readiness: () => Promise<PlatformReadiness>,
+  readiness: (signal?: AbortSignal) => Promise<PlatformReadiness>,
   closeExtra: () => Promise<void> = () => Promise.resolve(),
 ): GatewayComposition {
   if (options.dataMode !== mode) {
@@ -593,29 +614,37 @@ export function createProductionComposition(
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
     ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
   ];
-  let productionQuotePdfReady = false;
   const quotePdfConfigured = options.quotePdfEnabled === true &&
     hasQuotePdfPort(providedAdapters.quotePdf) &&
     structuralReasons.length === 0;
-  const tools = compositionTools(
-    adapters,
-    quotePdfConfigured,
-    () => productionQuotePdfReady,
-  );
 
-  const readiness = async (): Promise<PlatformReadiness> => {
-    const platformState = await platform.readiness();
+  const readiness = async (signal?: AbortSignal): Promise<PlatformReadiness> => {
+    let platformState: PlatformReadiness;
+    try {
+      platformState = await withAbort(platform.readiness(), signal);
+    } catch {
+      return { ready: false, reasons: ["production_runtime_unavailable"] };
+    }
     const reasons = [...platformState.reasons, ...structuralReasons];
     const liveChecks = [
-      verifierStatus.valid ? checkProductionHealth(options.tokenVerifier!, verifierStatus.unhealthyReason) : null,
-      adapterStatus.valid ? checkProductionHealth(options.adapterSource!, adapterStatus.unhealthyReason) : null,
+      verifierStatus.valid
+        ? checkProductionHealth(options.tokenVerifier!, verifierStatus.unhealthyReason, signal)
+        : null,
+      adapterStatus.valid
+        ? checkProductionHealth(options.adapterSource!, adapterStatus.unhealthyReason, signal)
+        : null,
     ].filter((check): check is Promise<string | null> => check !== null);
     const liveReasons = await Promise.all(liveChecks);
     reasons.push(...liveReasons.filter((reason): reason is string => reason !== null));
     const uniqueReasons = [...new Set(reasons)];
-    productionQuotePdfReady = quotePdfConfigured && uniqueReasons.length === 0;
     return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
   };
+
+  const tools = compositionTools(
+    adapters,
+    quotePdfConfigured,
+    async (signal) => (await readiness(signal)).ready,
+  );
 
   const handler =
     structuralReasons.length > 0 || platform.dependencies === undefined
@@ -691,7 +720,8 @@ function productionDependencyStatus(
     typeof record.health !== "function" ||
     typeof record.close !== "function" ||
     (expectedKind === "token_verifier" && typeof record.verify !== "function") ||
-    (expectedKind === "adapter_source" && !Object.hasOwn(record, "adapters"))
+    (expectedKind === "adapter_source" &&
+      (!Object.hasOwn(record, "adapters") || !hasProductionAdapterSet(record.adapters)))
   ) {
     return { valid: false, reason: invalidReason, unhealthyReason };
   }
@@ -701,10 +731,39 @@ function productionDependencyStatus(
 async function checkProductionHealth(
   dependency: ManagedProductionDependency,
   reason: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   try {
-    return (await dependency.health()).ready ? null : reason;
+    return (await withAbort(dependency.health(), signal)).ready ? null : reason;
   } catch {
     return reason;
   }
+}
+
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise;
+  const abortError = signal.reason instanceof Error
+    ? signal.reason
+    : new Error("request aborted");
+  if (signal.aborted) {
+    return Promise.reject(abortError);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(abortError);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error instanceof Error ? error : new Error("request failed"));
+      },
+    );
+  });
 }

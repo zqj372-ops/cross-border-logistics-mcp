@@ -516,7 +516,11 @@ describe("quote.create_pdf platform registration", () => {
     const directory = mkdtempSync(join(tmpdir(), "logistics-mcp-quote-pdf-"));
     const store = new SqliteProductionStore(join(directory, "platform.sqlite"));
     const delegated = delegatedPorts();
-    const sourceHealth = vi.fn(() => Promise.resolve({ ready: true }));
+    let sourceReady = true;
+    let sourceHangs = false;
+    const sourceHealth = vi.fn(() => sourceHangs
+      ? new Promise<{ readonly ready: boolean }>(() => {})
+      : Promise.resolve({ ready: sourceReady }));
     const sourceClose = vi.fn(() => Promise.resolve());
     const verifier = {
       kind: "token_verifier" as const,
@@ -551,14 +555,16 @@ describe("quote.create_pdf platform registration", () => {
       sessionOwnerId: "quote-pdf-platform-test",
     });
     try {
-      const beforeReady = await composition.handlers["quote.create_pdf"]!(
-        pdfInput(),
+      await expect(composition.readiness()).resolves.toMatchObject({ ready: true });
+      sourceReady = false;
+      const staleReadiness = await composition.handlers["quote.create_pdf"]!(
+        pdfInput("preview", "pdf_production_stale_001"),
         context,
       );
-      expect(beforeReady).toMatchObject({ status: "unavailable", data: null });
+      expect(staleReadiness).toMatchObject({ status: "unavailable", data: null });
       expect(delegated.calculate).not.toHaveBeenCalled();
 
-      await expect(composition.readiness()).resolves.toMatchObject({ ready: true });
+      sourceReady = true;
       const definition = composition.definitions.find(
         ({ name }) => name === "quote.create_pdf",
       );
@@ -598,7 +604,19 @@ describe("quote.create_pdf platform registration", () => {
       expect(delegated.calculate).toHaveBeenCalledTimes(2);
       expect(delegated.post).toHaveBeenCalledTimes(1);
       expect(delegated.get).toHaveBeenCalledTimes(1);
-      expect(sourceHealth).toHaveBeenCalledTimes(1);
+
+      sourceHangs = true;
+      const abortController = new AbortController();
+      const pending = composition.handlers["quote.create_pdf"]!(
+        pdfInput("preview", "pdf_production_abort_001"),
+        context,
+        abortController.signal,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      abortController.abort();
+      await expect(pending).resolves.toMatchObject({ status: "unavailable", data: null });
+      expect(delegated.calculate).toHaveBeenCalledTimes(2);
+      expect(sourceHealth).toHaveBeenCalledTimes(5);
     } finally {
       await composition.close();
       expect(sourceClose).toHaveBeenCalledTimes(1);

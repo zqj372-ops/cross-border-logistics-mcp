@@ -339,6 +339,26 @@ describe("production quote delegation", () => {
     });
   });
 
+  it("fails closed when an adapter source omits required adapters", async () => {
+    const fixture = createFixtureAdapters();
+    const malformedSource = {
+      kind: "adapter_source",
+      adapters: { quote: fixture.quote, quotePdf: fixture.quotePdf },
+      health: () => Promise.resolve({ ready: true }),
+      close: () => Promise.resolve(),
+    } as unknown as ProductionAdapterSource;
+
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource: malformedSource,
+    });
+
+    await usingComposition(composition, async () => {
+      const readiness = await composition.readiness();
+      expect(readiness.reasons).toContain("production_adapter_source_invalid");
+    });
+  });
+
   it("fails closed for a null adapter source without throwing during close", async () => {
     const composition = createProductionComposition({
       dataMode: "production",
