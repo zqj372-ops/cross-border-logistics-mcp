@@ -325,11 +325,23 @@ export function createFixtureComposition(
       : { sessionRegistryOptions: options.sessionRegistryOptions }),
   };
   const platform = createFixturePlatformDependencies(platformOptions);
-  const adapters = createFixtureAdapters(
+  const fixtureAdapters = createFixtureAdapters(
     options.customsFixture === undefined
       ? {}
       : { customsFixture: options.customsFixture },
   );
+  const fixtureQuote = fixtureAdapters.quote;
+  const disabledQuote = new ExistingQuoteAdapter();
+  const adapters: FixtureAdapters = {
+    ...fixtureAdapters,
+    quote: {
+      calculate: (input, context, signal) =>
+        disabledQuote.calculate(input, context, signal),
+      previewDraft: (input) => fixtureQuote.previewDraft(input),
+      commitDraft: (input, signal) => fixtureQuote.commitDraft(input, signal),
+      readDraft: (input) => fixtureQuote.readDraft(input),
+    },
+  };
   const tools = compositionTools(adapters);
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],

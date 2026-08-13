@@ -40,7 +40,10 @@ const context = parseExecutionContext({
   expires_at: Math.floor(Date.now() / 1000) + 300,
 });
 
-function quoteInput(): Record<string, unknown> {
+function quoteInput(overrides: {
+  readonly limitedAccess?: boolean;
+  readonly remoteArea?: boolean;
+} = {}): Record<string, unknown> {
   return quoteV2InputSchema.parse({
     schema_version: "2026-08-11.v1",
     version: "quote-request@2026-08-13.v2",
@@ -68,8 +71,8 @@ function quoteInput(): Record<string, unknown> {
       liftgate: false,
       pallet_jack: true,
       detention_minutes: 15,
-      limited_access: false,
-      remote_area: false,
+      limited_access: overrides.limitedAccess ?? false,
+      remote_area: overrides.remoteArea ?? false,
     },
     effective_at: "2026-08-12",
   });
@@ -237,6 +240,55 @@ describe("quote v2 runtime envelope contract", () => {
       const definition = definitions.find((candidate) => candidate.name === name)!;
       expect(definition.inputSchemaId).toBe(`urn:logistics-mcp:${name}:2026-08-11.v1`);
       expect(definition.outputSchemaId).toBe(outputSchemaId);
+    }
+  });
+
+  it("keeps fixture quote calculation unavailable while retaining fixture draft ports", async () => {
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const definition = composition.definitions.find(
+      (candidate) => candidate.name === QUOTE_TOOL,
+    );
+    if (definition === undefined) throw new Error("quote definition missing");
+
+    try {
+      for (const input of [
+        quoteInput(),
+        quoteInput({ limitedAccess: true }),
+        quoteInput({ remoteArea: true }),
+      ]) {
+        const result = await executeRegisteredTool(
+          definition,
+          input,
+          context,
+          {
+            requestId: "req_fixture_quote_v2_unavailable",
+            auditId: "audit_fixture_quote_v2_unavailable",
+          },
+        );
+
+        expect(result.status).toBe("unavailable");
+        expect(result.data).toBeNull();
+        expect(result.source_refs).toEqual([]);
+        expect(result.calculation_trace).toEqual([]);
+        expect(JSON.stringify(result)).not.toMatch(
+          /ready|test_data|amount|release|snapshot|authoritative/i,
+        );
+      }
+
+      await expect(composition.adapters.quote.previewDraft({})).resolves.toMatchObject({
+        status: "manual_review",
+        blockers: [{ code: "quote.target_invalid" }],
+      });
+      await expect(composition.adapters.quote.commitDraft({})).resolves.toMatchObject({
+        status: "manual_review",
+        blockers: [{ code: "quote.target_invalid" }],
+      });
+      await expect(composition.adapters.quote.readDraft({})).resolves.toMatchObject({
+        status: "manual_review",
+        blockers: [{ code: "quote.readback_input_required" }],
+      });
+    } finally {
+      await composition.close();
     }
   });
 
