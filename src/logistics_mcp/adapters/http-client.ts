@@ -261,6 +261,7 @@ export function createFetchJsonClient(
     if (signal?.aborted) abort();
     else signal?.addEventListener("abort", abort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     const requestHeadersValue = requestHeaders(headers);
     const requestInit: RequestInit = {
       method,
@@ -279,6 +280,7 @@ export function createFetchJsonClient(
     };
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        timedOut = true;
         controller.abort();
         reject(
           new HttpAdapterError(
@@ -323,8 +325,24 @@ export function createFetchJsonClient(
           ...abortables,
         ]);
       } catch (error: unknown) {
-        if (error instanceof HttpAdapterError && response.status >= 400 && error.status === undefined) {
-          throw new HttpAdapterError(error.code, error.message, response.status);
+        if (timedOut) {
+          throw new HttpAdapterError(
+            "upstream_timeout",
+            "The upstream request exceeded the configured timeout.",
+          );
+        }
+        if (signal?.aborted) {
+          throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
+        }
+        if (response.status >= 400) {
+          if (error instanceof HttpAdapterError) {
+            throw new HttpAdapterError(error.code, error.message, response.status);
+          }
+          throw new HttpAdapterError(
+            "upstream_http_error",
+            "The upstream response could not be read.",
+            response.status,
+          );
         }
         throw error;
       }

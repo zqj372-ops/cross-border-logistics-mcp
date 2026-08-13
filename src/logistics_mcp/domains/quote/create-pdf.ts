@@ -19,7 +19,8 @@ const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
 const SAFE_TEXT_REJECT = /^(?:(?:https?|file|data):|(?:https?:)?\/\/|(?:[A-Za-z]:[\\/]|\/{1,2}))/iu;
 const HTML_REJECT = /<\s*\/?\s*[A-Za-z][^>]*>/u;
-const PREVIEW_REF_RE = /^preview:quote\.pdf:([a-f0-9]{32}):([a-f0-9]{32})$/u;
+const PREVIEW_REF_RE = /^preview:quote\.pdf:([A-Za-z0-9_-]{43}):([A-Za-z0-9_-]{43})$/u;
+const STRICT_DECIMAL_RE = /^(0|[1-9][0-9]{0,29})(?:\.([0-9]{1,6}))?$/u;
 
 const identifierSchema = z.string().regex(IDENTIFIER_RE);
 const versionSchema = z.string().regex(VERSION_RE);
@@ -39,7 +40,7 @@ const approvalSchema = z
 
 const writeContextSchema = z
   .object({
-    idempotency_key: z.string().min(16).max(200),
+    idempotency_key: z.string().min(16).max(200).refine((value) => value.trim().length > 0),
     operation_mode: z.enum(["preview", "commit"]),
     preview_ref: identifierSchema.nullable(),
     approval: approvalSchema,
@@ -190,17 +191,8 @@ function noData(
   };
 }
 
-function uniqueSourceRefs(sourceRefs: readonly SourceRef[]): SourceRef[] {
-  const seen = new Set<string>();
-  return sourceRefs.filter((source) => {
-    if (seen.has(source.source_id)) return false;
-    seen.add(source.source_id);
-    return true;
-  });
-}
-
 function safeSourceRefs(sourceRefs: readonly SourceRef[]): SourceRef[] {
-  return uniqueSourceRefs(sourceRefs).map((source) => ({
+  return sourceRefs.map((source) => ({
     ...source,
     locator: "opaque://quote-authority",
   }));
@@ -216,7 +208,7 @@ function safeNotices(notices: readonly Notice[] | undefined): Notice[] | undefin
 }
 
 function safeEvidenceTrace(sourceRefs: readonly SourceRef[], status: string): CalculationStep[] {
-  const sourceRefIds = uniqueSourceRefs(sourceRefs).map((source) => source.source_id);
+  const sourceRefIds = sourceRefs.map((source) => source.source_id);
   return sourceRefIds.length === 0
     ? []
     : [{
@@ -269,14 +261,78 @@ function previewRef(
   candidate: Record<string, unknown>,
   idempotencyKey: string,
 ): string {
-  const candidateDigest = hashPayload(candidate).slice("sha256:".length, "sha256:".length + 32);
-  const keyDigest = hashPayload({ idempotency_key: idempotencyKey }).slice("sha256:".length, "sha256:".length + 32);
+  const candidateDigest = digestBase64Url(candidate);
+  const keyDigest = digestBase64Url({ idempotency_key: idempotencyKey });
   return `preview:quote.pdf:${candidateDigest}:${keyDigest}`;
 }
 
 function parsePreviewRef(value: string): { candidateDigest: string; keyDigest: string } | null {
   const match = PREVIEW_REF_RE.exec(value);
-  return match === null ? null : { candidateDigest: match[1]!, keyDigest: match[2]! };
+  if (match === null || decodeDigest(match[1]!) === null || decodeDigest(match[2]!) === null) return null;
+  return { candidateDigest: match[1]!, keyDigest: match[2]! };
+}
+
+function digestBase64Url(value: unknown): string {
+  return Buffer.from(hashPayload(value).slice("sha256:".length), "hex").toString("base64url");
+}
+
+function decodeDigest(value: string): Buffer | null {
+  const decoded = Buffer.from(value, "base64url");
+  return decoded.length === 32 && decoded.toString("base64url") === value ? decoded : null;
+}
+
+function canonicalDecimal(value: unknown): string {
+  if (typeof value !== "string") throw new Error("decimal must be a string");
+  const match = STRICT_DECIMAL_RE.exec(value);
+  if (match === null) throw new Error("decimal is not a supported non-negative string");
+  const fraction = match[2]?.replace(/0+$/u, "") ?? "";
+  return fraction.length === 0 ? match[1]! : `${match[1]}.${fraction}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function canonicalizeQuotePdfAuthorityBody(body: Record<string, unknown>): Record<string, unknown> {
+  const data = body.data;
+  if (!isRecord(data) || !isRecord(data.total) || !Array.isArray(data.line_items)) {
+    throw new Error("quote PDF authority body shape is invalid");
+  }
+  const total = { ...data.total, amount: canonicalDecimal(data.total.amount) };
+  const lineItems = data.line_items.map((item) => {
+    if (!isRecord(item) || !isRecord(item.amount)) throw new Error("quote PDF line item shape is invalid");
+    return { ...item, amount: { ...item.amount, amount: canonicalDecimal(item.amount.amount) } };
+  });
+  return { ...body, data: { ...data, total, line_items: lineItems } };
+}
+
+function isSafePdfText(value: unknown, maxLength: number): value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > maxLength) return false;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !SAFE_TEXT_REJECT.test(trimmed) && !HTML_REJECT.test(value);
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === left.length && rightSet.size === right.length &&
+    leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value));
+}
+
+function quoteVersion(quote: ParsedQuote): string {
+  return `${quote.release_id}:${quote.rule_version}:${quote.data_version}`;
+}
+
+function closedQuoteEvidence(
+  quote: ParsedQuote,
+  sourceRefs: readonly SourceRef[],
+  quoteTrace: readonly CalculationStep[],
+): boolean {
+  const sourceIds = sourceRefs.map((source) => source.source_id);
+  return sourceIds.length > 0 && sameStringSet(sourceIds, quote.source_ref_ids) &&
+    quoteTrace.every((step) => step.source_ref_ids.length > 0 &&
+      new Set(step.source_ref_ids).size === step.source_ref_ids.length &&
+      step.source_ref_ids.every((sourceId) => sourceIds.includes(sourceId)));
 }
 
 function isContextAllowed(context: ExecutionContext): boolean {
@@ -292,6 +348,7 @@ function isCalculatedQuote(quote: ParsedQuote, context: ExecutionContext): boole
     quote.ready === true &&
     quote.test_data === false &&
     quote.sendable === false &&
+    VERSION_RE.test(quoteVersion(quote)) &&
     /^sha256:[0-9a-f]{64}$/u.test(quote.snapshot_hash) &&
     /^sha256:[0-9a-f]{64}$/u.test(quote.release_hash) &&
     quote.snapshot_hash === quote.release_hash;
@@ -301,12 +358,23 @@ function projectPdfBody(quote: ParsedQuote, presentation: QuoteCreatePdfInput["p
   if (quote.quote_status !== "calculated" || quote.total === null) {
     throw new Error("quote is not calculated");
   }
-  return {
+  if (!VERSION_RE.test(quoteVersion(quote)) || quote.line_items.length > 500 || quote.line_items.length < 1) {
+    throw new Error("quote identity or line count is invalid");
+  }
+  const sourceIds = quote.source_ref_ids;
+  if (!sameStringSet(sourceIds, quote.line_items.flatMap((line) => line.source_ref_ids))) {
+    throw new Error("quote source references are not closed");
+  }
+  if (new Set(quote.line_items.map((line) => line.line_id)).size !== quote.line_items.length ||
+      quote.line_items.some((line) => !isSafePdfText(line.label, 200) || !isSafePdfText(line.pricing_basis, 500))) {
+    throw new Error("quote line projection is unsafe");
+  }
+  return canonicalizeQuotePdfAuthorityBody({
     version: 2,
     kind: "quote",
     sendable: false,
     quote_id: quote.quote_id,
-    quote_version: `${quote.release_id}:${quote.rule_version}:${quote.data_version}`,
+    quote_version: quoteVersion(quote),
     release_id: quote.release_id,
     rule_version: quote.rule_version,
     data_version: quote.data_version,
@@ -319,7 +387,7 @@ function projectPdfBody(quote: ParsedQuote, presentation: QuoteCreatePdfInput["p
       line_items: quote.line_items,
       presentation,
     },
-  };
+  });
 }
 
 function metadataMatches(
@@ -357,7 +425,7 @@ function readbackSource(metadata: QuotePdfMetadata, retrievedAt: string): Source
     source_type: "internal_system",
     system: "quote-pdf-api",
     locator: "opaque://quote-pdf/readback",
-    version: metadata.renderer_version,
+    version: `pdf-renderer:${digestBase64Url({ renderer_version: metadata.renderer_version, template_version: metadata.template_version })}`,
     retrieved_at: retrievedAt,
     authority: "authoritative",
     content_hash: `sha256:${metadata.sha256}`,
@@ -410,7 +478,7 @@ export async function createQuotePdf(
     return noData("needs_input", "quote.create_pdf.preview_ref_invalid", "The commit preview_ref is not valid.");
   }
   if (commitPreview !== null) {
-    const commitKeyDigest = hashPayload({ idempotency_key: input.write_context.idempotency_key }).slice("sha256:".length, "sha256:".length + 32);
+    const commitKeyDigest = digestBase64Url({ idempotency_key: input.write_context.idempotency_key });
     if (commitKeyDigest === commitPreview.keyDigest) {
       return noData("needs_input", "quote.create_pdf.preview_commit_key_reused", "Preview and commit require different idempotency keys.");
     }
@@ -423,15 +491,21 @@ export async function createQuotePdf(
   }
   if (quoteResult.status !== "success") return propagateQuoteResult(quoteResult);
   const parsedQuote = quoteV2ResultSchema.safeParse(quoteResult.data);
-  const sourceRefs = safeSourceRefs(quoteResult.sourceRefs);
   const quoteTrace = quoteResult.calculationTrace ?? [];
-  const sourceIds = new Set(sourceRefs.map((source) => source.source_id));
-  if (!parsedQuote.success || !isCalculatedQuote(parsedQuote.data, context) || sourceRefs.length === 0 || parsedQuote.data.source_ref_ids.some((sourceId) => !sourceIds.has(sourceId))) {
-    return noData("unavailable", "quote.create_pdf.quote_result_invalid", "The authoritative quote did not satisfy the PDF projection contract.", sourceRefs, safeEvidenceTrace(sourceRefs, "invalid"));
+  if (!parsedQuote.success || !isCalculatedQuote(parsedQuote.data, context) || !closedQuoteEvidence(parsedQuote.data, quoteResult.sourceRefs, quoteTrace)) {
+    return noData("unavailable", "quote.create_pdf.quote_result_invalid", "The authoritative quote did not satisfy the PDF projection contract.");
+  }
+  const sourceRefs = safeSourceRefs(quoteResult.sourceRefs);
+
+  let projectedBody: Record<string, unknown>;
+  try {
+    projectedBody = projectPdfBody(parsedQuote.data, input.presentation);
+  } catch {
+    return noData("unavailable", "quote.create_pdf.projection_invalid", "The authoritative quote could not be projected to PDF input.", sourceRefs, safeEvidenceTrace(sourceRefs, "calculated"));
   }
 
   const candidate = candidatePayload(input, context, parsedQuote.data, sourceRefs, quoteTrace);
-  const candidateDigest = hashPayload(candidate).slice("sha256:".length, "sha256:".length + 32);
+  const candidateDigest = digestBase64Url(candidate);
   if (input.write_context.operation_mode === "preview") {
     const assumptions = safeNotices(quoteResult.assumptions);
     const warnings = safeNotices(quoteResult.warnings);
@@ -440,7 +514,7 @@ export async function createQuotePdf(
       step_id: "step:quote:candidate",
       operation: "form opaque quote candidate",
       inputs: [
-        { name: "quote_version", value: `${parsedQuote.data.release_id}:${parsedQuote.data.rule_version}:${parsedQuote.data.data_version}` },
+        { name: "quote_version", value: quoteVersion(parsedQuote.data) },
         { name: "candidate_digest", value: candidateDigest },
       ],
       result: "previewed",
@@ -463,12 +537,7 @@ export async function createQuotePdf(
     return noData("manual_review", "quote.create_pdf.candidate_drift", "The authoritative quote candidate changed before commit.", sourceRefs, safeEvidenceTrace(sourceRefs, "calculated"));
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = projectPdfBody(parsedQuote.data, input.presentation);
-  } catch {
-    return noData("unavailable", "quote.create_pdf.projection_invalid", "The authoritative quote could not be projected to PDF input.", sourceRefs, safeEvidenceTrace(sourceRefs, "calculated"));
-  }
+  const body = projectedBody;
   const inputSha256 = hashPayload(body).slice("sha256:".length);
   let posted: QuotePdfPostResult;
   try {

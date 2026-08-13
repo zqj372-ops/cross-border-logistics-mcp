@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  canonicalizeQuotePdfAuthorityBody,
   createQuotePdf,
   quoteCreatePdfInputSchema,
   quoteCreatePdfWriteResultSchema,
@@ -134,6 +135,31 @@ const quoteTrace = {
   rounding: null,
 };
 
+const upstreamCanonicalFixture = {
+  version: 2,
+  kind: "quote",
+  sendable: false,
+  quote_id: "quote-001",
+  quote_version: "release-2026-08-13:zone-rules-2026-08-13:release:rule:data",
+  release_id: "release-2026-08-13",
+  rule_version: "zone-rules-2026-08-13",
+  data_version: "release:rule:data",
+  effective_date: "2026-08-13",
+  snapshot_hash: `sha256:${"a".repeat(64)}`,
+  release_hash: `sha256:${"a".repeat(64)}`,
+  data: {
+    currency: "USD",
+    total: { amount: "9007199254740994.000", currency: "USD" },
+    line_items: [
+      { line_id: "line-1", label: "six", amount: { amount: "6.00", currency: "USD" }, pricing_basis: "fixture", source_ref_ids: ["src:fixture"] },
+      { line_id: "line-2", label: "precise", amount: { amount: "0.005", currency: "USD" }, pricing_basis: "fixture", source_ref_ids: ["src:fixture"] },
+      { line_id: "line-3", label: "zero", amount: { amount: "0.000", currency: "USD" }, pricing_basis: "fixture", source_ref_ids: ["src:fixture"] },
+      { line_id: "line-4", label: "large", amount: { amount: "9007199254740987.995", currency: "USD" }, pricing_basis: "fixture", source_ref_ids: ["src:fixture"] },
+    ],
+    presentation: { customer_display_name: "Fixture customer" },
+  },
+};
+
 type MockQuoteAdapter = QuoteAdapter & {
   calculateMock: ReturnType<typeof vi.fn<QuoteAdapter["calculate"]>>;
 };
@@ -183,7 +209,7 @@ function pdfPort(options: PdfOverrides = {}): MockPdfPort {
     input_sha256: "c".repeat(64),
   };
   const defaultPost = vi.fn<QuotePdfPort["post"]>((body) => {
-    latestMetadata = { ...latestMetadata, input_sha256: hashPayload(body).slice("sha256:".length) };
+    latestMetadata = { ...latestMetadata, input_sha256: hashPayload(canonicalizeQuotePdfAuthorityBody(body)).slice("sha256:".length) };
     return Promise.resolve({
       ok: true as const,
       status: 201 as const,
@@ -229,6 +255,24 @@ describe("quote.create_pdf domain", () => {
         approval: { required: true, status: "pending", approval_id: "approval:fixture:1" },
       },
     }).success).toBe(false);
+    const whitespaceKey = " ".repeat(16);
+    expect(quoteCreatePdfInputSchema.safeParse(input("preview", whitespaceKey)).success).toBe(false);
+    expect(quoteCreatePdfInputSchema.safeParse(input("commit", whitespaceKey, "preview:valid:1")).success).toBe(false);
+  });
+
+  it("uses the upstream decimal canonicalization and stable hash without Number", () => {
+    const canonical = canonicalizeQuotePdfAuthorityBody(upstreamCanonicalFixture);
+    const data = canonical.data as Record<string, unknown>;
+    const total = data.total as Record<string, unknown>;
+    const lines = data.line_items as Array<Record<string, unknown>>;
+    expect(total.amount).toBe("9007199254740994");
+    expect(lines.map((line) => (line.amount as Record<string, unknown>).amount)).toEqual([
+      "6",
+      "0.005",
+      "0",
+      "9007199254740987.995",
+    ]);
+    expect(hashPayload(canonical)).toBe("sha256:c698ce124c58532c47f6c3dee1bfb02154065a236c3a9162229829159693ea9f");
   });
 
   it("previews with one Quote call, zero PDF calls, stable opaque ref, and no PDF evidence or amount", async () => {
@@ -251,6 +295,11 @@ describe("quote.create_pdf domain", () => {
       approval: { required: false, status: "not_required", approval_id: null },
     });
     expect(result.data).toHaveProperty("preview_ref");
+    const previewRef = result.data?.preview_ref as string;
+    const previewParts = previewRef.split(":");
+    expect(previewRef.length).toBeLessThanOrEqual(128);
+    expect(Buffer.from(previewParts[2] ?? "", "base64url")).toHaveLength(32);
+    expect(Buffer.from(previewParts[3] ?? "", "base64url")).toHaveLength(32);
     expect(JSON.stringify(result)).not.toContain("9007199254740993.00");
     expect(JSON.stringify(result)).not.toContain("/private/customer/path");
     expect(JSON.stringify(result)).not.toContain("customer secret");
@@ -301,7 +350,7 @@ describe("quote.create_pdf domain", () => {
       sendable: false,
       quote_id: "quote:pdf:001",
       quote_version: "release-1:rules-1:data-1",
-      data: { total: { amount: "9007199254740993.00", currency: "USD" } },
+      data: { total: { amount: "9007199254740993", currency: "USD" } },
     });
     expect(postedCall?.[1]).toBe("commit-key-123456");
     expect(postedCall?.[2]).toBe(context);
@@ -313,6 +362,94 @@ describe("quote.create_pdf domain", () => {
     expect(committed.calculationTrace?.every((step) => step.source_ref_ids.every((id) =>
       committed.sourceRefs.some((ref) => ref.source_id === id)))).toBe(true);
     quoteCreatePdfWriteResultSchema.parse(committed.data);
+  });
+
+  it("rejects unsafe PDF projection text, duplicate sources, unknown trace sources, and overlong PDF identity", async () => {
+    const oversizedLines = Array.from({ length: 501 }, (_, index) => ({
+      line_id: `line-${index}`,
+      label: "line",
+      amount: { amount: "1.00", currency: "USD" },
+      pricing_basis: "fixture",
+      source_ref_ids: [sourceId],
+    }));
+    const unsafeQuotes = [
+      quoteData({ line_items: [{ ...quoteData().line_items[0], label: "https://example.invalid" }] }),
+      quoteData({ line_items: [{ ...quoteData().line_items[0], pricing_basis: "/absolute/path" }] }),
+      quoteData({ line_items: [{ ...quoteData().line_items[0], label: "<b>line</b>" }] }),
+      quoteData({ line_items: [{ ...quoteData().line_items[0], pricing_basis: "   " }] }),
+      quoteData({ line_items: oversizedLines, total: { amount: "501.00", currency: "USD" } }),
+      quoteData({ release_id: "r".repeat(64), rule_version: "s".repeat(64), data_version: "d" }),
+    ];
+    for (const data of unsafeQuotes) {
+      const pdf = pdfPort();
+      const result = await createQuotePdf(quoteAdapter([{
+        status: "success",
+        data,
+        sourceRefs: [sourceRef],
+        calculationTrace: [quoteTrace],
+      }]), pdf, input("preview", "preview-key-123456"), context);
+      expect(result).toMatchObject({ status: "unavailable", data: null });
+      expect(pdf.postMock).not.toHaveBeenCalled();
+    }
+
+    const duplicateLinePdf = pdfPort();
+    const duplicateLineBase = quoteData();
+    const duplicateLineData = {
+      ...duplicateLineBase,
+      total: { amount: "2.00", currency: "USD" },
+      line_items: [
+        { ...duplicateLineBase.line_items[0], line_id: "same-line", amount: { amount: "1.00", currency: "USD" } },
+        { ...duplicateLineBase.line_items[0], line_id: "same-line", amount: { amount: "1.00", currency: "USD" } },
+      ],
+    };
+    const duplicateLine = await createQuotePdf(quoteAdapter([{
+      status: "success",
+      data: duplicateLineData,
+      sourceRefs: [sourceRef],
+      calculationTrace: [quoteTrace],
+    }]), duplicateLinePdf, input("preview", "preview-key-123456"), context);
+    expect(duplicateLine).toMatchObject({ status: "unavailable", data: null });
+
+    const duplicateLineSourcePdf = pdfPort();
+    const duplicateLineSourceBase = quoteData();
+    const duplicateLineSourceData = {
+      ...duplicateLineSourceBase,
+      line_items: [{ ...quoteData().line_items[0], source_ref_ids: [sourceId, sourceId] }],
+    };
+    const duplicateLineSource = await createQuotePdf(quoteAdapter([{
+      status: "success",
+      data: duplicateLineSourceData,
+      sourceRefs: [sourceRef],
+      calculationTrace: [quoteTrace],
+    }]), duplicateLineSourcePdf, input("preview", "preview-key-123456"), context);
+    expect(duplicateLineSource).toMatchObject({ status: "unavailable", data: null });
+
+    const duplicateSourcePdf = pdfPort();
+    const duplicateSource = await createQuotePdf(quoteAdapter([{
+      status: "success",
+      data: quoteData(),
+      sourceRefs: [sourceRef, sourceRef],
+      calculationTrace: [quoteTrace],
+    }]), duplicateSourcePdf, input("preview", "preview-key-123456"), context);
+    expect(duplicateSource).toMatchObject({ status: "unavailable", data: null });
+
+    const unknownTracePdf = pdfPort();
+    const unknownTrace = await createQuotePdf(quoteAdapter([{
+      status: "success",
+      data: quoteData(),
+      sourceRefs: [sourceRef],
+      calculationTrace: [{ ...quoteTrace, source_ref_ids: ["src:unknown"] }],
+    }]), unknownTracePdf, input("preview", "preview-key-123456"), context);
+    expect(unknownTrace).toMatchObject({ status: "unavailable", data: null });
+
+    const extraSourcePdf = pdfPort();
+    const extraSource = await createQuotePdf(quoteAdapter([{
+      status: "success",
+      data: quoteData(),
+      sourceRefs: [sourceRef, { ...sourceRef, source_id: "src:quote:extra" }],
+      calculationTrace: [quoteTrace],
+    }]), extraSourcePdf, input("preview", "preview-key-123456"), context);
+    expect(extraSource).toMatchObject({ status: "unavailable", data: null });
   });
 
   it("keeps drift, non-calculated quotes, and PDF failures fail-closed with zero PDF write", async () => {

@@ -165,6 +165,21 @@ describe("quote PDF API adapter", () => {
     expect(hashPayload(body)).toBe(`sha256:22610e04efd281008d0dfbfd8206333dddf7ab837181ab932bffc6a55c783a8a`);
   });
 
+  it("accepts upstream metadata version strings without imposing a narrower local cap", async () => {
+    const upstreamMetadata = {
+      ...metadata,
+      renderer_version: "renderer-" + "r".repeat(200),
+      template_version: "template-" + "t".repeat(200),
+    };
+    const fetchImpl = vi.fn<FetchImplementation>(() => Promise.resolve(response(upstreamMetadata, 201)));
+    await expect(adapter(fetchImpl).post(body, "commit-key-123456", context)).resolves.toMatchObject({
+      ok: true,
+      status: 201,
+      metadata: upstreamMetadata,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     [400, "unavailable"],
     [413, "unavailable"],
@@ -207,6 +222,26 @@ describe("quote PDF API adapter", () => {
       failure: { kind: "unavailable", upstreamStatus: 503 },
     });
     expect(knownErrorFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [503, "unavailable"],
+    [409, "blocked"],
+  ] as const)("keeps known status %s when the error body is unreadable or oversized", async (status, kind) => {
+    const readFailure = status === 409
+      ? {
+          status,
+          ok: false,
+          body: null,
+          headers: new Headers(),
+          text: vi.fn(() => Promise.reject(new Error("body read failed"))),
+        } as unknown as Response
+      : new Response("too large", { status, headers: { "content-length": "600000" } });
+    const fetchImpl = vi.fn<FetchImplementation>(() => Promise.resolve(readFailure));
+    const result = await adapter(fetchImpl).post(body, "commit-key-123456", context);
+
+    expect(result).toMatchObject({ ok: false, failure: { kind, upstreamStatus: status } });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -262,5 +297,39 @@ describe("quote PDF API adapter", () => {
 
     expect(result).toMatchObject({ ok: false, failure: { kind: "manual_review", dispatched: true } });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds a hanging credential provider by timeout and caller abort without fetching", async () => {
+    const fetchImpl = vi.fn<FetchImplementation>();
+    const hanging = new QuotePdfApiAdapter({
+      baseUrl: "https://pdf.example.invalid",
+      allowedHosts: ["pdf.example.invalid"],
+      enabled: true,
+      timeoutMs: 5,
+      fetchImpl,
+      credentialProvider: vi.fn(() => new Promise<string>(() => undefined)),
+    });
+    await expect(hanging.post(body, "commit-key-123456", context)).resolves.toMatchObject({
+      ok: false,
+      failure: { kind: "unavailable", dispatched: false },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    const controller = new AbortController();
+    const aborting = new QuotePdfApiAdapter({
+      baseUrl: "https://pdf.example.invalid",
+      allowedHosts: ["pdf.example.invalid"],
+      enabled: true,
+      timeoutMs: 50,
+      fetchImpl,
+      credentialProvider: vi.fn(() => new Promise<string>(() => undefined)),
+    });
+    const request = aborting.post(body, "commit-key-123456", context, controller.signal);
+    controller.abort();
+    await expect(request).resolves.toMatchObject({
+      ok: false,
+      failure: { kind: "unavailable", dispatched: false },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -21,8 +21,8 @@ const metadataSchema = z
     document_ref: z.string().regex(DOCUMENT_REF),
     sha256: z.string().regex(HASH),
     byte_length: z.number().int().min(0).max(50 * 1024 * 1024),
-    renderer_version: z.string().min(1).max(128),
-    template_version: z.string().min(1).max(128),
+    renderer_version: z.string().min(1),
+    template_version: z.string().min(1),
     status: z.literal("ready"),
     sendable: z.literal(false),
     quote_id: z.string().regex(IDENTIFIER),
@@ -135,8 +135,10 @@ export class QuotePdfApiAdapter {
   private readonly client: FetchJsonClient;
   private readonly enabled: boolean;
   private readonly credentialProvider: QuotePdfCredentialProvider | undefined;
+  private readonly timeoutMs: number;
 
   constructor(options: QuotePdfApiAdapterOptions) {
+    this.timeoutMs = options.timeoutMs ?? 10_000;
     this.client = createFetchJsonClient({
       baseUrl: options.baseUrl,
       allowedHosts: options.allowedHosts,
@@ -234,17 +236,57 @@ export class QuotePdfApiAdapter {
     if (this.credentialProvider === undefined) {
       return failure("blocked", "pdf.credential_missing", false);
     }
-    const providerSignal = signal ?? new AbortController().signal;
+    const providerController = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectCallerAbort: ((error: HttpAdapterError) => void) | undefined;
+    const callerAbort = signal === undefined
+      ? null
+      : new Promise<never>((_, reject) => {
+          rejectCallerAbort = reject;
+        });
+    const abortProvider = (): void => {
+      providerController.abort(signal?.reason);
+      rejectCallerAbort?.(new HttpAdapterError("upstream_aborted", "The credential request was aborted."));
+    };
+    if (signal?.aborted) abortProvider();
+    else signal?.addEventListener("abort", abortProvider, { once: true });
+    let providerPromise: Promise<string>;
     try {
-      const value = await this.credentialProvider(context, providerSignal);
+      providerPromise = Promise.resolve(this.credentialProvider(context, providerController.signal));
+    } catch {
+      signal?.removeEventListener("abort", abortProvider);
+      return signal?.aborted
+        ? failure("unavailable", "pdf.request_aborted", false)
+        : failure("blocked", "pdf.credential_unavailable", false);
+    }
+    void providerPromise.catch(() => undefined);
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        providerController.abort();
+        reject(new HttpAdapterError("upstream_timeout", "The credential request exceeded the configured timeout."));
+      }, this.timeoutMs);
+    });
+    try {
+      const value = await Promise.race([
+        providerPromise,
+        timeout,
+        ...(callerAbort === null ? [] : [callerAbort]),
+      ]);
       if (typeof value !== "string" || !/^Bearer [^\s\r\n]+$/u.test(value)) {
         return failure("blocked", "pdf.credential_invalid", false);
       }
       return value;
-    } catch {
-      return signal?.aborted
-        ? failure("unavailable", "pdf.request_aborted", false)
-        : failure("blocked", "pdf.credential_unavailable", false);
+    } catch (error: unknown) {
+      if (signal?.aborted || (error instanceof HttpAdapterError && error.code === "upstream_aborted")) {
+        return failure("unavailable", "pdf.request_aborted", false);
+      }
+      if (error instanceof HttpAdapterError && error.code === "upstream_timeout") {
+        return failure("unavailable", "pdf.credential_timeout", false);
+      }
+      return failure("blocked", "pdf.credential_unavailable", false);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", abortProvider);
     }
   }
 
