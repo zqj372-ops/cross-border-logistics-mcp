@@ -46,7 +46,7 @@ const writeContext = {
   idempotency_key: previewIdempotencyKey,
   operation_mode: "preview",
   preview_ref: null,
-  approval: { required: true, status: "pending", approval_id: null },
+  approval: { required: false, status: "not_required", approval_id: null },
 };
 
 const request = {
@@ -77,6 +77,16 @@ assert.equal(commitRequest.write_context.idempotency_key, commitIdempotencyKey);
 const previewWithRef = structuredClone(request);
 previewWithRef.write_context.preview_ref = "preview:quote-pdf:unexpected";
 rejects(requestSchemaId, previewWithRef);
+
+for (const approval of [
+  { required: true, status: "not_required", approval_id: null },
+  { required: false, status: "pending", approval_id: null },
+  { required: false, status: "not_required", approval_id: "approval:preview:unexpected" },
+]) {
+  const invalid = structuredClone(request);
+  invalid.write_context.approval = approval;
+  rejects(requestSchemaId, invalid);
+}
 
 const commitWithoutPreview = structuredClone(commitRequest);
 commitWithoutPreview.write_context.preview_ref = null;
@@ -140,11 +150,27 @@ const previewResult = structuredClone(writeResult);
 previewResult.operation_status = "previewed";
 previewResult.record_id = null;
 previewResult.readback_evidence = null;
+previewResult.idempotency_key = previewIdempotencyKey;
+previewResult.approval = { required: false, status: "not_required", approval_id: null };
 validate(writeResultV2SchemaId, previewResult);
+
+for (const approval of [
+  { required: true, status: "not_required", approval_id: null },
+  { required: false, status: "pending", approval_id: null },
+  { required: false, status: "not_required", approval_id: "approval:preview:unexpected" },
+]) {
+  const invalid = structuredClone(previewResult);
+  invalid.approval = approval;
+  rejects(writeResultV2SchemaId, invalid);
+}
 
 const alreadyCommittedResult = structuredClone(writeResult);
 alreadyCommittedResult.operation_status = "already_committed";
 validate(writeResultV2SchemaId, alreadyCommittedResult);
+
+const committedPendingApproval = structuredClone(writeResult);
+committedPendingApproval.approval.status = "pending";
+rejects(writeResultV2SchemaId, committedPendingApproval);
 
 const committedWithoutRecord = structuredClone(writeResult);
 delete committedWithoutRecord.record_id;
@@ -219,7 +245,7 @@ validate(quotePdfEnvelopeSchemaId, successAlreadyCommitted);
 
 const successWithPreview = structuredClone(successEnvelope);
 successWithPreview.data = previewResult;
-rejects(quotePdfEnvelopeSchemaId, successWithPreview);
+validate(quotePdfEnvelopeSchemaId, successWithPreview);
 
 const successWithPendingApproval = structuredClone(successEnvelope);
 successWithPendingApproval.data.approval.status = "pending";

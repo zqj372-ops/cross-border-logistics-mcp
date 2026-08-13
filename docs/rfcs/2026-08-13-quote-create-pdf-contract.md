@@ -65,7 +65,7 @@
 1. 服务端校验 Schema、请求大小、tenant/RBAC、`quote:pdf_write` 和敏感输入边界。
 2. 仅调用 AI Quote `/quotes/zone-preview` v2；该调用是只读报价预览。Quote 返回 `needs_input`、`manual_review` 或 `unavailable` 时原样保留状态，零 PDF POST。
 3. Quote success 后，服务端对同 tenant、quote request、presentation 和权威 Quote 响应的身份/版本/hash 形成 candidate hash。hash 和候选证据只通过现有平台 preview/idempotency 机制关联，不把金额或 line items 回显给模型。
-4. 返回 `write-result-v2`：`operation=quote.create_pdf`、`version=write-result@2026-08-13.v2`、`operation_status=previewed`、`record_id=null`、opaque `preview_ref`、`readback_evidence=null`。此阶段绝不调用 PDF POST。
+4. 返回 outer `status=success` 和 `write-result-v2`：`operation=quote.create_pdf`、`version=write-result@2026-08-13.v2`、`operation_status=previewed`、`record_id=null`、opaque `preview_ref`、`readback_evidence=null`；preview approval 固定为 `required=false/status=not_required/approval_id=null`。这是稳定 preview_ref 的成功生成，不代表 PDF 已创建；此阶段绝不调用 PDF POST。
 
 ### Commit
 
@@ -74,7 +74,7 @@
 3. 仅在重新读取的 Quote 仍为可用权威 success 后，由服务端投影 quote 的 authoritative USD line items，并固定内部草稿字段 `sendable=false`。金额、line items、logo、path、html、url 都不来自模型输入。
 4. Preview 和 commit 使用两个不同的平台幂等键：preview 使用 `P`，commit 使用 `C`，且 `P ≠ C`。只有 commit 的 `C` 才能原样作为 PDF `Idempotency-Key` 转发；同一 commit 重试必须复用 `C` 和同一投影 body，不能把 `P` 用于 commit，也不能在重试时新生成 `C`。两者都由平台按完整输入分别做幂等关联。
 5. PDF POST 返回 201 或 200 后，服务端按返回的 opaque document reference GET metadata，并精确核对 tenant、request/presentation 关联、candidate/quote hash、quote version、`sendable=false`、document reference 和 PDF observed version。只有 exact readback 才返回 success。
-6. success 复用 `write-result-v2`：`operation_status=committed`（同一平台/PDF幂等重放可为 `already_committed`），`record_id` 为 document reference，`readback_evidence.verified=true`。outer `source_refs` 与 `calculation_trace` 必须同时闭合 AI Quote 权威来源和 PDF readback 来源；不把金额复制到新的 MCP data 模型。
+6. 返回 outer `status=success` 和 `write-result-v2`：`operation_status=committed`（同一平台/PDF幂等重放可为 `already_committed`），approval 固定为 `required=true/status=approved/approval_id=Identifier`，`record_id` 为 document reference，`readback_evidence.verified=true`。只有该 commit/already_committed 形态同时满足 approved 和 verified readback，才表示 PDF 已创建；outer `source_refs` 与 `calculation_trace` 必须同时闭合 AI Quote 权威来源和 PDF readback 来源；不把金额复制到新的 MCP data 模型。
 
 PDF POST 丢响应、已 dispatch 后 response timeout/unknown、GET 404、identity/hash/version 不一致或最终状态未知均为 `manual_review`；dispatch 前连接失败才是 `unavailable`。同 key、同 body 的已知 replay 可按 exact GET readback 返回既有 success。当前 composition 实际 deadline 为 10s，start 的 15s 没有传入 composition；这不足以覆盖 re-quote、renderer 8s、一次恢复和 GET。后续 task02 必须由 start 显式传入单一约 30s 的 absolute deadline，composition 与 adapter 各阶段共享同一 remaining，不得每阶段重置；这是 task02/06 的实现资格门，本分支不改代码。整个 Quote preview + PDF recovery + GET readback 必须在该平台 deadline 内完成；不引入队列、后台清理器或异步任务。
 

@@ -21,7 +21,16 @@
       "then": {
         "properties": {
           "record_id": { "type": "null" },
-          "readback_evidence": { "type": "null" }
+          "readback_evidence": { "type": "null" },
+          "approval": {
+            "type": "object",
+            "required": ["required", "status", "approval_id"],
+            "properties": {
+              "required": { "const": false },
+              "status": { "const": "not_required" },
+              "approval_id": { "type": "null" }
+            }
+          }
         }
       }
     },
@@ -34,6 +43,15 @@
             "type": "object",
             "required": ["verified"],
             "properties": { "verified": { "const": true } }
+          },
+          "approval": {
+            "type": "object",
+            "required": ["required", "status", "approval_id"],
+            "properties": {
+              "required": { "const": true },
+              "status": { "const": "approved" },
+              "approval_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }
+            }
           }
         }
       }

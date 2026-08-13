@@ -51,7 +51,20 @@
       "allOf": [
         {
           "if": { "required": ["operation_mode"], "properties": { "operation_mode": { "const": "preview" } } },
-          "then": { "properties": { "preview_ref": { "type": "null" } } }
+          "then": {
+            "properties": {
+              "preview_ref": { "type": "null" },
+              "approval": {
+                "type": "object",
+                "required": ["required", "status", "approval_id"],
+                "properties": {
+                  "required": { "const": false },
+                  "status": { "const": "not_required" },
+                  "approval_id": { "type": "null" }
+                }
+              }
+            }
+          }
         },
         {
           "if": { "required": ["operation_mode"], "properties": { "operation_mode": { "const": "commit" } } },
