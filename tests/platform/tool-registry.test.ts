@@ -61,7 +61,11 @@ describe("Phase 1 tool registry", () => {
 
   it("describes an input/output schema and permission for every tool", () => {
     for (const tool of registerPhaseOneTools()) {
-      expect(tool.inputSchemaId).toMatch(/2026-08-11\.v1/);
+      expect(tool.inputSchemaId).toMatch(
+        tool.name === "quote.canada_final_mile.calculate"
+          ? /2026-08-13\.v2/
+          : /2026-08-11\.v1/,
+      );
       expect(tool.outputSchemaId).toMatch(/schema\.json$/);
       expect(tool.permission).toMatch(/:/);
       expect(["read", "write"]).toContain(tool.kind);

@@ -132,7 +132,7 @@ const outputSchemaByTool: Record<PhaseOneToolName, string> = {
   "system.get_data_status": "data-status.schema.json",
   "cargo.calculate": "cargo-result.schema.json",
   "container.plan_summary": "container-plan.schema.json",
-  "quote.canada_final_mile.calculate": "quote-result.schema.json",
+  "quote.canada_final_mile.calculate": "quote-envelope-v2.schema.json",
   "customs.ca.search": "customs-search-result.schema.json",
   "customs.ca.estimate": "customs-assessment.schema.json",
   "quote.save_draft": "write-result.schema.json",
@@ -198,7 +198,10 @@ export function registerPhaseOneTools(
       name,
       title: presentation.title,
       description: presentation.description,
-      inputSchemaId: `urn:logistics-mcp:${name}:2026-08-11.v1`,
+      inputSchemaId:
+        name === "quote.canada_final_mile.calculate"
+          ? `urn:logistics-mcp:${name}:2026-08-13.v2`
+          : `urn:logistics-mcp:${name}:2026-08-11.v1`,
       outputSchemaId: outputSchemaByTool[name],
       permission: policy.permission,
       kind: policy.kind,

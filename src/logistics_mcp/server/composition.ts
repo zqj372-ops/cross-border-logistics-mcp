@@ -55,6 +55,11 @@ import {
   containerPlanSummaryHandler,
   containerPlanSummaryToolContract,
 } from "../domains/container/service";
+import {
+  quoteV2InputSchema,
+  quoteV2ResultSchema,
+} from "../adapters/quote/quote-api-adapter";
+import { envelopeSchema } from "../platform/envelope";
 
 /*
  * The import grouping above deliberately keeps all platform ownership at this
@@ -164,6 +169,50 @@ interface CompositionTools {
 
 function compositionTools(adapters: FixtureAdapters): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
+  const quoteV2EnvelopeSchema = envelopeSchema
+    .extend({ data: quoteV2ResultSchema.nullable() })
+    .superRefine((envelope, refinement) => {
+    const sourceIds = envelope.source_refs.map((source) => source.source_id);
+    const traceIds = envelope.calculation_trace.flatMap((step) => step.source_ref_ids);
+    const data = envelope.data;
+    const dataSourceIds =
+      data !== null && Array.isArray(data.source_ref_ids) &&
+      data.source_ref_ids.every((value): value is string => typeof value === "string")
+        ? data.source_ref_ids
+        : [];
+    const lineSourceIds =
+      data !== null && Array.isArray(data.line_items)
+        ? data.line_items.flatMap((line) =>
+            typeof line === "object" && line !== null &&
+            Array.isArray((line as Record<string, unknown>).source_ref_ids)
+              ? ((line as Record<string, unknown>).source_ref_ids as unknown[]).filter(
+                  (value): value is string => typeof value === "string",
+                )
+              : [],
+          )
+        : [];
+    const union = [...new Set([...dataSourceIds, ...lineSourceIds, ...traceIds])];
+    const sameSourceSet =
+      new Set(sourceIds).size === sourceIds.length &&
+      union.length === sourceIds.length &&
+      union.every((sourceId) => sourceIds.includes(sourceId));
+
+    if (envelope.status === "success") {
+      if (data === null || data.quote_status !== "calculated" || sourceIds.length === 0 || traceIds.length === 0) {
+        refinement.addIssue({ code: "custom", message: "calculated success requires data, source_refs, and calculation_trace" });
+      }
+    } else if (envelope.status === "manual_review" && data !== null) {
+      if (!(["manual_review", "not_calculable"] as readonly unknown[]).includes(data.quote_status) || sourceIds.length === 0) {
+        refinement.addIssue({ code: "custom", message: "manual quote data requires manual status and source_refs" });
+      }
+    } else if (data !== null || sourceIds.length !== 0 || traceIds.length !== 0) {
+      refinement.addIssue({ code: "custom", message: "empty quote outcomes cannot carry data or evidence" });
+    }
+
+    if ((data !== null || sourceIds.length > 0 || traceIds.length > 0) && !sameSourceSet) {
+      refinement.addIssue({ code: "custom", message: "quote source IDs must match the outer source refs exactly" });
+    }
+  });
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,
     "cargo.calculate": cargoToolHandler,
@@ -171,6 +220,13 @@ function compositionTools(adapters: FixtureAdapters): CompositionTools {
   };
   const contracts: ToolContractMap = {
     ...bundle.contracts,
+    "quote.canada_final_mile.calculate": {
+      inputSchema: quoteV2InputSchema,
+      validateOutput: (data) => {
+        if (data !== null) quoteV2ResultSchema.parse(data);
+      },
+      outputSchema: quoteV2EnvelopeSchema,
+    },
     "cargo.calculate": cargoToolContract,
     "container.plan_summary": containerPlanSummaryToolContract,
   };
