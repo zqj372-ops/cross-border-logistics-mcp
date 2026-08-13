@@ -309,4 +309,33 @@ describe("production quote delegation", () => {
       );
     });
   });
+
+  it("fails closed for an adapter source with missing adapters", async () => {
+    const malformedSource = {
+      kind: "adapter_source",
+      health: () => Promise.resolve({ ready: true }),
+      close: () => Promise.resolve(),
+    } as unknown as ProductionAdapterSource;
+
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource: malformedSource,
+    });
+
+    await usingComposition(composition, async () => {
+      await expect(composition.readiness()).resolves.toMatchObject({ ready: false });
+      const readiness = await composition.readiness();
+      expect(readiness.reasons).toContain("production_adapter_source_invalid");
+
+      const response = await composition.handler(
+        new Request("https://mcp.example.invalid/mcp", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      );
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ status: "unavailable" });
+    });
+  });
 });

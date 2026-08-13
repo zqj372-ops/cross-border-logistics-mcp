@@ -393,7 +393,7 @@ export function createProductionComposition(
   );
   const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
   const disabledQuote = new ExistingQuoteAdapter();
-  const providedQuote = options.adapterSource?.adapters.quote;
+  const providedQuote = providedAdapters.quote;
   const adapters: FixtureAdapters = {
     ...providedAdapters,
     quote: providedQuote === undefined
