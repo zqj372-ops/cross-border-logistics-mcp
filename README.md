@@ -6,7 +6,7 @@
 
 - `cargo`、`container`：MCP 内的本地确定性计算，负责 CBM、体积重、分泡、计费重和理论/运营装柜摘要。
 - AI 报价、RiskCustoms、PDF/文档的目标形态是只通过现有生产 API 的窄适配器接入；上游系统继续拥有价格、规则、关务和文档权威。
-- 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合，`quote.create_pdf` 仅有共享契约，未注册且 production 默认 disabled。
+- 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合，`quote.create_pdf` 已登记为第10个工具，但默认 handler unavailable 且 production 默认 disabled。
 - AI 只负责理解意图、补输入、选择工具和解释结果；金额、重量、容量、状态和版本边界由确定性代码或上游 API 决定。
 - `ready=false`、版本缺失、响应冲突和上游故障必须保持结构化 `needs_input`、`manual_review`、`blocked` 或 `unavailable`，不使用 fixture 静默回退。
 
@@ -17,7 +17,7 @@
 | quote API adapter | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed；保留上游副作用 warning |
 | RiskCustoms search adapter | 已实现 status→query 和失败闭合；当前生产服务仍缺少机器到机器认证合同，未接入生产组合 |
 | `customs.ca.estimate` | `unavailable`；尚无已核验生产 API 合同 |
-| PDF/文档能力 | `quote.create_pdf` RFC/wrapper/`write-result-v2` 已定义；隔离核验 `/quotes/zone-preview` v2、`/v2/quote-pdfs` 的 replay/GET readback 形状，但当前仅 loopback HTTP，未注册且 production disabled |
+| PDF/文档能力 | `quote.create_pdf` RFC/wrapper/`write-result-v2` 已定义并登记为第10个工具；隔离核验 `/quotes/zone-preview` v2、`/v2/quote-pdfs` 的 replay/GET readback 形状，但当前仅 loopback HTTP，默认 handler unavailable 且 production disabled |
 | 生产写工具 | `quote.save_draft` 和 `review.create_task` 固定 `unavailable`；上游未提供同一幂等键、取消和状态读回合同前不注入写源 |
 | 生产平台 | 已接入 RS256/JWKS 令牌验证、SQLite audit/idempotency/session binding 和会话所有者校验；缺配置仍 fail-closed |
 
@@ -37,7 +37,7 @@ flowchart LR
 ## 工具与契约
 
 - [统一响应包络](docs/contracts/envelope.md)：五种状态、来源、警告、阻断、计算 trace 和审计字段。
-- [工具目录](docs/contracts/tool-catalog.md)：覆盖既有工具与唯一新增 `quote.create_pdf` 的十个窄语义契约；PDF 当前 contract-only，runtime 仍未注册。
+- [工具目录](docs/contracts/tool-catalog.md)：覆盖既有工具与唯一新增 `quote.create_pdf` 的十个窄语义契约；PDF 已登记但默认 handler unavailable，production disabled。
 - [权威矩阵](docs/contracts/authority-matrix.md)：Quote API、RiskCustoms API、cargo/container 及其失败边界。
 - [Schema 目录](docs/contracts/schemas/) 与 [示例目录](docs/contracts/examples/)：Draft 2020-12 契约和结构化样例。
 - [`quote.create_pdf` RFC](docs/rfcs/2026-08-13-quote-create-pdf-contract.md)：内部 PDF preview→approved commit→exact readback 的共享边界。
@@ -59,7 +59,7 @@ flowchart LR
 - 进入工具前由服务端完成 Schema、tenant、actor、RBAC、权限和敏感输入校验。
 - `cargo`、`container` 请求只在本地计算，并返回单位、规则版本、假设、warnings 和 trace。
 - 获准启用后，quote 请求只调用现有 Quote API，RiskCustoms search 只调用 status/query API 的对应路径；当前两条生产路径均保持失败闭合。
-- `quote.create_pdf` 在 AI Quote candidate hash、PDF HTTPS+allowlist、tenant credential、POST/replay/GET exact readback 和 deadline 合同完成前不注册；不在 MCP 本地生成或存储 PDF。
+- `quote.create_pdf` 在 AI Quote candidate hash、PDF HTTPS+allowlist、tenant credential、POST/replay/GET exact readback 和 deadline 合同完成前保持 handler unavailable；平台 outer deadline 为单一 30 秒，不在 MCP 本地生成或存储 PDF。
 - 客户端不能选择任意上游 URL、提交上游 token，或把客户端 tenant/actor 当成服务端身份。
 
 ## 结果与故障隔离
@@ -67,7 +67,7 @@ flowchart LR
 - 统一包络只允许 `success`、`needs_input`、`manual_review`、`blocked`、`unavailable`。
 - 上游 503、RiskCustoms `ready=false` 或 PDF dispatch 前连接失败只关闭 affected tools；PDF 已 dispatch 后 response timeout/unknown 进入 `manual_review`，不关闭本地工具或其他可用 API。
 - quote 当前工具路径保持 `unavailable`/fail-closed；未获生产启用资格前不伪造可发送结果。
-- customs estimate 当前固定 `unavailable`；`quote.save_draft` 仍等生产草稿 API 的完整写后读回合同；`quote.create_pdf` 只返回独立 `write-result-v2`，且当前保持 contract-only/disabled。
+- customs estimate 当前固定 `unavailable`；`quote.save_draft` 仍等生产草稿 API 的完整写后读回合同；`quote.create_pdf` 已登记但默认 handler unavailable，当前保持 contract-only/production disabled。
 - 生产组合的 JWKS、issuer/audience、SQLite 状态库或会话所有者配置缺失时，全局保持 fail-closed。
 
 ## 开发入口
@@ -82,7 +82,7 @@ npm run start:fixture
 `?fixture=1` 的地址只用于完整界面演示。MCP 入口为 `http://127.0.0.1:8080/mcp`，
 本机假 token 为 `local-fixture-token`。演示模式只绑定
 `127.0.0.1`，`/readyz` 保持 `503/fixture_mode_not_production_ready`，不代表生产就绪。
-一条命令验收编译产物、后台页面、认证拒绝、MCP 初始化、既有九个工具和
+一条命令验收编译产物、后台页面、认证拒绝、MCP 初始化、十个工具和
 `cargo.calculate`：
 
 ```bash

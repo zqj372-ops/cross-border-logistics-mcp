@@ -27,7 +27,7 @@
 | 权限 | `quote:pdf_write`；允许角色 `admin`、`sales`、`operator`，其他角色为 `blocked` |
 | 输入 | `quote-create-pdf-request.schema.json`；仅 wrapper，不复制 quote v2 字段 |
 | 输出 | 复用既有字段的 `write-result-v2.schema.json`；仅允许 `quote.create_pdf`，不建立 PDF 结果大 Schema |
-| 运行时状态 | contract-only；在正式适配和生产资格齐全前不注册/不调用 |
+| 运行时状态 | 已登记；默认 handler unavailable、production disabled，不调用 PDF |
 
 这是 additive Schema 版本：旧 `write-result.schema.json` 的 `$id`、字节和 operation 接受集合完全不变；新增 `write-result-v2.schema.json` 使用 `2026-08-13` `$id`、`version=write-result@2026-08-13.v2`，且 operation 固定为 `quote.create_pdf`。外层使用同样新版本路径下的 `quote-create-pdf-envelope.schema.json`，仍保留统一 envelope 字段和 `schema_version=2026-08-11.v1`。没有把新 operation 加入旧 Schema，也没有修改固定示例数量。
 
@@ -76,7 +76,7 @@
 5. PDF POST 返回 201 或 200 后，服务端按返回的 opaque document reference GET metadata，并精确核对 tenant、request/presentation 关联、candidate/quote hash、quote version、`sendable=false`、document reference 和 PDF observed version。只有 exact readback 才返回 success。
 6. 返回 outer `status=success` 和 `write-result-v2`：`operation_status=committed`（同一平台/PDF幂等重放可为 `already_committed`），approval 固定为 `required=true/status=approved/approval_id=Identifier`，`record_id` 为 document reference，`readback_evidence.verified=true`。只有该 commit/already_committed 形态同时满足 approved 和 verified readback，才表示 PDF 已创建；outer `source_refs` 与 `calculation_trace` 必须同时闭合 AI Quote 权威来源和 PDF readback 来源；不把金额复制到新的 MCP data 模型。
 
-PDF POST 丢响应、已 dispatch 后 response timeout/unknown、GET 404、identity/hash/version 不一致或最终状态未知均为 `manual_review`；dispatch 前连接失败才是 `unavailable`。同 key、同 body 的已知 replay 可按 exact GET readback 返回既有 success。当前 composition 实际 deadline 为 10s，start 的 15s 没有传入 composition；这不足以覆盖 re-quote、renderer 8s、一次恢复和 GET。后续 task02 必须由 start 显式传入单一约 30s 的 absolute deadline，composition 与 adapter 各阶段共享同一 remaining，不得每阶段重置；这是 task02/06 的实现资格门，本分支不改代码。整个 Quote preview + PDF recovery + GET readback 必须在该平台 deadline 内完成；不引入队列、后台清理器或异步任务。
+PDF POST 丢响应、已 dispatch 后 response timeout/unknown、GET 404、identity/hash/version 不一致或最终状态未知均为 `manual_review`；dispatch 前连接失败才是 `unavailable`。同 key、同 body 的已知 replay 可按 exact GET readback 返回既有 success。当前平台 outer deadline 已统一为单一 30 秒 absolute deadline；后续集成仍须让各阶段共享同一 remaining，不得每阶段重置。整个 Quote preview + PDF recovery + GET readback 必须在该平台 deadline 内完成；不引入队列、后台清理器或异步任务。
 
 ## 5. 状态映射
 
@@ -97,14 +97,14 @@ PDF POST 丢响应、已 dispatch 后 response timeout/unknown、GET 404、ident
 
 ## 6. 来源、审计与安全边界
 
-- AI Quote 权威 source ref、release/snapshot hash、版本和 calculation trace 必须进入外层证据；PDF GET readback source ref、observed version 和 document reference 也必须进入同一 envelope。
+- AI Quote 权威 source ref、release/snapshot hash、版本和 calculation trace 必须进入外层证据；PDF GET readback source ref、observed version 和 document reference 也必须进入同一 envelope。公开 `write-result-v2` 不新增内部 candidate 字段；候选报价 source 的闭合由 task05 领域边界校验，平台只校验公开 envelope 的 outer `source_refs` 与 `calculation_trace`/`readback_evidence.source_ref_ids` 精确闭合。
 - 只记录 opaque reference、request/audit ID、状态、版本、hash 和脱敏摘要；不记录客户地址、报价明细全文、原始聊天、logo、HTML、URL、凭证或 token。
 - PDF 是 non-destructive 内部草稿创建；本工具没有 send/publish/download/template/status/delete/overwrite 语义，也不复用 `quote.save_draft`。
 - 不允许模型选择 PDF endpoint、tenant credential、Idempotency-Key 的转发目标或服务端 tenant mapping；所有出站目标必须由 HTTPS + allowlist 配置控制。
 
 ## 7. 生产资格与实施边界
 
-production 默认 disabled。只有以下证据全部具备，才可由后续任务实现窄适配并评估注册：
+production 默认 disabled；平台已登记 `quote.create_pdf`，但默认 handler unavailable。只有以下证据全部具备，才可由后续任务启用生产路径：
 
 1. AI Quote `/quotes/zone-preview` v2 正式 API、tenant mapping、版本/发布 hash 和 read-only 语义通过正式合同验收；
 2. PDF API 提供 HTTPS、allowlist、tenant credential、正式输入/输出、201/200 replay、metadata GET 和错误语义；

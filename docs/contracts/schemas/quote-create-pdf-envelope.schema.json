@@ -81,6 +81,21 @@
           "blockers": { "type": "array", "maxItems": 0 }
         }
       }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {
+          "status": { "enum": ["needs_input", "manual_review", "blocked", "unavailable"] }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "data": { "const": null },
+          "blockers": { "type": "array", "minItems": 1 }
+        }
+      }
     }
   ]
 }

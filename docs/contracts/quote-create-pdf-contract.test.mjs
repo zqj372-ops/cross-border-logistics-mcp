@@ -302,4 +302,32 @@ const successWithBlocker = structuredClone(successEnvelope);
 successWithBlocker.blockers = [successEnvelope.warnings[0]];
 rejects(quotePdfEnvelopeSchemaId, successWithBlocker);
 
+const successWithRejectedOperation = structuredClone(successEnvelope);
+successWithRejectedOperation.data.operation_status = "rejected";
+rejects(quotePdfEnvelopeSchemaId, successWithRejectedOperation);
+
+const successWithMismatchedPreview = structuredClone(successEnvelope);
+successWithMismatchedPreview.data.operation_status = "previewed";
+rejects(quotePdfEnvelopeSchemaId, successWithMismatchedPreview);
+
+const successWithUnknownField = structuredClone(successEnvelope);
+successWithUnknownField.unexpected = true;
+rejects(quotePdfEnvelopeSchemaId, successWithUnknownField);
+
+for (const status of ["needs_input", "manual_review", "blocked", "unavailable"]) {
+  const validFailure = structuredClone(successEnvelope);
+  validFailure.status = status;
+  validFailure.data = null;
+  validFailure.blockers = [successEnvelope.warnings[0]];
+  validate(quotePdfEnvelopeSchemaId, validFailure);
+
+  const nonNullFailure = structuredClone(validFailure);
+  nonNullFailure.data = writeResult;
+  rejects(quotePdfEnvelopeSchemaId, nonNullFailure);
+
+  const missingBlocker = structuredClone(validFailure);
+  missingBlocker.blockers = [];
+  rejects(quotePdfEnvelopeSchemaId, missingBlocker);
+}
+
 console.log("quote.create_pdf contract checks passed");
