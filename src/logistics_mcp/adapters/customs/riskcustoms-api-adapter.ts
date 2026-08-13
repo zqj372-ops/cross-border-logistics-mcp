@@ -6,6 +6,7 @@ import { hashPayload } from "../../platform/idempotency";
 import {
   createFetchJsonClient,
   HttpAdapterError,
+  type FetchJsonAllowedStatusResponse,
   type FetchImplementation,
   type FetchJsonClient,
 } from "../http-client";
@@ -33,7 +34,7 @@ const identitySchema = z
   })
   .strict();
 
-const statusResponseSchema = identitySchema
+const statusResponseBaseSchema = identitySchema
   .extend({
     evaluatedAt: z.string().datetime().nullable(),
     lastSourceCheckAt: z.string().datetime().nullable(),
@@ -41,20 +42,44 @@ const statusResponseSchema = identitySchema
     testData: z.boolean(),
     reasons: z.array(z.string()),
   })
+  .strict();
+
+function readyStatusIsComplete(value: {
+  readonly ready: boolean;
+  readonly publishedAt: string | null;
+  readonly releaseIds: readonly string[];
+  readonly snapshotHash: string | null;
+  readonly releaseHash: string | null;
+  readonly reasons: readonly string[];
+}): boolean {
+  return !value.ready || (
+    value.publishedAt !== null &&
+    value.releaseIds.length > 0 &&
+    value.snapshotHash !== null &&
+    value.releaseHash !== null &&
+    value.reasons.length === 0
+  );
+}
+
+const statusResponseSchema = statusResponseBaseSchema.refine(
+  readyStatusIsComplete,
+  { message: "A ready publication must include complete release and snapshot identity" },
+);
+
+const dataNotReadyErrorSchema = z
+  .object({
+    code: z.literal("data_not_ready"),
+    message: z.string().min(1),
+  })
+  .strict();
+
+const statusResponseWithErrorSchema = statusResponseBaseSchema
+  .extend({ error: dataNotReadyErrorSchema })
   .strict()
-  .superRefine((value, ctx) => {
-    if (value.ready && (
-      value.publishedAt === null ||
-      value.releaseIds.length === 0 ||
-      value.snapshotHash === null ||
-      value.releaseHash === null
-    )) {
-      ctx.addIssue({
-        code: "custom",
-        message: "A ready publication must include complete release and snapshot identity",
-      });
-    }
-  });
+  .refine(
+    readyStatusIsComplete,
+    { message: "A ready publication must include complete release and snapshot identity" },
+  );
 
 const legalNameSchema = z
   .object({
@@ -192,6 +217,15 @@ const nextQuestionSchema = z
   })
   .strict();
 
+function isSafeOfficialUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
 const sourceSchema = z
   .object({
     id: z.string().min(1),
@@ -201,7 +235,7 @@ const sourceSchema = z
     dataset: z.string().min(1),
     edition: z.string().min(1),
     revision: z.string().min(1),
-    officialUrl: z.string().url().regex(/^https:\/\//iu),
+    officialUrl: z.string().url().refine(isSafeOfficialUrl, "officialUrl must be HTTPS without URL credentials"),
     publishedAt: z
       .union([z.string().date(), z.string().datetime()])
       .transform((value) => value.slice(0, 10)),
@@ -316,6 +350,30 @@ type QueryResponse = z.infer<typeof queryResponseSchema>;
 type Candidate = QueryResponse["candidates"][number];
 type Result = QueryResponse["results"][number];
 type Source = QueryResponse["sources"][number];
+
+function isAllowedStatusResponse(value: unknown): value is FetchJsonAllowedStatusResponse {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    typeof (value as { readonly status?: unknown }).status === "number" &&
+    "body" in value;
+}
+
+function parseStatusResponse(raw: unknown): {
+  readonly value: StatusResponse;
+  readonly dataNotReady: boolean;
+} | null {
+  const httpResponse = isAllowedStatusResponse(raw)
+    ? raw
+    : { status: 200, body: raw };
+  if (httpResponse.status === 503) {
+    const parsed = statusResponseWithErrorSchema.safeParse(httpResponse.body);
+    if (!parsed.success || parsed.data.ready) return null;
+    const { error, ...value } = parsed.data;
+    void error;
+    return { value, dataNotReady: true };
+  }
+  const parsed = statusResponseSchema.safeParse(httpResponse.body);
+  return parsed.success ? { value: parsed.data, dataNotReady: false } : null;
+}
 
 export interface RiskCustomsApiAdapterOptions {
   readonly baseUrl: string;
@@ -457,15 +515,6 @@ function candidateSourceIds(value: Candidate): string[] {
   ].filter((id, index, ids) => ids.indexOf(id) === index);
 }
 
-function resultSourceIds(value: Result): string[] {
-  return [
-    ...candidateSourceIds(value),
-    ...value.rates.map((rate) => rate.sourceId),
-    ...value.documents.map((document) => document.sourceId),
-    ...value.measures.map((measure) => measure.sourceId),
-  ].filter((id, index, ids) => ids.indexOf(id) === index);
-}
-
 function mappedClassification(
   value: Candidate | Result,
   sourceIds: ReadonlySet<string>,
@@ -473,7 +522,7 @@ function mappedClassification(
 ): { readonly value: Record<string, unknown>; readonly hasUnconfirmed: boolean } | null {
   if (value.country !== "CA") return null;
   if (value.codeDigits !== value.code.length || !value.hierarchy.some((node) => node.code === value.code)) return null;
-  const ids = "rates" in value ? resultSourceIds(value) : candidateSourceIds(value);
+  const ids = candidateSourceIds(value);
   if (ids.some((id) => !sourceIds.has(id))) return null;
   const mappedRefs = ids.map((id) => refIds.get(id));
   if (mappedRefs.some((id) => id === undefined)) return null;
@@ -550,29 +599,36 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     if (unavailable !== null) return unavailable;
     try {
       const response = await this.fetchStatus(input.rule_date, context!, signal);
-      const parsed = statusResponseSchema.safeParse(response);
-      if (!parsed.success) {
+      const parsed = parseStatusResponse(response);
+      if (parsed === null) {
         return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
       }
-      const mapped = mappedStatus(parsed.data);
+      const mapped = mappedStatus(parsed.value);
       if (mapped === null) {
         return failure("unavailable", "customs.status_mapping_invalid", "RiskCustoms status could not be mapped to the MCP contract.");
+      }
+      if (parsed.dataNotReady) {
+        return {
+          ...failure("unavailable", "customs.ready_false", "RiskCustoms is not ready; dependent customs search remains unavailable.", "ready"),
+          data: mapped.data,
+          sourceRefs: [mapped.sourceRef],
+        };
       }
       return {
         status: "success",
         data: mapped.data,
         sourceRefs: [mapped.sourceRef],
-        ...(parsed.data.ready && !parsed.data.testData
+        ...(parsed.value.ready && !parsed.value.testData
           ? {}
           : {
               warnings: [
                 notice(
-                  parsed.data.testData ? "customs.test_data_not_production" : "customs.ready_false",
-                  parsed.data.testData
+                  parsed.value.testData ? "customs.test_data_not_production" : "customs.ready_false",
+                  parsed.value.testData
                     ? "RiskCustoms test data cannot be used as production data."
                     : "RiskCustoms is not ready; dependent customs search remains unavailable.",
                   "warning",
-                  parsed.data.testData ? "testData" : "ready",
+                  parsed.value.testData ? "testData" : "ready",
                 ),
               ],
             }),
@@ -609,22 +665,22 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     if (unavailable !== null) return unavailable;
 
     try {
-      const statusResponse = statusResponseSchema.safeParse(await this.fetchStatus(ruleDate, context!, signal));
-      if (!statusResponse.success) {
+      const statusResponse = parseStatusResponse(await this.fetchStatus(ruleDate, context!, signal));
+      if (statusResponse === null) {
         return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
       }
-      const mapped = mappedStatus(statusResponse.data);
+      const mapped = mappedStatus(statusResponse.value);
       if (mapped === null) {
         return failure("unavailable", "customs.status_mapping_invalid", "RiskCustoms status could not be mapped to the MCP contract.");
       }
-      const gateFailure = this.readinessFailure(input, statusResponse.data, mapped.data, mapped.sourceRef);
+      const gateFailure = this.readinessFailure(input, statusResponse.value, mapped.data, mapped.sourceRef);
       if (gateFailure !== null) return gateFailure;
       const body = this.queryBody(input, query, ruleDate);
       if (body === null) {
         return failure("needs_input", "customs.attributes_invalid", "Product attributes must contain only explicit scalar values.", "product_attributes");
       }
       const response = await this.fetchQuery(body, context!, signal);
-      return this.mapResponse(input, ruleDate, response, statusResponse.data, mapped.sourceRef);
+      return this.mapResponse(input, ruleDate, response, statusResponse.value, mapped.sourceRef);
     } catch (error: unknown) {
       return this.mapHttpFailure(error, "query");
     }
@@ -669,6 +725,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
       `/api/m2m/status?ruleDate=${encodeURIComponent(ruleDate)}`,
       await this.headers(context),
       signal,
+      [503],
     );
   }
 
@@ -779,15 +836,20 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
       : requestedHs6 === undefined || requestedHs6 === null || response.selectedHs6 === requestedHs6;
     if (!modeMatches || !selectedHs6Matches) return failure("manual_review", "customs.response_correlation_mismatch", "RiskCustoms response mode or selected HS6 does not match the request.");
 
-    const sourceResult = this.mapSources(response.sources, response.releaseIds);
-    if (sourceResult === null) return failure("unavailable", "customs.source_mapping_invalid", "RiskCustoms sources could not be mapped to the verified source contract.");
-    const refIds = new Map(response.sources.map((value) => [value.id, sourceRefId(value.id)]));
     const responseValues = [...response.candidates, ...response.results];
     if (responseValues.some((value) => value.country !== "CA")) {
       return failure("manual_review", "customs.jurisdiction_mismatch", "RiskCustoms returned a classification outside the Canada query scope.");
     }
+    const classificationSourceIds = new Set(responseValues.flatMap(candidateSourceIds));
+    const sourceResult = this.mapSources(
+      response.sources,
+      response.releaseIds,
+      classificationSourceIds,
+      ruleDate,
+    );
+    if (sourceResult === null) return failure("unavailable", "customs.source_mapping_invalid", "RiskCustoms sources could not be mapped to the verified source contract.");
     const values = responseValues
-      .map((value) => mappedClassification(value, new Set(response.sources.map((source) => source.id)), refIds));
+      .map((value) => mappedClassification(value, classificationSourceIds, sourceResult.refIds));
     if (values.some((value) => value === null)) return failure("manual_review", "customs.source_reference_missing", "A RiskCustoms classification references an unavailable source.");
     const mappedValues = values.filter((value): value is NonNullable<typeof value> => value !== null);
     const byCode = new Map<string, Record<string, unknown>>();
@@ -822,12 +884,22 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
   private mapSources(
     sources: readonly Source[],
     releaseIds: readonly string[],
-  ): { readonly refs: readonly SourceRef[] } | null {
+    usedSourceIds: ReadonlySet<string>,
+    ruleDate: string,
+  ): { readonly refs: readonly SourceRef[]; readonly refIds: ReadonlyMap<string, string> } | null {
     const refs: SourceRef[] = [];
+    const refIds = new Map<string, string>();
     const seen = new Set<string>();
     for (const source of sources) {
-      if (seen.has(source.id) || !releaseIds.includes(source.releaseId) || !validIdentifier(source.releaseId)) return null;
+      if (seen.has(source.id)) return null;
       seen.add(source.id);
+      if (!usedSourceIds.has(source.id)) continue;
+      if (
+        !releaseIds.includes(source.releaseId) ||
+        !validIdentifier(source.releaseId) ||
+        source.effectiveFrom > ruleDate ||
+        (source.effectiveTo !== null && ruleDate >= source.effectiveTo)
+      ) return null;
       const sourceRef: SourceRef = {
         source_id: sourceRefId(source.id),
         source_type: "official_source",
@@ -840,7 +912,8 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
       };
       if (!sourceRefSchema.safeParse(sourceRef).success) return null;
       refs.push(sourceRef);
+      refIds.set(source.id, sourceRef.source_id);
     }
-    return refs.length === 0 ? null : { refs };
+    return refs.length === usedSourceIds.size ? { refs, refIds } : null;
   }
 }
