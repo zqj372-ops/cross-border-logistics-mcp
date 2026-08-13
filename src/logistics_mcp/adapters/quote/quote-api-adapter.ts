@@ -358,6 +358,8 @@ export interface QuoteApiAdapterOptions {
   readonly headerProvider?: QuoteApiHeaderProvider;
   readonly clock?: () => Date;
   readonly originByTenantWarehouse?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** @deprecated Compatibility-only for the task06 caller migration; ignored at runtime. */
+  readonly originByWarehouse?: Readonly<Record<string, string>>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -518,8 +520,6 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
   private readonly originByTenantWarehouse: Readonly<Record<string, Readonly<Record<string, string>>>>;
   private readonly requestTimeoutMs: number;
 
-  constructor(options: QuoteApiAdapterOptions);
-  constructor(options: QuoteApiAdapterOptions & Record<string, unknown>);
   constructor(options: QuoteApiAdapterOptions) {
     super(options.clock === undefined ? {} : { clock: options.clock });
     this.client = createFetchJsonClient({
