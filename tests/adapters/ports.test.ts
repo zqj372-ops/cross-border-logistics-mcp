@@ -87,25 +87,15 @@ describe("existing-system adapter ports", () => {
     const source = createQuotePdfProductionSource({ ...base, health, close });
     expect(source.ok).toBe(true);
     if (!source.ok) return;
-    const disabledPdf = source.source.adapters.quotePdf;
-    expect(disabledPdf).toBe(unavailableQuotePdfPort);
-    if (disabledPdf === undefined) return;
-    await expect(disabledPdf.post({}, "disabled-key", {} as never)).resolves.toMatchObject({
-      ok: false,
-      failure: { code: "pdf.adapter_disabled", dispatched: false },
-    });
-    await expect(disabledPdf.get("document.pdf", {} as never)).resolves.toMatchObject({
-      ok: false,
-      failure: { code: "pdf.adapter_disabled", dispatched: false },
-    });
-    expect(Object.keys(source.source.adapters).sort()).toEqual([
-      "customs",
-      "knowledge",
-      "quote",
-      "quotePdf",
-      "review",
-      "status",
-    ]);
+    expect(source.source.adapters).toBe(base.adapters);
+    expect(Object.hasOwn(source.source.adapters, "quotePdf")).toBe(false);
+    for (const options of [{}, { quotePdf: undefined }, { quotePdf: unavailableQuotePdfPort }]) {
+      const absent = createQuotePdfProductionSource(base, options);
+      expect(absent.ok).toBe(true);
+      if (!absent.ok) continue;
+      expect(absent.source.adapters).toBe(base.adapters);
+      expect(Object.hasOwn(absent.source.adapters, "quotePdf")).toBe(false);
+    }
 
     const pdfHealth = vi.fn();
     const pdfClose = vi.fn();

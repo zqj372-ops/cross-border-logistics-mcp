@@ -10,7 +10,7 @@ export interface ProductionAdapterSourceLike {
 }
 
 export interface QuotePdfProductionSourceOptions {
-  readonly quotePdf?: QuotePdfPort;
+  readonly quotePdf?: QuotePdfPort | undefined;
 }
 
 export type QuotePdfProductionSourceResult =
@@ -49,13 +49,23 @@ export function createQuotePdfProductionSource(
     return { ok: false, code: "production_quote_pdf_source_invalid" };
   }
 
+  if (candidate === undefined || candidate === unavailableQuotePdfPort) {
+    return {
+      ok: true,
+      source: {
+        ...baseSource,
+        adapters: baseSource.adapters,
+      },
+    };
+  }
+
   return {
     ok: true,
     source: {
       ...baseSource,
       adapters: {
         ...baseSource.adapters,
-        quotePdf: candidate ?? unavailableQuotePdfPort,
+        quotePdf: candidate,
       },
     },
   };
