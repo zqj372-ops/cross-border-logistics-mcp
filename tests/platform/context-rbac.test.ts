@@ -78,6 +78,29 @@ describe("platform context and RBAC", () => {
     );
   });
 
+  it.each(["admin", "sales", "operator"] as const)(
+    "allows %s to create a quote PDF with the dedicated permission",
+    (role) => {
+      const context = parseExecutionContext({
+        ...claims(role),
+        scopes: [...claims(role).scopes, "quote:pdf_write"],
+      });
+
+      expect(authorizeTool(context, "quote.create_pdf")).toBe(true);
+    },
+  );
+
+  it("keeps quote PDF creation outside viewer access", () => {
+    const context = parseExecutionContext({
+      ...claims("viewer"),
+      scopes: [...claims("viewer").scopes, "quote:pdf_write"],
+    });
+
+    expect(() => authorizeTool(context, "quote.create_pdf")).toThrow(
+      ForbiddenError,
+    );
+  });
+
   it("blocks a target tenant that differs from the authenticated tenant", () => {
     const context = parseExecutionContext(claims("sales"));
 

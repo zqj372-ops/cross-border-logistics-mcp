@@ -12,7 +12,7 @@ describe("platform verification contract", () => {
   it("gives every allowlisted tool schema, permission, and status mapping", () => {
     const definitions = registerPhaseOneTools();
 
-    expect(definitions).toHaveLength(9);
+    expect(definitions).toHaveLength(10);
     expect(definitions.map((definition) => definition.name)).toEqual(
       phaseOneToolNames,
     );
@@ -21,7 +21,9 @@ describe("platform verification contract", () => {
       expect(definition.inputSchemaId).toContain(
         definition.name === "quote.canada_final_mile.calculate"
           ? "2026-08-13.v2"
-          : "2026-08-11.v1",
+          : definition.name === "quote.create_pdf"
+            ? "2026-08-14.v1"
+            : "2026-08-11.v1",
       );
       expect(definition.outputSchemaId).toMatch(/\.schema\.json$/);
       expect(definition.statusMapping).toEqual(ENVELOPE_STATUSES);

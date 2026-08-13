@@ -324,7 +324,11 @@ function readbackStatusFor(
   tool: string,
   envelope: ResponseEnvelope,
 ): AuditEvent["readback_status"] {
-  if (tool !== "quote.save_draft" && tool !== "review.create_task") {
+  if (
+    tool !== "quote.save_draft" &&
+    tool !== "review.create_task" &&
+    tool !== "quote.create_pdf"
+  ) {
     return "not_applicable";
   }
   if (envelope.status !== "success" || !isRecord(envelope.data)) {

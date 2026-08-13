@@ -26,6 +26,7 @@ import {
 } from "./http";
 import {
   registerPhaseOneTools,
+  type DomainToolHandler,
   type ToolContractMap,
   type ToolDefinition,
   type ToolHandlerMap,
@@ -62,6 +63,10 @@ import {
   quoteV2ResultSchema,
 } from "../adapters/quote/quote-api-adapter";
 import { envelopeSchema } from "../platform/envelope";
+import {
+  quoteCreatePdfInputSchema,
+  quoteCreatePdfWriteResultSchema,
+} from "../domains/quote/create-pdf";
 
 /*
  * The import grouping above deliberately keeps all platform ownership at this
@@ -239,10 +244,69 @@ function compositionTools(adapters: FixtureAdapters): CompositionTools {
         target: "draft-2020-12",
       }).anyOf,
     });
+  const quotePdfPreviewDataSchema = quoteCreatePdfWriteResultSchema.and(
+    z.object({ operation_status: z.literal("previewed") }),
+  );
+  const quotePdfCommittedDataSchema = quoteCreatePdfWriteResultSchema.and(
+    z.object({
+      operation_status: z.enum(["committed", "already_committed"]),
+    }),
+  );
+  const quotePdfEnvelopeBranches = z.union([
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: quotePdfPreviewDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+      blockers: envelopeSchema.shape.blockers.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: quotePdfCommittedDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+      blockers: envelopeSchema.shape.blockers.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.enum(["needs_input", "manual_review", "blocked", "unavailable"]),
+      data: quoteCreatePdfWriteResultSchema.nullable(),
+      blockers: envelopeSchema.shape.blockers.min(1),
+    }),
+  ]);
+  const quotePdfEnvelopeSchema = envelopeSchema
+    .extend({ data: quoteCreatePdfWriteResultSchema.nullable() })
+    .superRefine((envelope, refinement) => {
+      if (
+        envelope.status === "success" &&
+        !quotePdfEnvelopeBranches.safeParse(envelope).success
+      ) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote PDF success must contain a valid preview or commit result",
+        });
+      }
+    })
+    .meta({
+      anyOf: z.toJSONSchema(quotePdfEnvelopeBranches, {
+        target: "draft-2020-12",
+      }).anyOf,
+    });
+  const quotePdfUnavailableHandler: DomainToolHandler = () => ({
+    status: "unavailable",
+    data: null,
+    blockers: [{
+      code: "quote.create_pdf.handler_unavailable",
+      message: "The quote PDF handler is not configured; no PDF request was sent.",
+      severity: "error",
+      field: null,
+    }],
+    reviewStatus: "manual_review",
+  });
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,
     "cargo.calculate": cargoToolHandler,
     "container.plan_summary": containerPlanSummaryHandler,
+    "quote.create_pdf": quotePdfUnavailableHandler,
   };
   const contracts: ToolContractMap = {
     ...bundle.contracts,
@@ -255,6 +319,13 @@ function compositionTools(adapters: FixtureAdapters): CompositionTools {
     },
     "cargo.calculate": cargoToolContract,
     "container.plan_summary": containerPlanSummaryToolContract,
+    "quote.create_pdf": {
+      inputSchema: quoteCreatePdfInputSchema,
+      validateOutput: (data) => {
+        if (data !== null) quoteCreatePdfWriteResultSchema.parse(data);
+      },
+      outputSchema: quotePdfEnvelopeSchema,
+    },
   };
   return { bundle, handlers, contracts };
 }

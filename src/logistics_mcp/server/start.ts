@@ -22,7 +22,7 @@ import { createProductionTokenVerifier } from "./production-token-verifier";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
-const RUNTIME_REQUEST_TIMEOUT_MS = 15_000;
+export const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
 
 class RuntimeBodyTooLargeError extends Error {}
@@ -472,6 +472,7 @@ function makeComposition(): GatewayComposition {
       dataMode: "fixtures",
       ...common,
       authenticate: fixtureAuthenticatorFromEnvironment(),
+      requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
     });
   }
   if (mode !== "production") {
@@ -512,6 +513,7 @@ function makeComposition(): GatewayComposition {
       : { sessionOwnerId: instanceId }),
     ...(tokenVerifier === undefined ? {} : { tokenVerifier }),
     ...(tokenPolicy === undefined ? {} : { tokenPolicy }),
+    requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
   });
 }
 

@@ -42,7 +42,7 @@ const writeContext = parseExecutionContext({
 });
 
 describe("Phase 1 tool registry", () => {
-  it("registers exactly the nine baseline tools", () => {
+  it("registers the baseline tools plus quote PDF creation", () => {
     expect(phaseOneToolNames).toEqual([
       "knowledge.search_curated",
       "system.get_data_status",
@@ -53,6 +53,7 @@ describe("Phase 1 tool registry", () => {
       "customs.ca.estimate",
       "quote.save_draft",
       "review.create_task",
+      "quote.create_pdf",
     ]);
     expect(registerPhaseOneTools().map((tool) => tool.name)).toEqual(
       phaseOneToolNames,
@@ -64,12 +65,26 @@ describe("Phase 1 tool registry", () => {
       expect(tool.inputSchemaId).toMatch(
         tool.name === "quote.canada_final_mile.calculate"
           ? /2026-08-13\.v2/
-          : /2026-08-11\.v1/,
+          : tool.name === "quote.create_pdf"
+            ? /2026-08-14\.v1/
+            : /2026-08-11\.v1/,
       );
       expect(tool.outputSchemaId).toMatch(/schema\.json$/);
       expect(tool.permission).toMatch(/:/);
       expect(["read", "write"]).toContain(tool.kind);
     }
+  });
+
+  it("publishes the quote PDF write metadata and dedicated output contract", () => {
+    const tool = registerPhaseOneTools().find(
+      (candidate) => candidate.name === "quote.create_pdf",
+    );
+
+    expect(tool?.title).toBe("创建报价 PDF");
+    expect(tool?.description).toContain("预览");
+    expect(tool?.outputSchemaId).toBe("quote-create-pdf-envelope.schema.json");
+    expect(tool?.permission).toBe("quote:pdf_write");
+    expect(tool?.kind).toBe("write");
   });
 
   it("does not register generic or forbidden write capabilities", () => {
