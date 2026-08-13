@@ -171,41 +171,42 @@ interface CompositionTools {
 
 function compositionTools(adapters: FixtureAdapters): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
-  const calculatedQuoteDataSchema = quoteV2ResultSchema.and(
-    z.object({ quote_status: z.literal("calculated") }).passthrough(),
-  );
-  const manualQuoteDataSchema = quoteV2ResultSchema.and(
-    z.object({
-      quote_status: z.enum(["manual_review", "not_calculable"]),
-    }).passthrough(),
-  );
-  const quoteV2EnvelopeSchema = z
-    .union([
-      envelopeSchema.extend({
-        status: z.literal("success"),
-        data: calculatedQuoteDataSchema,
-        source_refs: envelopeSchema.shape.source_refs.min(1),
-        calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
-      }),
-      envelopeSchema.extend({
-        status: z.literal("manual_review"),
-        data: z.null(),
-        source_refs: envelopeSchema.shape.source_refs.max(0),
-        calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
-      }),
-      envelopeSchema.extend({
-        status: z.literal("manual_review"),
-        data: manualQuoteDataSchema,
-        source_refs: envelopeSchema.shape.source_refs.min(1),
-      }),
-      envelopeSchema.extend({
-        status: z.enum(["needs_input", "blocked", "unavailable"]),
-        data: z.null(),
-        source_refs: envelopeSchema.shape.source_refs.max(0),
-        calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
-      }),
-    ])
+  const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
+  const manualQuoteDataSchema = quoteV2ResultSchema.options[1];
+  const quoteV2EnvelopeBranches = z.union([
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: calculatedQuoteDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("manual_review"),
+      data: z.null(),
+      source_refs: envelopeSchema.shape.source_refs.max(0),
+      calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("manual_review"),
+      data: manualQuoteDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+    }),
+    envelopeSchema.extend({
+      status: z.enum(["needs_input", "blocked", "unavailable"]),
+      data: z.null(),
+      source_refs: envelopeSchema.shape.source_refs.max(0),
+      calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+    }),
+  ]);
+  const quoteV2EnvelopeSchema = envelopeSchema
+    .extend({ data: quoteV2ResultSchema.nullable() })
     .superRefine((envelope, refinement) => {
+      if (!quoteV2EnvelopeBranches.safeParse(envelope).success) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote status and data do not match an allowed v2 envelope branch",
+        });
+      }
       const sourceIds = envelope.source_refs.map((source) => source.source_id);
       const traceIds = envelope.calculation_trace.flatMap(
         (step) => step.source_ref_ids,
@@ -232,6 +233,11 @@ function compositionTools(adapters: FixtureAdapters): CompositionTools {
           message: "quote source IDs must match the outer source refs exactly",
         });
       }
+    })
+    .meta({
+      anyOf: z.toJSONSchema(quoteV2EnvelopeBranches, {
+        target: "draft-2020-12",
+      }).anyOf,
     });
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,

@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import addFormats from "ajv-formats";
 import Ajv2020 from "ajv/dist/2020.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
   createFixtureComposition,
@@ -293,6 +296,62 @@ describe("quote v2 runtime envelope contract", () => {
         data: quoteData(),
       }),
     ).toBe(false);
+  });
+
+  it("keeps the v2 schema visible and enforced by the real MCP SDK", async () => {
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const definition = composition.definitions.find(
+      (candidate) => candidate.name === QUOTE_TOOL,
+    )!;
+    const server = new McpServer({ name: "quote-v2-sdk-test", version: "1.0.0" });
+    let response = await execute(
+      outcome("success", quoteData(), {
+        sourceRefs: [sourceRef(SOURCE_ID)],
+        calculationTrace: [trace()],
+      }),
+    );
+    server.registerTool(
+      QUOTE_TOOL,
+      {
+        title: definition.title,
+        description: definition.description,
+        inputSchema: definition.inputSchema!,
+        outputSchema: definition.outputSchema!,
+      },
+      () => ({
+        content: [{ type: "text", text: "fixture" }],
+        structuredContent: { ...response },
+      }),
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "quote-v2-sdk-client", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const listed = await client.listTools();
+      const listedQuote = listed.tools.find((tool) => tool.name === QUOTE_TOOL);
+      expect(listedQuote?.outputSchema).toMatchObject({ type: "object" });
+
+      await expect(
+        client.callTool({ name: QUOTE_TOOL, arguments: quoteInput() }),
+      ).resolves.toMatchObject({
+        structuredContent: { status: "success" },
+      });
+
+      response = { ...response, data: quoteData("manual_review") };
+      await expect(
+        client.callTool({ name: QUOTE_TOOL, arguments: quoteInput() }),
+      ).resolves.toMatchObject({ isError: true });
+
+      response = { ...response, data: { ...quoteData(), injected: "reject" } };
+      await expect(
+        client.callTool({ name: QUOTE_TOOL, arguments: quoteInput() }),
+      ).resolves.toMatchObject({ isError: true });
+    } finally {
+      await client.close();
+      await server.close();
+      await composition.close();
+    }
   });
 
   it("executes manual review with v2 manual data and evidence", async () => {
