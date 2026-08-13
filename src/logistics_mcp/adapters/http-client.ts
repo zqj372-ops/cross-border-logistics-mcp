@@ -290,8 +290,17 @@ export function createFetchJsonClient(
     });
     try {
       const abortables = [timeout, ...(callerAbort === null ? [] : [callerAbort])];
+      let fetchPromise: Promise<Response>;
+      try {
+        fetchPromise = fetchImpl(url.toString(), requestInit);
+      } catch {
+        throw new HttpAdapterError(
+          "upstream_request_invalid",
+          "The upstream request could not be started.",
+        );
+      }
       const response = await Promise.race([
-        fetchImpl(url.toString(), requestInit),
+        fetchPromise,
         ...abortables,
       ]);
       if (response.status >= 300 && response.status < 400) {
@@ -307,19 +316,31 @@ export function createFetchJsonClient(
           response.status,
         );
       }
-      const text = await Promise.race([
-        readBoundedText(response, maxResponseBytes),
-        ...abortables,
-      ]);
+      let text: string;
+      try {
+        text = await Promise.race([
+          readBoundedText(response, maxResponseBytes),
+          ...abortables,
+        ]);
+      } catch (error: unknown) {
+        if (error instanceof HttpAdapterError && response.status >= 400 && error.status === undefined) {
+          throw new HttpAdapterError(error.code, error.message, response.status);
+        }
+        throw error;
+      }
       try {
         const body = JSON.parse(text) as unknown;
         return allowedStatuses?.includes(response.status) === true
           ? { status: response.status, body } satisfies FetchJsonAllowedStatusResponse
           : body;
-      } catch {
+      } catch (error: unknown) {
+        if (error instanceof HttpAdapterError && response.status >= 400 && error.status === undefined) {
+          throw new HttpAdapterError(error.code, error.message, response.status);
+        }
         throw new HttpAdapterError(
           "upstream_invalid_json",
           "The upstream response was not valid JSON.",
+          response.status >= 400 ? response.status : undefined,
         );
       }
     } catch (error: unknown) {
