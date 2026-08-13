@@ -418,9 +418,22 @@ describe("quote API v2 adapter", () => {
     }).success).toBe(false);
     expect(quoteV2ResultSchema.safeParse({
       ...validData,
+      currency: "CAD",
+    }).success).toBe(false);
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
       line_items: validData.line_items.map((line, index) => index === 0
         ? { ...line, source_ref_ids: ["src:quote:snapshot:b"] }
         : line),
+    }).success).toBe(false);
+    const wrongSnapshotSourceId = `src:quote:snapshot:${"b".repeat(64)}`;
+    expect(quoteV2ResultSchema.safeParse({
+      ...validData,
+      source_ref_ids: [wrongSnapshotSourceId],
+      line_items: validData.line_items.map((line) => ({
+        ...line,
+        source_ref_ids: [wrongSnapshotSourceId],
+      })),
     }).success).toBe(false);
 
     const manual = await adapter(responseFetch(manualResponse())).calculate(quoteInput(), context);
@@ -569,6 +582,26 @@ describe("quote API v2 adapter", () => {
     expect(result.sourceRefs).toEqual([]);
     expect(result.calculationTrace).toEqual([]);
     expect(JSON.stringify(result)).not.toContain("synthetic-upstream-body");
+  });
+
+  it("maps a formal 422 validation response to needs_input without exposing the upstream body", async () => {
+    const fetchImpl = responseFetch({
+      detail: "sensitive upstream detail",
+      credential: "synthetic-upstream-secret",
+    }, 422);
+    const result = await adapter(fetchImpl).calculate(quoteInput(), context);
+
+    expect(result.status).toBe("needs_input");
+    expect(result.data).toBeNull();
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        code: "quote.upstream_request_invalid",
+        field: "input",
+      }),
+    ]);
+    expect(JSON.stringify(result)).not.toContain("sensitive upstream detail");
+    expect(JSON.stringify(result)).not.toContain("synthetic-upstream-secret");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it.each([

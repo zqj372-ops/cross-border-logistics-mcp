@@ -131,7 +131,7 @@ const quoteV2ResultBaseSchema = z
   .object({
     version: z.literal(AVAILABLE_VERSION),
     quote_id: identifierSchema,
-    currency: z.string().regex(/^[A-Z]{3}$/u),
+    currency: z.literal("USD"),
     rule_version: versionSchema,
     data_version: versionSchema,
     sendable: z.literal(false),
@@ -189,6 +189,10 @@ export const quoteV2ResultSchema = z
   .superRefine((value, refinement) => {
     if (!uniqueStrings(value.source_ref_ids)) {
       refinement.addIssue({ code: "custom", message: "source_ref_ids must be unique", path: ["source_ref_ids"] });
+    }
+    const expectedSourceId = `src:quote:snapshot:${value.snapshot_hash.slice("sha256:".length)}`;
+    if (value.source_ref_ids.length !== 1 || value.source_ref_ids[0] !== expectedSourceId) {
+      refinement.addIssue({ code: "custom", message: "source_ref_ids must bind to snapshot_hash", path: ["source_ref_ids"] });
     }
     if (value.release_hash !== value.snapshot_hash) {
       refinement.addIssue({ code: "custom", message: "release_hash must equal snapshot_hash", path: ["release_hash"] });
@@ -585,13 +589,20 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
         if (sanitizedHeaders === null) {
           throw new HttpAdapterError("upstream_request_invalid", "The quote preview API-key header is invalid.");
         }
-        return this.client.post(QUOTE_PATH, prepared.body, sanitizedHeaders, requestSignal, [503]);
+        return this.client.post(QUOTE_PATH, prepared.body, sanitizedHeaders, requestSignal, [422, 503]);
       });
     } catch (error: unknown) {
       return this.mapHttpFailure(error);
     }
 
     if (isAllowedStatusResponse(response)) {
+      if (response.status === 422) {
+        return needsInput(
+          "quote.upstream_request_invalid",
+          "The quote preview API rejected the request evidence.",
+          "input",
+        );
+      }
       if (response.status === 503) {
         unavailableResponseSchema.safeParse(response.body);
         return unavailable(
