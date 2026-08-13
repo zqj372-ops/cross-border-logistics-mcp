@@ -296,18 +296,16 @@ const VIEW_META = {
   },
 };
 
-const state = isBrowser
-  ? {
-      mode: new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
-      view: getViewFromHash(),
-      data: null,
-      loading: true,
-      error: null,
-      roleFilter: "all",
-      localDraft: null,
-      architectureSelection: null,
-    }
-  : null;
+const state = {
+  mode: isBrowser && new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
+  view: isBrowser ? getViewFromHash() : "overview",
+  data: null,
+  loading: true,
+  error: null,
+  roleFilter: "all",
+  localDraft: null,
+  architectureSelection: null,
+};
 
 const content = isBrowser ? document.querySelector("#content") : null;
 const liveRegion = isBrowser ? document.querySelector("#live-region") : null;
@@ -895,6 +893,18 @@ function renderView() {
     default:
       return renderOverview(state.data);
   }
+}
+
+export function renderSnapshotForSelfCheck(snapshot, view = "overview") {
+  state.mode = snapshot?.environment === "fixture" || snapshot?.environment === "演示环境" ? "fixture" : "live";
+  state.view = Object.hasOwn(VIEW_META, view) ? view : "overview";
+  state.data = validateSnapshot(snapshot);
+  state.loading = false;
+  state.error = null;
+  state.roleFilter = "all";
+  state.localDraft = null;
+  state.architectureSelection = null;
+  return renderView();
 }
 
 function updateContext() {

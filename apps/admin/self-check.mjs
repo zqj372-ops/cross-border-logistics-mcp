@@ -5,6 +5,7 @@ import {
   architectureNodeStatus,
   deriveArchitectureModel,
   escapeHtml,
+  renderSnapshotForSelfCheck,
   safeOpaqueReference,
   toChineseDisplayText,
   validateSnapshot,
@@ -202,6 +203,69 @@ assert.equal(architecture.tools.find((tool) => tool.name === "quote.create_pdf")
 assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").readiness, "unavailable");
 assert.equal(architecture.sources.find((source) => source.businessKey === "pdf").registrationStatus, "已登记，正式连接未启用/不可用");
 assert.ok(!fixtureSnapshot.tools.some((tool) => tool.name.startsWith("pdf.")));
+
+const renderedViews = ["overview", "clients", "tools", "adapters", "architecture", "approvals", "audit"];
+const renderedFixtureHtml = renderedViews.map((view) => renderSnapshotForSelfCheck(fixtureSnapshot, view)).join("\n");
+assert.match(renderedFixtureHtml, /生成内部报价单/);
+assert.match(renderedFixtureHtml, /已登记，正式连接未启用\/不可用/);
+assert.match(renderedFixtureHtml, /10 个工具/);
+
+const maliciousSnapshot = {
+  ...fixtureSnapshot,
+  blockers: [...fixtureSnapshot.blockers, "https://evil.invalid/GET?token=secret"],
+  clients: fixtureSnapshot.clients.map((client, index) => index === 0
+    ? { ...client, name: "https://evil.invalid/client_id" }
+    : client),
+  tools: [...fixtureSnapshot.tools, {
+    name: "evil.tool",
+    label: "https://evil.invalid/tool",
+    description: "Bearer token /secret/path client_id tenant_id actor_id request_id audit_id hash endpoint_ref secret_ref MCP_evil",
+    permission: "evil:write",
+    roles: ["admin"],
+    kind: "write",
+    availability: "unavailable",
+  }],
+  sources: [...fixtureSnapshot.sources, {
+    name: "evil.source",
+    label: "https://evil.invalid/source",
+    type: "Bearer token",
+    category: "business_api",
+    business_key: "evil.source",
+    environment: "/secret/path",
+    endpoint_ref: "endpoint_ref:https://evil.invalid/GET",
+    secret_ref: "secret_ref:Bearer secret",
+    source_version: "hash:opaque-ref",
+    adapter_contract_version: "MCP_evil",
+    business_version_evidence: { raw: "request_id/audit_id" },
+    update_mode: "GET",
+    last_checked_at: "https://evil.invalid/time",
+    last_success_at: "Bearer token",
+    affected_tools: ["evil.tool"],
+    registration_status: "client_id tenant_id actor_id",
+    readiness: "unavailable",
+    reason: "https://evil.invalid/reason",
+    blocker: "secret_ref password hash",
+  }],
+  approvals: {
+    ...fixtureSnapshot.approvals,
+    chain: fixtureSnapshot.approvals.chain.map((step, index) => index === 0
+      ? { ...step, label: "https://evil.invalid/approval", detail: "request_id audit_id" }
+      : step),
+  },
+  audit: fixtureSnapshot.audit.map((entry, index) => index === 0
+    ? { ...entry, reason: "https://evil.invalid/audit" }
+    : entry),
+};
+const visibleRenderedText = renderedViews
+  .map((view) => renderSnapshotForSelfCheck(maliciousSnapshot, view))
+  .join("\n")
+  .replace(/<[^>]*>/g, " ")
+  .replace(/\s+/g, " ");
+assert.doesNotMatch(
+  visibleRenderedText,
+  /evil\.tool|evil\.source|GET|path|https?:\/\/|Bearer|token|secret|password|client_id|tenant_id|actor_id|request_id|audit_id|hash|endpoint_ref|secret_ref|opaque|MCP_|<code>/i,
+);
+
 assert.equal(architecture.approvalLifecycle.find((stage) => stage.key === "publish").status, "empty");
 assert.equal(architecture.approvalLifecycle.find((stage) => stage.key === "approval").status, "blocked");
 assert.ok(architecture.approvalLifecycle.every((stage) => stage.kind === "approval"));

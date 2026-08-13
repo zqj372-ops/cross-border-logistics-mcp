@@ -17,6 +17,7 @@ import {
   cargoInput,
   containerInput,
   quoteInput,
+  quotePdfInput,
 } from "./fixtures/tenant-fixtures";
 import { securityClaims } from "./fixtures/security-fixtures";
 
@@ -41,6 +42,19 @@ const customsSearchInput = {
   product_attributes: { material: "synthetic", origin_country: "CN" },
   selected_hs6: null,
 };
+
+const EXPECTED_TOOL_NAMES = [
+  "cargo.calculate",
+  "container.plan_summary",
+  "customs.ca.estimate",
+  "customs.ca.search",
+  "knowledge.search_curated",
+  "quote.canada_final_mile.calculate",
+  "quote.create_pdf",
+  "quote.save_draft",
+  "review.create_task",
+  "system.get_data_status",
+].sort();
 
 function serverContext(): ExecutionContext {
   return parseExecutionContext({
@@ -406,17 +420,56 @@ describe("gateway composition modes", () => {
   });
 
   it("keeps production adapters disabled until endpoint, tenant and readiness contracts are verified", async () => {
+    const quotePdfCalls = { post: 0, get: 0 };
+    let quoteCalls = 0;
+    const baseAdapters = createProductionApiAdapterSource().adapters;
+    const adapterSource: ProductionAdapterSource = {
+      kind: "adapter_source",
+      adapters: {
+        ...baseAdapters,
+        quotePdf: {
+          post: () => {
+            quotePdfCalls.post += 1;
+            return Promise.reject(new Error("disabled PDF port must not be called"));
+          },
+          get: () => {
+            quotePdfCalls.get += 1;
+            return Promise.reject(new Error("disabled PDF port must not be called"));
+          },
+        },
+        quote: {
+          ...baseAdapters.quote,
+          calculate: async (...args) => {
+            quoteCalls += 1;
+            return baseAdapters.quote.calculate(...args);
+          },
+        },
+      },
+      health: () => Promise.resolve({ ready: true }),
+      close: () => Promise.resolve(),
+    };
     const composition = createProductionComposition({
       dataMode: "production",
       allowedOrigins: ["https://client.example.invalid"],
       allowedHosts: ["mcp.example.invalid"],
       authenticate: () => securityClaims,
+      adapterSource,
     });
     try {
       expect(composition.dataMode).toBe("production");
-      expect(composition.definitions).toHaveLength(10);
-      expect(composition.definitions.map(({ name }) => name)).toContain("quote.create_pdf");
+      expect(composition.definitions.map(({ name }) => name).sort()).toEqual(EXPECTED_TOOL_NAMES);
       expect(composition.adapters.quote).not.toBe(composition.adapters.status);
+
+      const pdfHandler = composition.handlers["quote.create_pdf"];
+      if (pdfHandler === undefined) throw new Error("quote PDF handler was not registered");
+      const pdf = await pdfHandler(
+        quotePdfInput("preview", "pdf_production_disabled_001"),
+        serverContext(),
+      );
+      expect(pdf.status).toBe("unavailable");
+      expect(pdf.data).toBeNull();
+      expect(quoteCalls).toBe(0);
+      expect(quotePdfCalls).toEqual({ post: 0, get: 0 });
 
       const context = parseExecutionContext(securityClaims);
       const quoteHandler = composition.handlers["quote.canada_final_mile.calculate"];
