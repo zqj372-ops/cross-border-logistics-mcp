@@ -252,7 +252,9 @@ function candidatePayload(
     quote_request: input.quote_request,
     presentation: input.presentation,
     quote_data: quote,
-    quote_source_refs: sourceRefs,
+    quote_source_refs: sourceRefs.map((source) => Object.fromEntries(
+      Object.entries(source).filter(([key]) => key !== "retrieved_at"),
+    )),
     quote_calculation_trace: calculationTrace,
   };
 }
@@ -329,7 +331,7 @@ function closedQuoteEvidence(
   quoteTrace: readonly CalculationStep[],
 ): boolean {
   const sourceIds = sourceRefs.map((source) => source.source_id);
-  return sourceIds.length > 0 && sameStringSet(sourceIds, quote.source_ref_ids) &&
+  return sourceIds.length > 0 && quoteTrace.length > 0 && sameStringSet(sourceIds, quote.source_ref_ids) &&
     quoteTrace.every((step) => step.source_ref_ids.length > 0 &&
       new Set(step.source_ref_ids).size === step.source_ref_ids.length &&
       step.source_ref_ids.every((sourceId) => sourceIds.includes(sourceId)));
@@ -504,7 +506,7 @@ export async function createQuotePdf(
     return noData("unavailable", "quote.create_pdf.projection_invalid", "The authoritative quote could not be projected to PDF input.", sourceRefs, safeEvidenceTrace(sourceRefs, "calculated"));
   }
 
-  const candidate = candidatePayload(input, context, parsedQuote.data, sourceRefs, quoteTrace);
+  const candidate = candidatePayload(input, context, parsedQuote.data, quoteResult.sourceRefs, quoteTrace);
   const candidateDigest = digestBase64Url(candidate);
   if (input.write_context.operation_mode === "preview") {
     const assumptions = safeNotices(quoteResult.assumptions);

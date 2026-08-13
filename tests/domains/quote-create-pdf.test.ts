@@ -116,6 +116,16 @@ function quoteData(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function quoteDataForSource(nextSourceId: string, nextSnapshot: string) {
+  const base = quoteData();
+  return quoteData({
+    source_ref_ids: [nextSourceId],
+    snapshot_hash: `sha256:${nextSnapshot}`,
+    release_hash: `sha256:${nextSnapshot}`,
+    line_items: base.line_items.map((line) => ({ ...line, source_ref_ids: [nextSourceId] })),
+  });
+}
+
 const sourceRef = {
   source_id: sourceId,
   source_type: "internal_system" as const,
@@ -318,6 +328,127 @@ describe("quote.create_pdf domain", () => {
     const replay = await createQuotePdf(quote, pdf, input("preview", "preview-key-123456"), context);
     expect(replay.data).toMatchObject({ preview_ref: result.data?.preview_ref });
     quoteCreatePdfWriteResultSchema.parse(result.data);
+  });
+
+  it("keeps the preview identity stable when only source observation time changes", async () => {
+    const firstRetrievedAt = "2026-08-14T00:00:00Z";
+    const secondRetrievedAt = "2026-08-14T00:00:01Z";
+    const quote = quoteAdapter([
+      { status: "success", data: quoteData(), sourceRefs: [{ ...sourceRef, retrieved_at: firstRetrievedAt }], calculationTrace: [quoteTrace] },
+      { status: "success", data: quoteData(), sourceRefs: [{ ...sourceRef, retrieved_at: secondRetrievedAt }], calculationTrace: [quoteTrace] },
+    ]);
+    const pdf = pdfPort();
+
+    const first = await createQuotePdf(quote, pdf, input("preview", "preview-key-123456"), context);
+    const replay = await createQuotePdf(quote, pdf, input("preview", "preview-key-123456"), context);
+
+    expect(replay.data).toMatchObject({ preview_ref: first.data?.preview_ref });
+    expect(first.sourceRefs[0]?.retrieved_at).toBe(firstRetrievedAt);
+    expect(replay.sourceRefs[0]?.retrieved_at).toBe(secondRetrievedAt);
+    expect(pdf.postMock).not.toHaveBeenCalled();
+  });
+
+  it("allows commit when only source observation time changes and preserves the commit evidence", async () => {
+    const firstRetrievedAt = "2026-08-14T00:00:00Z";
+    const secondRetrievedAt = "2026-08-14T00:00:01Z";
+    const quote = quoteAdapter([
+      { status: "success", data: quoteData(), sourceRefs: [{ ...sourceRef, retrieved_at: firstRetrievedAt }], calculationTrace: [quoteTrace] },
+      { status: "success", data: quoteData(), sourceRefs: [{ ...sourceRef, retrieved_at: secondRetrievedAt }], calculationTrace: [quoteTrace] },
+    ]);
+    const pdf = pdfPort();
+    const preview = await createQuotePdf(quote, pdf, input("preview", "preview-key-123456"), context);
+    const committed = await createQuotePdf(
+      quote,
+      pdf,
+      input("commit", "commit-key-123456", (preview.data as Record<string, unknown>).preview_ref as string),
+      context,
+    );
+
+    expect(committed.status).toBe("success");
+    expect(committed.sourceRefs.find((ref) => ref.source_id === sourceId)?.retrieved_at).toBe(secondRetrievedAt);
+    expect(pdf.postMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reviews any stable quote evidence or trace change before PDF write", async () => {
+    const changedSnapshot = "b".repeat(64);
+    const changedSourceId = `src:quote:snapshot:${changedSnapshot}`;
+    const cases = [
+      {
+        name: "version",
+        source: { ...sourceRef, version: "release-2:rules-1:data-1" },
+        data: quoteData(),
+        trace: quoteTrace,
+      },
+      {
+        name: "content_hash",
+        source: { ...sourceRef, content_hash: `sha256:${"e".repeat(64)}` },
+        data: quoteData(),
+        trace: quoteTrace,
+      },
+      {
+        name: "locator",
+        source: { ...sourceRef, locator: "opaque://quote-authority-v2" },
+        data: quoteData(),
+        trace: quoteTrace,
+      },
+      {
+        name: "source_id",
+        source: { ...sourceRef, source_id: changedSourceId },
+        data: quoteDataForSource(changedSourceId, changedSnapshot),
+        trace: { ...quoteTrace, source_ref_ids: [changedSourceId] },
+      },
+      {
+        name: "trace",
+        source: sourceRef,
+        data: quoteData(),
+        trace: { ...quoteTrace, operation: "changed quote evidence" },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const quote = quoteAdapter([
+        { status: "success", data: quoteData(), sourceRefs: [sourceRef], calculationTrace: [quoteTrace] },
+        { status: "success", data: testCase.data, sourceRefs: [testCase.source], calculationTrace: [testCase.trace] },
+      ]);
+      const pdf = pdfPort();
+      const preview = await createQuotePdf(quote, pdf, input("preview", "preview-key-123456"), context);
+      const result = await createQuotePdf(
+        quote,
+        pdf,
+        input("commit", "commit-key-123456", (preview.data as Record<string, unknown>).preview_ref as string),
+        context,
+      );
+
+      expect(result, testCase.name).toMatchObject({ status: "manual_review", data: null });
+      expect(pdf.postMock, testCase.name).not.toHaveBeenCalled();
+    }
+  });
+
+  it("requires non-empty quote calculation trace for preview and commit", async () => {
+    const previewPdf = pdfPort();
+    const unavailablePreview = await createQuotePdf(quoteAdapter([{
+      status: "success",
+      data: quoteData(),
+      sourceRefs: [sourceRef],
+      calculationTrace: [],
+    }]), previewPdf, input("preview", "preview-key-123456"), context);
+    expect(unavailablePreview).toMatchObject({ status: "unavailable", data: null });
+    expect(previewPdf.postMock).not.toHaveBeenCalled();
+
+    const commitPdf = pdfPort();
+    const quote = quoteAdapter([
+      { status: "success", data: quoteData(), sourceRefs: [sourceRef], calculationTrace: [quoteTrace] },
+      { status: "success", data: quoteData(), sourceRefs: [sourceRef], calculationTrace: [] },
+    ]);
+    const preview = await createQuotePdf(quote, commitPdf, input("preview", "preview-key-123456"), context);
+    const unavailableCommit = await createQuotePdf(
+      quote,
+      commitPdf,
+      input("commit", "commit-key-123456", (preview.data as Record<string, unknown>).preview_ref as string),
+      context,
+    );
+    expect(unavailableCommit).toMatchObject({ status: "unavailable", data: null });
+    expect(commitPdf.postMock).not.toHaveBeenCalled();
   });
 
   it("requires P != C, requotes on commit, projects exact decimal strings, and reads back before success", async () => {
