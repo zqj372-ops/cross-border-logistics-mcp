@@ -1,9 +1,19 @@
 # Client onboarding
 
 ChatGPT、Codex 和企业助手只使用同一远程 MCP endpoint：
-`https://mcp.example.invalid/mcp`。仓库中的三个文件是示意模板/待管理员验证，不能直接
-写入用户全局配置，也不包含真实 token。管理员必须先确认企业身份 provider、issuer、
-audience、tenant mapping、Origin/Host allowlist、HTTPS gateway 和审计保留策略。
+`https://mcp.example.invalid/mcp`。`deploy/clients/codex.example.toml` 已按 OpenAI 当前
+`[mcp_servers.<name>]` 格式编写，但仍使用假地址，必须由管理员替换并通过
+`LOGISTICS_MCP_BEARER_TOKEN` 注入短期令牌。另两个 JSON 只是对接清单，
+不是可导入的机器配置，也不包含真实 token。
+
+OpenAI 当前说明：ChatGPT 桌面端、Codex CLI 和 IDE 扩展在同一 Codex 主机上
+共享 MCP 配置；ChatGPT Work 网页则由工作区管理员安装包含远程 MCP 工具的
+插件，不读取本地 Codex 配置。参考：
+<https://learn.chatgpt.com/docs/extend/mcp?surface=cli>。
+
+管理员必须先确认企业身份 provider、issuer、audience、tenant mapping、
+Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人、角色和会话
+都由服务端校验令牌后注入，客户端配置不得提供或覆盖这些字段。
 
 ## 工具与状态
 
@@ -28,5 +38,5 @@ audience、tenant mapping、Origin/Host allowlist、HTTPS gateway 和审计保�
 3. 运行 cargo/quote 查询和一个 `needs_input` 负例；确认金额/重量带单位和版本。
 4. 只在批准的 fixture/sandbox 中验证 `quote.save_draft` 与 `review.create_task` 的
    preview→approval→commit→readback；不得发送、发布、订舱或写生产。
-5. 保存响应、审计 ID、工具版本和管理员批准记录；客户端精确语法未由官方文档确认前，
-   继续标记为“示意模板/待管理员验证”。
+5. 保存响应、审计 ID、工具版本和管理员批准记录；ChatGPT Work 插件和
+   企业助手必须在 staging 通过身份、权限、审批和状态处理验收后再开放。

@@ -234,14 +234,14 @@ export class QuoteApiAdapter extends ExistingQuoteAdapter {
   }
 
   override async calculate(input: Record<string, unknown>): Promise<AdapterResult> {
-    const prepared = this.prepareRequest(input);
-    if ("result" in prepared) return prepared.result;
     if (!this.enabled) {
       return unavailable(
         "quote.adapter_disabled",
         "The quote API adapter is disabled until its endpoint is explicitly enabled.",
       );
     }
+    const prepared = this.prepareRequest(input);
+    if ("result" in prepared) return prepared.result;
 
     let response: unknown;
     try {

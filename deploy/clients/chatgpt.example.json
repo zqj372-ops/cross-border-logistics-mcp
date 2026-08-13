@@ -1,16 +1,14 @@
 {
-  "template_status": "示意模板/待管理员验证",
-  "client": "chatgpt",
-  "client_id": "client_demo",
-  "tenant_id": "tenant_demo",
-  "transport": "streamable-http",
-  "url": "https://mcp.example.invalid/mcp",
+  "template_status": "管理员接入清单/不可导入",
+  "importable": false,
+  "surface": "ChatGPT Work 网页",
+  "endpoint": "https://mcp.example.invalid/mcp",
+  "connection_method": "由工作区管理员安装包含远程 MCP 工具的插件",
   "authentication": {
-    "type": "enterprise-short-lived-jwt",
-    "token_source": "enterprise_identity_provider",
-    "token": "INJECT_FROM_IDENTITY_PROVIDER"
+    "required": "企业短期身份令牌",
+    "configured_by": "插件与企业身份平台"
   },
-  "tools": [
+  "allowed_tools": [
     "cargo.calculate",
     "container.plan_summary",
     "quote.canada_final_mile.calculate",
@@ -21,14 +19,10 @@
     "system.get_data_status",
     "review.create_task"
   ],
-  "state_policy": {
-    "success": "render versioned data and trace",
-    "needs_input": "ask only for listed blockers",
-    "manual_review": "handoff with reason, source and owner",
-    "unavailable": "show unavailable; do not substitute a value",
-    "blocked": "show policy denial; do not retry by another tool",
+  "safety": {
+    "write_tools_require_approval": true,
+    "unavailable_is_not_success": true,
     "sendable": false,
     "theoretical_only": true
-  },
-  "status_handling": "See docs/runbooks/client-onboarding.md; never treat manual_review, unavailable, or blocked as success."
+  }
 }

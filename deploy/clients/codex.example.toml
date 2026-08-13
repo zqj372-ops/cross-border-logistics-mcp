@@ -1,12 +1,14 @@
-template_status = "示意模板/待管理员验证"
-client = "codex"
-client_id = "client_demo"
-tenant_id = "tenant_demo"
-transport = "streamable-http"
-endpoint = "https://mcp.example.invalid/mcp"
-token_source = "enterprise_identity_provider"
-token = "INJECT_FROM_IDENTITY_PROVIDER"
-tools = [
+# 按 OpenAI 当前 Codex MCP 配置格式编写。使用前替换示例地址，
+# 并由企业身份平台把短期令牌注入 LOGISTICS_MCP_BEARER_TOKEN。
+[mcp_servers.cross_border_logistics]
+url = "https://mcp.example.invalid/mcp"
+bearer_token_env_var = "LOGISTICS_MCP_BEARER_TOKEN"
+enabled = true
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+default_tools_approval_mode = "writes"
+enabled_tools = [
   "cargo.calculate",
   "container.plan_summary",
   "quote.canada_final_mile.calculate",
@@ -17,12 +19,3 @@ tools = [
   "system.get_data_status",
   "review.create_task",
 ]
-[state_policy]
-success = "render versioned data and trace"
-needs_input = "ask only for listed blockers"
-manual_review = "handoff with reason, source and owner"
-unavailable = "show unavailable; do not substitute a value"
-blocked = "show policy denial; do not retry by another tool"
-sendable = false
-theoretical_only = true
-status_handling = "See docs/runbooks/client-onboarding.md; success remains sendable=false and theoretical_only=true where declared."

@@ -26,7 +26,23 @@ describe("Phase 1 integrated fixture gateway", () => {
         },
         sessionId,
       );
-      const body = (await response.json()) as { result?: { tools?: Array<{ name: string }> } };
+      const body = (await response.json()) as {
+        result?: {
+          tools?: Array<{
+            name: string;
+            title?: string;
+            description?: string;
+            inputSchema?: { $schema?: string };
+            outputSchema?: { $schema?: string; required?: string[] };
+            annotations?: {
+              readOnlyHint?: boolean;
+              destructiveHint?: boolean;
+              idempotentHint?: boolean;
+              openWorldHint?: boolean;
+            };
+          }>;
+        };
+      };
       expect(body.result?.tools?.map((tool) => tool.name).sort()).toEqual([
         "cargo.calculate",
         "container.plan_summary",
@@ -39,6 +55,38 @@ describe("Phase 1 integrated fixture gateway", () => {
         "system.get_data_status",
       ].sort());
       expect(body.result?.tools?.some((tool) => /commit|send|publish|booking/i.test(tool.name))).toBe(false);
+      const tools = Object.fromEntries(
+        (body.result?.tools ?? []).map((tool) => [tool.name, tool]),
+      );
+      expect(tools["cargo.calculate"]).toMatchObject({
+        title: "货物与分泡计算",
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      });
+      expect(tools["customs.ca.search"]?.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(tools["quote.save_draft"]?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(body.result?.tools?.every((tool) =>
+        tool.title !== undefined &&
+        tool.description !== undefined &&
+        !tool.description.includes("Phase 1") &&
+        tool.inputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema" &&
+        tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema" &&
+        tool.outputSchema.required?.includes("status") === true
+      )).toBe(true);
     } finally {
       await harness.close();
     }

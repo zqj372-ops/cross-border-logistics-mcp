@@ -101,6 +101,8 @@ export type ToolContractMap = Partial<Record<PhaseOneToolName, ToolContract>>;
 
 export interface ToolDefinition {
   readonly name: PhaseOneToolName;
+  readonly title: string;
+  readonly description: string;
   readonly inputSchemaId: string;
   readonly outputSchemaId: string;
   readonly permission: string;
@@ -135,6 +137,48 @@ const outputSchemaByTool: Record<PhaseOneToolName, string> = {
   "review.create_task": "write-result.schema.json",
 };
 
+const presentationByTool: Record<
+  PhaseOneToolName,
+  { readonly title: string; readonly description: string }
+> = {
+  "knowledge.search_curated": {
+    title: "精选知识搜索",
+    description: "只查询经过审核的当前操作资料。",
+  },
+  "system.get_data_status": {
+    title: "数据状态查询",
+    description: "读取已接入来源的就绪状态和版本证据。",
+  },
+  "cargo.calculate": {
+    title: "货物与分泡计算",
+    description: "计算体积、体积重、分泡和计费重。",
+  },
+  "container.plan_summary": {
+    title: "装柜摘要计算",
+    description: "汇总理论容量、运营目标和超限提醒。",
+  },
+  "quote.canada_final_mile.calculate": {
+    title: "加拿大尾程报价",
+    description: "通过受控接口获取加拿大尾程报价。",
+  },
+  "customs.ca.search": {
+    title: "加拿大关务候选查询",
+    description: "查询海关编码候选和待补充问题。",
+  },
+  "customs.ca.estimate": {
+    title: "加拿大税费估算",
+    description: "正式估算接口约定完成前保持不可用。",
+  },
+  "quote.save_draft": {
+    title: "保存报价草稿",
+    description: "正式草稿接口和写后读回完成前保持不可用。",
+  },
+  "review.create_task": {
+    title: "创建人工复核任务",
+    description: "正式任务接口和写后读回完成前保持不可用。",
+  },
+};
+
 export type ToolHandlerMap = Partial<
   Record<PhaseOneToolName, DomainToolHandler>
 >;
@@ -145,10 +189,13 @@ export function registerPhaseOneTools(
 ): readonly ToolDefinition[] {
   return phaseOneToolNames.map((name) => {
     const policy = getToolPolicy(name);
+    const presentation = presentationByTool[name];
     const handler = handlers[name];
     const contract = contracts[name];
     return {
       name,
+      title: presentation.title,
+      description: presentation.description,
       inputSchemaId: `urn:logistics-mcp:${name}:2026-08-11.v1`,
       outputSchemaId: outputSchemaByTool[name],
       permission: policy.permission,
