@@ -1,4 +1,5 @@
 import type { CustomsAdapter, AdapterResult } from "../../adapters/ports";
+import type { ExecutionContext } from "../../platform/context";
 import {
   customsSearchInputSchema,
   customsSearchResultSchema,
@@ -11,6 +12,8 @@ export const customsSearchOutputValidator = outputValidator(customsSearchResultS
 export async function searchCanadaCustoms(
   adapter: CustomsAdapter,
   input: Record<string, unknown>,
+  context?: ExecutionContext,
+  signal?: AbortSignal,
 ): Promise<AdapterResult> {
-  return adapter.search(input);
+  return adapter.search(input, context, signal);
 }

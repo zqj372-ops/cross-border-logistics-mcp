@@ -17,11 +17,16 @@ export interface FetchJsonClientOptions {
   readonly fetchImpl?: FetchImplementation;
 }
 export interface FetchJsonClient {
-  get(path: string, headers?: Readonly<Record<string, string>>): Promise<unknown>;
+  get(
+    path: string,
+    headers?: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
   post(
     path: string,
     body: unknown,
     headers?: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
   ): Promise<unknown>;
 }
 
@@ -31,6 +36,7 @@ export type HttpAdapterErrorCode =
   | "upstream_host_not_allowed"
   | "upstream_redirect_rejected"
   | "upstream_timeout"
+  | "upstream_aborted"
   | "upstream_response_too_large"
   | "upstream_invalid_json"
   | "upstream_http_error"
@@ -40,6 +46,7 @@ export class HttpAdapterError extends Error {
   constructor(
     readonly code: HttpAdapterErrorCode,
     message: string,
+    readonly status?: number,
   ) {
     super(message);
     this.name = "HttpAdapterError";
@@ -219,6 +226,7 @@ export function createFetchJsonClient(
     path: string,
     body: unknown,
     headers: Readonly<Record<string, string>> | undefined,
+    signal: AbortSignal | undefined,
   ): Promise<unknown> {
     if (options.enabled !== true) {
       throw new HttpAdapterError(
@@ -226,8 +234,25 @@ export function createFetchJsonClient(
         "The production upstream adapter is disabled until its endpoint contract is verified.",
       );
     }
+    if (signal?.aborted) {
+      throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
+    }
     const url = resolveAllowedUrl(baseUrl, path, options.allowedHosts);
     const controller = new AbortController();
+    let rejectCallerAbort: ((error: HttpAdapterError) => void) | undefined;
+    const callerAbort = signal === undefined
+      ? null
+      : new Promise<never>((_, reject) => {
+          rejectCallerAbort = reject;
+        });
+    const abort = (): void => {
+      controller.abort(signal?.reason);
+      rejectCallerAbort?.(
+        new HttpAdapterError("upstream_aborted", "The upstream request was aborted."),
+      );
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const requestHeadersValue = requestHeaders(headers);
     const requestInit: RequestInit = {
@@ -257,9 +282,10 @@ export function createFetchJsonClient(
       }, timeoutMs);
     });
     try {
+      const abortables = [timeout, ...(callerAbort === null ? [] : [callerAbort])];
       const response = await Promise.race([
         fetchImpl(url.toString(), requestInit),
-        timeout,
+        ...abortables,
       ]);
       if (response.status >= 300 && response.status < 400) {
         throw new HttpAdapterError(
@@ -271,9 +297,13 @@ export function createFetchJsonClient(
         throw new HttpAdapterError(
           "upstream_http_error",
           "The upstream service returned a non-success response.",
+          response.status,
         );
       }
-      const text = await readBoundedText(response, maxResponseBytes);
+      const text = await Promise.race([
+        readBoundedText(response, maxResponseBytes),
+        ...abortables,
+      ]);
       try {
         return JSON.parse(text) as unknown;
       } catch {
@@ -290,11 +320,12 @@ export function createFetchJsonClient(
       );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
     }
   }
 
   return {
-    get: (path, headers) => request("GET", path, undefined, headers),
-    post: (path, body, headers) => request("POST", path, body, headers),
+    get: (path, headers, signal) => request("GET", path, undefined, headers, signal),
+    post: (path, body, headers, signal) => request("POST", path, body, headers, signal),
   };
 }

@@ -1,4 +1,5 @@
 import type { CustomsAdapter, AdapterResult } from "../../adapters/ports";
+import type { ExecutionContext } from "../../platform/context";
 import {
   customsAssessmentSchema,
   customsEstimateInputSchema,
@@ -11,6 +12,8 @@ export const customsEstimateOutputValidator = outputValidator(customsAssessmentS
 export async function estimateCanadaCustoms(
   adapter: CustomsAdapter,
   input: Record<string, unknown>,
+  context?: ExecutionContext,
+  signal?: AbortSignal,
 ): Promise<AdapterResult> {
-  return adapter.estimate(input);
+  return adapter.estimate(input, context, signal);
 }
