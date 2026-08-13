@@ -40,6 +40,7 @@ docker compose --env-file deploy/env.example -f deploy/compose.yml config
 ```
 
 `--fixture-only` 只做本地只读/隔离验证，不访问网络、不打印密钥，也不启动容器。
+该门禁会先验证构建产物：默认禁用且缺配置时失败闭合。
 
 Quote PDF 的五个运行时变量为 `MCP_QUOTE_PDF_ENABLED`、`MCP_QUOTE_PDF_BASE_URL`、
 `MCP_QUOTE_PDF_ALLOWED_HOSTS`、`MCP_QUOTE_PDF_TENANT_ID` 和

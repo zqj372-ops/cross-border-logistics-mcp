@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -53,6 +53,7 @@ describe("non-production release gates", () => {
       env: { PATH: process.env.PATH ?? "" },
     });
     expect(output).toMatch(/fixture/i);
+    expect(output).toContain("built quote PDF startup probe: PASS");
   });
 
   it("requires and propagates the quote v2 contract gate", () => {
@@ -105,6 +106,13 @@ exec '${realNode}' "$@"
     } finally {
       rmSync(bin, { recursive: true, force: true });
     }
+  });
+
+  it("runs the built quote PDF startup probe in fixture-only release checks", () => {
+    const script = read("deploy/scripts/check-release.sh");
+    expect(script).toContain("npm run build");
+    expect(script).toContain("node deploy/scripts/verify-quote-pdf-startup.mjs");
+    expect(existsSync(resolve(root, "deploy/scripts/verify-quote-pdf-startup.mjs"))).toBe(true);
   });
 
   it("documents disabled-by-default quote PDF deployment gates", () => {
