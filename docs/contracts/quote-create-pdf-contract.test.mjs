@@ -17,7 +17,7 @@ for (const file of readdirSync(schemasDir).filter((name) => name.endsWith(".json
 }
 
 const requestSchemaId =
-  "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-create-pdf-request.schema.json";
+  "https://schemas.example.invalid/logistics-mcp/2026-08-14/quote-create-pdf-request.schema.json";
 const writeResultV1SchemaId =
   "https://schemas.example.invalid/logistics-mcp/2026-08-11/write-result.schema.json";
 const writeResultV2SchemaId =
@@ -212,6 +212,18 @@ const successEnvelope = {
   audit_id: "audit_quote_create_pdf_001",
 };
 validate(quotePdfEnvelopeSchemaId, successEnvelope);
+
+const successAlreadyCommitted = structuredClone(successEnvelope);
+successAlreadyCommitted.data = alreadyCommittedResult;
+validate(quotePdfEnvelopeSchemaId, successAlreadyCommitted);
+
+const successWithPreview = structuredClone(successEnvelope);
+successWithPreview.data = previewResult;
+rejects(quotePdfEnvelopeSchemaId, successWithPreview);
+
+const successWithPendingApproval = structuredClone(successEnvelope);
+successWithPendingApproval.data.approval.status = "pending";
+rejects(quotePdfEnvelopeSchemaId, successWithPendingApproval);
 
 const successWithoutData = structuredClone(successEnvelope);
 successWithoutData.data = null;

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-create-pdf-request.schema.json",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-14/quote-create-pdf-request.schema.json",
   "title": "Quote PDF creation request",
   "type": "object",
   "additionalProperties": false,

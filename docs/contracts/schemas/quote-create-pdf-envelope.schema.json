@@ -23,7 +23,22 @@
       "if": { "required": ["status"], "properties": { "status": { "const": "success" } } },
       "then": {
         "properties": {
-          "data": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/write-result-v2.schema.json" },
+          "data": {
+            "allOf": [
+              { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-13/write-result-v2.schema.json" },
+              {
+                "type": "object",
+                "properties": {
+                  "operation_status": { "enum": ["committed", "already_committed"] },
+                  "approval": {
+                    "type": "object",
+                    "required": ["status"],
+                    "properties": { "status": { "const": "approved" } }
+                  }
+                }
+              }
+            ]
+          },
           "source_refs": { "type": "array", "minItems": 1 },
           "calculation_trace": { "type": "array", "minItems": 1 },
           "blockers": { "type": "array", "maxItems": 0 }

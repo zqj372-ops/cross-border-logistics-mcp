@@ -125,7 +125,7 @@ production 默认 disabled。只有以下证据全部具备，才可由后续任
 
 ### 本基线验证
 
-- `node docs/contracts/quote-create-pdf-contract.test.mjs` 覆盖合法 preview/commit、`P ≠ C`、工具专属输入生命周期、拒绝 quote 输出/敏感字段/tenant/actor 注入、旧 write-result v1 不接受新 operation、write-result v2 生命周期和 success envelope 证据闭合。该自包含负测暂未接入 `npm run validate:schemas`，任务 06 接线后需纳入正式 gate。
+- `node docs/contracts/quote-create-pdf-contract.test.mjs` 是自包含契约检查，覆盖合法 preview/commit、`P ≠ C`、工具专属输入生命周期、拒绝 quote 输出/敏感字段/tenant/actor 注入、旧 write-result v1 不接受新 operation、write-result v2 生命周期和 success envelope 证据闭合；它不是当前正式 gate。正式 gate 仍由任务 06 接入 `npm run validate:schemas`，在任务 06 接线前不得宣称该 gate 已闭合。
 - `npm run validate:schemas` 负责现有官方 envelope examples 和所有 Schema 编译；不增加旧 examples 数量。
 - `git diff --check` 必须通过；本分支不修改 `package.json`、源码、测试、deploy 或 runbooks。
 
