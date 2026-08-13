@@ -54,6 +54,7 @@ export interface QuotePdfStartupOptions {
   readonly adapterSource?: ProductionAdapterSource;
   readonly quotePdfEnabled?: true;
   readonly quotePdfConfigurationInvalid?: true;
+  readonly quotePdfAdapterSourceInvalid?: true;
 }
 
 export interface QuotePdfStartupFactoryOptions {
@@ -63,6 +64,10 @@ export interface QuotePdfStartupFactoryOptions {
 
 function invalidQuotePdfConfiguration(): QuotePdfStartupOptions {
   return { quotePdfConfigurationInvalid: true };
+}
+
+function invalidQuotePdfAdapterSource(): QuotePdfStartupOptions {
+  return { quotePdfAdapterSourceInvalid: true };
 }
 
 function validBearerToken(value: string | undefined): value is string {
@@ -99,9 +104,10 @@ export function createQuotePdfStartupOptions(
     return invalidQuotePdfConfiguration();
   }
 
+  let adapter: QuotePdfApiAdapter;
   try {
     assertAllowedOutboundUrl(baseUrl, allowedHosts);
-    const adapter = new QuotePdfApiAdapter({
+    adapter = new QuotePdfApiAdapter({
       baseUrl,
       allowedHosts,
       enabled: true,
@@ -113,12 +119,16 @@ export function createQuotePdfStartupOptions(
         return `Bearer ${bearerToken}`;
       },
     });
+  } catch {
+    return invalidQuotePdfConfiguration();
+  }
+  try {
     const source = createQuotePdfProductionSource(baseSource, { quotePdf: adapter });
     return source.ok
       ? { adapterSource: source.source, quotePdfEnabled: true }
-      : invalidQuotePdfConfiguration();
+      : invalidQuotePdfAdapterSource();
   } catch {
-    return invalidQuotePdfConfiguration();
+    return invalidQuotePdfAdapterSource();
   }
 }
 

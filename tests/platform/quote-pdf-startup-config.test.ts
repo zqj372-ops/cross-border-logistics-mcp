@@ -208,4 +208,37 @@ describe("quote PDF startup configuration", () => {
       await composition.close();
     }
   });
+
+  it("keeps adapter-source helper failure separate from invalid PDF configuration", async () => {
+    const malformedBase = {
+      kind: "adapter_source",
+      adapters: null,
+      health: () => Promise.resolve({ ready: true }),
+      close: () => Promise.resolve(),
+    } as unknown as Parameters<typeof createQuotePdfStartupOptions>[0];
+    const startup = createQuotePdfStartupOptions(malformedBase, { env: environment() });
+
+    expect(startup).toEqual({ quotePdfAdapterSourceInvalid: true });
+    expect(startup.quotePdfConfigurationInvalid).toBeUndefined();
+
+    const composition = createProductionComposition({
+      dataMode: "production",
+      adapterSource: createProductionApiAdapterSource(),
+      quotePdfEnabled: true,
+      ...startup,
+    });
+    try {
+      const readiness = await composition.readiness();
+      expect(readiness.reasons).toContain("production_adapter_source_invalid");
+      expect(readiness.reasons).not.toContain("production_quote_pdf_configuration_invalid");
+      expect(readiness.reasons.filter((reason) => reason.includes("adapter_source") || reason.includes("quote_pdf")))
+        .toEqual(["production_adapter_source_invalid"]);
+      expect(composition.handlers["quote.create_pdf"]!({}, context)).toMatchObject({
+        status: "unavailable",
+        data: null,
+      });
+    } finally {
+      await composition.close();
+    }
+  });
 });

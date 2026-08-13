@@ -127,6 +127,7 @@ export interface ProductionCompositionOptions
   readonly adapterSource?: ProductionAdapterSource;
   readonly quotePdfEnabled?: boolean;
   readonly quotePdfConfigurationInvalid?: boolean;
+  readonly quotePdfAdapterSourceInvalid?: boolean;
   readonly sessionBindingStore?: DurableSessionBindingStore;
   readonly sessionOwnerId?: string;
 }
@@ -616,6 +617,9 @@ export function createProductionComposition(
     ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
     ...(options.quotePdfConfigurationInvalid === true
       ? ["production_quote_pdf_configuration_invalid"]
+      : []),
+    ...(options.quotePdfAdapterSourceInvalid === true
+      ? ["production_adapter_source_invalid"]
       : []),
   ];
   const quotePdfConfigured = options.quotePdfEnabled === true &&
