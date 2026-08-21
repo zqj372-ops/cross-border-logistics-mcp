@@ -217,7 +217,7 @@ Map these directories without inventing new responsibilities: `src/logistics_mcp
 Run:
 
 ```bash
-rg -o '\]\([^)]*\)' README.md | sed 's/^](//; s/)$//' | while read -r path; do case "$path" in http://*|https://*|#*) continue ;; esac; test -e "$path" || { echo "missing README path: $path"; exit 1; }; done
+rg -o '\]\([^)]*\)' README.md | sed 's/^](//; s/)$//' | while read -r path; do case "$path" in http://*|https://*|'#'*) continue ;; esac; test -e "$path" || { echo "missing README path: $path"; exit 1; }; done
 ```
 
 Expected: no `missing README path` output and exit code 0. Mermaid blocks are checked by visual inspection in GitHub-compatible Markdown; no external renderer is added.
