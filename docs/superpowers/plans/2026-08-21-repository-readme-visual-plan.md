@@ -31,11 +31,11 @@ Run:
 
 ```bash
 git branch --show-current
-git rev-parse HEAD
+git log -3 --oneline
 git status --short --branch
 ```
 
-Expected: branch `codex/repository-readme-visual`, HEAD `c9873b1cbafd6239acbf98f84f737b10fdf934f4`, and no user worktree files in the isolated worktree.
+Expected: branch `codex/repository-readme-visual`, history containing the `main` base `c9873b1cbafd6239acbf98f84f737b10fdf934f4` followed by the design/plan commits, and no user worktree files in the isolated worktree.
 
 - [ ] **Step 2: Cross-check every command and count used by the README**
 
@@ -217,7 +217,7 @@ Map these directories without inventing new responsibilities: `src/logistics_mcp
 Run:
 
 ```bash
-rg -o '\\]\\([^)]*\\)' README.md | sed 's/^](//; s/)$//' | while read -r path; do case "$path" in http://*|https://*|#*) continue ;; esac; test -e "$path" || { echo "missing README path: $path"; exit 1; }; done
+rg -o '\]\([^)]*\)' README.md | sed 's/^](//; s/)$//' | while read -r path; do case "$path" in http://*|https://*|#*) continue ;; esac; test -e "$path" || { echo "missing README path: $path"; exit 1; }; done
 ```
 
 Expected: no `missing README path` output and exit code 0. Mermaid blocks are checked by visual inspection in GitHub-compatible Markdown; no external renderer is added.
@@ -273,4 +273,3 @@ Expected: one documentation commit containing only the README rewrite; report th
 - Directory map and deeper documentation: Task 4, Step 4.
 - No unmerged branch claims and no production overstatement: Tasks 1, 3, and 5.
 - Existing Vitest discovery limitation documented without unrelated test edits: Tasks 1 and 5.
-
