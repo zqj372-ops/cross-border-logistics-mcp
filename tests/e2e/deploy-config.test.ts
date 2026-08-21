@@ -58,6 +58,7 @@ describe("safe deployment artifacts", () => {
 
   it("wires the production JWKS verifier and durable state provider", () => {
     const start = read("src/logistics_mcp/server/start.ts");
+    const riskCustomsRuntime = read("src/logistics_mcp/adapters/customs/riskcustoms-runtime.ts");
     const deployReadme = read("deploy/README.md");
     expect(start).toContain("MCP_JWT_ISSUER");
     expect(start).toContain("MCP_JWT_AUDIENCE");
@@ -67,12 +68,18 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("createProductionComposition");
     expect(start).toContain("createProductionTokenVerifier");
     expect(start).toContain("SqliteProductionStore");
+    expect(start).toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(riskCustomsRuntime).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
+    expect(riskCustomsRuntime).toContain("MCP_ALLOWED_OUTBOUND_HOSTS");
+    expect(riskCustomsRuntime).toContain("readFileSync");
+    expect(riskCustomsRuntime).not.toMatch(/MCP_RISK_CUSTOMS_M2M_TOKEN\s*:/);
     expect(deployReadme).toContain("JWKS");
     expect(deployReadme).toContain("SQLite");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
     const compose = read("deploy/compose.yml");
+    const riskCustomsOverride = read("deploy/compose.riskcustoms.override.yml.example");
     const env = read("deploy/env.example");
     expect(compose).toMatch(/expose:/);
     expect(compose).not.toMatch(/^\s*ports:/m);
@@ -104,10 +111,15 @@ describe("safe deployment artifacts", () => {
     expect(env).toContain("https://issuer.example.invalid/");
     expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
     expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
+    expect(compose).toContain("MCP_RISK_CUSTOMS_ENABLED");
+    expect(env).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
+    expect(riskCustomsOverride).toContain("/run/secrets/riskcustoms_m2m_token");
+    expect(riskCustomsOverride).toContain("RISK_CUSTOMS_M2M_TOKEN_FILE");
     expect(compose).toContain("MCP_STATE_DB_PATH");
     expect(compose).toMatch(/\/var\/lib\/logistics-mcp/);
     expect(compose).toMatch(/volumes:/);
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(riskCustomsOverride).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
   });
 
   it("sets runtime request and header timeout guards", () => {

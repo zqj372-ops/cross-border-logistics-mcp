@@ -19,6 +19,7 @@ import {
   type AdminStaticHandler,
 } from "./admin-static";
 import { createProductionTokenVerifier } from "./production-token-verifier";
+import { createRiskCustomsApiAdapterFromEnvironment } from "../adapters/customs/riskcustoms-runtime";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
@@ -497,10 +498,13 @@ function makeComposition(): GatewayComposition {
           jwksUrl,
           allowedHosts: outboundHosts,
         });
+  const riskCustoms = createRiskCustomsApiAdapterFromEnvironment();
   return createProductionComposition({
     dataMode: "production",
     ...common,
-    adapterSource: createProductionApiAdapterSource(),
+    adapterSource: createProductionApiAdapterSource(
+      riskCustoms === undefined ? {} : { customs: riskCustoms },
+    ),
     ...(store === undefined
       ? {}
       : {

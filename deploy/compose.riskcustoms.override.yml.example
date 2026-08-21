@@ -1,0 +1,13 @@
+services:
+  logistics-mcp:
+    environment:
+      MCP_RISK_CUSTOMS_ENABLED: "true"
+      MCP_RISK_CUSTOMS_BASE_URL: "${MCP_RISK_CUSTOMS_BASE_URL:?MCP_RISK_CUSTOMS_BASE_URL is required}"
+      MCP_RISK_CUSTOMS_ALLOWED_HOSTS: "${MCP_RISK_CUSTOMS_ALLOWED_HOSTS:?MCP_RISK_CUSTOMS_ALLOWED_HOSTS is required}"
+      MCP_RISK_CUSTOMS_AUTH_SECRET_FILE: "/run/secrets/riskcustoms_m2m_token"
+    secrets:
+      - riskcustoms_m2m_token
+
+secrets:
+  riskcustoms_m2m_token:
+    file: "${RISK_CUSTOMS_M2M_TOKEN_FILE:?RISK_CUSTOMS_M2M_TOKEN_FILE must point to a secret file outside the repository}"

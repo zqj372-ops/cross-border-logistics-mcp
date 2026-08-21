@@ -12,7 +12,7 @@
 
 - `cargo`、`container`：MCP 内的本地确定性计算，负责 CBM、体积重、分泡、计费重和理论/运营装柜摘要。
 - AI 报价、RiskCustoms、PDF/文档的目标形态是只通过现有生产 API 的窄适配器接入；上游系统继续拥有价格、规则、关务和文档权威。
-- 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合、PDF 未注册。
+- 只有合同与生产资格验收通过的能力才在请求时直连上游；quote 当前生产零调用，RiskCustoms M2M 适配器已具备显式配置注入路径但默认 disabled，PDF 未注册。
 - AI 只负责理解意图、补输入、选择工具和解释结果；金额、重量、容量、状态和版本边界由确定性代码或上游 API 决定。
 - `ready=false`、版本缺失、响应冲突和上游故障必须保持结构化 `needs_input`、`manual_review`、`blocked` 或 `unavailable`，不使用 fixture 静默回退。
 - Module Runtime v0 只在启动时挂载静态可信模块；模块通过 manifest、capability、lease 和 catalog 暴露工具，当前 cargo/container 已走这条适配路径。
@@ -23,7 +23,7 @@
 | 能力 | 当前状态 |
 | --- | --- |
 | quote API adapter | HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed；保留上游副作用 warning |
-| RiskCustoms search adapter | 已实现 status→query 和失败闭合；当前生产服务仍缺少机器到机器认证合同，未接入生产组合 |
+| RiskCustoms search adapter | 已实现 status→query、M2M 认证注入和失败闭合；只有 endpoint、主机白名单、secret 文件和全局出站白名单同时配置时才注入生产组合，默认 disabled；外部非测试 release、tenant mapping 和 staging 证据仍待验证 |
 | `customs.ca.estimate` | `unavailable`；尚无已核验生产 API 合同 |
 | PDF/文档能力 | 未注册；等待 OpenAPI、认证、输入/输出、写后读回和副作用合同 |
 | 生产写工具 | `quote.save_draft` 和 `review.create_task` 固定 `unavailable`；上游未提供同一幂等键、取消和状态读回合同前不注入写源 |
@@ -68,7 +68,7 @@ flowchart LR
 
 - 进入工具前由服务端完成 Schema、tenant、actor、RBAC、权限和敏感输入校验。
 - `cargo`、`container` 请求只在本地计算，并返回单位、规则版本、假设、warnings 和 trace。
-- 获准启用后，quote 请求只调用现有 Quote API，RiskCustoms search 只调用 status/query API 的对应路径；当前两条生产路径均保持失败闭合。
+- 获准启用后，quote 请求只调用现有 Quote API，RiskCustoms search 只调用 status/query API 的对应路径；RiskCustoms 未满足服务端配置或 ready gate 时保持失败闭合。
 - PDF/文档能力在 OpenAPI、认证、输入输出、副作用和写后读回合同完成前不注册。
 - 客户端不能选择任意上游 URL、提交上游 token，或把客户端 tenant/actor 当成服务端身份。
 
