@@ -60,6 +60,7 @@ import {
   type ToolContractMap,
   type ToolHandlerMap,
 } from "./tool-registry";
+import type { AgentAccessRuntime } from "../agent-context/runtime";
 
 export interface McpHttpOptions {
   readonly allowedOrigins: readonly string[];
@@ -70,6 +71,8 @@ export interface McpHttpOptions {
   readonly tokenPolicy?: ShortLivedTokenValidationOptions;
   readonly handlers?: ToolHandlerMap;
   readonly contracts?: ToolContractMap;
+  readonly definitions?: readonly ToolDefinition[];
+  readonly agentAccessRuntime?: AgentAccessRuntime;
   readonly auditRepository: AuditRepository;
   readonly idempotencyRepository: IdempotencyRepository;
   readonly sessionRegistry: SessionRuntimeRegistry;
@@ -97,9 +100,43 @@ const CLOSED_WORLD_TOOLS = new Set([
   "knowledge.search_curated",
   "cargo.calculate",
   "container.plan_summary",
+  "system.agent_context.get",
 ]);
 
 const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
+
+const AGENT_RESOURCE_DEFINITIONS = [
+  {
+    name: "agent.bootstrap",
+    uri: "logistics://agent/bootstrap",
+    description: "Stable Agent bootstrap and safety boundary.",
+    mimeType: "application/json",
+  },
+  {
+    name: "standards.index",
+    uri: "logistics://standards/index",
+    description: "Machine-readable Standard Pack index.",
+    mimeType: "application/json",
+  },
+  {
+    name: "contracts.envelope.current",
+    uri: "logistics://contracts/envelope/current",
+    description: "Current response envelope and status standard.",
+    mimeType: "text/markdown",
+  },
+  {
+    name: "modules.catalog",
+    uri: "logistics://modules/catalog",
+    description: "Static trusted module catalog.",
+    mimeType: "application/json",
+  },
+  {
+    name: "agent.profiles",
+    uri: "logistics://agent/profiles",
+    description: "Allowlisted Agent profiles.",
+    mimeType: "application/json",
+  },
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -702,6 +739,34 @@ function registerMcpTools(
   }
 }
 
+function registerAgentResources(
+  server: McpServer,
+  runtime: AgentAccessRuntime,
+): void {
+  for (const resource of AGENT_RESOURCE_DEFINITIONS) {
+    server.registerResource(
+      resource.name,
+      resource.uri,
+      {
+        description: resource.description,
+        mimeType: resource.mimeType,
+      },
+      (uri) => {
+        const content = runtime.readResource(uri.toString());
+        return {
+          contents: [
+            {
+              uri: content.uri,
+              mimeType: content.mimeType,
+              text: content.text,
+            },
+          ],
+        };
+      },
+    );
+  }
+}
+
 export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   ensureSecurityOptions(options);
   ensurePlatformDependencies(options);
@@ -709,7 +774,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   const auditRepository = options.auditRepository;
   const idempotencyRepository = options.idempotencyRepository;
-  const definitions = registerPhaseOneTools(options.handlers, options.contracts);
+  const definitions = options.definitions ?? registerPhaseOneTools(options.handlers, options.contracts);
   const sessions = options.sessionRegistry;
   const sessionBindingStore = options.sessionBindingStore;
   const sessionOwnerId = options.sessionOwnerId;
@@ -775,6 +840,9 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       idempotencyRepository,
       requestSignals,
     );
+    if (options.agentAccessRuntime !== undefined) {
+      registerAgentResources(server, options.agentAccessRuntime);
+    }
     const runtime: SessionRuntimeHandle = { transport, server };
     let registered = false;
     try {

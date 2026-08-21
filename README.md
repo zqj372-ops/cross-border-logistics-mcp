@@ -9,6 +9,8 @@
 - 只有合同与生产资格验收通过的能力才在请求时直连上游；当前 quote 生产零调用、RiskCustoms 尚未注入生产组合、PDF 未注册。
 - AI 只负责理解意图、补输入、选择工具和解释结果；金额、重量、容量、状态和版本边界由确定性代码或上游 API 决定。
 - `ready=false`、版本缺失、响应冲突和上游故障必须保持结构化 `needs_input`、`manual_review`、`blocked` 或 `unavailable`，不使用 fixture 静默回退。
+- Module Runtime v0 只在启动时挂载静态可信模块；模块通过 manifest、capability、lease 和 catalog 暴露工具，当前 cargo/container 已走这条适配路径。
+- Agent Standard Access v0 通过 `docs/agent/index.json`、profile 和不可变 Standard Pack 为 module developer、reviewer、release operator 与 runtime caller 提供 allowlisted 上下文。
 
 ## 当前真实状态
 
@@ -40,10 +42,13 @@ flowchart LR
 - [工具目录](docs/contracts/tool-catalog.md)：Phase 1 九个窄语义工具；Schema 和注册保持不变。
 - [权威矩阵](docs/contracts/authority-matrix.md)：Quote API、RiskCustoms API、cargo/container 及其失败边界。
 - [Schema 目录](docs/contracts/schemas/) 与 [示例目录](docs/contracts/examples/)：Draft 2020-12 契约和结构化样例。
+- [Agent 标准注册表](docs/agent/index.json)：标准、规则、profile、模块和固定 MCP resource 的机器入口。
+- [Module Runtime + Agent Access RFC](docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md)：生命周期、兼容性、失败闭合和回滚边界。
 
-## 唯一当前执行计划
+## 当前执行计划
 
-- [API-first 适配实施计划](docs/superpowers/plans/2026-08-12-api-first-integration-plan.md)：当前唯一权威执行计划，覆盖 quote、RiskCustoms、组合隔离、PDF 阻塞条件和验收。
+- [API-first 适配实施计划](docs/superpowers/plans/2026-08-12-api-first-integration-plan.md)：quote、RiskCustoms、组合隔离、PDF 阻塞条件和验收的业务适配计划。
+- [Module Runtime + Agent Standard Access v0](docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md)：本次补充的执行计划；它不改变业务权威边界，并要求先通过 RFC/pack/schema/资源验证。
 - [产品实现说明](docs/product/2026-08-11-cross-border-logistics-mcp-product-implementation.md)：API 对接产品边界、流程、后台显示和验收。
 - [后台控制台说明](docs/product/admin-console.md)：只展示来源、版本、状态、权限和审批证据，不启用未经合同核验的写入。
 
@@ -81,7 +86,7 @@ npm run start:fixture
 `?fixture=1` 的地址只用于完整界面演示。MCP 入口为 `http://127.0.0.1:8080/mcp`，
 本机假 token 为 `local-fixture-token`。演示模式只绑定
 `127.0.0.1`，`/readyz` 保持 `503/fixture_mode_not_production_ready`，不代表生产就绪。
-一条命令验收编译产物、后台页面、认证拒绝、MCP 初始化、九个工具和
+一条命令验收编译产物、后台页面、认证拒绝、MCP 初始化、九个业务工具、Agent 控制面和
 `cargo.calculate`：
 
 ```bash
@@ -89,6 +94,8 @@ npm run verify:runtime
 ```
 
 - `src/logistics_mcp/adapters/`：Quote API 与 RiskCustoms API 的窄适配器。
+- `src/logistics_mcp/module-runtime/`、`src/logistics_mcp/modules/`：静态可信模块 host、能力、lease、catalog 以及 cargo/container/Agent access 适配。
+- `src/logistics_mcp/agent-context/`：注册表校验、profile resolver、Standard Pack、MCP context 运行时和客户端适配校验。
 - `src/logistics_mcp/server/composition.ts`：生产组合注入点和 fail-closed 默认适配器。
 - `src/logistics_mcp/domains/cargo/`、`src/logistics_mcp/domains/container/`：本地确定性计算。
 - `tests/adapters/`、`tests/domains/`、`tests/e2e/`：fake HTTP、fixture 和隔离证据；fixture 不自动回退。

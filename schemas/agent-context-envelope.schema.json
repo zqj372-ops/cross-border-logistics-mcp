@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-21/agent-context-envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "status", "data", "source_refs", "assumptions", "warnings", "blockers", "calculation_trace", "review_status", "audit_id"],
+  "properties": {
+    "schema_version": {"const": "2026-08-11.v1"},
+    "request_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["success", "needs_input", "manual_review", "blocked", "unavailable"]},
+    "data": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "schema_version", "profile_id", "profile_version", "scopes", "selected_module_id", "standards", "rules", "modules", "workstreams", "source_refs"],
+          "properties": {
+            "status": {"const": "success"},
+            "schema_version": {"const": "2026-08-21.v1"},
+            "profile_id": {"type": "string"},
+            "profile_version": {"type": "string"},
+            "scopes": {"type": "array", "items": {"type": "string"}},
+            "selected_module_id": {"type": ["string", "null"]},
+            "standards": {"type": "array", "items": {"$ref": "#/$defs/standard"}},
+            "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
+            "modules": {"type": "array", "items": {"$ref": "#/$defs/module"}},
+            "workstreams": {"type": "array", "items": {"$ref": "#/$defs/workstream"}},
+            "source_refs": {"type": "array", "items": {"$ref": "#/$defs/source"}}
+          }
+        }
+      ]
+    },
+    "source_refs": {"type": "array"},
+    "assumptions": {"type": "array"},
+    "warnings": {"type": "array"},
+    "blockers": {"type": "array"},
+    "calculation_trace": {"type": "array"},
+    "review_status": {"enum": ["not_required", "pending", "approved", "rejected", "manual_review"]},
+    "audit_id": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "standard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standard_id", "version", "priority", "rule_ids", "summary", "sha256"],
+      "properties": {
+        "standard_id": {"type": "string"},
+        "version": {"type": "string"},
+        "priority": {"type": "integer"},
+        "rule_ids": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "content": {"type": "string"}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "standard_id", "priority", "source_sha256"],
+      "properties": {
+        "rule_id": {"type": "string"},
+        "standard_id": {"type": "string"},
+        "priority": {"type": "integer"},
+        "source_sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_id", "version", "risk_level", "standard_ids", "tool_names"],
+      "properties": {
+        "module_id": {"type": "string"},
+        "version": {"type": "string"},
+        "risk_level": {"enum": ["T0", "T1", "T2", "T3"]},
+        "standard_ids": {"type": "array", "items": {"type": "string"}},
+        "tool_names": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "workstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workstream_id", "owner", "writable_paths", "primary_delivery"],
+      "properties": {
+        "workstream_id": {"type": "string"},
+        "owner": {"type": "string"},
+        "writable_paths": {"type": "array", "items": {"type": "string"}},
+        "primary_delivery": {"type": "string"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "version", "content_hash", "locator"],
+      "properties": {
+        "source_id": {"type": "string"},
+        "version": {"type": "string"},
+        "content_hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "locator": {"type": "string"}
+      }
+    }
+  }
+}

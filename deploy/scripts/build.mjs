@@ -1,4 +1,5 @@
 import { cpSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const adminAssetNames = ["index.html", "styles.css", "app.js", "fixture-data.js"];
@@ -28,6 +29,14 @@ await build({
   sourcemap: false,
   legalComments: "none",
 });
+
+execFileSync(process.execPath, [
+  "--import",
+  "tsx/esm",
+  "src/logistics_mcp/agent-context/cli.ts",
+  "build",
+  "dist/standards/agent-standard-pack.json",
+], { stdio: "inherit" });
 
 mkdirSync(resolve("dist/admin"), { recursive: true });
 for (const [index, sourcePath] of adminSourcePaths.entries()) {

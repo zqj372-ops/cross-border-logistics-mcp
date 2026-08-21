@@ -13,7 +13,7 @@ import {
 const schemaVersion = "2026-08-11.v1";
 
 describe("Phase 1 integrated fixture gateway", () => {
-  it("exposes exactly the nine public tools and no generic write tool", async () => {
+  it("exposes nine business tools plus the read-only Agent context tool", async () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
@@ -52,6 +52,7 @@ describe("Phase 1 integrated fixture gateway", () => {
         "quote.canada_final_mile.calculate",
         "quote.save_draft",
         "review.create_task",
+        "system.agent_context.get",
         "system.get_data_status",
       ].sort());
       expect(body.result?.tools?.some((tool) => /commit|send|publish|booking/i.test(tool.name))).toBe(false);

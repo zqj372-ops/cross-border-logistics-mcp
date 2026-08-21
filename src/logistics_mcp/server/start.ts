@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { AuthenticationError, type AuthClaims } from "../platform/context";
-import { getToolPolicy, type PhaseOneToolName } from "../platform/rbac";
+import { getToolPolicy } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
   createFixtureComposition,
@@ -81,9 +81,10 @@ const ROLE_PRESENTATION = {
   service: ["后台服务", "以最小权限调用确定性工具。"],
 } as const;
 
-const LOCAL_TOOL_NAMES = new Set<PhaseOneToolName>([
+const LOCAL_TOOL_NAMES = new Set<string>([
   "cargo.calculate",
   "container.plan_summary",
+  "system.agent_context.get",
 ]);
 
 function adminBlocker(reason: string): string {

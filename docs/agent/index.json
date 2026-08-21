@@ -1,0 +1,151 @@
+{
+  "$schema": "../../schemas/agent-index.schema.json",
+  "schema_version": "2026-08-21.v1",
+  "registry_id": "logistics-mcp.agent-standards",
+  "standards": [
+    {
+      "standard_id": "agent.bootstrap",
+      "version": "2026-08-21.v1",
+      "path": "docs/standards/agent-bootstrap.md",
+      "priority": 100,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001"],
+      "summary": "Stable bootstrap, safety boundary and source-of-truth rules."
+    },
+    {
+      "standard_id": "platform.contracts",
+      "version": "2026-08-21.v1",
+      "path": "docs/standards/platform-contracts.md",
+      "priority": 90,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001"],
+      "summary": "Schema, status, units, evidence and write-boundary invariants."
+    },
+    {
+      "standard_id": "module-runtime.v0",
+      "version": "2026-08-21.v0",
+      "path": "docs/standards/module-runtime-v0.md",
+      "priority": 80,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["MOD-LIFE-001", "MOD-CAP-001", "MOD-TOOL-001", "MOD-MOUNT-001"],
+      "summary": "Static trusted modules, capability injection, lifecycle and tool catalog."
+    },
+    {
+      "standard_id": "agent-access.v0",
+      "version": "2026-08-21.v0",
+      "path": "docs/standards/agent-access-v0.md",
+      "priority": 80,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001"],
+      "summary": "Allowlisted Agent profiles, context projection and MCP resources."
+    },
+    {
+      "standard_id": "active-workstreams",
+      "version": "2026-08-21.v1",
+      "path": "docs/standards/active-workstreams.md",
+      "priority": 80,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["WORKSTREAM-001"],
+      "summary": "Current workstream ownership and RFC escalation path."
+    },
+    {
+      "standard_id": "release-agent-adapters",
+      "version": "2026-08-21.v1",
+      "path": "docs/standards/release-agent-adapters.md",
+      "priority": 60,
+      "audiences": ["operator", "caller"],
+      "rule_ids": ["RELEASE-ADAPTER-001", "RELEASE-ADAPTER-002"],
+      "summary": "Client transport, authentication, discovery and readiness adaptation rules."
+    },
+    {
+      "standard_id": "effective-rfc",
+      "version": "2026-08-21.v0",
+      "path": "docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md",
+      "priority": 70,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["RFC-CHANGE-001"],
+      "summary": "Accepted change record, compatibility boundary and rollback requirements."
+    },
+    {
+      "standard_id": "implementation-plan",
+      "version": "2026-08-21.v0",
+      "path": "docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md",
+      "priority": 40,
+      "audiences": ["developer", "reviewer"],
+      "rule_ids": ["PLAN-TRACE-001"],
+      "summary": "Implementation traceability, test checkpoints and ownership boundaries."
+    }
+  ],
+  "profiles": [
+    {
+      "profile_id": "module-developer",
+      "path": "docs/agent/profiles/module-developer.json"
+    },
+    {
+      "profile_id": "platform-developer",
+      "path": "docs/agent/profiles/platform-developer.json"
+    },
+    {
+      "profile_id": "module-reviewer",
+      "path": "docs/agent/profiles/module-reviewer.json"
+    },
+    {
+      "profile_id": "release-operator",
+      "path": "docs/agent/profiles/release-operator.json"
+    },
+    {
+      "profile_id": "runtime-caller",
+      "path": "docs/agent/profiles/runtime-caller.json"
+    }
+  ],
+  "modules": [
+    {
+      "module_id": "cargo",
+      "version": "2026-08-21.v0",
+      "risk_level": "T0",
+      "standard_ids": ["module-runtime.v0", "platform.contracts"],
+      "tool_names": ["cargo.calculate"]
+    },
+    {
+      "module_id": "container",
+      "version": "2026-08-21.v0",
+      "risk_level": "T0",
+      "standard_ids": ["module-runtime.v0", "platform.contracts"],
+      "tool_names": ["container.plan_summary"]
+    },
+    {
+      "module_id": "agent-access",
+      "version": "2026-08-21.v0",
+      "risk_level": "T0",
+      "standard_ids": ["module-runtime.v0", "platform.contracts", "agent-access.v0"],
+      "tool_names": ["system.agent_context.get"]
+    }
+  ],
+  "resources": [
+    {
+      "resource_id": "agent.bootstrap",
+      "uri": "logistics://agent/bootstrap",
+      "standard_ids": ["agent.bootstrap"]
+    },
+    {
+      "resource_id": "standards.index",
+      "uri": "logistics://standards/index",
+      "standard_ids": ["agent.bootstrap", "platform.contracts", "module-runtime.v0", "agent-access.v0"]
+    },
+    {
+      "resource_id": "contracts.envelope.current",
+      "uri": "logistics://contracts/envelope/current",
+      "standard_ids": ["platform.contracts"]
+    },
+    {
+      "resource_id": "modules.catalog",
+      "uri": "logistics://modules/catalog",
+      "standard_ids": ["module-runtime.v0"]
+    },
+    {
+      "resource_id": "agent.profiles",
+      "uri": "logistics://agent/profiles",
+      "standard_ids": ["agent-access.v0"]
+    }
+  ]
+}

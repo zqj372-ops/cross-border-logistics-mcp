@@ -19,6 +19,8 @@ export const phaseOneToolNames = [
 ] as const;
 
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
+export const agentContextToolName = "system.agent_context.get" as const;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName;
 
 type ToolPolicy = {
   readonly permission: string;
@@ -44,7 +46,7 @@ const taskRoles = [
   "finance",
 ] as const satisfies readonly ActorRole[];
 
-const toolPolicies: Record<PhaseOneToolName, ToolPolicy> = {
+const toolPolicies: Record<KnownToolName, ToolPolicy> = {
   "knowledge.search_curated": {
     permission: "knowledge:read",
     kind: "read",
@@ -90,6 +92,11 @@ const toolPolicies: Record<PhaseOneToolName, ToolPolicy> = {
     kind: "write",
     roles: taskRoles,
   },
+  [agentContextToolName]: {
+    permission: "system:agent_context",
+    kind: "read",
+    roles: readRoles,
+  },
 };
 
 function hasScope(context: ExecutionContext, permission: string): boolean {
@@ -130,6 +137,10 @@ export function authorizeTool(
   return true;
 }
 
-export function getToolPolicy(toolName: PhaseOneToolName): ToolPolicy {
-  return toolPolicies[toolName];
+export function getToolPolicy(toolName: string): ToolPolicy {
+  const policy = toolPolicies[toolName as KnownToolName];
+  if (policy === undefined) {
+    throw new ForbiddenError("The requested MCP tool is not allowlisted.");
+  }
+  return policy;
 }

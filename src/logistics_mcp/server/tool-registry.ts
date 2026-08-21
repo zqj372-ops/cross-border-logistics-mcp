@@ -28,6 +28,7 @@ import type {
   IdempotencyRepository,
 } from "../platform/repositories";
 import type { ZodType } from "zod";
+import type { ModuleCatalogEntry } from "../module-runtime";
 
 export const phaseOneToolNames = allowlistedToolNames;
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
@@ -101,7 +102,7 @@ export interface ToolContract {
 export type ToolContractMap = Partial<Record<PhaseOneToolName, ToolContract>>;
 
 export interface ToolDefinition {
-  readonly name: PhaseOneToolName;
+  readonly name: string;
   readonly title: string;
   readonly description: string;
   readonly inputSchemaId: string;
@@ -113,6 +114,10 @@ export interface ToolDefinition {
   readonly inputSchema?: ZodType;
   readonly validateOutput?: (data: EnvelopeData) => void;
   readonly outputSchema?: ZodType;
+  readonly moduleId?: string;
+  readonly moduleVersion?: string;
+  readonly riskLevel?: "T0" | "T1" | "T2" | "T3";
+  readonly standardRefs?: readonly string[];
 }
 
 export interface ToolExecutionMetadata {
@@ -220,6 +225,29 @@ export function registerPhaseOneTools(
   });
 }
 
+export function registerModuleToolDefinitions(
+  entries: readonly ModuleCatalogEntry[],
+): readonly ToolDefinition[] {
+  return entries.map((entry) => ({
+    name: entry.name,
+    title: entry.title,
+    description: entry.description,
+    inputSchemaId: entry.inputSchemaId,
+    outputSchemaId: entry.outputSchemaId,
+    permission: entry.permission,
+    kind: entry.kind,
+    statusMapping: ENVELOPE_STATUSES,
+    handler: entry.handler,
+    inputSchema: entry.inputSchema,
+    validateOutput: entry.validateOutput,
+    ...(entry.outputSchema === undefined ? {} : { outputSchema: entry.outputSchema }),
+    moduleId: entry.module_id,
+    moduleVersion: entry.module_version,
+    riskLevel: entry.riskLevel,
+    standardRefs: entry.standardRefs,
+  }));
+}
+
 interface WriteRequest {
   readonly idempotencyKey: string;
   readonly operationMode: "preview" | "commit";
@@ -233,7 +261,7 @@ const writeApprovalPolicy: Readonly<Record<WriteToolName, true>> = {
   "review.create_task": true,
 };
 
-function requiresCommitApproval(toolName: PhaseOneToolName): boolean {
+function requiresCommitApproval(toolName: string): boolean {
   return toolName in writeApprovalPolicy;
 }
 
@@ -252,7 +280,7 @@ function writeContractError(
 function parseWriteRequest(
   input: unknown,
   context: ExecutionContext,
-  toolName: PhaseOneToolName,
+  toolName: string,
 ): WriteRequest {
   if (!isRecord(input) || !isRecord(input.write_context)) {
     throw writeContractError(

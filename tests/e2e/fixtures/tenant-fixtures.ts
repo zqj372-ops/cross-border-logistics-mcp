@@ -1,5 +1,6 @@
 import { createFixtureComposition, type GatewayComposition } from "../../../src/logistics_mcp/server/composition";
 import type { AuthClaims } from "../../../src/logistics_mcp/platform/context";
+import type { AgentAccessRuntime } from "../../../src/logistics_mcp/agent-context/runtime";
 
 export const FIXTURE_ORIGIN = "https://client.example.invalid";
 export const FIXTURE_HOST = "mcp.example.invalid";
@@ -7,6 +8,7 @@ export const FIXTURE_HOST = "mcp.example.invalid";
 export interface FixtureHarnessOptions {
   readonly tenantId?: string;
   readonly customsFixture?: "customs-ready" | "customs-not-ready";
+  readonly agentAccessRuntime?: AgentAccessRuntime;
 }
 
 export interface FixtureHarness {
@@ -24,6 +26,7 @@ function claimsFor(tenantId: string): AuthClaims {
     scopes: [
       "knowledge:read",
       "system:read",
+      "system:agent_context",
       "quote:calculate",
       "container:calculate",
       "tariff:read",
@@ -44,6 +47,7 @@ export function createFixtureHarness(options: FixtureHarnessOptions = {}): Fixtu
     customsFixture: options.customsFixture,
     allowedOrigins: [FIXTURE_ORIGIN],
     allowedHosts: [FIXTURE_HOST],
+    ...(options.agentAccessRuntime === undefined ? {} : { agentAccessRuntime: options.agentAccessRuntime }),
     authenticate: (token) => {
       if (token !== `token_${tenantId}`) {
         throw new Error("fixture authentication failed");

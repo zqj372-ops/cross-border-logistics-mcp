@@ -18,4 +18,11 @@ enabled_tools = [
   "knowledge.search_curated",
   "system.get_data_status",
   "review.create_task",
+  "system.agent_context.get",
 ]
+# Read-only resources are discovered after initialize:
+# logistics://agent/bootstrap
+# logistics://standards/index
+# logistics://contracts/envelope/current
+# logistics://modules/catalog
+# logistics://agent/profiles

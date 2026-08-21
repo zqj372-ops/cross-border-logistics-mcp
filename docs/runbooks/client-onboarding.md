@@ -17,10 +17,17 @@ Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人
 
 ## 工具与状态
 
-冻结的九个工具是：`cargo.calculate`、`container.plan_summary`、
+冻结的九个业务工具仍是：`cargo.calculate`、`container.plan_summary`、
 `quote.canada_final_mile.calculate`、`quote.save_draft`、`customs.ca.search`、
 `customs.ca.estimate`、`knowledge.search_curated`、`system.get_data_status`、
-`review.create_task`。不存在 `commit_operation`、send、publish、booking 或通用写工具。
+`review.create_task`。另外暴露一个只读控制面工具 `system.agent_context.get`，用于
+allowlisted profile 的标准和模块上下文。不存在 `commit_operation`、send、publish、booking
+或通用写工具。
+
+固定资源为：`logistics://agent/bootstrap`、`logistics://standards/index`、
+`logistics://contracts/envelope/current`、`logistics://modules/catalog`、
+`logistics://agent/profiles`。运行时只读取不可变 Standard Pack；Pack 缺失时返回
+`unavailable`，不回退到当前工作目录 Markdown。
 
 客户端必须按统一 envelope 处理：
 
@@ -33,10 +40,13 @@ Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人
 
 ## 接入 smoke
 
-1. 管理员使用假 endpoint 和短期身份在 staging 获取工具列表，确认只有九个工具。
-2. 调用 `system.get_data_status`，核对 RiskCustoms `ready`、`test_data` 和 release IDs。
-3. 运行 cargo/quote 查询和一个 `needs_input` 负例；确认金额/重量带单位和版本。
-4. 只在批准的 fixture/sandbox 中验证 `quote.save_draft` 与 `review.create_task` 的
-   preview→approval→commit→readback；不得发送、发布、订舱或写生产。
-5. 保存响应、审计 ID、工具版本和管理员批准记录；ChatGPT Work 插件和
+1. 管理员使用假 endpoint 和短期身份在 staging 完成 initialize，获取 tools/resources 列表，
+   确认九个业务工具加一个只读 Agent 控制面工具，并读回五个固定资源。
+2. 调用 `system.agent_context.get`，只使用 `runtime-caller` profile 和已注册模块 ID；
+   核对 profile、规则优先级、Standard Pack hash 和 `unavailable`/`blocked` 失败闭合。
+3. 调用 `system.get_data_status`，核对 RiskCustoms `ready`、`test_data` 和 release IDs。
+4. 运行 cargo/quote 查询和一个 `needs_input` 负例；确认金额/重量带单位和版本。
+5. 只在批准的 fixture/sandbox 中验证 `quote.save_draft` 与 `review.create_task` 的
+  preview→approval→commit→readback；不得发送、发布、订舱或写生产。
+6. 保存响应、审计 ID、工具版本和管理员批准记录；ChatGPT Work 插件和
    企业助手必须在 staging 通过身份、权限、审批和状态处理验收后再开放。
