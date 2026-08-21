@@ -20,7 +20,7 @@
 - 不把 README 做成生产运维手册；生产发布、回滚、客户端接入仍链接到 `docs/runbooks/`。
 - 不新增外部图片托管、截图或构建依赖；视觉表达使用 GitHub 可渲染的 Mermaid、表格、代码块和状态标识。
 - 不为未获生产资格的 quote、RiskCustoms、PDF、草稿写入或人工任务能力增加“已上线”“可发送”“可生产写入”等措辞。
-- 不修复既有 Vitest 测试发现问题；该问题单独记录在交付验证中。
+- 不修改与 README 无关的测试配置；验证以完整初始化 worktree 后的实际运行结果为准。
 
 ## 采用的叙事方案
 
@@ -93,5 +93,4 @@ npm run verify:runtime
 - 新读者可从 README 找到：仓库定位、不能做什么、如何启动 fixture、如何验证、哪里查看契约、如何理解 Agent 适配。
 - README 不包含当前 RiskCustoms/Freightcom 分支未合并内容，不把 fixture、fake HTTP、本地测试或计划写成生产连接/生产就绪。
 - 修改仅限 `README.md` 和本设计文档；`git diff --check` 通过。
-- 验证报告明确记录既有 `docs/contracts/quote-v2-contract.test.mjs` 被 Vitest 当作空 suite 的基线失败，不将其归因于 README。
-
+- 验证报告区分完整 worktree 初始化后的测试结果与环境尚未准备完成时的临时失败，不将环境误判归因于 README。

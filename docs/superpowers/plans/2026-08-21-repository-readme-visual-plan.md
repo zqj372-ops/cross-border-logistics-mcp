@@ -49,7 +49,7 @@ rg -n '^### `|^## |^\\| `|tool_names|profile|resources' docs/contracts/tool-cata
 
 Expected: all commands in the README exist in `package.json`; the registry and client templates expose the documented profile/resource relationships; Phase 1 has nine business tools and `system.agent_context.get` is an additional Agent context tool.
 
-- [ ] **Step 3: Record the known test-discovery limitation without changing it**
+- [ ] **Step 3: Run the full suite after the worktree is fully initialized**
 
 Run:
 
@@ -57,7 +57,7 @@ Run:
 npm test
 ```
 
-Expected on the clean `main` baseline: Vitest fails while loading `docs/contracts/quote-v2-contract.test.mjs` with `No test suite found`; its own Node assertion output says `quote v2 contract checks passed`. Do not edit test configuration as part of this README task.
+Expected after `npm ci` and complete worktree initialization: `51` test files and `381` tests pass. If a single-file discovery failure appears while `git worktree list --porcelain` still reports `locked initializing`, wait for checkout completion and rerun; do not edit test configuration as part of this README task.
 
 ### Task 2: Replace the README opening with the architecture-first story
 
@@ -199,7 +199,7 @@ npm run validate:agent-adapters
 npm run build
 ```
 
-Do not claim the full `npm test` command is green; include the known Vitest discovery limitation in a verification note or link to the task handoff.
+Run the full `npm test` command during final validation and report its actual output; do not add a CI or test badge that could be mistaken for production readiness.
 
 - [ ] **Step 4: Add the directory map and deeper reading links**
 
@@ -234,11 +234,11 @@ npm run validate:schemas
 npm run validate:agent-standards
 npm run validate:agent-adapters
 npm run build
+npm test
 npm run verify:runtime
-npx vitest run --exclude docs/contracts/quote-v2-contract.test.mjs
 ```
 
-Expected: all listed commands pass. The excluded Vitest run reports the TypeScript/JSON test suites as passing; the full `npm test` baseline limitation remains separately reported and is not changed by this documentation task.
+Expected: all listed commands pass; the full suite reports `51` test files and `381` tests passing. A passing local suite still does not establish production connectivity or readiness.
 
 - [ ] **Step 3: Review the final diff for truthfulness and scope**
 
@@ -272,4 +272,4 @@ Expected: one documentation commit containing only the README rewrite; report th
 - Contract/status/security boundary: Task 4, Step 2.
 - Directory map and deeper documentation: Task 4, Step 4.
 - No unmerged branch claims and no production overstatement: Tasks 1, 3, and 5.
-- Existing Vitest discovery limitation documented without unrelated test edits: Tasks 1 and 5.
+- Full test suite run after worktree initialization, without unrelated test edits: Tasks 1 and 5.
