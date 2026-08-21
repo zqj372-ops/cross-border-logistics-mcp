@@ -56,6 +56,7 @@ function sourceRef(
 }
 
 function quoteLookupRecord(status: QuoteLookupRecord["status"] = "matched"): QuoteLookupRecord {
+  const snapshotHash = `sha256:${"c".repeat(64)}`;
   return {
     status,
     quote_id: "quote-demo-001",
@@ -81,6 +82,16 @@ function quoteLookupRecord(status: QuoteLookupRecord["status"] = "matched"): Quo
       "fixture://existing-quote/quote-demo-001",
       "quote-fixture@1",
     ),
+    v2: {
+      origin: "toronto",
+      billing_pallets: status === "matched" ? 2 : null,
+      snapshot_hash: snapshotHash,
+      service_version: "quote-service@fixture-v2",
+      contract_version: "quote-zone.v2",
+      release_id: "quote-release-fixture-v2",
+      release_hash: snapshotHash,
+      published_at: NOW,
+    },
   };
 }
 

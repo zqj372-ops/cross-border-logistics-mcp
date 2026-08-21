@@ -169,7 +169,9 @@ function quoteApi(fetchImpl: FetchImplementation): QuoteApiAdapter {
     enabled: true,
     fetchImpl,
     clock: () => new Date(API_TIME),
-    originByWarehouse: { "fixture-warehouse": "toronto" },
+    originByTenantWarehouse: {
+      tenant_demo_a: { "fixture-warehouse": "toronto" },
+    },
   });
 }
 
@@ -372,7 +374,7 @@ describe("gateway composition modes", () => {
     });
 
     try {
-      const result = await composition.adapters.quote.calculate(apiQuoteInput);
+      const result = await composition.adapters.quote.calculate(apiQuoteInput, serverContext());
       const review = await composition.adapters.review.previewTask({
         schema_version: "2026-08-11.v1",
         version: "review-request@test",
@@ -395,8 +397,8 @@ describe("gateway composition modes", () => {
         },
       });
 
-      expect(result.status).toBe("unavailable");
-      expect(result.blockers?.map(({ code }) => code)).toContain("quote.adapter_disabled");
+      expect(result.status).toBe("blocked");
+      expect(result.blockers?.map(({ code }) => code)).toContain("quote.authorization_unconfigured");
       expect(review.status).toBe("unavailable");
       expect(review.blockers?.map(({ code }) => code)).toContain("review.adapter_disabled");
       expect(composition.adapters.review).not.toBe(fixtureAdapters.review);

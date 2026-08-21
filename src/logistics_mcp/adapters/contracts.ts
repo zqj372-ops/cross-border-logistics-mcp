@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ENVELOPE_SCHEMA_VERSION } from "../platform/envelope";
+import { quoteV2ResultSchema } from "./quote/quote-v2-contract";
 
 const identifierSchema = z
   .string()
@@ -318,7 +319,7 @@ export const quoteSaveDraftInputSchema = z
   .object({
     schema_version: z.literal(ENVELOPE_SCHEMA_VERSION),
     version: versionSchema,
-    quote_result: quoteResultSchema,
+    quote_result: z.union([quoteResultSchema, quoteV2ResultSchema]),
     target: z
       .object({ system: z.literal("existing_quote_system"), record_kind: z.literal("draft") })
       .strict(),

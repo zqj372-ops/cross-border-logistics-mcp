@@ -223,7 +223,7 @@ export function containerInput(overrides: Record<string, unknown> = {}): Record<
 export function quoteInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schema_version: "2026-08-11.v1",
-    version: "quote-request@fixture-1",
+    version: "quote-request@2026-08-13.v2",
     origin: { warehouse_code: "fixture-warehouse", province: "ON" },
     destination: {
       country: "CA",
@@ -235,14 +235,19 @@ export function quoteInput(overrides: Record<string, unknown> = {}): Record<stri
     },
     cargo: {
       cargo_result_ref: null,
-      billing_pallets: 2,
+      explicit_pallet_count: 2,
+      longest_side: { value: "1.20", unit: "m" },
+      is_stackable: false,
       weight_kg: { value: "100", unit: "kg" },
       pieces: 2,
       package_types: ["pallet"],
+      total_volume: { value: "1.25", unit: "cbm" },
     },
     services: {
       appointment: true,
       liftgate: false,
+      pallet_jack: true,
+      detention_minutes: 0,
       limited_access: false,
       remote_area: false,
     },
