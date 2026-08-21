@@ -14,7 +14,14 @@
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
-    "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts"
+    "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts",
+    "validate:agent-standards": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts validate",
+    "build:agent-pack": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts build",
+    "agent:context": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts context",
+    "test:agent-context": "vitest run tests/agent-context --pool=forks --no-file-parallelism --maxWorkers=1",
+    "test:module-runtime": "vitest run tests/module-runtime --pool=forks --no-file-parallelism --maxWorkers=1",
+    "test:mcp-resources": "vitest run tests/e2e/mcp-resources.test.ts --pool=forks --no-file-parallelism --maxWorkers=1 --testTimeout=5000 --hookTimeout=5000",
+    "validate:agent-adapters": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts adapters"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

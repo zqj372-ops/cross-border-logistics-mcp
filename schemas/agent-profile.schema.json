@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-21/agent-profile.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "profile_id", "version", "audience", "standard_ids", "allowed_rule_ids", "context_scopes", "allowed_module_ids", "content_mode"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri-reference"},
+    "profile_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"},
+    "audience": {"enum": ["developer", "reviewer", "operator", "caller"]},
+    "standard_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}},
+    "allowed_rule_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9-]{2,63}$"}},
+    "context_scopes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["bootstrap", "standards", "module_catalog", "workstreams", "release"]}},
+    "allowed_module_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}},
+    "content_mode": {"enum": ["summary", "full"]}
+  }
+}

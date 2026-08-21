@@ -141,7 +141,7 @@ describe("production platform runtime", () => {
         tenantId: "tenant_demo_a",
         ownerId: "production-test-worker",
       });
-      expect((await client.listTools()).tools).toHaveLength(9);
+      expect((await client.listTools()).tools).toHaveLength(10);
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),

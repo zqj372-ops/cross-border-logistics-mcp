@@ -1,0 +1,43 @@
+{
+  "$schema": "../../../schemas/agent-workstreams.schema.json",
+  "schema_version": "2026-08-21.v1",
+  "workstreams": [
+    {
+      "workstream_id": "01-baseline",
+      "owner": "baseline",
+      "writable_paths": ["README.md", "AGENTS.md", "docs/product/**", "docs/contracts/**", "docs/superpowers/plans/**"],
+      "primary_delivery": "shared positioning, contracts, schemas, examples and plans"
+    },
+    {
+      "workstream_id": "02-platform",
+      "owner": "platform",
+      "writable_paths": ["src/logistics_mcp/platform/**", "src/logistics_mcp/server/**", "src/logistics_mcp/module-runtime/**", "src/logistics_mcp/agent-context/**", "tests/platform/**", "tests/module-runtime/**", "tests/agent-context/**"],
+      "primary_delivery": "MCP transport, context, RBAC, envelope, audit, idempotency, module runtime and Agent access"
+    },
+    {
+      "workstream_id": "03-cargo",
+      "owner": "cargo",
+      "writable_paths": ["src/logistics_mcp/domains/cargo/**", "tests/cargo/**"],
+      "primary_delivery": "CargoLine, CBM, volumetric weight, bubble share and chargeable weight"
+    },
+    {
+      "workstream_id": "04-container",
+      "owner": "container",
+      "writable_paths": ["src/logistics_mcp/domains/container/**", "tests/container/**"],
+      "primary_delivery": "theoretical/operational capacity, loading summary and overflow warnings"
+    },
+    {
+      "workstream_id": "05-adapters",
+      "owner": "adapters",
+      "writable_paths": ["src/logistics_mcp/adapters/**", "src/logistics_mcp/domains/{quote,customs,knowledge,status,review}/**", "tests/adapters/**", "tests/domains/**"],
+      "primary_delivery": "narrow adapters for current quote, RiskCustoms, curated knowledge, status and review"
+    },
+    {
+      "workstream_id": "06-integration",
+      "owner": "integration",
+      "writable_paths": ["tests/e2e/**", "deploy/**", "docs/runbooks/**"],
+      "primary_delivery": "multi-client, deployment, security release, end-to-end and rollback verification"
+    }
+  ],
+  "escalation": "Changes to shared contracts require a dated RFC and baseline maintainer acceptance before docs/contracts is modified."
+}

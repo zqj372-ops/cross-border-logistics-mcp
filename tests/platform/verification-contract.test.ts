@@ -18,7 +18,11 @@ describe("platform verification contract", () => {
     );
     for (const definition of definitions) {
       expect(definition.permission).toMatch(/^[a-z]+:[a-z_]+$/);
-      expect(definition.inputSchemaId).toContain("2026-08-11.v1");
+      expect(definition.inputSchemaId).toContain(
+        definition.name === "quote.canada_final_mile.calculate"
+          ? "2026-08-13.v2"
+          : "2026-08-11.v1",
+      );
       expect(definition.outputSchemaId).toMatch(/\.schema\.json$/);
       expect(definition.statusMapping).toEqual(ENVELOPE_STATUSES);
     }

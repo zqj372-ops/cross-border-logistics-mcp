@@ -17,8 +17,20 @@
     "customs.ca.estimate",
     "knowledge.search_curated",
     "system.get_data_status",
-    "review.create_task"
+    "review.create_task",
+    "system.agent_context.get"
   ],
+  "agent_access": {
+    "profile": "runtime-caller",
+    "context_tool": "system.agent_context.get",
+    "resources": [
+      "logistics://agent/bootstrap",
+      "logistics://standards/index",
+      "logistics://contracts/envelope/current",
+      "logistics://modules/catalog",
+      "logistics://agent/profiles"
+    ]
+  },
   "safety": {
     "write_tools_require_approval": true,
     "unavailable_is_not_success": true,

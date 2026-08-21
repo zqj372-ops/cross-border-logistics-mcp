@@ -2,10 +2,18 @@ import Decimal from "decimal.js";
 
 import type {
   AdapterResult,
+  FixtureInput,
   QuoteAdapter,
 } from "../ports";
+import type { ExecutionContext } from "../../platform/context";
 import { hashPayload } from "../../platform/idempotency";
-import type { SourceRef } from "../../platform/envelope";
+import type { CalculationStep, SourceRef } from "../../platform/envelope";
+import {
+  QUOTE_V2_REQUEST_VERSION,
+  QUOTE_V2_RESULT_VERSION,
+  quoteV2InputSchema,
+  quoteV2ResultSchema,
+} from "./quote-v2-contract";
 
 export type QuoteLookupStatus =
   | "matched"
@@ -32,6 +40,18 @@ export interface QuoteLookupRecord {
   readonly valid_to: string;
   readonly matched_by: string;
   readonly source_ref: SourceRef;
+  readonly v2?: QuoteV2LookupMetadata;
+}
+
+export interface QuoteV2LookupMetadata {
+  readonly origin: string;
+  readonly billing_pallets: number | null;
+  readonly snapshot_hash: string;
+  readonly service_version: string;
+  readonly contract_version: "quote-zone.v2";
+  readonly release_id: string;
+  readonly release_hash: string;
+  readonly published_at: string;
 }
 
 export interface QuoteDraftWriteRecord {
@@ -184,6 +204,58 @@ function quoteManualData(
   };
 }
 
+const V2_HASH_RE = /^sha256:[A-Fa-f0-9]{64}$/u;
+const V2_IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
+const V2_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/u;
+
+function isV2Metadata(value: unknown): value is QuoteV2LookupMetadata {
+  if (!isRecord(value)) return false;
+  const billingPallets = value.billing_pallets;
+  return (
+    typeof value.origin === "string" && V2_IDENTIFIER_RE.test(value.origin) &&
+    (billingPallets === null || (typeof billingPallets === "number" && Number.isInteger(billingPallets) && billingPallets >= 1)) &&
+    typeof value.snapshot_hash === "string" && V2_HASH_RE.test(value.snapshot_hash) &&
+    typeof value.service_version === "string" && V2_VERSION_RE.test(value.service_version) &&
+    value.contract_version === "quote-zone.v2" &&
+    typeof value.release_id === "string" && V2_IDENTIFIER_RE.test(value.release_id) &&
+    typeof value.release_hash === "string" && V2_HASH_RE.test(value.release_hash) &&
+    value.release_hash === value.snapshot_hash &&
+    typeof value.published_at === "string" && Number.isFinite(Date.parse(value.published_at))
+  );
+}
+
+function v2SourceRef(
+  record: QuoteLookupRecord,
+  metadata: QuoteV2LookupMetadata,
+): SourceRef {
+  const digest = metadata.snapshot_hash.slice("sha256:".length);
+  return {
+    ...record.source_ref,
+    source_id: `src:quote:snapshot:${digest}`,
+    locator: `opaque://quote-snapshot/${digest}`,
+    version: `${metadata.release_id}:${record.rule_version}:${record.data_version}`,
+    content_hash: metadata.snapshot_hash,
+  };
+}
+
+function rebindTrace(
+  trace: readonly CalculationStep[],
+  sourceId: string,
+): readonly CalculationStep[] {
+  return trace.map((step) => ({ ...step, source_ref_ids: [sourceId] }));
+}
+
+function v2Unavailable(code: string, message: string): AdapterResult {
+  return {
+    status: "unavailable",
+    data: null,
+    sourceRefs: [],
+    calculationTrace: [],
+    blockers: [notice(code, message)],
+    reviewStatus: "manual_review",
+  };
+}
+
 function writeContext(
   input: Record<string, unknown>,
 ): Record<string, unknown> | null {
@@ -245,7 +317,23 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
     this.source = options.source;
   }
 
-  async calculate(input: Record<string, unknown>): Promise<AdapterResult> {
+  async calculate(
+    input: Record<string, unknown> | FixtureInput,
+    context?: ExecutionContext,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult> {
+    const request = isRecord(input) ? input : null;
+    if (request?.version === QUOTE_V2_REQUEST_VERSION) {
+      return this.calculateV2(request, context, signal);
+    }
+    return this.calculateLegacy(input, context, signal);
+  }
+
+  private async calculateV2(
+    input: Record<string, unknown>,
+    context?: ExecutionContext,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult> {
     if (this.source === undefined) {
       return {
         status: "unavailable",
@@ -260,7 +348,118 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
         reviewStatus: "manual_review",
       };
     }
-    const destination = nestedRecord(input, "destination");
+    if (context === undefined) {
+      return {
+        status: "blocked",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.execution_context_required",
+            "The v2 quote result requires a server-authenticated execution context.",
+          ),
+        ],
+        reviewStatus: "manual_review",
+      };
+    }
+    if (signal?.aborted) {
+      return v2Unavailable(
+        "quote.request_aborted",
+        "The v2 quote lookup was aborted before the source was queried.",
+      );
+    }
+    const parsed = quoteV2InputSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        status: "needs_input",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.request_invalid",
+            "The v2 quote request requires all explicit shipment fields.",
+            "error",
+            "input",
+          ),
+        ],
+      };
+    }
+    if (
+      parsed.data.destination.address_type === "unknown" ||
+      parsed.data.destination.postal_code === null
+    ) {
+      return {
+        status: "needs_input",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.destination_evidence_required",
+            "A supported address type and postal code are required before the v2 quote lookup.",
+            "error",
+            "destination",
+          ),
+        ],
+      };
+    }
+    if (parsed.data.services.limited_access || parsed.data.services.remote_area) {
+      return {
+        status: "manual_review",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.service_not_supported",
+            "Limited-access and remote-area services require manual review before the v2 quote lookup.",
+            "error",
+            "services",
+          ),
+        ],
+        reviewStatus: "manual_review",
+      };
+    }
+
+    const record = await this.source.lookup(parsed.data);
+    if (record.v2 === undefined) {
+      return v2Unavailable(
+        "quote.v2_metadata_missing",
+        "The existing quote row has no verified v2 snapshot metadata.",
+      );
+    }
+    if (!isV2Metadata(record.v2)) {
+      return v2Unavailable(
+        "quote.v2_metadata_invalid",
+        "The existing quote row v2 snapshot metadata is invalid or internally inconsistent.",
+      );
+    }
+    const legacy = await this.calculateLegacy(parsed.data, context, signal, record);
+    return this.projectV2Result(legacy, parsed.data, context, record, record.v2);
+  }
+
+  private async calculateLegacy(
+    input: Record<string, unknown> | FixtureInput,
+    _context?: ExecutionContext,
+    _signal?: AbortSignal,
+    lookedUpRecord?: QuoteLookupRecord,
+  ): Promise<AdapterResult> {
+    void _context;
+    void _signal;
+    const request = input as Record<string, unknown>;
+    if (this.source === undefined) {
+      return {
+        status: "unavailable",
+        data: null,
+        sourceRefs: [],
+        blockers: [
+          notice(
+            "quote.adapter_disabled",
+            "The existing quote endpoint is disabled until its route, tenant scope, and readback contract are verified.",
+          ),
+        ],
+        reviewStatus: "manual_review",
+      };
+    }
+    const destination = nestedRecord(request, "destination");
     const addressType = stringValue(destination?.address_type);
     if (addressType === null || addressType === "unknown") {
       return {
@@ -277,7 +476,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
         ],
       };
     }
-    const record = await this.source.lookup(input);
+    const record = lookedUpRecord ?? await this.source.lookup(request);
     const sourceRefs = [record.source_ref];
     if (record.status !== "matched") {
       const blockerCode = sourceStatusBlocker(record.status);
@@ -304,7 +503,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
       };
     }
 
-    const effectiveAt = stringValue(input.effective_at);
+    const effectiveAt = stringValue(request.effective_at);
     if (
       effectiveAt === null ||
       !dateIsWithin(effectiveAt, record.valid_from, record.valid_to)
@@ -358,7 +557,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
       },
     ];
     let total = base.add(fuel);
-    const services = nestedRecord(input, "services");
+    const services = nestedRecord(request, "services");
     const requestedFees: string[] = [];
     if (["residential", "private", "rural_residential"].includes(addressType)) {
       requestedFees.push("residential_fee");
@@ -445,6 +644,128 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
           rounding: "2 decimal places",
         },
       ],
+    };
+  }
+
+  private projectV2Result(
+    legacy: AdapterResult,
+    input: Record<string, unknown>,
+    context: ExecutionContext,
+    record: QuoteLookupRecord,
+    metadata: QuoteV2LookupMetadata,
+  ): AdapterResult {
+    if (legacy.status !== "success" && legacy.status !== "manual_review") {
+      return legacy;
+    }
+
+    const effectiveDate = stringValue(input.effective_at);
+    const validFrom = record.valid_from.slice(0, 10);
+    const validTo = record.valid_to.slice(0, 10);
+    const source = v2SourceRef(record, metadata);
+    const sourceId = source.source_id;
+    if (
+      effectiveDate === null ||
+      !dateIsWithin(effectiveDate, validFrom, validTo)
+    ) {
+      if (legacy.status === "manual_review") {
+        return {
+          ...legacy,
+          data: null,
+          sourceRefs: [],
+          calculationTrace: [],
+          reviewStatus: "manual_review",
+        };
+      }
+      return v2Unavailable(
+        "quote.result_projection_invalid",
+        "The calculated quote effective date is outside the v2 validity window.",
+      );
+    }
+
+    const baseData: Record<string, unknown> = {
+      version: QUOTE_V2_RESULT_VERSION,
+      quote_id: record.quote_id,
+      currency: record.currency ?? record.base_price?.currency,
+      rule_version: record.rule_version,
+      data_version: record.data_version,
+      sendable: false,
+      valid_from: validFrom,
+      valid_to: validTo,
+      source_ref_ids: [sourceId],
+      tenant: context.tenantId,
+      effective_date: effectiveDate,
+      ready: true,
+      test_data: false,
+      origin: metadata.origin,
+      snapshot_hash: metadata.snapshot_hash,
+      service_version: metadata.service_version,
+      contract_version: metadata.contract_version,
+      release_id: metadata.release_id,
+      release_hash: metadata.release_hash,
+      published_at: metadata.published_at,
+    };
+
+    if (legacy.status === "manual_review") {
+      const parsed = quoteV2ResultSchema.safeParse({
+        ...baseData,
+        quote_status: "manual_review",
+        total: null,
+        line_items: [],
+        billing_pallets: metadata.billing_pallets,
+      });
+      if (!parsed.success) {
+        return v2Unavailable(
+          "quote.result_projection_invalid",
+          "The manual quote result could not be projected to the verified v2 result shape.",
+        );
+      }
+      return {
+        ...legacy,
+        data: parsed.data,
+        sourceRefs: [source],
+        calculationTrace: [],
+        reviewStatus: "manual_review",
+      };
+    }
+
+    const legacyData = isRecord(legacy.data) ? legacy.data : null;
+    const rawLineItems = legacyData?.line_items;
+    const trace = legacy.calculationTrace ?? [];
+    if (
+      legacyData === null ||
+      legacyData.quote_status !== "calculated" ||
+      !isRecord(legacyData.total) ||
+      !Array.isArray(rawLineItems) ||
+      !rawLineItems.every(isRecord) ||
+      metadata.billing_pallets === null ||
+      trace.length === 0
+    ) {
+      return v2Unavailable(
+        "quote.result_projection_invalid",
+        "The calculated quote result did not contain enough verified evidence for the v2 contract.",
+      );
+    }
+    const parsed = quoteV2ResultSchema.safeParse({
+      ...baseData,
+      quote_status: "calculated",
+      total: legacyData.total,
+      line_items: rawLineItems.map((lineItem) => ({
+        ...lineItem,
+        source_ref_ids: [sourceId],
+      })),
+      billing_pallets: metadata.billing_pallets,
+    });
+    if (!parsed.success) {
+      return v2Unavailable(
+        "quote.result_projection_invalid",
+        "The calculated quote result could not be projected to the verified v2 result shape.",
+      );
+    }
+    return {
+      ...legacy,
+      data: parsed.data,
+      sourceRefs: [source],
+      calculationTrace: rebindTrace(trace, sourceId),
     };
   }
 

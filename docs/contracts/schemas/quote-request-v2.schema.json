@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-request-v2.schema.json",
+  "title": "AI 报价请求 v2",
+  "$defs": {
+    "Date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "PositiveDecimalString": {
+      "type": "string",
+      "pattern": "^(0\\.(?:[0-9]*[1-9][0-9]*)|[1-9][0-9]*(?:\\.[0-9]+)?)$"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "version", "origin", "destination", "cargo", "services", "effective_at"],
+  "properties": {
+    "schema_version": { "const": "2026-08-11.v1" },
+    "version": { "type": "string", "const": "quote-request@2026-08-13.v2" },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["warehouse_code", "province"],
+      "properties": {
+        "warehouse_code": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+        "province": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["country", "province", "city", "postal_code", "address_type", "full_address_ref"],
+      "properties": {
+        "country": { "const": "CA" },
+        "province": { "type": ["string", "null"], "minLength": 1, "maxLength": 80 },
+        "city": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "postal_code": { "type": ["string", "null"], "minLength": 1, "maxLength": 20 },
+        "address_type": { "type": "string", "enum": ["commercial", "residential", "unknown"] },
+        "full_address_ref": {
+          "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/OpaqueReference" }, { "type": "null" }]
+        }
+      }
+    },
+    "cargo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cargo_result_ref", "explicit_pallet_count", "longest_side", "is_stackable", "weight_kg", "pieces", "package_types", "total_volume"],
+      "properties": {
+        "cargo_result_ref": {
+          "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }, { "type": "null" }]
+        },
+        "explicit_pallet_count": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "longest_side": {
+          "allOf": [
+            { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/LengthMeasurement" },
+            { "type": "object", "additionalProperties": false, "properties": { "value": { "$ref": "#/$defs/PositiveDecimalString" }, "unit": { "type": "string", "enum": ["mm", "cm", "m"] } } }
+          ]
+        },
+        "is_stackable": { "type": "boolean" },
+        "weight_kg": {
+          "allOf": [
+            { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/WeightMeasurement" },
+            { "type": "object", "additionalProperties": false, "properties": { "value": { "$ref": "#/$defs/PositiveDecimalString" }, "unit": { "type": "string", "enum": ["g", "kg", "lb"] } } }
+          ]
+        },
+        "pieces": { "type": "integer", "minimum": 1 },
+        "package_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "total_volume": {
+          "allOf": [
+            { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/VolumeMeasurement" },
+            { "type": "object", "additionalProperties": false, "properties": { "value": { "$ref": "#/$defs/PositiveDecimalString" }, "unit": { "type": "string", "enum": ["l", "cbm", "m3"] } } }
+          ]
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appointment", "liftgate", "pallet_jack", "detention_minutes", "limited_access", "remote_area"],
+      "properties": {
+        "appointment": { "type": "boolean" },
+        "liftgate": { "type": "boolean" },
+        "pallet_jack": { "type": "boolean" },
+        "detention_minutes": { "type": "integer", "minimum": 0 },
+        "limited_access": { "type": "boolean" },
+        "remote_area": { "type": "boolean" }
+      }
+    },
+    "effective_at": { "$ref": "#/$defs/Date" }
+  }
+}

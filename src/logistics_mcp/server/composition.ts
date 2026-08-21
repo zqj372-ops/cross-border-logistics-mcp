@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import {
   createFixturePlatformDependencies,
@@ -24,10 +26,21 @@ import {
 } from "./http";
 import {
   registerPhaseOneTools,
+  registerModuleToolDefinitions,
   type ToolContractMap,
   type ToolDefinition,
   type ToolHandlerMap,
 } from "./tool-registry";
+import {
+  CapabilityRegistry,
+  ModuleHost,
+} from "../module-runtime";
+import {
+  cargoModule,
+  containerModule,
+  createAgentAccessModule,
+} from "../modules";
+import { createAgentAccessRuntime, type AgentAccessRuntime } from "../agent-context/runtime";
 import type {
   CustomsAdapter,
   FixtureAdapters,
@@ -55,6 +68,11 @@ import {
   containerPlanSummaryHandler,
   containerPlanSummaryToolContract,
 } from "../domains/container/service";
+import {
+  quoteV2InputSchema,
+  quoteV2ResultSchema,
+} from "../adapters/quote/quote-api-adapter";
+import { envelopeSchema } from "../platform/envelope";
 
 /*
  * The import grouping above deliberately keeps all platform ownership at this
@@ -95,6 +113,7 @@ export interface GatewayCompositionOptions {
   readonly sessionRegistryOptions?: SessionRuntimeRegistryOptions;
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
+  readonly agentAccessRuntime?: AgentAccessRuntime;
 }
 
 export interface FixtureCompositionOptions extends GatewayCompositionOptions {
@@ -121,6 +140,8 @@ export interface GatewayComposition {
   readonly handlers: ToolHandlerMap;
   readonly contracts: ToolContractMap;
   readonly definitions: readonly ToolDefinition[];
+  readonly moduleHost: ModuleHost;
+  readonly agentAccessRuntime: AgentAccessRuntime;
   readonly handler: McpHttpHandler;
   readonly readiness: () => Promise<PlatformReadiness>;
   readonly close: () => Promise<void>;
@@ -160,10 +181,84 @@ interface CompositionTools {
   readonly bundle: Phase1Bundle;
   readonly handlers: ToolHandlerMap;
   readonly contracts: ToolContractMap;
+  readonly definitions: readonly ToolDefinition[];
+  readonly moduleHost: ModuleHost;
+  readonly agentAccessRuntime: AgentAccessRuntime;
 }
 
-function compositionTools(adapters: FixtureAdapters): CompositionTools {
+function compositionTools(
+  adapters: FixtureAdapters,
+  configuredAgentAccessRuntime?: AgentAccessRuntime,
+): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
+  const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
+  const manualQuoteDataSchema = quoteV2ResultSchema.options[1];
+  const quoteV2EnvelopeBranches = z.union([
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: calculatedQuoteDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("manual_review"),
+      data: z.null(),
+      source_refs: envelopeSchema.shape.source_refs.max(0),
+      calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("manual_review"),
+      data: manualQuoteDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+    }),
+    envelopeSchema.extend({
+      status: z.enum(["needs_input", "blocked", "unavailable"]),
+      data: z.null(),
+      source_refs: envelopeSchema.shape.source_refs.max(0),
+      calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+    }),
+  ]);
+  const quoteV2EnvelopeSchema = envelopeSchema
+    .extend({ data: quoteV2ResultSchema.nullable() })
+    .superRefine((envelope, refinement) => {
+      if (!quoteV2EnvelopeBranches.safeParse(envelope).success) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote status and data do not match an allowed v2 envelope branch",
+        });
+      }
+      const sourceIds = envelope.source_refs.map((source) => source.source_id);
+      const traceIds = envelope.calculation_trace.flatMap(
+        (step) => step.source_ref_ids,
+      );
+      const data = envelope.data;
+      const dataSourceIds = data?.source_ref_ids ?? [];
+      const lineSourceIds = data?.line_items.flatMap(
+        (line) => line.source_ref_ids,
+      ) ?? [];
+      const union = [
+        ...new Set([...dataSourceIds, ...lineSourceIds, ...traceIds]),
+      ];
+      const sameSourceSet =
+        new Set(sourceIds).size === sourceIds.length &&
+        union.length === sourceIds.length &&
+        union.every((sourceId) => sourceIds.includes(sourceId));
+
+      if (
+        (data !== null || sourceIds.length > 0 || traceIds.length > 0) &&
+        !sameSourceSet
+      ) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote source IDs must match the outer source refs exactly",
+        });
+      }
+    })
+    .meta({
+      anyOf: z.toJSONSchema(quoteV2EnvelopeBranches, {
+        target: "draft-2020-12",
+      }).anyOf,
+    });
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,
     "cargo.calculate": cargoToolHandler,
@@ -171,10 +266,30 @@ function compositionTools(adapters: FixtureAdapters): CompositionTools {
   };
   const contracts: ToolContractMap = {
     ...bundle.contracts,
+    "quote.canada_final_mile.calculate": {
+      inputSchema: quoteV2InputSchema,
+      validateOutput: (data) => {
+        if (data !== null) quoteV2ResultSchema.parse(data);
+      },
+      outputSchema: quoteV2EnvelopeSchema,
+    },
     "cargo.calculate": cargoToolContract,
     "container.plan_summary": containerPlanSummaryToolContract,
   };
-  return { bundle, handlers, contracts };
+  const agentAccessRuntime = configuredAgentAccessRuntime ?? createAgentAccessRuntime();
+  const moduleHost = new ModuleHost({
+    capabilities: new CapabilityRegistry(),
+    modules: [cargoModule, containerModule, createAgentAccessModule(agentAccessRuntime)],
+  });
+  moduleHost.mountSync();
+  const moduleToolNames = new Set(moduleHost.catalog.list().map((tool) => tool.name));
+  const definitions = [
+    ...registerPhaseOneTools(handlers, contracts).filter(
+      (definition) => !moduleToolNames.has(definition.name),
+    ),
+    ...registerModuleToolDefinitions(moduleHost.catalog.list()),
+  ];
+  return { bundle, handlers, contracts, definitions, moduleHost, agentAccessRuntime };
 }
 
 function buildComposition(
@@ -192,7 +307,7 @@ function buildComposition(
     );
   }
 
-  const definitions = registerPhaseOneTools(tools.handlers, tools.contracts);
+  const definitions = tools.definitions;
   return {
     mode,
     dataMode: mode,
@@ -201,6 +316,8 @@ function buildComposition(
     handlers: tools.handlers,
     contracts: tools.contracts,
     definitions,
+    moduleHost: tools.moduleHost,
+    agentAccessRuntime: tools.agentAccessRuntime,
     handler,
     readiness,
     close: async () => {
@@ -212,6 +329,11 @@ function buildComposition(
       }
       try {
         await closeExtra();
+      } catch {
+        failed = true;
+      }
+      try {
+        await tools.moduleHost.close();
       } catch {
         failed = true;
       }
@@ -248,7 +370,7 @@ export function createFixtureComposition(
       ? {}
       : { customsFixture: options.customsFixture },
   );
-  const tools = compositionTools(adapters);
+  const tools = compositionTools(adapters, options.agentAccessRuntime);
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
     allowedHosts: options.allowedHosts ?? ["mcp.example.invalid"],
@@ -256,6 +378,8 @@ export function createFixtureComposition(
     ...(options.tokenPolicy === undefined ? {} : { tokenPolicy: options.tokenPolicy }),
     handlers: tools.handlers,
     contracts: tools.contracts,
+    definitions: tools.definitions,
+    agentAccessRuntime: tools.agentAccessRuntime,
     auditRepository: platform.auditRepository,
     idempotencyRepository: platform.idempotencyRepository,
     sessionRegistry: platform.sessionRegistry,
@@ -310,12 +434,22 @@ export function createProductionComposition(
     options.adapterSource,
   );
   const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
+  const disabledQuote = new ExistingQuoteAdapter();
+  const providedQuote = providedAdapters.quote;
   const adapters: FixtureAdapters = {
     ...providedAdapters,
-    quote: new ExistingQuoteAdapter(),
+    quote: providedQuote === undefined
+      ? disabledQuote
+      : {
+          calculate: (input, context, signal) =>
+            providedQuote.calculate(input, context, signal),
+          previewDraft: (input) => disabledQuote.previewDraft(input),
+          commitDraft: (input, signal) => disabledQuote.commitDraft(input, signal),
+          readDraft: (input) => disabledQuote.readDraft(input),
+        },
     review: new ManualTaskAdapter(),
   };
-  const tools = compositionTools(adapters);
+  const tools = compositionTools(adapters, options.agentAccessRuntime);
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
   const validSessionOwner =
@@ -358,6 +492,8 @@ export function createProductionComposition(
           ...(options.tokenPolicy === undefined ? {} : { tokenPolicy: options.tokenPolicy }),
           handlers: tools.handlers,
           contracts: tools.contracts,
+          definitions: tools.definitions,
+          agentAccessRuntime: tools.agentAccessRuntime,
           auditRepository: platform.dependencies.auditRepository,
           idempotencyRepository: platform.dependencies.idempotencyRepository,
           sessionRegistry: platform.dependencies.sessionRegistry,

@@ -6,6 +6,7 @@ import type {
   ReviewStatus,
   SourceRef,
 } from "../platform/envelope";
+import type { ExecutionContext } from "../platform/context";
 
 export interface AdapterResult<TData extends EnvelopeData = EnvelopeData> {
   readonly status: EnvelopeStatus;
@@ -22,16 +23,32 @@ export interface FixtureInput {
 }
 
 export interface QuoteAdapter {
-  calculate(input: Record<string, unknown> | FixtureInput): Promise<AdapterResult>;
+  calculate(
+    input: Record<string, unknown> | FixtureInput,
+    context?: ExecutionContext,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult>;
   previewDraft(input: Record<string, unknown>): Promise<AdapterResult>;
   commitDraft(input: Record<string, unknown>, signal?: AbortSignal): Promise<AdapterResult>;
   readDraft(input: Record<string, unknown>): Promise<AdapterResult>;
 }
 
 export interface CustomsAdapter {
-  getStatus(input: Record<string, unknown> | FixtureInput): Promise<AdapterResult>;
-  search(input: Record<string, unknown> | FixtureInput): Promise<AdapterResult>;
-  estimate(input: Record<string, unknown> | FixtureInput): Promise<AdapterResult>;
+  getStatus(
+    input: Record<string, unknown> | FixtureInput,
+    context?: ExecutionContext,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult>;
+  search(
+    input: Record<string, unknown> | FixtureInput,
+    context?: ExecutionContext,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult>;
+  estimate(
+    input: Record<string, unknown> | FixtureInput,
+    context?: ExecutionContext,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult>;
 }
 
 export interface KnowledgeAdapter {

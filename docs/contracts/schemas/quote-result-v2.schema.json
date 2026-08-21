@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/quote-result-v2.schema.json",
+  "title": "AI 报价结果 v2",
+  "$defs": {
+    "Date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "quote_id", "quote_status", "currency", "total", "line_items", "rule_version", "data_version", "sendable", "valid_from", "valid_to", "source_ref_ids", "tenant", "effective_date", "ready", "test_data", "origin", "billing_pallets", "snapshot_hash", "service_version", "contract_version", "release_id", "release_hash", "published_at"],
+  "properties": {
+    "version": { "type": "string", "const": "quote-result@2026-08-13.v2" },
+    "quote_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "quote_status": { "type": "string", "enum": ["calculated", "not_calculable", "manual_review"] },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "total": { "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Money" }, { "type": "null" }] },
+    "line_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["line_id", "label", "amount", "pricing_basis", "source_ref_ids"],
+        "properties": {
+          "line_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "amount": { "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Money" }, { "type": "null" }] },
+          "pricing_basis": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "source_ref_ids": { "type": "array", "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }, "uniqueItems": true }
+        }
+      }
+    },
+    "rule_version": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Version" },
+    "data_version": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Version" },
+    "sendable": { "const": false },
+    "valid_from": { "$ref": "#/$defs/Date" },
+    "valid_to": { "$ref": "#/$defs/Date" },
+    "source_ref_ids": { "type": "array", "minItems": 1, "items": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }, "uniqueItems": true },
+    "tenant": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "effective_date": { "$ref": "#/$defs/Date" },
+    "ready": { "const": true },
+    "test_data": { "const": false },
+    "origin": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "billing_pallets": {
+      "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+    },
+    "snapshot_hash": {
+      "type": "string",
+      "pattern": "^sha256:[A-Fa-f0-9]{64}$"
+    },
+    "service_version": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Version" },
+    "contract_version": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Version" },
+    "release_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "release_hash": { "type": "string", "pattern": "^sha256:[A-Fa-f0-9]{64}$" },
+    "published_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "quote_status": { "const": "calculated" } } },
+      "then": {
+        "properties": {
+          "ready": { "const": true },
+          "test_data": { "const": false },
+          "total": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Money" },
+          "line_items": { "type": "array", "minItems": 1 },
+          "billing_pallets": { "type": "integer", "minimum": 1 },
+          "snapshot_hash": { "type": "string", "pattern": "^sha256:[A-Fa-f0-9]{64}$" },
+          "release_hash": { "type": "string", "pattern": "^sha256:[A-Fa-f0-9]{64}$" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "quote_status": { "const": "manual_review" } } },
+      "then": {
+        "properties": {
+          "ready": { "const": true },
+          "test_data": { "const": false },
+          "total": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "quote_status": { "const": "not_calculable" } } },
+      "then": { "properties": { "total": { "type": "null" } } }
+    }
+  ]
+}

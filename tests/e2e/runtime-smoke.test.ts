@@ -363,6 +363,7 @@ describe("built runtime smoke", () => {
         "quote.canada_final_mile.calculate",
         "quote.save_draft",
         "review.create_task",
+        "system.agent_context.get",
         "system.get_data_status",
       ].sort());
       expect(toolList.tools.every((tool) =>

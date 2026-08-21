@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-21/agent-index.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "registry_id", "standards", "profiles", "modules", "resources"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri-reference"},
+    "schema_version": {"type": "string", "const": "2026-08-21.v1"},
+    "registry_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "standards": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/standard"}},
+    "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/profileRef"}},
+    "modules": {"type": "array", "items": {"$ref": "#/$defs/module"}},
+    "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"},
+    "standard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standard_id", "version", "path", "priority", "audiences", "rule_ids", "summary"],
+      "properties": {
+        "standard_id": {"$ref": "#/$defs/id"},
+        "version": {"$ref": "#/$defs/id"},
+        "path": {"$ref": "#/$defs/path"},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+        "audiences": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["developer", "reviewer", "operator", "caller"]}},
+        "rule_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9-]{2,63}$"}},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 300}
+      }
+    },
+    "profileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "path"],
+      "properties": {"profile_id": {"$ref": "#/$defs/id"}, "path": {"$ref": "#/$defs/path"}}
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_id", "version", "risk_level", "standard_ids", "tool_names"],
+      "properties": {
+        "module_id": {"$ref": "#/$defs/id"},
+        "version": {"$ref": "#/$defs/id"},
+        "risk_level": {"enum": ["T0", "T1", "T2", "T3"]},
+        "standard_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "tool_names": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_id", "uri", "standard_ids"],
+      "properties": {
+        "resource_id": {"$ref": "#/$defs/id"},
+        "uri": {"type": "string", "pattern": "^logistics://[A-Za-z0-9._/-]+$"},
+        "standard_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_contract_quote_v2_calculated",
+  "status": "success",
+  "data": {
+    "version": "quote-result@2026-08-13.v2",
+    "quote_id": "quote-contract-v2-calculated-001",
+    "quote_status": "calculated",
+    "currency": "USD",
+    "total": { "amount": "100.00", "currency": "USD" },
+    "line_items": [
+      {
+        "line_id": "line:quote:v2:base",
+        "label": "Canada final-mile base price",
+        "amount": { "amount": "100.00", "currency": "USD" },
+        "pricing_basis": "fixture upstream base price",
+        "source_ref_ids": ["src:quote:v2:fixture"]
+      }
+    ],
+    "rule_version": "quote-preview-rule@fixture",
+    "data_version": "quote-preview-data@fixture",
+    "sendable": false,
+    "valid_from": "2026-08-13",
+    "valid_to": "2026-08-13",
+    "source_ref_ids": ["src:quote:v2:fixture"],
+    "tenant": "tenant-contract-demo",
+    "effective_date": "2026-08-13",
+    "ready": true,
+    "test_data": false,
+    "origin": "canonical-origin-demo",
+    "billing_pallets": 2,
+    "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "service_version": "quote-service@fixture",
+    "contract_version": "quote-preview-contract@2026-08-13",
+    "release_id": "quote-release-fixture",
+    "release_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "published_at": "2026-08-13T00:00:00Z"
+  },
+  "source_refs": [
+    {
+      "source_id": "src:quote:v2:fixture",
+      "source_type": "fixture",
+      "system": "quote-v2-contract-fixture",
+      "locator": "fixture://quote-v2/calculated",
+      "version": "quote-preview-fixture@2026-08-13",
+      "retrieved_at": "2026-08-13T00:00:00Z",
+      "authority": "supporting",
+      "content_hash": "sha256:quotev2fixture01"
+    }
+  ],
+  "assumptions": [],
+  "warnings": [],
+  "blockers": [],
+  "calculation_trace": [
+    {
+      "step_id": "step:quote:v2:project",
+      "operation": "project_upstream_quote_result",
+      "inputs": [],
+      "result": "fixture projection",
+      "source_ref_ids": ["src:quote:v2:fixture"]
+    }
+  ],
+  "review_status": "not_required",
+  "audit_id": "audit_contract_quote_v2_calculated"
+}

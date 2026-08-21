@@ -310,7 +310,7 @@ describe("admin static runtime boundary", () => {
         clients: [],
         audit: [],
       });
-      expect((snapshot.tools as unknown[])).toHaveLength(9);
+      expect((snapshot.tools as unknown[])).toHaveLength(10);
       expect((snapshot.roles as unknown[])).toHaveLength(7);
       expect((snapshot.sources as unknown[])).toHaveLength(3);
       expect(body).not.toMatch(

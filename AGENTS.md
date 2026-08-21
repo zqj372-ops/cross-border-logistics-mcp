@@ -1,3 +1,11 @@
+# Agent 标准入口
+
+本仓库的机器可读 Agent 标准入口是 `docs/agent/index.json`。开始模块开发、审查、发布
+或运行时调用前，先按 profile 读取对应标准；开发/构建时使用 `npm run validate:agent-standards`
+和 `npm run build:agent-pack`，运行时只使用生成的
+`dist/standards/agent-standard-pack.json`，不得从当前工作目录随意读取 Markdown。
+本入口与下方协作规则共同生效；在 v0 迁移完成前，以下任务所有权和安全红线仍是完整权威。
+
 # 后续任务协作规则
 
 ## 强制启动顺序

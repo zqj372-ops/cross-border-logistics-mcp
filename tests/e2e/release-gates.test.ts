@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -52,5 +53,32 @@ describe("non-production release gates", () => {
       env: { PATH: process.env.PATH ?? "" },
     });
     expect(output).toMatch(/fixture/i);
+  });
+
+  it("requires and propagates the quote v2 contract gate", () => {
+    const script = read("deploy/scripts/check-release.sh");
+    expect(script).toContain("node docs/contracts/quote-v2-contract.test.mjs");
+
+    const bin = mkdtempSync(join(tmpdir(), "logistics-mcp-release-gate-"));
+    const fakeNode = join(bin, "node");
+    const realNode = process.execPath.replaceAll("'", "'\\''");
+    writeFileSync(fakeNode, `#!/bin/sh
+if [ "$1" = "docs/contracts/quote-v2-contract.test.mjs" ]; then
+  exit 91
+fi
+exec '${realNode}' "$@"
+`);
+    chmodSync(fakeNode, 0o755);
+
+    try {
+      const result = spawnSync("bash", ["deploy/scripts/check-release.sh", "--fixture-only"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(91);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });
