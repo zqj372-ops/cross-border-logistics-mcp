@@ -51,13 +51,13 @@ describe("MCP Agent resources and context tool", () => {
         profile_id: "runtime-caller",
         module_id: "cargo",
       });
-      expect(context).toMatchObject({
-        status: "success",
-        data: expect.objectContaining({
-          profile_id: "runtime-caller",
-          selected_module_id: "cargo",
-        }),
-      });
+      expect(context.status).toBe("success");
+      if (typeof context.data !== "object" || context.data === null) {
+        throw new Error("agent context response did not contain a data object");
+      }
+      const contextData = context.data as Record<string, unknown>;
+      expect(contextData.profile_id).toBe("runtime-caller");
+      expect(contextData.selected_module_id).toBe("cargo");
     } finally {
       await harness.close();
     }

@@ -7,6 +7,8 @@ import type {
   AgentStandardPack,
 } from "./types";
 
+export type { AgentStandardPack } from "./types";
+
 export interface AgentContextSourceRef {
   readonly source_id: string;
   readonly version: string;
@@ -31,9 +33,9 @@ export interface AgentContextRuleProjection {
   readonly source_sha256: string;
 }
 
-export interface AgentContextModuleProjection extends AgentModuleRef {}
+export type AgentContextModuleProjection = AgentModuleRef;
 
-export interface AgentContextProjection {
+export interface AgentContextProjection extends Record<string, unknown> {
   readonly status: "success";
   readonly schema_version: "2026-08-21.v1";
   readonly profile_id: string;

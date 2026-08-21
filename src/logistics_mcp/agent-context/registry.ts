@@ -5,7 +5,6 @@ import { z } from "zod";
 
 import type {
   AgentAudience,
-  AgentContextScope,
   AgentProfile,
   AgentProfileRef,
   AgentRegistry,
@@ -304,5 +303,5 @@ export function loadWorkstreamProjection(rootDir: string): AgentWorkstreamProjec
   if (!parsed.success) {
     throw new AgentRegistryError("workstreams.schema_invalid", parsed.error.message);
   }
-  return parsed.data as AgentWorkstreamProjection;
+  return parsed.data;
 }

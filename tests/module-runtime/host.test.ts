@@ -53,8 +53,8 @@ describe("Module Runtime v0", () => {
 
     const events: string[] = [];
     const lease = new RegistrationLease();
-    lease.add(() => events.push("first"));
-    lease.add(() => events.push("second"));
+    lease.add(() => { events.push("first"); });
+    lease.add(() => { events.push("second"); });
     await lease.close();
     await lease.close();
     expect(events).toEqual(["second", "first"]);

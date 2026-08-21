@@ -44,7 +44,8 @@ function validateJsonAdapter(rootDir: string, path: string, failures: string[]):
     if (record.profile !== "runtime-caller" || record.context_tool !== requiredTool) {
       failures.push(`${path}: invalid runtime-caller context declaration`);
     }
-    if (!Array.isArray(record.resources) || requiredResources.some((uri) => !record.resources.includes(uri))) {
+    const resources = record.resources;
+    if (!Array.isArray(resources) || requiredResources.some((uri) => !resources.includes(uri))) {
       failures.push(`${path}: fixed resource allowlist is incomplete`);
     }
   }

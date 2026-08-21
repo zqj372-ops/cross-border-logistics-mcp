@@ -1,5 +1,5 @@
 import { ModuleRuntimeError } from "./errors";
-import { CapabilityRegistry } from "./capabilities";
+import type { CapabilityRegistry } from "./capabilities";
 import { ModuleCatalog } from "./catalog";
 import { RegistrationLease } from "./lease";
 import { validateModuleManifest } from "./manifest";

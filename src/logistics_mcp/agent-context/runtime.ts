@@ -18,6 +18,18 @@ import type { AgentStandardPack } from "./types";
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 
+function withoutKey(value: object, keyToRemove: string): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== keyToRemove));
+}
+
+function withoutSchema(value: object): Record<string, unknown> {
+  return withoutKey(value, "$schema");
+}
+
+function withoutContent(value: object): Record<string, unknown> {
+  return withoutKey(value, "content");
+}
+
 export const agentContextInputSchema = z
   .object({
     profile_id: identifierSchema,
@@ -197,11 +209,11 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
       return { uri, mimeType: "application/json", text: JSON.stringify({ modules: this.pack.modules }, null, 2) };
     }
     if (resource.resource_id === "agent.profiles") {
-      const profiles = this.pack.profiles.map(({ $schema: _schema, ...profile }) => profile);
+      const profiles = this.pack.profiles.map(withoutSchema);
       return { uri, mimeType: "application/json", text: JSON.stringify({ profiles }, null, 2) };
     }
     if (resource.resource_id === "standards.index") {
-      const index = standards.map(({ content: _content, ...standard }) => standard);
+      const index = standards.map(withoutContent);
       return { uri, mimeType: "application/json", text: JSON.stringify({ standards: index }, null, 2) };
     }
     return {
@@ -210,7 +222,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
       text: JSON.stringify({
         pack_schema_version: this.pack.pack_schema_version,
         registry_id: this.pack.registry_id,
-        standards: standards.map(({ content: _content, ...standard }) => standard),
+        standards: standards.map(withoutContent),
       }, null, 2),
     };
   }
