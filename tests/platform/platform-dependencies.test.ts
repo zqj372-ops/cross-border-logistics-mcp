@@ -30,6 +30,7 @@ function durableIdempotency(ready = true): DurableIdempotencyRepository {
   return {
     reserve: vi.fn(() => Promise.reject(new Error("fake reserve not used"))),
     commit: vi.fn(() => Promise.reject(new Error("fake commit not used"))),
+    release: vi.fn(() => Promise.resolve()),
     get: vi.fn(() => Promise.resolve(null)),
     durability: "durable" as const,
     health: vi.fn(() => Promise.resolve({ ready })),

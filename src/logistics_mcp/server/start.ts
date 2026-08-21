@@ -4,7 +4,7 @@ import { BlockList, isIP } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { AuthenticationError, type AuthClaims } from "../platform/context";
+import { AuthenticationError, type AuthClaims, type ExecutionContext } from "../platform/context";
 import { getToolPolicy, type PhaseOneToolName } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
 import {
@@ -12,28 +12,125 @@ import {
   createProductionApiAdapterSource,
   createProductionComposition,
   type GatewayComposition,
+  type ProductionAdapterSource,
+  type QuotePdfStartupFailure,
+  type QuotePdfStartupStatus,
 } from "./composition";
-import type { ShortLivedTokenValidationOptions } from "../platform/security";
+import {
+  assertAllowedOutboundUrl,
+  type ShortLivedTokenValidationOptions,
+} from "../platform/security";
 import {
   createAdminStaticHandler,
   type AdminStaticHandler,
 } from "./admin-static";
 import { createProductionTokenVerifier } from "./production-token-verifier";
+import type { FetchImplementation } from "../adapters/http-client";
+import { QuotePdfApiAdapter } from "../adapters/pdf/quote-pdf-api-adapter";
+import { createQuotePdfProductionSource } from "../adapters/production-source";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
-const RUNTIME_REQUEST_TIMEOUT_MS = 15_000;
+export const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
+const QUOTE_PDF_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
+const QUOTE_PDF_MAX_TOKEN_LENGTH = 4096;
+type Environment = Readonly<Record<string, string | undefined>>;
 
 class RuntimeBodyTooLargeError extends Error {}
 class RuntimeRequestError extends Error {}
 
-function splitSetting(name: string, fallback: string): string[] {
-  const value = process.env[name] ?? fallback;
+function splitSetting(
+  name: string,
+  fallback: string,
+  environment: Environment = process.env,
+): string[] {
+  const value = environment[name] ?? fallback;
   return value
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+export interface QuotePdfStartupOptions {
+  readonly adapterSource?: ProductionAdapterSource;
+  readonly quotePdfEnabled?: true;
+  readonly quotePdfStartupFailure?: QuotePdfStartupFailure;
+}
+
+export interface QuotePdfStartupFactoryOptions {
+  readonly env?: Environment;
+  readonly fetchImpl?: FetchImplementation;
+}
+
+function invalidQuotePdfConfiguration(): QuotePdfStartupOptions {
+  return { quotePdfStartupFailure: "configuration_invalid" };
+}
+
+function invalidQuotePdfAdapterSource(): QuotePdfStartupOptions {
+  return { quotePdfStartupFailure: "adapter_source_invalid" };
+}
+
+function validBearerToken(value: string | undefined): value is string {
+  const hasForbiddenCharacter = value === undefined
+    ? true
+    : [...value].some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint <= 0x1f || codePoint === 0x7f || /\s/u.test(character);
+      });
+  return value !== undefined &&
+    value.length > 0 &&
+    value.length <= QUOTE_PDF_MAX_TOKEN_LENGTH &&
+    !hasForbiddenCharacter;
+}
+
+export function createQuotePdfStartupOptions(
+  baseSource: ProductionAdapterSource,
+  options: QuotePdfStartupFactoryOptions = {},
+): QuotePdfStartupOptions {
+  const environment = options.env ?? process.env;
+  if ((environment.MCP_QUOTE_PDF_ENABLED ?? "").trim() !== "true") return {};
+
+  const baseUrl = environment.MCP_QUOTE_PDF_BASE_URL?.trim();
+  const allowedHosts = splitSetting("MCP_QUOTE_PDF_ALLOWED_HOSTS", "", environment);
+  const tenantId = environment.MCP_QUOTE_PDF_TENANT_ID;
+  const bearerToken = environment.MCP_QUOTE_PDF_BEARER_TOKEN;
+  if (
+    baseUrl === undefined ||
+    allowedHosts.length === 0 ||
+    tenantId === undefined ||
+    !QUOTE_PDF_IDENTIFIER.test(tenantId) ||
+    !validBearerToken(bearerToken)
+  ) {
+    return invalidQuotePdfConfiguration();
+  }
+
+  let adapter: QuotePdfApiAdapter;
+  try {
+    assertAllowedOutboundUrl(baseUrl, allowedHosts);
+    adapter = new QuotePdfApiAdapter({
+      baseUrl,
+      allowedHosts,
+      enabled: true,
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+      credentialProvider: (context: ExecutionContext, signal: AbortSignal) => {
+        if (signal.aborted || context.tenantId !== tenantId) {
+          throw new Error("The configured PDF credential is unavailable for this tenant.");
+        }
+        return `Bearer ${bearerToken}`;
+      },
+    });
+  } catch {
+    return invalidQuotePdfConfiguration();
+  }
+  try {
+    const source = createQuotePdfProductionSource(baseSource, { quotePdf: adapter });
+    return source.ok
+      ? { adapterSource: source.source, quotePdfEnabled: true }
+      : invalidQuotePdfAdapterSource();
+  } catch {
+    return invalidQuotePdfAdapterSource();
+  }
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -110,7 +207,40 @@ function adminBlocker(reason: string): string {
   return "存在未通过的运行门槛，技术信息已隐藏。";
 }
 
-function businessSources(mode: GatewayComposition["mode"]): readonly Record<string, unknown>[] {
+function quotePdfRegistrationStatus(status: QuotePdfStartupStatus): string {
+  switch (status) {
+    case "disabled":
+      return "工具已登记，正式连接未启用";
+    case "configuration_invalid":
+      return "工具已登记，正式配置不完整";
+    case "adapter_source_invalid":
+      return "工具已登记，正式适配器不可用";
+    case "configured":
+      return "工具已登记，正式连接已配置，仍需当前健康与写后读回验证";
+    default:
+      return "工具已登记，正式连接状态未知，暂不可用";
+  }
+}
+
+function quotePdfSourceReason(status: QuotePdfStartupStatus): string {
+  switch (status) {
+    case "disabled":
+      return "正式连接未启用，相关工具保持不可用。";
+    case "configuration_invalid":
+      return "正式配置未通过启动校验，相关工具保持不可用。";
+    case "adapter_source_invalid":
+      return "正式适配器未通过结构校验，相关工具保持不可用。";
+    case "configured":
+      return "仍需当前健康检查与写后读回验证，暂不视为正式可用。";
+    default:
+      return "正式连接状态未知，相关工具保持不可用。";
+  }
+}
+
+function businessSources(
+  mode: GatewayComposition["mode"],
+  quotePdfStartupStatus: QuotePdfStartupStatus = "disabled",
+): readonly Record<string, unknown>[] {
   const fixture = mode === "fixtures";
   const common = {
     category: "business_api",
@@ -147,13 +277,15 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
     },
     {
       ...common,
+      readiness: "unavailable",
       name: "pdf_api",
       label: "报价单服务",
       business_key: "pdf",
-      affected_tools: [],
-      registration_status: "未登记工具",
+      affected_tools: ["quote.create_pdf"],
+      registration_status: quotePdfRegistrationStatus(quotePdfStartupStatus),
       business_version_evidence: "尚未提供可核验的服务端接口约定。",
-      blocker: "缺少服务端接口地址、身份认证、输入输出和文件读回约定。",
+      reason: quotePdfSourceReason(quotePdfStartupStatus),
+      blocker: "当前未完成正式健康、认证和写后读回验收。",
     },
   ];
 }
@@ -198,11 +330,11 @@ async function adminRuntimeSnapshot(
       kind: definition.kind,
       roles: [...getToolPolicy(definition.name).roles],
       availability:
-        fixture || (state.ready && LOCAL_TOOL_NAMES.has(definition.name))
+        LOCAL_TOOL_NAMES.has(definition.name) && (fixture || state.ready)
           ? "ready"
           : "unavailable",
     })),
-    sources: businessSources(composition.mode),
+    sources: businessSources(composition.mode, composition.quotePdfStartupStatus),
     approvals: {
       validation: {
         status: "blocked",
@@ -472,6 +604,7 @@ function makeComposition(): GatewayComposition {
       dataMode: "fixtures",
       ...common,
       authenticate: fixtureAuthenticatorFromEnvironment(),
+      requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
     });
   }
   if (mode !== "production") {
@@ -496,10 +629,13 @@ function makeComposition(): GatewayComposition {
           jwksUrl,
           allowedHosts: outboundHosts,
         });
+  const baseAdapterSource = createProductionApiAdapterSource();
+  const quotePdfOptions = createQuotePdfStartupOptions(baseAdapterSource);
   return createProductionComposition({
     dataMode: "production",
     ...common,
-    adapterSource: createProductionApiAdapterSource(),
+    ...quotePdfOptions,
+    adapterSource: quotePdfOptions.adapterSource ?? baseAdapterSource,
     ...(store === undefined
       ? {}
       : {
@@ -512,6 +648,7 @@ function makeComposition(): GatewayComposition {
       : { sessionOwnerId: instanceId }),
     ...(tokenVerifier === undefined ? {} : { tokenVerifier }),
     ...(tokenPolicy === undefined ? {} : { tokenPolicy }),
+    requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
   });
 }
 

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import {
   createFixturePlatformDependencies,
@@ -24,6 +26,7 @@ import {
 } from "./http";
 import {
   registerPhaseOneTools,
+  type DomainToolHandler,
   type ToolContractMap,
   type ToolDefinition,
   type ToolHandlerMap,
@@ -31,6 +34,7 @@ import {
 import type {
   CustomsAdapter,
   FixtureAdapters,
+  QuoteAdapter,
 } from "../adapters/ports";
 import {
   createFixtureAdapters,
@@ -55,6 +59,16 @@ import {
   containerPlanSummaryHandler,
   containerPlanSummaryToolContract,
 } from "../domains/container/service";
+import {
+  quoteV2InputSchema,
+  quoteV2ResultSchema,
+} from "../adapters/quote/quote-api-adapter";
+import { envelopeSchema } from "../platform/envelope";
+import {
+  quoteCreatePdfInputSchema,
+  quoteCreatePdfWriteResultSchema,
+  type QuotePdfPort,
+} from "../domains/quote/create-pdf";
 
 /*
  * The import grouping above deliberately keeps all platform ownership at this
@@ -82,6 +96,12 @@ export interface ProductionApiAdapterSourceOptions {
 }
 
 export type CompositionMode = "fixtures" | "production";
+export type QuotePdfStartupFailure = "configuration_invalid" | "adapter_source_invalid";
+export type QuotePdfStartupStatus =
+  | "disabled"
+  | "configuration_invalid"
+  | "adapter_source_invalid"
+  | "configured";
 
 export interface GatewayCompositionOptions {
   readonly dataMode: CompositionMode;
@@ -100,6 +120,8 @@ export interface GatewayCompositionOptions {
 export interface FixtureCompositionOptions extends GatewayCompositionOptions {
   readonly dataMode: "fixtures";
   readonly customsFixture?: FixtureAdapterOptions["customsFixture"];
+  readonly quote?: QuoteAdapter;
+  readonly quotePdf?: QuotePdfPort;
 }
 
 export interface ProductionCompositionOptions
@@ -109,6 +131,8 @@ export interface ProductionCompositionOptions
   readonly idempotencyRepository?: DurableIdempotencyRepository;
   readonly tokenVerifier?: ProductionTokenVerifier;
   readonly adapterSource?: ProductionAdapterSource;
+  readonly quotePdfEnabled?: boolean;
+  readonly quotePdfStartupFailure?: QuotePdfStartupFailure;
   readonly sessionBindingStore?: DurableSessionBindingStore;
   readonly sessionOwnerId?: string;
 }
@@ -121,8 +145,9 @@ export interface GatewayComposition {
   readonly handlers: ToolHandlerMap;
   readonly contracts: ToolContractMap;
   readonly definitions: readonly ToolDefinition[];
+  readonly quotePdfStartupStatus: QuotePdfStartupStatus;
   readonly handler: McpHttpHandler;
-  readonly readiness: () => Promise<PlatformReadiness>;
+  readonly readiness: (signal?: AbortSignal) => Promise<PlatformReadiness>;
   readonly close: () => Promise<void>;
 }
 
@@ -130,6 +155,26 @@ function failClosedAuthenticator(): AuthClaims {
   throw new AuthenticationError(
     "No production token verifier has been configured for this composition.",
   );
+}
+
+function hasQuotePdfPort(value: unknown): value is QuotePdfPort {
+  return typeof value === "object" && value !== null &&
+    typeof (value as { post?: unknown }).post === "function" &&
+    typeof (value as { get?: unknown }).get === "function";
+}
+
+function hasProductionAdapterSet(value: unknown): value is FixtureAdapters {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const hasMethods = (candidate: unknown, methods: readonly string[]) =>
+    typeof candidate === "object" && candidate !== null &&
+    methods.every((method) => typeof (candidate as Record<string, unknown>)[method] === "function");
+  return hasMethods(record.quote, ["calculate", "previewDraft", "commitDraft", "readDraft"]) &&
+    hasMethods(record.customs, ["getStatus", "search", "estimate"]) &&
+    hasMethods(record.knowledge, ["searchCurated"]) &&
+    hasMethods(record.status, ["getDataStatus"]) &&
+    hasMethods(record.review, ["previewTask", "commitTask", "readTask"]) &&
+    (record.quotePdf === undefined || hasQuotePdfPort(record.quotePdf));
 }
 
 function productionAdapters(
@@ -162,17 +207,201 @@ interface CompositionTools {
   readonly contracts: ToolContractMap;
 }
 
-function compositionTools(adapters: FixtureAdapters): CompositionTools {
+function compositionTools(
+  adapters: FixtureAdapters,
+  quotePdfEnabled = false,
+  quotePdfReady: (signal?: AbortSignal) => Promise<boolean> = () => Promise.resolve(true),
+): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
+  const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
+  const manualQuoteDataSchema = quoteV2ResultSchema.options[1];
+  const quoteV2EnvelopeBranches = z.union([
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: calculatedQuoteDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("manual_review"),
+      data: z.null(),
+      source_refs: envelopeSchema.shape.source_refs.max(0),
+      calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("manual_review"),
+      data: manualQuoteDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+    }),
+    envelopeSchema.extend({
+      status: z.enum(["needs_input", "blocked", "unavailable"]),
+      data: z.null(),
+      source_refs: envelopeSchema.shape.source_refs.max(0),
+      calculation_trace: envelopeSchema.shape.calculation_trace.max(0),
+    }),
+  ]);
+  const quoteV2EnvelopeSchema = envelopeSchema
+    .extend({ data: quoteV2ResultSchema.nullable() })
+    .superRefine((envelope, refinement) => {
+      if (!quoteV2EnvelopeBranches.safeParse(envelope).success) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote status and data do not match an allowed v2 envelope branch",
+        });
+      }
+      const sourceIds = envelope.source_refs.map((source) => source.source_id);
+      const traceIds = envelope.calculation_trace.flatMap(
+        (step) => step.source_ref_ids,
+      );
+      const data = envelope.data;
+      const dataSourceIds = data?.source_ref_ids ?? [];
+      const lineSourceIds = data?.line_items.flatMap(
+        (line) => line.source_ref_ids,
+      ) ?? [];
+      const union = [
+        ...new Set([...dataSourceIds, ...lineSourceIds, ...traceIds]),
+      ];
+      const sameSourceSet =
+        new Set(sourceIds).size === sourceIds.length &&
+        union.length === sourceIds.length &&
+        union.every((sourceId) => sourceIds.includes(sourceId));
+
+      if (
+        (data !== null || sourceIds.length > 0 || traceIds.length > 0) &&
+        !sameSourceSet
+      ) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote source IDs must match the outer source refs exactly",
+        });
+      }
+    })
+    .meta({
+      anyOf: z.toJSONSchema(quoteV2EnvelopeBranches, {
+        target: "draft-2020-12",
+      }).anyOf,
+    });
+  const quotePdfPreviewDataSchema = quoteCreatePdfWriteResultSchema.and(
+    z.object({ operation_status: z.literal("previewed") }),
+  );
+  const quotePdfCommittedDataSchema = quoteCreatePdfWriteResultSchema.and(
+    z.object({
+      operation_status: z.enum(["committed", "already_committed"]),
+    }),
+  );
+  const quotePdfEnvelopeBranches = z.union([
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: quotePdfPreviewDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+      blockers: envelopeSchema.shape.blockers.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.literal("success"),
+      data: quotePdfCommittedDataSchema,
+      source_refs: envelopeSchema.shape.source_refs.min(1),
+      calculation_trace: envelopeSchema.shape.calculation_trace.min(1),
+      blockers: envelopeSchema.shape.blockers.max(0),
+    }),
+    envelopeSchema.extend({
+      status: z.enum(["needs_input", "manual_review", "blocked", "unavailable"]),
+      data: z.null(),
+      blockers: envelopeSchema.shape.blockers.min(1),
+    }),
+  ]);
+  const quotePdfEnvelopeSchema = envelopeSchema
+    .extend({ data: quoteCreatePdfWriteResultSchema.nullable() })
+    .superRefine((envelope, refinement) => {
+      if (!quotePdfEnvelopeBranches.safeParse(envelope).success) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote PDF success must contain a valid preview or commit result",
+        });
+      }
+      if (envelope.status !== "success") return;
+      const sourceIds = envelope.source_refs.map((source) => source.source_id);
+      const data = envelope.data as Record<string, unknown>;
+      const readback = data.readback_evidence;
+      const rawDataIds = data.source_ref_ids;
+      const dataIds = Array.isArray(rawDataIds)
+        ? rawDataIds.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+      const rawReadbackIds = typeof readback === "object" && readback !== null && !Array.isArray(readback)
+        ? (readback as Record<string, unknown>).source_ref_ids
+        : null;
+      const readbackIds = Array.isArray(rawReadbackIds)
+        ? rawReadbackIds.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+      const referencedIds = [
+        ...dataIds,
+        ...readbackIds,
+        ...envelope.calculation_trace.flatMap((step) => step.source_ref_ids),
+      ];
+      const referencedSet = new Set(referencedIds);
+      const sourceIdsClosed = new Set(sourceIds).size === sourceIds.length &&
+        referencedSet.size === sourceIds.length &&
+        [...referencedSet].every((sourceId) => sourceIds.includes(sourceId));
+      if (!sourceIdsClosed) {
+        refinement.addIssue({
+          code: "custom",
+          message: "quote PDF source IDs must match the outer source refs exactly",
+        });
+      }
+    })
+    .meta({
+      anyOf: z.toJSONSchema(quotePdfEnvelopeBranches, {
+        target: "draft-2020-12",
+      }).anyOf,
+    });
+  const quotePdfUnavailableHandler: DomainToolHandler = () => ({
+    status: "unavailable",
+    data: null,
+    blockers: [{
+      code: "quote.create_pdf.handler_unavailable",
+      message: "The quote PDF handler is not configured; no PDF request was sent.",
+      severity: "error",
+      field: null,
+    }],
+    reviewStatus: "manual_review",
+  });
+  const quotePdfHandler: DomainToolHandler =
+    quotePdfEnabled && hasQuotePdfPort(adapters.quotePdf)
+      ? async (input, context, signal) => {
+          try {
+            if (!await quotePdfReady(signal)) {
+              return quotePdfUnavailableHandler(input, context, signal);
+            }
+          } catch {
+            return quotePdfUnavailableHandler(input, context, signal);
+          }
+          return bundle.handlers["quote.create_pdf"](input, context, signal);
+        }
+      : quotePdfUnavailableHandler;
   const handlers: ToolHandlerMap = {
     ...bundle.handlers,
     "cargo.calculate": cargoToolHandler,
     "container.plan_summary": containerPlanSummaryHandler,
+    "quote.create_pdf": quotePdfHandler,
   };
   const contracts: ToolContractMap = {
     ...bundle.contracts,
+    "quote.canada_final_mile.calculate": {
+      inputSchema: quoteV2InputSchema,
+      validateOutput: (data) => {
+        if (data !== null) quoteV2ResultSchema.parse(data);
+      },
+      outputSchema: quoteV2EnvelopeSchema,
+    },
     "cargo.calculate": cargoToolContract,
     "container.plan_summary": containerPlanSummaryToolContract,
+    "quote.create_pdf": {
+      inputSchema: quoteCreatePdfInputSchema,
+      validateOutput: (data) => {
+        if (data !== null) quoteCreatePdfWriteResultSchema.parse(data);
+      },
+      outputSchema: quotePdfEnvelopeSchema,
+    },
   };
   return { bundle, handlers, contracts };
 }
@@ -183,8 +412,9 @@ function buildComposition(
   adapters: FixtureAdapters,
   tools: CompositionTools,
   handler: McpHttpHandler,
-  readiness: () => Promise<PlatformReadiness>,
+  readiness: (signal?: AbortSignal) => Promise<PlatformReadiness>,
   closeExtra: () => Promise<void> = () => Promise.resolve(),
+  quotePdfStartupStatus: QuotePdfStartupStatus = "disabled",
 ): GatewayComposition {
   if (options.dataMode !== mode) {
     throw new Error(
@@ -201,6 +431,7 @@ function buildComposition(
     handlers: tools.handlers,
     contracts: tools.contracts,
     definitions,
+    quotePdfStartupStatus,
     handler,
     readiness,
     close: async () => {
@@ -243,12 +474,62 @@ export function createFixtureComposition(
       : { sessionRegistryOptions: options.sessionRegistryOptions }),
   };
   const platform = createFixturePlatformDependencies(platformOptions);
-  const adapters = createFixtureAdapters(
-    options.customsFixture === undefined
-      ? {}
-      : { customsFixture: options.customsFixture },
+  const fixtureAdapters = createFixtureAdapters(
+    {
+      ...(options.customsFixture === undefined
+        ? {}
+        : { customsFixture: options.customsFixture }),
+      ...(options.quotePdf === undefined ? {} : { quotePdf: options.quotePdf }),
+    },
   );
-  const tools = compositionTools(adapters);
+  const fixtureQuote = fixtureAdapters.quote;
+  const disabledQuote = new ExistingQuoteAdapter();
+  const adapters: FixtureAdapters = {
+    ...fixtureAdapters,
+    quote: {
+      calculate: async (input, context, signal) => {
+        if (options.quote !== undefined) {
+          return options.quote.calculate(input, context, signal);
+        }
+        const parsed = quoteV2InputSchema.safeParse(input);
+        const reviewField =
+          parsed.success && parsed.data.services.limited_access
+            ? "services.limited_access"
+            : parsed.success && parsed.data.services.remote_area
+              ? "services.remote_area"
+              : null;
+        if (reviewField !== null) {
+          return {
+            status: "manual_review",
+            data: null,
+            sourceRefs: [],
+            warnings: [{
+              code: "quote.zero_upstream_call",
+              message: "limited_access 或 remote_area 门禁不发起上游报价调用。",
+              severity: "warning" as const,
+              field: reviewField,
+            }],
+            blockers: [{
+              code: "quote.manual_review_required",
+              message: "该服务门禁需要人工复核，不能伪造报价、发布或来源证据。",
+              severity: "error" as const,
+              field: reviewField,
+            }],
+            calculationTrace: [],
+            reviewStatus: "manual_review",
+          };
+        }
+        return disabledQuote.calculate(input, context, signal);
+      },
+      previewDraft: (input) => fixtureQuote.previewDraft(input),
+      commitDraft: (input, signal) => fixtureQuote.commitDraft(input, signal),
+      readDraft: (input) => fixtureQuote.readDraft(input),
+    },
+  };
+  const tools = compositionTools(
+    adapters,
+    options.quote !== undefined && options.quotePdf !== undefined,
+  );
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
     allowedHosts: options.allowedHosts ?? ["mcp.example.invalid"],
@@ -260,7 +541,7 @@ export function createFixtureComposition(
     idempotencyRepository: platform.idempotencyRepository,
     sessionRegistry: platform.sessionRegistry,
     maxBodyBytes: options.maxBodyBytes ?? 32 * 1024,
-    requestTimeoutMs: options.requestTimeoutMs ?? 10_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
     requireHttps: true,
   });
   return buildComposition(
@@ -310,12 +591,21 @@ export function createProductionComposition(
     options.adapterSource,
   );
   const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
+  const disabledQuote = new ExistingQuoteAdapter();
+  const providedQuote = providedAdapters.quote;
   const adapters: FixtureAdapters = {
     ...providedAdapters,
-    quote: new ExistingQuoteAdapter(),
+    quote: providedQuote === undefined
+      ? disabledQuote
+      : {
+          calculate: (input, context, signal) =>
+            providedQuote.calculate(input, context, signal),
+          previewDraft: (input) => disabledQuote.previewDraft(input),
+          commitDraft: (input, signal) => disabledQuote.commitDraft(input, signal),
+          readDraft: (input) => disabledQuote.readDraft(input),
+        },
     review: new ManualTaskAdapter(),
   };
-  const tools = compositionTools(adapters);
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
   const validSessionOwner =
@@ -333,20 +623,49 @@ export function createProductionComposition(
       : []),
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
     ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
+    ...(options.quotePdfStartupFailure === "configuration_invalid"
+      ? ["production_quote_pdf_configuration_invalid"]
+      : []),
+    ...(options.quotePdfStartupFailure === "adapter_source_invalid"
+      ? ["production_adapter_source_invalid"]
+      : []),
   ];
+  const quotePdfConfigured = options.quotePdfEnabled === true &&
+    hasQuotePdfPort(providedAdapters.quotePdf) &&
+    structuralReasons.length === 0;
+  const quotePdfStartupStatus: QuotePdfStartupStatus =
+    options.quotePdfStartupFailure ??
+    (options.quotePdfEnabled === true && hasQuotePdfPort(providedAdapters.quotePdf)
+      ? "configured"
+      : "disabled");
 
-  const readiness = async (): Promise<PlatformReadiness> => {
-    const platformState = await platform.readiness();
+  const readiness = async (signal?: AbortSignal): Promise<PlatformReadiness> => {
+    let platformState: PlatformReadiness;
+    try {
+      platformState = await withAbort(platform.readiness(), signal);
+    } catch {
+      return { ready: false, reasons: ["production_runtime_unavailable"] };
+    }
     const reasons = [...platformState.reasons, ...structuralReasons];
     const liveChecks = [
-      verifierStatus.valid ? checkProductionHealth(options.tokenVerifier!, verifierStatus.unhealthyReason) : null,
-      adapterStatus.valid ? checkProductionHealth(options.adapterSource!, adapterStatus.unhealthyReason) : null,
+      verifierStatus.valid
+        ? checkProductionHealth(options.tokenVerifier!, verifierStatus.unhealthyReason, signal)
+        : null,
+      adapterStatus.valid
+        ? checkProductionHealth(options.adapterSource!, adapterStatus.unhealthyReason, signal)
+        : null,
     ].filter((check): check is Promise<string | null> => check !== null);
     const liveReasons = await Promise.all(liveChecks);
     reasons.push(...liveReasons.filter((reason): reason is string => reason !== null));
     const uniqueReasons = [...new Set(reasons)];
     return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
   };
+
+  const tools = compositionTools(
+    adapters,
+    quotePdfConfigured,
+    async (signal) => (await readiness(signal)).ready,
+  );
 
   const handler =
     structuralReasons.length > 0 || platform.dependencies === undefined
@@ -364,7 +683,7 @@ export function createProductionComposition(
           sessionBindingStore: platform.dependencies.sessionBindingStore,
           sessionOwnerId: options.sessionOwnerId!,
           maxBodyBytes: options.maxBodyBytes ?? 32 * 1024,
-          requestTimeoutMs: options.requestTimeoutMs ?? 10_000,
+          requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
           requireHttps: true,
         });
 
@@ -379,10 +698,12 @@ export function createProductionComposition(
       const results = await Promise.allSettled([
         platform.close(),
         ...(options.tokenVerifier === undefined ||
+        options.tokenVerifier === null ||
         typeof options.tokenVerifier.close !== "function"
           ? []
           : [options.tokenVerifier.close()]),
         ...(options.adapterSource === undefined ||
+        options.adapterSource === null ||
         typeof options.adapterSource.close !== "function"
           ? []
           : [options.adapterSource.close()]),
@@ -391,6 +712,7 @@ export function createProductionComposition(
         throw new Error("A production composition dependency could not be closed.");
       }
     },
+    quotePdfStartupStatus,
   );
 }
 
@@ -411,13 +733,17 @@ function productionDependencyStatus(
   if (value === undefined) {
     return { valid: false, reason: missingReason, unhealthyReason };
   }
+  if (typeof value !== "object" || value === null) {
+    return { valid: false, reason: invalidReason, unhealthyReason };
+  }
   const record = value as unknown as Record<string, unknown>;
   if (
     record.kind !== expectedKind ||
     typeof record.health !== "function" ||
     typeof record.close !== "function" ||
     (expectedKind === "token_verifier" && typeof record.verify !== "function") ||
-    (expectedKind === "adapter_source" && !Object.hasOwn(record, "adapters"))
+    (expectedKind === "adapter_source" &&
+      (!Object.hasOwn(record, "adapters") || !hasProductionAdapterSet(record.adapters)))
   ) {
     return { valid: false, reason: invalidReason, unhealthyReason };
   }
@@ -427,10 +753,39 @@ function productionDependencyStatus(
 async function checkProductionHealth(
   dependency: ManagedProductionDependency,
   reason: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   try {
-    return (await dependency.health()).ready ? null : reason;
+    return (await withAbort(dependency.health(), signal)).ready ? null : reason;
   } catch {
     return reason;
   }
+}
+
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise;
+  const abortError = signal.reason instanceof Error
+    ? signal.reason
+    : new Error("request aborted");
+  if (signal.aborted) {
+    return Promise.reject(abortError);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(abortError);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error instanceof Error ? error : new Error("request failed"));
+      },
+    );
+  });
 }

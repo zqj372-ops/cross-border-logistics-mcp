@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  createProductionApiAdapterSource,
+} from "../../src/logistics_mcp/server/composition";
+import { createQuotePdfStartupOptions } from "../../src/logistics_mcp/server/start";
+
 const root = resolve(import.meta.dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
@@ -91,6 +96,16 @@ describe("safe deployment artifacts", () => {
       expect(compose).toContain(`\${${required}:?`);
       expect(compose).not.toContain(`\${${required}:-`);
     }
+    expect(compose).toContain('MCP_QUOTE_PDF_ENABLED: "${MCP_QUOTE_PDF_ENABLED:-false}"');
+    for (const optional of [
+      "MCP_QUOTE_PDF_BASE_URL",
+      "MCP_QUOTE_PDF_ALLOWED_HOSTS",
+      "MCP_QUOTE_PDF_TENANT_ID",
+      "MCP_QUOTE_PDF_BEARER_TOKEN",
+    ]) {
+      expect(compose).toContain(`${optional}: "\${${optional}:-}"`);
+      expect(compose).not.toContain(`\${${optional}:?`);
+    }
     for (const required of [
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
@@ -108,6 +123,30 @@ describe("safe deployment artifacts", () => {
     expect(compose).toMatch(/\/var\/lib\/logistics-mcp/);
     expect(compose).toMatch(/volumes:/);
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(env).toContain("MCP_QUOTE_PDF_ENABLED=false");
+    expect(env).toContain("MCP_QUOTE_PDF_BASE_URL=https://pdf.example.invalid");
+    expect(env).toContain("MCP_QUOTE_PDF_ALLOWED_HOSTS=pdf.example.invalid");
+    expect(env).toContain("MCP_QUOTE_PDF_TENANT_ID=tenant-disabled-example");
+    expect(env).toMatch(/^MCP_QUOTE_PDF_BEARER_TOKEN=\s*$/m);
+    expect(env).toMatch(/secret-managed|secret injection/i);
+  });
+
+  it("fails closed when PDF enablement omits any required setting", () => {
+    const base = createProductionApiAdapterSource();
+    const complete = {
+      MCP_QUOTE_PDF_ENABLED: "true",
+      MCP_QUOTE_PDF_BASE_URL: "https://pdf.example.invalid",
+      MCP_QUOTE_PDF_ALLOWED_HOSTS: "pdf.example.invalid",
+      MCP_QUOTE_PDF_TENANT_ID: "tenant-disabled-example",
+      MCP_QUOTE_PDF_BEARER_TOKEN: "runtime-secret-value",
+    };
+    for (const name of Object.keys(complete).filter((key) => key !== "MCP_QUOTE_PDF_ENABLED")) {
+      const environment = { ...complete };
+      delete environment[name as keyof typeof environment];
+      expect(createQuotePdfStartupOptions(base, { env: environment })).toEqual({
+        quotePdfStartupFailure: "configuration_invalid",
+      });
+    }
   });
 
   it("sets runtime request and header timeout guards", () => {

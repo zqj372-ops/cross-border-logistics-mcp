@@ -16,12 +16,25 @@ export interface FetchJsonClientOptions {
   readonly maxResponseBytes?: number;
   readonly fetchImpl?: FetchImplementation;
 }
+export interface FetchJsonAllowedStatusResponse {
+  readonly status: number;
+  readonly body: unknown;
+}
 export interface FetchJsonClient {
-  get(path: string, headers?: Readonly<Record<string, string>>): Promise<unknown>;
+  get(
+    path: string,
+    headers?: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+    allowedStatuses?: readonly number[],
+    timeoutMs?: number,
+  ): Promise<unknown>;
   post(
     path: string,
     body: unknown,
     headers?: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+    allowedStatuses?: readonly number[],
+    timeoutMs?: number,
   ): Promise<unknown>;
 }
 
@@ -31,6 +44,7 @@ export type HttpAdapterErrorCode =
   | "upstream_host_not_allowed"
   | "upstream_redirect_rejected"
   | "upstream_timeout"
+  | "upstream_aborted"
   | "upstream_response_too_large"
   | "upstream_invalid_json"
   | "upstream_http_error"
@@ -40,6 +54,7 @@ export class HttpAdapterError extends Error {
   constructor(
     readonly code: HttpAdapterErrorCode,
     message: string,
+    readonly status?: number,
   ) {
     super(message);
     this.name = "HttpAdapterError";
@@ -219,6 +234,9 @@ export function createFetchJsonClient(
     path: string,
     body: unknown,
     headers: Readonly<Record<string, string>> | undefined,
+    signal: AbortSignal | undefined,
+    allowedStatuses: readonly number[] | undefined,
+    timeoutOverrideMs: number | undefined,
   ): Promise<unknown> {
     if (options.enabled !== true) {
       throw new HttpAdapterError(
@@ -226,40 +244,79 @@ export function createFetchJsonClient(
         "The production upstream adapter is disabled until its endpoint contract is verified.",
       );
     }
-    const url = resolveAllowedUrl(baseUrl, path, options.allowedHosts);
+    if (signal?.aborted) {
+      throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
+    }
+    const requestTimeoutMs = validatePositiveInteger(
+      timeoutOverrideMs ?? timeoutMs,
+      "timeoutMs",
+    );
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const requestHeadersValue = requestHeaders(headers);
-    const requestInit: RequestInit = {
-      method,
-      headers: requestHeadersValue,
-      redirect: "error",
-      signal: controller.signal,
-      ...(method === "POST"
-        ? {
-            body: JSON.stringify(body),
-            headers: new Headers({
-              ...Object.fromEntries(requestHeadersValue.entries()),
-              "content-type": "application/json",
-            }),
-          }
-        : {}),
+    let rejectCallerAbort: ((error: HttpAdapterError) => void) | undefined;
+    const callerAbort = signal === undefined
+      ? null
+      : new Promise<never>((_, reject) => {
+          rejectCallerAbort = reject;
+        });
+    const abort = (): void => {
+      controller.abort(signal?.reason);
+      rejectCallerAbort?.(
+        new HttpAdapterError("upstream_aborted", "The upstream request was aborted."),
+      );
     };
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(
-          new HttpAdapterError(
-            "upstream_timeout",
-            "The upstream request exceeded the configured timeout.",
-          ),
-        );
-      }, timeoutMs);
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    let dispatched = false;
+    let listenerAdded = false;
     try {
+      const url = resolveAllowedUrl(baseUrl, path, options.allowedHosts);
+      if (signal?.aborted) {
+        throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
+      }
+      signal?.addEventListener("abort", abort, { once: true });
+      listenerAdded = signal !== undefined;
+      const requestHeadersValue = requestHeaders(headers);
+      const requestInit: RequestInit = {
+        method,
+        headers: requestHeadersValue,
+        redirect: "error",
+        signal: controller.signal,
+        ...(method === "POST"
+          ? {
+              body: JSON.stringify(body),
+              headers: new Headers({
+                ...Object.fromEntries(requestHeadersValue.entries()),
+                "content-type": "application/json",
+              }),
+            }
+          : {}),
+      };
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(
+            new HttpAdapterError(
+              "upstream_timeout",
+              "The upstream request exceeded the configured timeout.",
+            ),
+          );
+        }, requestTimeoutMs);
+      });
+      const abortables = [timeout, ...(callerAbort === null ? [] : [callerAbort])];
+      let fetchPromise: Promise<Response>;
+      try {
+        fetchPromise = fetchImpl(url.toString(), requestInit);
+      } catch {
+        throw new HttpAdapterError(
+          "upstream_request_invalid",
+          "The upstream request could not be started.",
+        );
+      }
+      dispatched = true;
       const response = await Promise.race([
-        fetchImpl(url.toString(), requestInit),
-        timeout,
+        fetchPromise,
+        ...abortables,
       ]);
       if (response.status >= 300 && response.status < 400) {
         throw new HttpAdapterError(
@@ -267,34 +324,74 @@ export function createFetchJsonClient(
           "The upstream redirect was rejected by policy.",
         );
       }
-      if (!response.ok) {
+      if (!response.ok && !(allowedStatuses?.includes(response.status) ?? false)) {
         throw new HttpAdapterError(
           "upstream_http_error",
           "The upstream service returned a non-success response.",
+          response.status,
         );
       }
-      const text = await readBoundedText(response, maxResponseBytes);
+      let text: string;
       try {
-        return JSON.parse(text) as unknown;
-      } catch {
+        text = await Promise.race([
+          readBoundedText(response, maxResponseBytes),
+          ...abortables,
+        ]);
+      } catch (error: unknown) {
+        if (timedOut) {
+          throw new HttpAdapterError(
+            "upstream_timeout",
+            "The upstream request exceeded the configured timeout.",
+          );
+        }
+        if (signal?.aborted) {
+          throw new HttpAdapterError("upstream_aborted", "The upstream request was aborted.");
+        }
+        if (response.status >= 400) {
+          if (error instanceof HttpAdapterError) {
+            throw new HttpAdapterError(error.code, error.message, response.status);
+          }
+          throw new HttpAdapterError(
+            "upstream_http_error",
+            "The upstream response could not be read.",
+            response.status,
+          );
+        }
+        throw error;
+      }
+      try {
+        const body = JSON.parse(text) as unknown;
+        return allowedStatuses?.includes(response.status) === true
+          ? { status: response.status, body } satisfies FetchJsonAllowedStatusResponse
+          : body;
+      } catch (error: unknown) {
+        if (error instanceof HttpAdapterError && response.status >= 400 && error.status === undefined) {
+          throw new HttpAdapterError(error.code, error.message, response.status);
+        }
         throw new HttpAdapterError(
           "upstream_invalid_json",
           "The upstream response was not valid JSON.",
+          response.status >= 400 ? response.status : undefined,
         );
       }
     } catch (error: unknown) {
       if (error instanceof HttpAdapterError) throw error;
       throw new HttpAdapterError(
-        "upstream_http_error",
-        "The upstream request failed without exposing response details.",
+        dispatched ? "upstream_http_error" : "upstream_request_invalid",
+        dispatched
+          ? "The upstream request failed without exposing response details."
+          : "The upstream request setup is invalid.",
       );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      if (listenerAdded) signal?.removeEventListener("abort", abort);
     }
   }
 
   return {
-    get: (path, headers) => request("GET", path, undefined, headers),
-    post: (path, body, headers) => request("POST", path, body, headers),
+    get: (path, headers, signal, allowedStatuses, requestTimeoutMs) =>
+      request("GET", path, undefined, headers, signal, allowedStatuses, requestTimeoutMs),
+    post: (path, body, headers, signal, allowedStatuses, requestTimeoutMs) =>
+      request("POST", path, body, headers, signal, allowedStatuses, requestTimeoutMs),
   };
 }

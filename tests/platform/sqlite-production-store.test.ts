@@ -146,6 +146,62 @@ describe("SQLite production store", () => {
     expect(reservations.filter((result) => !result.inProgress)).toHaveLength(1);
   });
 
+  it("releases only the matching reserved row across reopen and preserves commits", async () => {
+    const path = databasePath();
+    let now = 1_000;
+    const first = track(new SqliteProductionStore(path, 100, () => now));
+    const request = {
+      tenantId: "tenant_demo",
+      tool: "quote.save_draft",
+      key: "idem_sqlite_release_001",
+      requestHash: "hash_release",
+    };
+    const reservation = await first.reserve(request);
+    await first.close();
+
+    const reopened = track(new SqliteProductionStore(path, 100, () => now));
+    await expect(reopened.release({
+      ...request,
+      expectedExpiresAt: reservation.record.expiresAt,
+    })).resolves.toBeUndefined();
+    await expect(reopened.get(request.tenantId, request.tool, request.key)).resolves.toBeNull();
+
+    const committedRequest = {
+      ...request,
+      key: "idem_sqlite_release_committed_001",
+      requestHash: "hash_release_committed",
+    };
+    const committedReservation = await reopened.reserve(committedRequest);
+    await reopened.commit({ ...committedRequest, result: { committed: true } });
+    await expect(reopened.release({
+      ...committedRequest,
+      expectedExpiresAt: committedReservation.record.expiresAt,
+    })).resolves.toBeUndefined();
+    await expect(reopened.get(
+      committedRequest.tenantId,
+      committedRequest.tool,
+      committedRequest.key,
+    )).resolves.toMatchObject({ status: "committed", result: { committed: true } });
+
+    const staleRequest = {
+      ...request,
+      key: "idem_sqlite_release_stale_001",
+      requestHash: "hash_release_stale",
+    };
+    const stale = await reopened.reserve(staleRequest);
+    now = stale.record.expiresAt;
+    const replacement = await reopened.reserve(staleRequest);
+    await expect(reopened.release({
+      ...staleRequest,
+      expectedExpiresAt: stale.record.expiresAt,
+    })).resolves.toBeUndefined();
+    await expect(reopened.get(
+      staleRequest.tenantId,
+      staleRequest.tool,
+      staleRequest.key,
+    )).resolves.toMatchObject({ status: "reserved", expiresAt: replacement.record.expiresAt });
+  });
+
   it("persists session bindings and supports get, replace, delete, and expiry", async () => {
     const path = databasePath();
     let now = 1_000;

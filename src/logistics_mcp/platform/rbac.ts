@@ -16,6 +16,7 @@ export const phaseOneToolNames = [
   "customs.ca.estimate",
   "quote.save_draft",
   "review.create_task",
+  "quote.create_pdf",
 ] as const;
 
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
@@ -89,6 +90,11 @@ const toolPolicies: Record<PhaseOneToolName, ToolPolicy> = {
     permission: "review:create_task",
     kind: "write",
     roles: taskRoles,
+  },
+  "quote.create_pdf": {
+    permission: "quote:pdf_write",
+    kind: "write",
+    roles: ["admin", "sales", "operator"],
   },
 };
 

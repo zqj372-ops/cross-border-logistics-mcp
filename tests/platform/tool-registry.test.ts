@@ -16,6 +16,7 @@ import {
 import {
   MemoryIdempotencyRepository,
   IdempotencyConflictError,
+  type IdempotencyRepository,
 } from "../../src/logistics_mcp/platform/idempotency";
 
 const context = parseExecutionContext({
@@ -41,7 +42,7 @@ const writeContext = parseExecutionContext({
 });
 
 describe("Phase 1 tool registry", () => {
-  it("registers exactly the nine baseline tools", () => {
+  it("registers the baseline tools plus quote PDF creation", () => {
     expect(phaseOneToolNames).toEqual([
       "knowledge.search_curated",
       "system.get_data_status",
@@ -52,6 +53,7 @@ describe("Phase 1 tool registry", () => {
       "customs.ca.estimate",
       "quote.save_draft",
       "review.create_task",
+      "quote.create_pdf",
     ]);
     expect(registerPhaseOneTools().map((tool) => tool.name)).toEqual(
       phaseOneToolNames,
@@ -60,11 +62,29 @@ describe("Phase 1 tool registry", () => {
 
   it("describes an input/output schema and permission for every tool", () => {
     for (const tool of registerPhaseOneTools()) {
-      expect(tool.inputSchemaId).toMatch(/2026-08-11\.v1/);
+      expect(tool.inputSchemaId).toMatch(
+        tool.name === "quote.canada_final_mile.calculate"
+          ? /2026-08-13\.v2/
+          : tool.name === "quote.create_pdf"
+            ? /2026-08-14\.v1/
+            : /2026-08-11\.v1/,
+      );
       expect(tool.outputSchemaId).toMatch(/schema\.json$/);
       expect(tool.permission).toMatch(/:/);
       expect(["read", "write"]).toContain(tool.kind);
     }
+  });
+
+  it("publishes the quote PDF write metadata and dedicated output contract", () => {
+    const tool = registerPhaseOneTools().find(
+      (candidate) => candidate.name === "quote.create_pdf",
+    );
+
+    expect(tool?.title).toBe("创建报价 PDF");
+    expect(tool?.description).toContain("预览");
+    expect(tool?.outputSchemaId).toBe("quote-create-pdf-envelope.schema.json");
+    expect(tool?.permission).toBe("quote:pdf_write");
+    expect(tool?.kind).toBe("write");
   });
 
   it("does not register generic or forbidden write capabilities", () => {
@@ -139,6 +159,115 @@ describe("Phase 1 tool registry", () => {
       }),
     ).rejects.toThrow(ToolContractValidationError);
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a new envelope that fails a tool-specific output schema", async () => {
+    const tool = registerPhaseOneTools(
+      {
+        "cargo.calculate": () => ({
+          status: "success" as const,
+          data: { result: "ok" },
+        }),
+      },
+      {
+        "cargo.calculate": {
+          inputSchema: z.record(z.string(), z.unknown()),
+          validateOutput: () => undefined,
+          outputSchema: z.never(),
+        },
+      },
+    ).find((candidate) => candidate.name === "cargo.calculate");
+
+    await expect(
+      executeRegisteredTool(tool!, {}, context, {
+        requestId: "req_contract_schema_001",
+        auditId: "audit_contract_schema_001",
+      }),
+    ).rejects.toThrow(ToolContractValidationError);
+  });
+
+  it("rejects a valid envelope returned by a durable idempotency replay when its output schema fails", async () => {
+    const key = "idem_registry_bad_replay_123";
+    const input = {
+      write_context: {
+        tenant_context: {
+          tenant_id: "tenant_demo",
+          actor_id: "actor_sales",
+          actor_role: "sales",
+          client_id: "client_demo",
+          session_id: "session_demo",
+        },
+        idempotency_key: key,
+        operation_mode: "preview",
+        preview_ref: null,
+        approval: {
+          required: false,
+          status: "not_required",
+          approval_id: null,
+        },
+      },
+    };
+    const durableReplay: IdempotencyRepository & { readonly durability: "durable" } = {
+      durability: "durable",
+      reserve: (request) => Promise.resolve({
+        replayed: true,
+        inProgress: false,
+        record: {
+          tenantId: request.tenantId,
+          tool: request.tool,
+          key: request.key,
+          requestHash: request.requestHash,
+          previewRef: null,
+          status: "committed",
+          recordId: null,
+          result: {
+            schema_version: "2026-08-11.v1",
+            request_id: "req_replay_001",
+            status: "success",
+            data: null,
+            source_refs: [],
+            assumptions: [],
+            warnings: [],
+            blockers: [],
+            calculation_trace: [],
+            review_status: "not_required",
+            audit_id: "audit_replay_001",
+          },
+          expiresAt: Date.now() + 60_000,
+        },
+      }),
+      commit: (request) => Promise.resolve({
+        tenantId: request.tenantId,
+        tool: request.tool,
+        key: request.key,
+        requestHash: request.requestHash,
+        previewRef: null,
+        status: "committed",
+        recordId: null,
+        result: request.result,
+        expiresAt: Date.now() + 60_000,
+      }),
+      release: () => Promise.resolve(),
+      get: () => Promise.resolve(null),
+    };
+    const tool = registerPhaseOneTools(
+      { "quote.save_draft": () => ({ status: "success", data: null }) },
+      {
+        "quote.save_draft": {
+          inputSchema: z.record(z.string(), z.unknown()),
+          validateOutput: () => undefined,
+          outputSchema: z.object({ marker: z.string() }).strict(),
+        },
+      },
+    ).find((candidate) => candidate.name === "quote.save_draft");
+
+    await expect(
+      executeRegisteredTool(tool!, input, writeContext, {
+        requestId: "req_contract_schema_002",
+        auditId: "audit_contract_schema_002",
+        idempotencyRepository: durableReplay,
+      }),
+    ).rejects.toThrow(ToolContractValidationError);
   });
 
   it("enforces write preview/readback and replays an idempotent result", async () => {

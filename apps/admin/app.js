@@ -59,8 +59,8 @@ const EXECUTION_GROUP_DEFINITIONS = [
   {
     key: "external",
     label: "外部接口调用",
-    description: "报价请求调用智能报价服务，关务请求调用关务查询服务；单一来源故障只关闭相关工具。",
-    toolNames: ["quote.canada_final_mile.calculate", "customs.ca.search", "customs.ca.estimate"],
+    description: "报价和报价单请求调用相应业务接口，关务请求调用关务查询服务；单一来源故障只关闭相关工具。",
+    toolNames: ["quote.canada_final_mile.calculate", "quote.create_pdf", "customs.ca.search", "customs.ca.estimate"],
   },
 ];
 
@@ -296,18 +296,16 @@ const VIEW_META = {
   },
 };
 
-const state = isBrowser
-  ? {
-      mode: new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
-      view: getViewFromHash(),
-      data: null,
-      loading: true,
-      error: null,
-      roleFilter: "all",
-      localDraft: null,
-      architectureSelection: null,
-    }
-  : null;
+const state = {
+  mode: isBrowser && new URLSearchParams(window.location.search).get("fixture") === "1" ? "fixture" : "live",
+  view: isBrowser ? getViewFromHash() : "overview",
+  data: null,
+  loading: true,
+  error: null,
+  roleFilter: "all",
+  localDraft: null,
+  architectureSelection: null,
+};
 
 const content = isBrowser ? document.querySelector("#content") : null;
 const liveRegion = isBrowser ? document.querySelector("#live-region") : null;
@@ -364,6 +362,7 @@ export function toChineseDisplayText(value, fallback = "—") {
     [/Schema/gi, "字段格式"],
     [/RBAC/g, "角色权限"],
     [/allowlist/gi, "权限清单"],
+    [/HTTPS/g, "安全连接"],
     [/PDF/g, "报价单"],
     [/API/g, "接口"],
     [/AI/g, "智能"],
@@ -650,7 +649,7 @@ function renderAdapters(data) {
       ${renderSourceTable(supportingSources, true)}
     </section>
     <div class="section-grid">
-      <section class="panel" aria-labelledby="adapter-boundary-title"><div class="card-head"><div><h2 id="adapter-boundary-title">权威边界</h2><p>页面只说明业务含义，不显示内部路径。</p></div></div><dl class="key-value-list"><div class="key-value-row"><dt>智能报价服务</dt><dd>外部接口；当前正式报价路径保持不可用并失败闭合，未获生产启用资格。</dd></div><div class="key-value-row"><dt>关务查询服务</dt><dd>外部接口；先检查状态再查询，未就绪时必须显示不可用或人工复核。</dd></div><div class="key-value-row"><dt>报价单服务</dt><dd>外部接口；接口约定未核验，未注册任何报价单工具，不在本地替代。</dd></div><div class="key-value-row"><dt>本地确定性工具</dt><dd>本地只计算货物和装柜结果；智能模型只能解释或预填。</dd></div></dl></section>
+      <section class="panel" aria-labelledby="adapter-boundary-title"><div class="card-head"><div><h2 id="adapter-boundary-title">权威边界</h2><p>页面只说明业务含义，不显示内部路径。</p></div></div><dl class="key-value-list"><div class="key-value-row"><dt>智能报价服务</dt><dd>外部接口；当前正式报价路径保持不可用并失败闭合，未获生产启用资格。</dd></div><div class="key-value-row"><dt>关务查询服务</dt><dd>外部接口；先检查状态再查询，未就绪时必须显示不可用或人工复核。</dd></div><div class="key-value-row"><dt>报价单服务</dt><dd>接口已完成，等待正式安全连接地址与租户凭证验证；当前不可用，不在本地替代。</dd></div><div class="key-value-row"><dt>本地确定性工具</dt><dd>本地只计算货物和装柜结果；智能模型只能解释或预填。</dd></div></dl></section>
       <section class="panel" aria-labelledby="adapter-failure-title"><div class="card-head"><div><h2 id="adapter-failure-title">失败处理</h2><p>没有可靠来源就停在当前状态。</p></div>${statusMarkup("unavailable")}</div><ul class="plain-list"><li>接口不可达：显示不可用。</li><li>版本或租户边界不清：转人工复核。</li><li>权限或阶段禁止：显示已阻断。</li><li>不使用地图、聊天或相似记录补齐权威数据。</li></ul></section>
     </div>`;
 }
@@ -894,6 +893,18 @@ function renderView() {
     default:
       return renderOverview(state.data);
   }
+}
+
+export function renderSnapshotForSelfCheck(snapshot, view = "overview") {
+  state.mode = snapshot?.environment === "fixture" || snapshot?.environment === "演示环境" ? "fixture" : "live";
+  state.view = Object.hasOwn(VIEW_META, view) ? view : "overview";
+  state.data = validateSnapshot(snapshot);
+  state.loading = false;
+  state.error = null;
+  state.roleFilter = "all";
+  state.localDraft = null;
+  state.architectureSelection = null;
+  return renderView();
 }
 
 function updateContext() {

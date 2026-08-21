@@ -18,10 +18,11 @@
 | `system.get_data_status` | 查询现有系统和数据发布就绪状态 | 读 | `system:read` | 直接映射源状态 | 把 `ready=false` 补成可用 |
 | `cargo.calculate` | 计算 CBM、体积重、实际重、分泡和计费重 | 读/试算 | `quote:calculate` | 单位换算、合计、分泡公式、互斥重量证据 | 缺证据时猜重量、使用全局除数 |
 | `container.plan_summary` | 计算理论容量与可操作目标的装载摘要 | 读/试算 | `container:calculate` | 汇总方数、重量、比率、超方超重和顺序摘要 | 3D 装箱承诺、把物理容量当可操作容量 |
-| `quote.canada_final_mile.calculate` | 请求时调用现有 AI 报价 API 的加拿大尾程试算 | 读/试算 | `quote:calculate` | 只映射 API 响应和真实来源；当前合同缺口保持 `unavailable` | 本地持有 Zone/价格/规则表、默认地址类型、线性外推、改价、发送 |
+| `quote.canada_final_mile.calculate` | 按明确版本请求经发布且通过合同核验的加拿大尾程报价服务试算 | 读/试算 | `quote:calculate` | v1 历史契约继续可校验；v2 只做严格输入/身份/来源投影，当前 `production_eligible=false` | 本地持有 Zone/价格/规则表、默认货物字段、线性外推、改价、发送 |
 | `customs.ca.search` | 查询加拿大 HS 候选、税目、措施和缺失问题 | 读 | `tariff:read` | RiskCustoms 候选和来源/有效期映射 | 把候选变正式归类、绕过 ready gate |
 | `customs.ca.estimate` | 预留进口税估算工具；当前无已核验生产 API 合同 | 读/试算 | `tariff:estimate` | 固定 `unavailable`，不拼造税额 | 正式报关结论、补造税率/SIMA |
-| `quote.save_draft` | 保存现有报价系统的报价草稿 | 写（窄） | `quote:draft_write` | 当前固定 `unavailable`；只有生产草稿 API 合同、审批和写后读回齐全后才可启用 | 发布、发送、覆盖历史报价、改价格/Zone |
+| `quote.save_draft` | 保存经授权报价系统的报价草稿 | 写（窄） | `quote:draft_write` | 当前固定 `unavailable`；只有生产草稿 API 合同、审批和写后读回齐全后才可启用 | 发布、发送、覆盖历史报价、改价格/Zone |
+| `quote.create_pdf` | 从当前权威报价创建不可发送的内部 PDF 草稿 | 写（窄、非破坏） | `quote:pdf_write` | `write`/idempotent/open-world；preview 只形成服务端候选 hash，commit 只投影权威 USD lines 并 exact readback；已登记但默认 handler unavailable、production disabled | 下载、发送、发布、删除、覆盖、模板、状态查询、模型提供金额/line items |
 | `review.create_task` | 创建一个人工复核任务 | 写（窄） | `review:create_task` | 任务字段、原因码、opaque context、读回可确认 | 自动解决复核、自动上线规则 |
 
 ## 逐项契约
@@ -116,7 +117,7 @@ loading_constraints: { sensitive_at_head: boolean, declaration_at_tail: boolean,
 - `manual_review`：无运营目标版本、约束冲突、超方/超重或需要现场确认。
 - `blocked`：请求生成 3D/坐标承诺或写入仓库装柜记录。
 
-### `quote.canada_final_mile.calculate`
+### `quote.canada_final_mile.calculate` v1（历史兼容）
 
 **输入**
 
@@ -130,9 +131,46 @@ services: { appointment: boolean, liftgate: boolean, limited_access: boolean, re
 effective_at: YYYY-MM-DD, required
 ```
 
-请求时由适配器 POST `/quotes/zone-calculate`；MCP 不持有 Zone、价格或规则表，也不在本地运行确定性报价引擎。只映射 API 响应和真实来源，输出 `quote-result.schema.json`，Phase 1 强制 `sendable=false`。
+候选报价预览端点尚未发布为可用上游合同，当前不调用；未来仅在正式合同获批后由适配器按明确端点投影。MCP 不持有 Zone、价格或规则表，也不在本地运行确定性报价引擎。只映射 API 响应和真实来源，输出 `quote-result.schema.json`，Phase 1 强制 `sendable=false`。
 
-**当前 API 状态**
+v1 的历史输入/输出 Schema 和示例继续保留，可用于兼容校验；`cargo.billing_pallets` 不得在任何迁移中被静默解释为 v2 的 `explicit_pallet_count`。v1 `production_eligible=false`，生产固定返回 `unavailable`。
+
+### `quote.canada_final_mile.calculate` v2（评审契约，未启用）
+
+**输入 Schema：** `quote-request-v2.schema.json`
+**版本：** `quote-request@2026-08-13.v2`
+**统一包络：** v2 使用独立 `quote-envelope-v2.schema.json`；字段形状和 `schema_version=2026-08-11.v1` 与统一包络一致，旧 `envelope.schema.json` 不引用 v2，不扩展其他工具字段、状态或权限。
+
+```text
+schema_version: 2026-08-11.v1, required
+version: quote-request@2026-08-13.v2, required
+origin: { warehouse_code: string, province: string }, required; warehouse_code 只经租户范围显式映射
+destination: { country: const CA, province: string|null, city: string|null, postal_code: string|null, address_type: commercial|residential|unknown, full_address_ref: OpaqueReference|null }, required
+cargo: { cargo_result_ref: string|null, explicit_pallet_count: null|integer>=1, longest_side: LengthMeasurement(>0), is_stackable: boolean, weight_kg: WeightMeasurement(>0), pieces: integer>=1, package_types: string[exactly 1], total_volume: VolumeMeasurement(>0) }, required
+services: { appointment: boolean, liftgate: boolean, pallet_jack: boolean, detention_minutes: integer>=0, limited_access: boolean, remote_area: boolean }, required
+effective_at: YYYY-MM-DD, required
+```
+
+v2 不接受公开 `tenant_id` 或 `cargo.billing_pallets`。`explicit_pallet_count` 必须显式出现；未知时只能为 `null`，不能用 `0` 或默认托数。`longest_side`、`weight_kg`、`total_volume` 严格大于 `0`，`package_types` 恰好一个值，adapter 不猜选。`limited_access=true` 或 `remote_area=true` 时必须零调用并进入 `manual_review`；此类零调用门禁使用 `data=null`、空 `source_refs` 和空 `calculation_trace`，不得伪造报价、发布或来源。
+
+**输出 Schema：** `quote-result-v2.schema.json`；v2 envelope Schema：`quote-envelope-v2.schema.json`。v2 data 只允许来自 `ready=true`、`test_data=false` 的 active manifest；`valid_from`/`valid_to` 是必需非空 Date。除现有金额、版本、来源和 `sendable=false` 外，必须保留 `tenant`、`effective_date`、`ready`、`test_data`、canonical `origin`、上游结果 `billing_pallets`、`snapshot_hash`、`service_version`、`contract_version`、`release_id`、`release_hash` 和 `published_at`。`quote.calculate` 只读，不接受 `draft_saved`；金额仍为 decimal string + ISO 4217 三位币种。
+
+`origin` 是引擎实际返回的 canonical origin，不是 `origin.warehouse_code`；二者必须通过服务端显式映射关联。adapter 必须验证 active manifest、有效期覆盖 `effective_date`、`release_hash === snapshot_hash`，并拒绝不一致或缺失的发布证据。v2 外层状态精确映射为：`success` ↔ `quote_status=calculated`；带 quote data 的 `manual_review` ↔ `quote_status=manual_review|not_calculable`；零调用门禁的 `manual_review` ↔ `data=null`、空 `source_refs`、空 `calculation_trace`；`unavailable|blocked|needs_input` ↔ `data=null`。带 v2 `data` 的 `success`/`manual_review` envelope 必须有至少一项 `source_refs`，且 data、所有 line items、calculation trace 的 `source_ref_ids` union 与外层 `source_refs` IDs 是同一精确集合；`success` 还必须有至少一项 `calculation_trace`。`ready=false` 必须返回 v2 envelope `status=unavailable` 且 `data=null`；旧 envelope 继续按 v1 Schema 校验。
+
+**v2 当前状态**
+
+- `production_eligible=false`；候选 `/quotes/zone-preview` 尚未发布为可用上游合同，本次不调用、不实现 HTTP adapter。
+- MCP 只做严格校验、单位换算、字段投影和证据传播，不计算 Zone、计费托数、燃油、附加费或总价。
+- v2 `success` 仅在来源 `ready=true`、`test_data=false`、身份字段一致、金额/日期/发布证据完整时才可评估；本分支不提供生产成功证明。
+
+**v2 状态**
+
+- `needs_input`：缺 v2 必填字段、`explicit_pallet_count` 未知且不能明确为 `null`、单位/日期/金额格式错误；零上游调用。
+- `manual_review`：上游响应冲突、服务合同缺失或需要人工确认；若有 `data`，来源必须 ready 且非测试并保留完整 `quote-result-v2`/`source_refs`；`limited_access`/`remote_area` 零调用时必须使用 `data=null`、空 `source_refs` 和空 `calculation_trace`。
+- `unavailable`：上游未发布、`ready=false`、`test_data=true`、release/snapshot 证据缺失或适配器未获资格；`ready=false` 不带 quote data。
+- `blocked`：越权、跨租户、试图改价/发送/发布或覆盖服务端身份。
+
+**v1 历史适配状态**
 
 - HTTP adapter 已实现并通过 fake-HTTP/local 组合测试，但经 10A 审查发现生产合同阻塞，未获生产启用资格，当前工具路径保持 `unavailable`/fail-closed。
 - 三项未决合同问题：上游端点存在非零业务写副作用；正式输入到 `cbm`/`origin` 的映射不成立；真实响应缺业务版本/有效期证据。不以本地 Zone/价格/规则表或 fixture 代替上游合同。
@@ -194,18 +232,44 @@ trade_treatment: string|null, required
 - 当前无已核验生产 API 合同，工具固定返回 `unavailable` 且零 HTTP 请求；Schema 与注册保留，不拼造税额。
 - 后续只有在生产 estimate API 合同、认证、来源版本和失败映射核验完成后，才评估 `needs_input`、`manual_review` 或 `success` 的实际映射。
 
-### PDF / 文档能力（未注册）
+### `quote.create_pdf`（已登记，当前 handler unavailable）
 
-尚无已核验 PDF API 合同；未注册任何 `pdf.*` 工具，不以本地实现替代。
+这是唯一的 PDF 创建工具；不新增 `pdf.download`、`pdf.send`、`pdf.template` 或 `pdf.status`。它是 `write`、non-destructive、idempotent、open-world 工具，权限为 `quote:pdf_write`，允许角色为 `admin`、`sales`、`operator`。平台已登记为第10个工具，但默认 handler unavailable，不调用 PDF；production 默认 disabled。
+
+**输入 Schema：** `quote-create-pdf-request.schema.json`
+
+```text
+schema_version: 2026-08-11.v1, required
+version: quote-create-pdf-request@2026-08-14.v1, required
+quote_request: quote-request-v2.schema.json, required
+presentation: { customer_display_name: string, 1–200 }, required
+write_context: { idempotency_key, operation_mode, preview_ref, approval }, required
+```
+
+根、`presentation`、`write_context`、approval 和所有新增 object 均为 `additionalProperties=false`。`write_context` 是本工具专属闭合对象，不是含 `tenant_context` 的 common `WriteContext`；preview 时 `preview_ref=null`，commit 时 `preview_ref` 必须为 Identifier 且 approval 必须为 `required=true/status=approved/approval_id=Identifier`。`quote_request` 直接引用现有 quote v2 请求，模型不能传 `total`、`line_items`、金额、logo、path、html、url、公开 `tenant_id` 或其他未声明字段；wrapper 也不接受 `tenant_context`、`tenant_id`、`actor_id`、`client_id`、`session_id`。网关请求体上限为 32 KiB。
+
+task02 必须从服务端认证的 `ExecutionContext` 注入并校验 tenant、actor、client、session 和 RBAC；不得从客户端 wrapper 读取身份字段。旧 `quote.save_draft` 等 legacy 工具的旧 `WriteContext` 语义保持不变，不适用于 `quote.create_pdf`。
+
+**输出 Schema：** `write-result-v2.schema.json`（`$id` 为 `2026-08-13`，`version=write-result@2026-08-13.v2`，operation 固定为 `quote.create_pdf`）；外层使用 `quote-create-pdf-envelope.schema.json`。旧 `write-result.schema.json` 的 `$id`、字节和 operation 接受集合不变，不建立 PDF 结果大 Schema。合法 preview 和 commit 的 outer 都是 `status=success`，由 `data.operation_status` 区分：Schema 条件强制 previewed 为 `record_id=null/readback=null` 且 approval 为 `false/not_required/null`；committed/already_committed 为 Identifier、approved approval 和 `readback_evidence.verified=true`。success envelope 必须有非空 data、source_refs、calculation_trace 且无 blockers。preview 的 success 只表示稳定 preview_ref 已生成，不表示 PDF 已创建；只有 commit/already_committed success 同时满足 approved 和 verified readback 才表示 PDF 已创建。
+
+公开 `write-result-v2` 不新增内部 candidate 字段；候选报价 source 的闭合由 task05 领域边界校验，平台只校验公开 envelope 的 outer `source_refs` 与 `calculation_trace`/`readback_evidence.source_ref_ids` 精确闭合。
+
+**Preview → commit：** preview 只调用 AI Quote `/quotes/zone-preview` v2，形成服务端 candidate hash，零 PDF POST，不把金额/line items 回显模型。commit 必须同 tenant、request、presentation、`preview_ref` 且 approval 为 approved；服务端重新调用 AI Quote，候选或发布 evidence 漂移为 `manual_review`。只有重新得到权威 quote success 后，服务端才投影权威 USD line items，并固定内部 `sendable=false`。
+
+Preview 和 commit 必须使用不同的平台幂等键：preview 用 `P`，commit 用 `C`，`P ≠ C`；只有 commit 的 `C` 原样转发为 PDF `Idempotency-Key`，同一 commit retry 复用 `C` 和同一 body。201/200 后必须 GET metadata 并精确核对 tenant、request/presentation、candidate/quote hash、version、`sendable=false` 和 document reference；只有 exact readback 才 success。dispatch 前连接失败为 `unavailable`；已 dispatch 后 response timeout/unknown、POST 丢响应、GET 404 或 identity/hash/version mismatch 为 `manual_review`，不能盲目重复未知写入。
+
+**状态：** 输入错误为 `needs_input`；权限/审批/tenant/credential/409 为 `blocked`；Quote 的 `needs_input`/`manual_review`/`unavailable` 原样保留；PDF 400/413 为 `unavailable`，401/403 为 `blocked`，503 或 dispatch 前连接失败为 `unavailable`，已 dispatch 后 response timeout/unknown 为 `manual_review`。outer source refs/trace 必须同时闭合 AI Quote 权威证据和 PDF GET readback 证据。
+
+**生产资格：** 当前只核验到 loopback HTTP，默认 handler unavailable，production 默认 disabled。平台 outer deadline 已统一为单一 30 秒；后续集成仍须验证各阶段共享剩余时间，不能每阶段重置。只有 AI Quote 正式 API、PDF HTTPS+allowlist、tenant credential、staging POST/replay/GET exact readback、该 deadline 和平台失败闭合全部验收后，才可由后续适配任务启用生产路径。不在 MCP 本地生成或保存 PDF 权威记录。
 
 ### `quote.save_draft`
 
-这是唯一允许保存报价系统草稿的 Phase 1 工具之一，目标系统必须是现有报价系统的明确草稿/记录边界。
+这是唯一允许保存报价系统草稿的 Phase 1 工具之一，目标系统必须是经发布且通过合同核验的报价系统草稿/记录边界；当前没有已核验的生产写端点。以下旧 `WriteContext` 仅适用于该 legacy 工具，不适用于 `quote.create_pdf`。
 
 **当前状态**
 
 - 当前固定返回 `unavailable`。生产写 API、租户认证、幂等、preview/approval/commit 和写后读回合同尚未齐全；Schema 与注册不删除。
-- 只有上述合同全部由现有生产 API 覆盖后，才可启用生产路径。
+- 只有上述合同全部由已发布且通过合同核验的 API 覆盖后，才可启用生产路径。
 
 **输入**
 

@@ -1,19 +1,26 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { describe, expect, it } from "vitest";
 
+import { createFixtureComposition } from "../../src/logistics_mcp/server/composition";
 import {
   callTool,
   cargoInput,
   containerInput,
   createFixtureHarness,
   initialize,
+  legacyQuoteDraftResult,
   quoteInput,
+  quotePdfInput,
+  createQuotePdfFixturePorts,
   writeContext,
 } from "./fixtures/tenant-fixtures";
 
 const schemaVersion = "2026-08-11.v1";
 
 describe("Phase 1 integrated fixture gateway", () => {
-  it("exposes exactly the nine public tools and no generic write tool", async () => {
+  it("exposes exactly the ten public tools and no generic write tool", async () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
@@ -33,7 +40,12 @@ describe("Phase 1 integrated fixture gateway", () => {
             title?: string;
             description?: string;
             inputSchema?: { $schema?: string };
-            outputSchema?: { $schema?: string; required?: string[] };
+            outputSchema?: {
+              $schema?: string;
+              required?: string[];
+              type?: string;
+              additionalProperties?: boolean;
+            };
             annotations?: {
               readOnlyHint?: boolean;
               destructiveHint?: boolean;
@@ -50,6 +62,7 @@ describe("Phase 1 integrated fixture gateway", () => {
         "customs.ca.estimate",
         "knowledge.search_curated",
         "quote.canada_final_mile.calculate",
+        "quote.create_pdf",
         "quote.save_draft",
         "review.create_task",
         "system.get_data_status",
@@ -79,6 +92,21 @@ describe("Phase 1 integrated fixture gateway", () => {
         idempotentHint: true,
         openWorldHint: true,
       });
+      expect(tools["quote.create_pdf"]).toMatchObject({
+        title: "创建报价 PDF",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      });
+      expect(tools["quote.create_pdf"]?.description).toContain("不可发送");
+      expect(tools["quote.create_pdf"]?.outputSchema).toMatchObject({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        additionalProperties: false,
+      });
       expect(body.result?.tools?.every((tool) =>
         tool.title !== undefined &&
         tool.description !== undefined &&
@@ -87,8 +115,83 @@ describe("Phase 1 integrated fixture gateway", () => {
         tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema" &&
         tool.outputSchema.required?.includes("status") === true
       )).toBe(true);
+      const unavailablePdf = await callTool(
+        harness,
+        sessionId,
+        "quote.create_pdf",
+        quotePdfInput("preview", "idem_fixture_pdf_unavailable_001"),
+      );
+      expect(unavailablePdf).toMatchObject({ status: "unavailable", data: null });
     } finally {
       await harness.close();
+    }
+  });
+
+  it("runs an explicitly injected fixture PDF through the real MCP SDK", async () => {
+    const ports = createQuotePdfFixturePorts();
+    const composition = createFixtureComposition({
+      dataMode: "fixtures",
+      quote: ports.quote,
+      quotePdf: ports.quotePdf,
+      allowedOrigins: ["https://client.example.invalid"],
+      allowedHosts: ["mcp.example.invalid"],
+      authenticate: () => ({
+        tenant_id: "tenant_demo_a",
+        actor_id: "sales_demo",
+        actor_role: "sales",
+        roles: ["sales"],
+        scopes: ["quote:pdf_write"],
+        client_id: "client_demo",
+        session_id: "session_demo_a",
+        expires_at: Math.floor(Date.now() / 1000) + 300,
+      }),
+    });
+    const fetchToComposition = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      headers.set("origin", "https://client.example.invalid");
+      headers.set("host", "mcp.example.invalid");
+      return composition.handler(new Request(input, { ...init, headers }));
+    };
+    const client = new Client({ name: "quote-pdf-e2e", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("https://mcp.example.invalid/mcp"),
+      {
+        fetch: fetchToComposition,
+        requestInit: { headers: { authorization: "Bearer fixture-pdf-token" } },
+      },
+    );
+    try {
+      await client.connect(transport as Transport);
+      const preview = await client.callTool({
+        name: "quote.create_pdf",
+        arguments: quotePdfInput("preview", "pdf_e2e_preview_P"),
+      });
+      expect(preview.structuredContent).toMatchObject({
+        status: "success",
+        data: { operation_status: "previewed", readback_evidence: null },
+      });
+      const previewRef = (preview.structuredContent as { data: { preview_ref: string } }).data.preview_ref;
+      const committed = await client.callTool({
+        name: "quote.create_pdf",
+        arguments: quotePdfInput("commit", "pdf_e2e_commit_C", previewRef),
+      });
+      expect(committed.structuredContent).toMatchObject({
+        status: "success",
+        data: {
+          operation_status: "committed",
+          readback_evidence: { verified: true },
+        },
+      });
+      expect(ports.quoteCalls).toHaveLength(2);
+      expect(ports.postCalls).toHaveLength(1);
+      expect(ports.postCalls[0]?.key).toBe("pdf_e2e_commit_C");
+      expect(ports.getCalls).toHaveLength(1);
+      expect(ports.quoteCalls.every(({ context }) =>
+        (context as { tenantId?: string }).tenantId === "tenant_demo_a"
+      )).toBe(true);
+    } finally {
+      await client.close().catch(() => undefined);
+      await composition.close();
     }
   });
 
@@ -144,23 +247,56 @@ describe("Phase 1 integrated fixture gateway", () => {
     }
   });
 
-  it("keeps quote address type and container theory-only boundaries explicit", async () => {
+  it("keeps quote fail-closed and container theory-only boundaries explicit", async () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
-      const missingAddressType = await callTool(
+      const unavailableQuote = await callTool(
         harness,
         sessionId,
         "quote.canada_final_mile.calculate",
-        quoteInput({
-          destination: {
-            ...(quoteInput().destination as Record<string, unknown>),
-            address_type: "unknown",
-          },
-        }),
+        quoteInput(),
       );
-      expect(missingAddressType.status).toBe("needs_input");
-      expect(missingAddressType.data).toBeNull();
+      expect(unavailableQuote.status).toBe("unavailable");
+      expect(unavailableQuote.data).toBeNull();
+      expect(unavailableQuote.source_refs).toEqual([]);
+      expect(unavailableQuote.calculation_trace).toEqual([]);
+      expect(unavailableQuote.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "quote.adapter_disabled" }),
+        ]),
+      );
+
+      for (const field of ["limited_access", "remote_area"] as const) {
+        const services = quoteInput().services as Record<string, unknown>;
+        const manualReview = await callTool(
+          harness,
+          sessionId,
+          "quote.canada_final_mile.calculate",
+          quoteInput({ services: { ...services, [field]: true } }),
+        );
+        expect(manualReview.status).toBe("manual_review");
+        expect(manualReview.data).toBeNull();
+        expect(manualReview.source_refs).toEqual([]);
+        expect(manualReview.calculation_trace).toEqual([]);
+        expect(manualReview.review_status).toBe("manual_review");
+        expect(manualReview.warnings).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "quote.zero_upstream_call",
+              field: `services.${field}`,
+            }),
+          ]),
+        );
+        expect(manualReview.blockers).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "quote.manual_review_required",
+              field: `services.${field}`,
+            }),
+          ]),
+        );
+      }
 
       const theoretical = await callTool(
         harness,
@@ -237,14 +373,12 @@ describe("Phase 1 integrated fixture gateway", () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
-      const quote = await callTool(harness, sessionId, "quote.canada_final_mile.calculate", quoteInput());
-      expect(quote.status).toBe("success");
       const previewKey = "idem_fixture_quote_preview_001";
       const commitKey = "idem_fixture_quote_commit_001";
       const previewInput = {
         schema_version: schemaVersion,
         version: "quote-save@fixture-1",
-        quote_result: quote.data,
+        quote_result: legacyQuoteDraftResult(),
         target: { system: "existing_quote_system", record_kind: "draft" },
         write_context: writeContext("tenant_demo_a", "preview", null, previewKey),
       };

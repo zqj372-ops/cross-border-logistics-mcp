@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-13/write-result-v2.schema.json",
+  "title": "Quote PDF narrow write result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operation", "operation_status", "record_id", "preview_ref", "readback_evidence", "idempotency_key", "approval"],
+  "properties": {
+    "version": { "const": "write-result@2026-08-13.v2" },
+    "operation": { "const": "quote.create_pdf" },
+    "operation_status": { "type": "string", "enum": ["previewed", "committed", "already_committed", "rejected"] },
+    "record_id": { "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }, { "type": "null" }] },
+    "preview_ref": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+    "readback_evidence": { "oneOf": [{ "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/ReadbackEvidence" }, { "type": "null" }] },
+    "idempotency_key": { "type": "string", "minLength": 16, "maxLength": 200 },
+    "approval": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/ApprovalState" }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["operation_status"], "properties": { "operation_status": { "const": "previewed" } } },
+      "then": {
+        "properties": {
+          "record_id": { "type": "null" },
+          "readback_evidence": { "type": "null" },
+          "approval": {
+            "type": "object",
+            "required": ["required", "status", "approval_id"],
+            "properties": {
+              "required": { "const": false },
+              "status": { "const": "not_required" },
+              "approval_id": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["operation_status"], "properties": { "operation_status": { "enum": ["committed", "already_committed"] } } },
+      "then": {
+        "properties": {
+          "record_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" },
+          "readback_evidence": {
+            "type": "object",
+            "required": ["verified"],
+            "properties": { "verified": { "const": true } }
+          },
+          "approval": {
+            "type": "object",
+            "required": ["required", "status", "approval_id"],
+            "properties": {
+              "required": { "const": true },
+              "status": { "const": "approved" },
+              "approval_id": { "$ref": "https://schemas.example.invalid/logistics-mcp/2026-08-11/common.schema.json#/$defs/Identifier" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

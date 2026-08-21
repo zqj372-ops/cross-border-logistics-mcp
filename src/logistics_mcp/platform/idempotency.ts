@@ -4,6 +4,7 @@ import type {
   IdempotencyCommitRequest,
   IdempotencyRecord,
   IdempotencyRepository,
+  IdempotencyReleaseRequest,
   IdempotencyReserveRequest,
   IdempotencyReserveResult,
 } from "./repositories";
@@ -12,6 +13,7 @@ export type {
   IdempotencyCommitRequest,
   IdempotencyRecord,
   IdempotencyRepository,
+  IdempotencyReleaseRequest,
   IdempotencyReserveRequest,
   IdempotencyReserveResult,
 } from "./repositories";
@@ -88,7 +90,10 @@ export function hashPayload(payload: unknown): string {
 }
 
 function assertRequest(
-  request: IdempotencyReserveRequest | IdempotencyCommitRequest,
+  request:
+    | IdempotencyReserveRequest
+    | IdempotencyCommitRequest
+    | IdempotencyReleaseRequest,
 ): void {
   if (
     request.tenantId.length === 0 ||
@@ -96,6 +101,12 @@ function assertRequest(
     request.requestHash.length === 0 ||
     request.key.length < 16 ||
     request.key.length > 200
+  ) {
+    throw new IdempotencyStateError();
+  }
+  if (
+    "expectedExpiresAt" in request &&
+    !Number.isSafeInteger(request.expectedExpiresAt)
   ) {
     throw new IdempotencyStateError();
   }
@@ -200,6 +211,21 @@ export class MemoryIdempotencyRepository implements IdempotencyRepository {
       committed,
     );
     return clone(committed);
+  }
+
+  async release(request: IdempotencyReleaseRequest): Promise<void> {
+    await Promise.resolve();
+    assertRequest(request);
+    const mapKey = this.keyFor(request.tenantId, request.tool, request.key);
+    const record = this.records.get(mapKey);
+    if (
+      record !== undefined &&
+      record.requestHash === request.requestHash &&
+      record.status === "reserved" &&
+      record.expiresAt === request.expectedExpiresAt
+    ) {
+      this.records.delete(mapKey);
+    }
   }
 
   async get(

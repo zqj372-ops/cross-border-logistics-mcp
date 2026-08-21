@@ -1,0 +1,27 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "request_id": "req_contract_quote_v2_unavailable",
+  "status": "unavailable",
+  "data": null,
+  "source_refs": [],
+  "assumptions": [],
+  "warnings": [
+    {
+      "code": "quote.source_unavailable",
+      "message": "报价预览来源未达到可用门禁。",
+      "severity": "warning",
+      "field": null
+    }
+  ],
+  "blockers": [
+    {
+      "code": "quote.ready_false",
+      "message": "ready=false 的来源不进入报价 data。",
+      "severity": "error",
+      "field": null
+    }
+  ],
+  "calculation_trace": [],
+  "review_status": "manual_review",
+  "audit_id": "audit_contract_quote_v2_unavailable"
+}

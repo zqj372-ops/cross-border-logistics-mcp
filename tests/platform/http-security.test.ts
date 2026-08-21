@@ -171,19 +171,29 @@ describe("Streamable HTTP security boundary", () => {
   it("propagates timeout cancellation before a write handler commits", async () => {
     let writes = 0;
     const key = "idem_http_timeout_123456";
+    const idempotencyRepository = new MemoryIdempotencyRepository();
+    let handlerSettled!: () => void;
+    const handlerSettledPromise = new Promise<void>((resolve) => {
+      handlerSettled = resolve;
+    });
     const handle = makeHandler({
       maxBodyBytes: 2048,
       requestTimeoutMs: 20,
+      idempotencyRepository,
       authenticate: () => ({
         ...validClaims(),
         scopes: ["quote:calculate", "quote:draft_write"],
       }),
       handlers: {
         "quote.save_draft": async (_input, _context, signal) => {
-          await new Promise((resolve) => setTimeout(resolve, 60));
-          signal?.throwIfAborted();
-          writes += 1;
-          return { status: "unavailable", data: null };
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            signal?.throwIfAborted();
+            writes += 1;
+            return { status: "unavailable", data: null };
+          } finally {
+            handlerSettled();
+          }
         },
       },
       contracts: {
@@ -220,13 +230,25 @@ describe("Streamable HTTP security boundary", () => {
     }, { "mcp-session-id": sessionId ?? "" }));
 
     expect(response.status).toBe(504);
-    await new Promise((resolve) => setTimeout(resolve, 70));
+    await handlerSettledPromise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(writes).toBe(0);
+    await expect(
+      idempotencyRepository.get("tenant_demo", "quote.save_draft", key),
+    ).resolves.toBeNull();
     await handle.close();
   });
 
   it("uses the SDK Streamable HTTP transport for an allowed initialize request", async () => {
-    const handle = makeHandler();
+    const handle = makeHandler({
+      contracts: {
+        "cargo.calculate": {
+          inputSchema: z.object({}).catchall(z.unknown()),
+          validateOutput: () => undefined,
+          outputSchema: z.object({ custom_marker: z.string() }).strict(),
+        },
+      },
+    });
     const response = await handle(makeRequest(initializeBody));
     const body = (await response.json()) as {
       result?: { protocolVersion?: string; instructions?: string };
@@ -234,6 +256,11 @@ describe("Streamable HTTP security boundary", () => {
 
     expect(response.status).toBe(200);
     expect(body.result?.protocolVersion).toBe("2025-03-26");
+    expect(body.result?.instructions).toContain("成功（success）");
+    expect(body.result?.instructions).toContain("需补充（needs_input）");
+    expect(body.result?.instructions).toContain("人工复核（manual_review）");
+    expect(body.result?.instructions).toContain("已阻止（blocked）");
+    expect(body.result?.instructions).toContain("暂不可用（unavailable）");
     expect(body.result?.instructions).toContain("写操作必须按预览→审批→提交→读回执行");
     expect(body.result?.instructions).toContain("sendable=false");
     expect(body.result?.instructions?.length).toBeLessThanOrEqual(512);
@@ -242,11 +269,34 @@ describe("Streamable HTTP security boundary", () => {
       { "mcp-session-id": response.headers.get("mcp-session-id") ?? "" },
     ));
     const toolsBody = (await toolsResponse.json()) as {
-      result?: { tools?: Array<{ inputSchema?: { $schema?: string } }> };
+      result?: {
+        tools?: Array<{
+          name?: string;
+          inputSchema?: { $schema?: string };
+          outputSchema?: {
+            $schema?: string;
+            properties?: Record<string, unknown>;
+          };
+        }>;
+      };
     };
     expect(toolsBody.result?.tools?.every((tool) =>
       tool.inputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
     )).toBe(true);
+    const cargoTool = toolsBody.result?.tools?.find(
+      (tool) => tool.name === "cargo.calculate",
+    );
+    const statusTool = toolsBody.result?.tools?.find(
+      (tool) => tool.name === "system.get_data_status",
+    );
+    expect(cargoTool?.outputSchema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: { custom_marker: { type: "string" } },
+    });
+    expect(statusTool?.outputSchema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: { schema_version: { const: "2026-08-11.v1" } },
+    });
     await handle.close();
   });
 

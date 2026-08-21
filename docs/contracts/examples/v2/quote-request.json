@@ -1,0 +1,44 @@
+{
+  "schema_version": "2026-08-11.v1",
+  "version": "quote-request@2026-08-13.v2",
+  "origin": {
+    "warehouse_code": "tenant-warehouse-ont-01",
+    "province": "ON"
+  },
+  "destination": {
+    "country": "CA",
+    "province": "ON",
+    "city": "Fixture City",
+    "postal_code": "A0A 0A0",
+    "address_type": "commercial",
+    "full_address_ref": null
+  },
+  "cargo": {
+    "cargo_result_ref": null,
+    "explicit_pallet_count": 2,
+    "longest_side": {
+      "value": "1.20",
+      "unit": "m"
+    },
+    "is_stackable": false,
+    "weight_kg": {
+      "value": "100",
+      "unit": "kg"
+    },
+    "pieces": 2,
+    "package_types": ["pallet"],
+    "total_volume": {
+      "value": "1.25",
+      "unit": "cbm"
+    }
+  },
+  "services": {
+    "appointment": true,
+    "liftgate": false,
+    "pallet_jack": true,
+    "detention_minutes": 0,
+    "limited_access": false,
+    "remote_area": false
+  },
+  "effective_at": "2026-08-13"
+}

@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createFixtureAdapters } from "../../src/logistics_mcp/adapters/fixture-client";
+import {
+  createFixtureAdapters,
+  unavailableQuotePdfPort,
+} from "../../src/logistics_mcp/adapters/fixture-client";
+import { createQuotePdfProductionSource } from "../../src/logistics_mcp/adapters/production-source";
+import { createProductionApiAdapterSource } from "../../src/logistics_mcp/server/composition";
 
 describe("existing-system adapter ports", () => {
   it("returns versioned source references without exposing an upstream payload", async () => {
@@ -71,5 +76,61 @@ describe("existing-system adapter ports", () => {
       data_status: { ready: false },
     });
     expect(result).not.toHaveProperty("aiCandidate");
+  });
+
+  it("keeps production PDF source narrow, disabled by default, and fail-closed when malformed", async () => {
+    const baseHealth = () => Promise.resolve({ ready: true });
+    const baseClose = () => Promise.resolve();
+    const base = { ...createProductionApiAdapterSource(), health: baseHealth, close: baseClose };
+    const health = vi.fn(baseHealth);
+    const close = vi.fn(baseClose);
+    const source = createQuotePdfProductionSource({ ...base, health, close });
+    expect(source.ok).toBe(true);
+    if (!source.ok) return;
+    expect(source.source.adapters).toBe(base.adapters);
+    expect(Object.hasOwn(source.source.adapters, "quotePdf")).toBe(false);
+    for (const options of [{}, { quotePdf: undefined }, { quotePdf: unavailableQuotePdfPort }]) {
+      const absent = createQuotePdfProductionSource(base, options);
+      expect(absent.ok).toBe(true);
+      if (!absent.ok) continue;
+      expect(absent.source.adapters).toBe(base.adapters);
+      expect(Object.hasOwn(absent.source.adapters, "quotePdf")).toBe(false);
+    }
+
+    const pdfHealth = vi.fn();
+    const pdfClose = vi.fn();
+    const provided = {
+      post: () => Promise.resolve({
+        ok: false as const,
+        failure: { kind: "unavailable" as const, code: "fake", dispatched: false },
+      }),
+      get: () => Promise.resolve({
+        ok: false as const,
+        failure: { kind: "unavailable" as const, code: "fake", dispatched: false },
+      }),
+      health: pdfHealth,
+      close: pdfClose,
+    };
+    const injected = createQuotePdfProductionSource(base, { quotePdf: provided });
+    expect(injected.ok).toBe(true);
+    if (!injected.ok) return;
+    expect(injected.source.adapters.quotePdf).toBe(provided);
+    expect(injected.source.adapters.quote).toBe(base.adapters.quote);
+    expect(injected.source.adapters.customs).toBe(base.adapters.customs);
+    expect(injected.source.health).toBe(baseHealth);
+    expect(injected.source.close).toBe(baseClose);
+    await injected.source.health();
+    await injected.source.close();
+    expect(pdfHealth).not.toHaveBeenCalled();
+    expect(pdfClose).not.toHaveBeenCalled();
+
+    for (const quotePdf of [null, {}, { post: () => Promise.resolve(), get: "invalid" }]) {
+      expect(createQuotePdfProductionSource(base, { quotePdf: quotePdf as never })).toEqual({
+        ok: false,
+        code: "production_quote_pdf_source_invalid",
+      });
+    }
+    expect(health).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
   });
 });

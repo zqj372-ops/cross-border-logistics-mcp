@@ -25,6 +25,7 @@ import {
 } from "../platform/idempotency";
 import type {
   AuditEvent,
+  IdempotencyRecord,
   IdempotencyRepository,
 } from "../platform/repositories";
 import type { ZodType } from "zod";
@@ -95,6 +96,7 @@ export type DomainToolHandler = (
 export interface ToolContract {
   readonly inputSchema: ZodType;
   readonly validateOutput: (data: EnvelopeData) => void;
+  readonly outputSchema?: ZodType;
 }
 
 export type ToolContractMap = Partial<Record<PhaseOneToolName, ToolContract>>;
@@ -111,6 +113,7 @@ export interface ToolDefinition {
   readonly handler?: DomainToolHandler;
   readonly inputSchema?: ZodType;
   readonly validateOutput?: (data: EnvelopeData) => void;
+  readonly outputSchema?: ZodType;
 }
 
 export interface ToolExecutionMetadata {
@@ -130,11 +133,12 @@ const outputSchemaByTool: Record<PhaseOneToolName, string> = {
   "system.get_data_status": "data-status.schema.json",
   "cargo.calculate": "cargo-result.schema.json",
   "container.plan_summary": "container-plan.schema.json",
-  "quote.canada_final_mile.calculate": "quote-result.schema.json",
+  "quote.canada_final_mile.calculate": "quote-envelope-v2.schema.json",
   "customs.ca.search": "customs-search-result.schema.json",
   "customs.ca.estimate": "customs-assessment.schema.json",
   "quote.save_draft": "write-result.schema.json",
   "review.create_task": "write-result.schema.json",
+  "quote.create_pdf": "quote-create-pdf-envelope.schema.json",
 };
 
 const presentationByTool: Record<
@@ -177,6 +181,10 @@ const presentationByTool: Record<
     title: "创建人工复核任务",
     description: "正式任务接口和写后读回完成前保持不可用。",
   },
+  "quote.create_pdf": {
+    title: "创建报价 PDF",
+    description: "生成不可发送的报价 PDF 预览；审批、提交和精确读回完成前保持不可用。",
+  },
 };
 
 export type ToolHandlerMap = Partial<
@@ -196,7 +204,12 @@ export function registerPhaseOneTools(
       name,
       title: presentation.title,
       description: presentation.description,
-      inputSchemaId: `urn:logistics-mcp:${name}:2026-08-11.v1`,
+      inputSchemaId:
+        name === "quote.canada_final_mile.calculate"
+          ? `urn:logistics-mcp:${name}:2026-08-13.v2`
+          : name === "quote.create_pdf"
+            ? `urn:logistics-mcp:${name}:2026-08-14.v1`
+          : `urn:logistics-mcp:${name}:2026-08-11.v1`,
       outputSchemaId: outputSchemaByTool[name],
       permission: policy.permission,
       kind: policy.kind,
@@ -207,22 +220,37 @@ export function registerPhaseOneTools(
         : {
             inputSchema: contract.inputSchema,
             validateOutput: contract.validateOutput,
+            ...(contract.outputSchema === undefined
+              ? {}
+              : { outputSchema: contract.outputSchema }),
           }),
     };
   });
 }
 
+interface WriteApproval {
+  readonly required: boolean;
+  readonly status: string;
+  readonly approvalId: string | null;
+}
+
 interface WriteRequest {
+  readonly toolName: PhaseOneToolName;
   readonly idempotencyKey: string;
   readonly operationMode: "preview" | "commit";
   readonly previewRef: string | null;
+  readonly approval: WriteApproval;
 }
 
-type WriteToolName = "quote.save_draft" | "review.create_task";
+type WriteToolName =
+  | "quote.save_draft"
+  | "review.create_task"
+  | "quote.create_pdf";
 
 const writeApprovalPolicy: Readonly<Record<WriteToolName, true>> = {
   "quote.save_draft": true,
   "review.create_task": true,
+  "quote.create_pdf": true,
 };
 
 function requiresCommitApproval(toolName: PhaseOneToolName): boolean {
@@ -254,32 +282,34 @@ function parseWriteRequest(
     );
   }
   const writeContext = input.write_context;
-  const tenantContext = writeContext.tenant_context;
-  if (!isRecord(tenantContext)) {
-    throw writeContractError(
-      "tenant_context.required",
-      "blocked",
-      "The server-injected tenant context is required.",
-    );
-  }
-  if (tenantContext.tenant_id !== context.tenantId) {
-    throw writeContractError(
-      "security.cross_tenant_denied",
-      "blocked",
-      "The requested tenant is outside the authenticated scope.",
-    );
-  }
-  if (
-    tenantContext.actor_id !== context.actorId ||
-    tenantContext.actor_role !== context.role ||
-    tenantContext.client_id !== context.clientId ||
-    tenantContext.session_id !== context.sessionId
-  ) {
-    throw writeContractError(
-      "security.context_override",
-      "blocked",
-      "The write context does not match the authenticated context.",
-    );
+  if (toolName !== "quote.create_pdf") {
+    const tenantContext = writeContext.tenant_context;
+    if (!isRecord(tenantContext)) {
+      throw writeContractError(
+        "tenant_context.required",
+        "blocked",
+        "The server-injected tenant context is required.",
+      );
+    }
+    if (tenantContext.tenant_id !== context.tenantId) {
+      throw writeContractError(
+        "security.cross_tenant_denied",
+        "blocked",
+        "The requested tenant is outside the authenticated scope.",
+      );
+    }
+    if (
+      tenantContext.actor_id !== context.actorId ||
+      tenantContext.actor_role !== context.role ||
+      tenantContext.client_id !== context.clientId ||
+      tenantContext.session_id !== context.sessionId
+    ) {
+      throw writeContractError(
+        "security.context_override",
+        "blocked",
+        "The write context does not match the authenticated context.",
+      );
+    }
   }
 
   const idempotencyKey = writeContext.idempotency_key;
@@ -326,6 +356,26 @@ function parseWriteRequest(
     );
   }
   if (
+    toolName === "quote.create_pdf" &&
+    ((operationMode === "preview" &&
+      (approval.required !== false ||
+        approval.status !== "not_required" ||
+        approval.approval_id !== null)) ||
+      (operationMode === "commit" &&
+        (approval.required !== true ||
+          approval.status !== "approved" ||
+          typeof approval.approval_id !== "string" ||
+          approval.approval_id.length === 0)))
+  ) {
+    throw writeContractError(
+      operationMode === "commit" ? "approval.not_approved" : "approval.invalid",
+      operationMode === "commit" ? "blocked" : "needs_input",
+      operationMode === "commit"
+        ? "The write operation is not approved for commit."
+        : "Preview approval must be not_required.",
+    );
+  }
+  if (
     operationMode === "commit" &&
     requiresCommitApproval(toolName) &&
     (approval.status !== "approved" ||
@@ -339,10 +389,21 @@ function parseWriteRequest(
     );
   }
 
+  const parsedApproval: WriteApproval = {
+    required: approval.required,
+    status: typeof approval.status === "string" ? approval.status : "",
+    approvalId:
+      typeof approval.approval_id === "string" || approval.approval_id === null
+        ? approval.approval_id
+        : null,
+  };
+
   return {
+    toolName,
     idempotencyKey,
     operationMode,
     previewRef: typeof previewRef === "string" ? previewRef : null,
+    approval: parsedApproval,
   };
 }
 
@@ -353,6 +414,9 @@ function validateToolOutput(
   if (outcome.status === "success" && outcome.data === null) {
     throw new ToolContractValidationError();
   }
+  if (definition.name === "quote.create_pdf" && outcome.status !== "success" && outcome.data !== null) {
+    throw new ToolContractValidationError();
+  }
   if (outcome.data === null) {
     return;
   }
@@ -361,6 +425,24 @@ function validateToolOutput(
   } catch {
     throw new ToolContractValidationError();
   }
+}
+
+function validateOutputEnvelope(
+  definition: ToolDefinition,
+  envelope: unknown,
+): ResponseEnvelope {
+  let validated: ResponseEnvelope;
+  try {
+    validated = validateEnvelope(envelope);
+  } catch {
+    throw new ToolContractValidationError();
+  }
+  try {
+    definition.outputSchema?.parse(validated);
+  } catch {
+    throw new ToolContractValidationError();
+  }
+  return validated;
 }
 
 function validateWriteOutcome(
@@ -383,6 +465,21 @@ function validateWriteOutcome(
       "manual_review",
       "The write result idempotency key does not match the request.",
     );
+  }
+  if (request.toolName === "quote.create_pdf") {
+    const approval = outcome.data.approval;
+    if (
+      !isRecord(approval) ||
+      approval.required !== request.approval.required ||
+      approval.status !== request.approval.status ||
+      approval.approval_id !== request.approval.approvalId
+    ) {
+      throw writeContractError(
+        "write_result.approval_mismatch",
+        "manual_review",
+        "The write result approval does not match the request.",
+      );
+    }
   }
   if (request.operationMode === "preview") {
     if (
@@ -451,76 +548,109 @@ export async function executeRegisteredToolWithResult(
       ? parseWriteRequest(input, context, definition.name)
       : null;
   let idempotencyOutcome: AuditEvent["idempotency_outcome"] = "not_applicable";
-  let reservation:
-    | Awaited<ReturnType<IdempotencyRepository["reserve"]>>
-    | undefined;
-  if (writeRequest !== null) {
-    if (metadata.idempotencyRepository === undefined) {
-      throw new IdempotencyRequiredError();
+  let requestHash: string | null = null;
+  let reservedRecord: IdempotencyRecord | undefined;
+  const releaseReservation = async (): Promise<void> => {
+    const record = reservedRecord;
+    reservedRecord = undefined;
+    if (
+      record === undefined ||
+      writeRequest === null ||
+      requestHash === null ||
+      metadata.idempotencyRepository === undefined
+    ) {
+      return;
     }
-    reservation = await metadata.idempotencyRepository.reserve({
+    await metadata.idempotencyRepository.release({
       tenantId: context.tenantId,
       tool: definition.name,
       key: writeRequest.idempotencyKey,
-      requestHash: hashPayload(input),
+      requestHash,
+      expectedExpiresAt: record.expiresAt,
     });
-    metadata.signal?.throwIfAborted();
-    if (reservation.replayed) {
-      if (reservation.record.status !== "committed" || reservation.record.result === null) {
-        throw new IdempotencyStateError();
-      }
-      return {
-        envelope: validateEnvelope(reservation.record.result),
-        idempotencyOutcome: "replayed",
-      };
-    }
-    if (reservation.inProgress) {
-      throw new IdempotencyInProgressError();
-    }
-    idempotencyOutcome = "reserved";
-  }
-
-  const outcome = await definition.handler(input, context, metadata.signal);
-  metadata.signal?.throwIfAborted();
-  validateToolOutput(definition, outcome);
-  if (writeRequest !== null) {
-    validateWriteOutcome(writeRequest, outcome);
-  }
-
-  const envelopeInput: CreateEnvelopeInput = {
-    requestId: metadata.requestId,
-    auditId: metadata.auditId,
-    status: outcome.status,
-    data: outcome.data,
-    ...(outcome.sourceRefs === undefined
-      ? {}
-      : { sourceRefs: outcome.sourceRefs }),
-    ...(outcome.assumptions === undefined
-      ? {}
-      : { assumptions: outcome.assumptions }),
-    ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
-    ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
-    ...(outcome.calculationTrace === undefined
-      ? {}
-      : { calculationTrace: outcome.calculationTrace }),
-    ...(outcome.reviewStatus === undefined
-      ? {}
-      : { reviewStatus: outcome.reviewStatus }),
   };
-  const envelope = createEnvelope(envelopeInput);
 
-  if (writeRequest !== null && reservation !== undefined) {
-    metadata.signal?.throwIfAborted();
-    await metadata.idempotencyRepository!.commit({
-      tenantId: context.tenantId,
-      tool: definition.name,
-      key: writeRequest.idempotencyKey,
-      requestHash: hashPayload(input),
-      result: envelope,
-    });
+  try {
+    if (writeRequest !== null) {
+      if (metadata.idempotencyRepository === undefined) {
+        throw new IdempotencyRequiredError();
+      }
+      requestHash = hashPayload(input);
+      const reservation = await metadata.idempotencyRepository.reserve({
+        tenantId: context.tenantId,
+        tool: definition.name,
+        key: writeRequest.idempotencyKey,
+        requestHash,
+      });
+      if (reservation.replayed) {
+        if (reservation.record.status !== "committed" || reservation.record.result === null) {
+          throw new IdempotencyStateError();
+        }
+        return {
+          envelope: validateOutputEnvelope(definition, reservation.record.result),
+          idempotencyOutcome: "replayed",
+        };
+      }
+      if (reservation.inProgress) {
+        throw new IdempotencyInProgressError();
+      }
+      reservedRecord = reservation.record;
+      idempotencyOutcome = "reserved";
+      metadata.signal?.throwIfAborted();
+    }
+
+    const outcome = await definition.handler(input, context, metadata.signal);
+    validateToolOutput(definition, outcome);
+    if (writeRequest !== null) {
+      validateWriteOutcome(writeRequest, outcome);
+    }
+
+    const envelopeInput: CreateEnvelopeInput = {
+      requestId: metadata.requestId,
+      auditId: metadata.auditId,
+      status: outcome.status,
+      data: outcome.data,
+      ...(outcome.sourceRefs === undefined
+        ? {}
+        : { sourceRefs: outcome.sourceRefs }),
+      ...(outcome.assumptions === undefined
+        ? {}
+        : { assumptions: outcome.assumptions }),
+      ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
+      ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
+      ...(outcome.calculationTrace === undefined
+        ? {}
+        : { calculationTrace: outcome.calculationTrace }),
+      ...(outcome.reviewStatus === undefined
+        ? {}
+        : { reviewStatus: outcome.reviewStatus }),
+    };
+    const envelope = validateOutputEnvelope(
+      definition,
+      createEnvelope(envelopeInput),
+    );
+
+    if (writeRequest !== null && reservedRecord !== undefined) {
+      if (envelope.status === "success") {
+        if (requestHash === null) throw new IdempotencyStateError();
+        await metadata.idempotencyRepository!.commit({
+          tenantId: context.tenantId,
+          tool: definition.name,
+          key: writeRequest.idempotencyKey,
+          requestHash,
+          result: envelope,
+        });
+        reservedRecord = undefined;
+      } else {
+        await releaseReservation();
+      }
+    }
+
+    return { envelope, idempotencyOutcome };
+  } catch (error: unknown) {
+    await releaseReservation();
+    throw error;
   }
-
-  return { envelope, idempotencyOutcome };
 }
 
 export async function executeRegisteredTool(

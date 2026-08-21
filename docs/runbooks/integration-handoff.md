@@ -26,11 +26,25 @@ SQLite binding store。
 | --- | --- | --- | --- |
 | AI 报价 | 远程 `main` 仍为 `8d69f9d`，只有有副作用的 `POST /quotes/zone-calculate`。本地 `/quotes/zone-preview` 候选通过 28 项定向测试，但未提交、未推送，且仍允许 `ready=true` 与 `test_data=true` 同时出现。 | `quote.canada_final_mile.calculate` 继续 `unavailable`；不调用候选端点。 | 发布纯预览 OpenAPI；版本/有效期绑定实际规则与价格快照；响应回显 tenant、origin/warehouse、billing pallets 和非测试状态；完成 PR→CI→合并→staging 读回。 |
 | RiskCustoms | 当前 status/query 是匿名浏览器路径，依赖 IP、设备 Cookie 和 Turnstile；没有服务 JWT、token→tenant 映射或正式 M2M header 合同。运行路径仍是 `ready=false` / `testData=true`，也没有 estimate/OpenAPI。 | `customs.ca.search` 和 `customs.ca.estimate` 继续 `unavailable`；`start.ts` 不猜测认证 header。 | 发布服务 JWT、tenant 授权映射、M2M 限流/审计、status→query 可比 release/snapshot 证据、非测试 staging 以及独立 estimate 合同。 |
-| 报价单 PDF | 远程 `main` 仍是 Electron 桌面应用；无头 bytes/hash 渲染只在本地候选提交 `b570c8c`，未进入远程分支/PR。没有 HTTP/CLI/OpenAPI、服务认证、租户存储、幂等、opaque handle 或服务端读回。 | 不注册 `pdf.*`；不暴露 PDF bytes、本地路径或明文报价 JSON。 | 上游先发布受控 `POST` 生成和同租户 `GET` 读回，返回 opaque ref/hash/version；提供 OpenAPI 3.1、大小/保留期/幂等合同及绿色 CI，再由基线 RFC 新增工具。 |
+| 报价单服务 | 本地已完成 `quote.create_pdf` 的契约、窄适配、领域编排、平台登记和 fixture 集成验证；正式 HTTPS 地址、租户凭证和生产 adapter source 仍未接入。 | `quote.create_pdf` 已登记但默认 unavailable/fail-closed；不暴露 PDF bytes、本地路径或明文报价 JSON。 | 上游提供受控 HTTPS `POST` 生成和同租户 `GET` 读回，完成凭证、allowlist、幂等和 staging 验收后，才评估生产启用。 |
 
 上游完成上述门槛后，MCP 只做最窄接线：报价调用无副作用 preview；
 关务每次走 status→query；PDF 走 POST→GET readback 并只返回 opaque ref/hash。
 详细跟踪见 [生产激活 Issue](https://github.com/zqj372-ops/cross-border-logistics-mcp/issues/2)。
+
+## Quote PDF 配置交接
+
+正式接线只接受五个服务端变量：`MCP_QUOTE_PDF_ENABLED`、`MCP_QUOTE_PDF_BASE_URL`、
+`MCP_QUOTE_PDF_ALLOWED_HOSTS`、`MCP_QUOTE_PDF_TENANT_ID` 和
+`MCP_QUOTE_PDF_BEARER_TOKEN`。默认 `MCP_QUOTE_PDF_ENABLED=false`；后四项在 disabled
+时可以为空，启用时由 `start.ts` 严格校验。地址必须是 HTTPS 非 loopback，主机必须精确命中
+allowlist；tenant 是单公司服务端映射；Bearer 只由 secret manager 注入，客户端不提供
+URL、token、tenant 或 actor。
+
+PDF adapter 固定使用 `/v2/quote-pdfs` POST 和 document readback GET；base URL 的 path/query
+会被固定路径覆盖，建议只填 origin。应用不做 DNS pinning，解析后的目的 IP 防护由 egress
+proxy/firewall 负责。启用证据必须包含 Quote preview、PDF POST `201/200`、同 key replay
+恢复、GET exact readback、`sendable=false` 以及跨租户零请求；否则保持 unavailable/disabled。
 
 ## 精确验证命令
 
@@ -54,12 +68,12 @@ Docker build 只允许在本地做非推送验证；不可用时记录“Docker 
 
 ## 交接边界
 
-- 唯一注册九工具：`cargo.calculate`、`container.plan_summary`、
-  `quote.canada_final_mile.calculate`、`quote.save_draft`、`customs.ca.search`、
-  `customs.ca.estimate`、`knowledge.search_curated`、`system.get_data_status`、
-  `review.create_task`。
+- 唯一登记十工具：`cargo.calculate`、`container.plan_summary`、
+  `quote.canada_final_mile.calculate`、`quote.create_pdf`、`quote.save_draft`、
+  `customs.ca.search`、`customs.ca.estimate`、`knowledge.search_curated`、
+  `system.get_data_status`、`review.create_task`。其中报价单工具默认不可用。
 - 五状态必须闭合；`unavailable`、`manual_review`、`blocked` 不能提升为 success。
 - 生产组合默认禁用未核验适配器；fixture 只接受 `DATA_MODE=fixtures`/显式 fixture mode。
-- 两个窄写工具只能 preview→approval policy→commit→readback；不发送/发布报价、不订舱、不
+- 已登记写工具只能 preview→approval policy→commit→readback；报价单保持不可发送；不发送/发布报价、不订舱、不
   改价格/Zone/税率、不建立第二套业务主数据。
 - 报价 `sendable=false`、装柜 `theoretical_only=true` 是客户端不可越过的边界。

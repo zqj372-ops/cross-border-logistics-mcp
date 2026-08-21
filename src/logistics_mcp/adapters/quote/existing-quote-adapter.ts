@@ -2,8 +2,10 @@ import Decimal from "decimal.js";
 
 import type {
   AdapterResult,
+  FixtureInput,
   QuoteAdapter,
 } from "../ports";
+import type { ExecutionContext } from "../../platform/context";
 import { hashPayload } from "../../platform/idempotency";
 import type { SourceRef } from "../../platform/envelope";
 
@@ -245,7 +247,14 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
     this.source = options.source;
   }
 
-  async calculate(input: Record<string, unknown>): Promise<AdapterResult> {
+  async calculate(
+    input: Record<string, unknown> | FixtureInput,
+    _context?: ExecutionContext,
+    _signal?: AbortSignal,
+  ): Promise<AdapterResult> {
+    void _context;
+    void _signal;
+    const request = input as Record<string, unknown>;
     if (this.source === undefined) {
       return {
         status: "unavailable",
@@ -260,7 +269,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
         reviewStatus: "manual_review",
       };
     }
-    const destination = nestedRecord(input, "destination");
+    const destination = nestedRecord(request, "destination");
     const addressType = stringValue(destination?.address_type);
     if (addressType === null || addressType === "unknown") {
       return {
@@ -277,7 +286,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
         ],
       };
     }
-    const record = await this.source.lookup(input);
+    const record = await this.source.lookup(request);
     const sourceRefs = [record.source_ref];
     if (record.status !== "matched") {
       const blockerCode = sourceStatusBlocker(record.status);
@@ -304,7 +313,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
       };
     }
 
-    const effectiveAt = stringValue(input.effective_at);
+    const effectiveAt = stringValue(request.effective_at);
     if (
       effectiveAt === null ||
       !dateIsWithin(effectiveAt, record.valid_from, record.valid_to)
@@ -358,7 +367,7 @@ export class ExistingQuoteAdapter implements QuoteAdapter {
       },
     ];
     let total = base.add(fuel);
-    const services = nestedRecord(input, "services");
+    const services = nestedRecord(request, "services");
     const requestedFees: string[] = [];
     if (["residential", "private", "rural_residential"].includes(addressType)) {
       requestedFees.push("residential_fee");

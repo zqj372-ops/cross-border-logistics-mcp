@@ -30,14 +30,14 @@ GET /admin/api/v1/snapshot
 
 ## 边界
 
-- AI 报价 API、RiskCustoms API、PDF API 均为外部 API；当前 quote 生产路径保持 unavailable/fail-closed，PDF 未注册；MCP 本地只有 cargo/container 确定性计算。
+- AI 报价 API、RiskCustoms API、报价单 API 均为外部接口；`quote.create_pdf` 已登记但正式连接未启用，当前保持不可用并失败闭合；MCP 本地只有货物和装柜确定性计算。
 - 数据源快照可以为业务 API 提供可选字段 `category`、`environment`、`adapter_contract_version`、`business_version_evidence`、`update_mode`、`last_checked_at`、`last_success_at`、`affected_tools`、`registration_status` 和 `blocker`；缺字段显示“未返回”，不会由前端推断。
 - 工具快照可提供独立的 `availability`；`kind` 不是可用性，字段未返回时显示“未返回”，不会推断为已就绪。
-- `#adapters` 顶部只把 `category=business_api` 的来源渲染为 API 状态卡；fixture 包含 AI 报价 API、RiskCustoms API 和未配置/未注册的 PDF API，knowledge/status/review 仍在普通引用表中。
+- `#adapters` 顶部只把 `category=business_api` 的来源渲染为接口状态卡；fixture 包含智能报价服务、关务查询服务和已登记但正式连接未启用的报价单服务，knowledge/status/review 仍在普通引用表中。
 - 页面只展示接口、凭证和版本证据是否已配置；不展示具体引用值、版本号、原始凭证、客户内容、报价明细或税务材料。
 - 一个业务 API 不可达只关闭其 `affected_tools`；只有身份、审计、session 等平台基础设施故障才影响全局 `/readyz`，来源卡不会被汇总为整个 MCP 健康。
 - 角色和 Phase 1 工具只按已校验快照中的平台 RBAC 展示；快照缺失时不生成默认权限，不能从页面新增 generic write。
-- `#architecture` 只把已校验快照中的 clients、tools、sources 和 `approvals.chain` 画成静态关系：clients → MCP 控制层 → 两类执行 → sources。本地确定性执行明确列出 `cargo.calculate`、`container.plan_summary`；外部 API 窄适配明确关联 quote 与 RiskCustoms；PDF 仅显示未配置/未注册来源，不生成可用工具节点。未知/空/异常 name 仍保留在平台支持/其他工具中。
+- `#architecture` 只把已校验快照中的 clients、tools、sources 和 `approvals.chain` 画成静态关系：clients → MCP 控制层 → 两类执行 → sources。本地确定性执行明确列出货物和装柜计算；外部接口窄适配明确关联智能报价、关务查询和报价单；报价单来源显示“工具已登记，正式连接未启用”，但不可用且不生成可用连接。未知/空/异常名称仍保留在平台支持/其他工具中。
 - 结构图不证明真实网络连通、认证已接通或正式配置生效；tool allowlist、client check、source readiness、approval 状态分别展示，不汇总为“系统健康”或“可发布”。节点详情只显示脱敏字段，`secret_ref` 仅作引用，实际 endpoint、凭证、客户内容和下游响应不显示。
 - 真实写操作必须经过 `draft → validate/preview → approval → publish → readback/rollback`；本原型没有正式写 API，因此不伪造成功。
 
@@ -57,7 +57,7 @@ node --check apps/admin/fixture-data.js
 node apps/admin/self-check.mjs
 ```
 
-self-check 还会验证前端中文展示边界、技术字段不回显、三业务 API 卡字段、引用隐藏、旧快照缺新字段仍可校验、缺字段不造状态、工具到来源分组、PDF 未注册、原始工具顺序、未知工具保留、空数组不造节点，以及审批链缺步骤不标记为成功。
+self-check 还会验证前端中文展示边界、技术字段不回显、三业务接口卡字段、引用隐藏、旧快照缺新字段仍可校验、缺字段不造状态、工具到来源分组、报价单已登记但不可用、原始工具顺序、未知工具保留、空数组不造节点，以及审批链缺步骤不标记为成功。
 
 静态服务器 smoke 应使用明确的 `?fixture=1` URL；运行时不带该参数时读取只读正式快照，读取失败也不会展示演示数据。
 

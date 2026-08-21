@@ -13,7 +13,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   cargoInput,
   containerInput,
+  legacyQuoteDraftResult,
   quoteInput,
+  quotePdfInput,
 } from "./fixtures/tenant-fixtures";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -361,16 +363,28 @@ describe("built runtime smoke", () => {
         "customs.ca.search",
         "knowledge.search_curated",
         "quote.canada_final_mile.calculate",
+        "quote.create_pdf",
         "quote.save_draft",
         "review.create_task",
         "system.get_data_status",
       ].sort());
       expect(toolList.tools.every((tool) =>
         tool.inputSchema.$schema === "https://json-schema.org/draft/2020-12/schema" &&
-        tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
+        tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema" &&
+        tool.outputSchema?.type === "object" &&
+        tool.outputSchema?.additionalProperties === false
       )).toBe(true);
       expect(toolList.tools.find((tool) => tool.name === "quote.save_draft")?.annotations)
         .toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+      expect(toolList.tools.find((tool) => tool.name === "quote.create_pdf")).toMatchObject({
+        title: "创建报价 PDF",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      });
 
       const cargo = structured(await client.callTool({
         name: "cargo.calculate",
@@ -393,12 +407,21 @@ describe("built runtime smoke", () => {
         name: "quote.canada_final_mile.calculate",
         arguments: quoteInput(),
       }));
-      expect(quote.status).toBe("success");
-      expect(quote.data).toMatchObject({
-        quote_status: "calculated",
-        sendable: false,
-      });
-      expect(quote.source_refs?.length).toBeGreaterThan(0);
+      expect(quote.status).toBe("unavailable");
+      expect(quote.data).toBeNull();
+      expect(quote.source_refs).toEqual([]);
+      expect(quote.calculation_trace).toEqual([]);
+      expect(quote.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "quote.adapter_disabled" }),
+        ]),
+      );
+
+      const pdf = structured(await client.callTool({
+        name: "quote.create_pdf",
+        arguments: quotePdfInput("preview", "pdf_runtime_disabled_001"),
+      }));
+      expect(pdf).toMatchObject({ status: "unavailable", data: null });
 
       const customsSearch = structured(await client.callTool({
         name: "customs.ca.search",
@@ -446,7 +469,7 @@ describe("built runtime smoke", () => {
       const quoteDraftBase = {
         schema_version: "2026-08-11.v1",
         version: "quote-save@fixture-1",
-        quote_result: quote.data,
+        quote_result: legacyQuoteDraftResult(),
         target: { system: "existing_quote_system", record_kind: "draft" },
       };
       const crossTenant = await client.callTool({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFetchJsonClient,
@@ -172,6 +172,35 @@ describe("allowlisted upstream HTTP client", () => {
     await expect(redirected.get("/api/status")).rejects.toMatchObject({
       code: "upstream_redirect_rejected",
     });
+  });
+
+  it.each([
+    ["cyclic body", (() => { const value: Record<string, unknown> = {}; value.self = value; return value; })(), undefined],
+    ["bigint body", 1n, undefined],
+    ["invalid header", {}, { "x-invalid": "\u0000" }],
+  ] as const)("fails closed before fetch for %s and removes the caller abort listener", async (_name, body, headers) => {
+    let fetchCalls = 0;
+    const client = createFetchJsonClient({
+      baseUrl: "https://quote.example.invalid",
+      allowedHosts: ["quote.example.invalid"],
+      enabled: true,
+      fetchImpl: () => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response("{}"));
+      },
+    });
+    const controller = new AbortController();
+    const add = vi.spyOn(controller.signal, "addEventListener");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+
+    await expect(client.post("/api/status", body, headers, controller.signal)).rejects.toMatchObject({
+      code: "upstream_request_invalid",
+      status: undefined,
+    });
+    expect(fetchCalls).toBe(0);
+    const addedListener = add.mock.calls.find(([type]) => type === "abort")?.[1];
+    expect(addedListener).toBeDefined();
+    expect(remove.mock.calls).toContainEqual(["abort", addedListener]);
   });
 
   it("redacts credential values before any diagnostic projection", () => {

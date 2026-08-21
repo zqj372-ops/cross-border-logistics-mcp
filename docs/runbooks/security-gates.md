@@ -30,6 +30,10 @@
   拒绝。测试应通过真实 HTTP client 请求路径验证，不只单测 security helper。
 - 应用层这里只检查 URL/hostname，不做 DNS 解析，不能单独解决 DNS rebinding。生产网络出口
   仍必须由 egress proxy/firewall 对解析后的目的 IP 执行 allow/deny 和 rebinding 防护。
+- Quote PDF 只有在 `MCP_QUOTE_PDF_ENABLED=true` 时读取其余四项：`MCP_QUOTE_PDF_BASE_URL`、
+  `MCP_QUOTE_PDF_ALLOWED_HOSTS`、`MCP_QUOTE_PDF_TENANT_ID`、`MCP_QUOTE_PDF_BEARER_TOKEN`。
+  地址必须 HTTPS/非 loopback，主机必须精确 allowlist；tenant 是单公司服务端映射，Bearer
+  必须由 secret manager 注入。跨租户或缺配置必须在 HTTP 前零请求；默认 false 不影响全局 readiness。
 - 生产 assembly 不得把 Memory audit/idempotency 实现当作 durable；缺 audit、幂等、session
   binding、token verifier 或 adapter source 时 readiness fail-closed，`/mcp` 不调用认证器或下游。
 - 审计失败 fail-closed；未完成审计的结果不能释放为 success。
@@ -56,3 +60,8 @@ npm run lint
 
 RiskCustoms `ready=false` 必须保持 `unavailable`/`manual_review`；不能用 fixture、旧数据或
 模型猜值提升成 success。
+
+Quote PDF staging gate 必须按 Quote preview → PDF POST `201/200` → 同 key replay（如需）→
+GET exact readback 验收，并核对 `sendable=false`、source/版本闭合和 admin 中文状态；未完成时
+不得宣称正式 HTTPS 已连接。base URL 的 path/query 会被固定 `/v2/quote-pdfs` 路径覆盖，部署建议只填 origin；
+不以应用层 DNS 检查代替 egress proxy 的 DNS rebinding 防护。

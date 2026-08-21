@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -52,5 +53,86 @@ describe("non-production release gates", () => {
       env: { PATH: process.env.PATH ?? "" },
     });
     expect(output).toMatch(/fixture/i);
+    expect(output).toContain("built quote PDF startup probe: PASS");
+  });
+
+  it("requires and propagates the quote v2 contract gate", () => {
+    const script = read("deploy/scripts/check-release.sh");
+    expect(script).toContain("node docs/contracts/quote-v2-contract.test.mjs");
+    expect(script).toContain("node docs/contracts/quote-create-pdf-contract.test.mjs");
+
+    const bin = mkdtempSync(join(tmpdir(), "logistics-mcp-release-gate-"));
+    const fakeNode = join(bin, "node");
+    const realNode = process.execPath.replaceAll("'", "'\\''");
+    writeFileSync(fakeNode, `#!/bin/sh
+if [ "$1" = "docs/contracts/quote-v2-contract.test.mjs" ]; then
+  exit 91
+fi
+exec '${realNode}' "$@"
+`);
+    chmodSync(fakeNode, 0o755);
+
+    try {
+      const result = spawnSync("bash", ["deploy/scripts/check-release.sh", "--fixture-only"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(91);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates the quote PDF contract gate", () => {
+    const bin = mkdtempSync(join(tmpdir(), "logistics-mcp-release-pdf-gate-"));
+    const fakeNode = join(bin, "node");
+    const realNode = process.execPath.replaceAll("'", "'\\''");
+    writeFileSync(fakeNode, `#!/bin/sh
+if [ "$1" = "docs/contracts/quote-create-pdf-contract.test.mjs" ]; then
+  exit 92
+fi
+exec '${realNode}' "$@"
+`);
+    chmodSync(fakeNode, 0o755);
+
+    try {
+      const result = spawnSync("bash", ["deploy/scripts/check-release.sh", "--fixture-only"], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(92);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the built quote PDF startup probe in fixture-only release checks", () => {
+    const script = read("deploy/scripts/check-release.sh");
+    expect(script).toContain("npm run build");
+    expect(script).toContain("node deploy/scripts/verify-quote-pdf-startup.mjs");
+    expect(existsSync(resolve(root, "deploy/scripts/verify-quote-pdf-startup.mjs"))).toBe(true);
+  });
+
+  it("documents disabled-by-default quote PDF deployment gates", () => {
+    const deployReadme = read("deploy/README.md");
+    const env = read("deploy/env.example");
+    const compose = read("deploy/compose.yml");
+    for (const name of [
+      "MCP_QUOTE_PDF_ENABLED",
+      "MCP_QUOTE_PDF_BASE_URL",
+      "MCP_QUOTE_PDF_ALLOWED_HOSTS",
+      "MCP_QUOTE_PDF_TENANT_ID",
+      "MCP_QUOTE_PDF_BEARER_TOKEN",
+    ]) {
+      expect(deployReadme).toContain(name);
+      expect(env).toContain(name);
+      expect(compose).toContain(name);
+    }
+    expect(deployReadme).toMatch(/HTTPS.*allowlist|allowlist.*HTTPS/i);
+    expect(deployReadme).toMatch(/preview[\s\S]*POST[\s\S]*GET|POST[\s\S]*GET[\s\S]*readback/i);
+    expect(deployReadme).toMatch(/cross.?tenant.*zero|跨租户.*零请求/i);
+    expect(deployReadme).toMatch(/默认.*false|false.*默认/i);
   });
 });
