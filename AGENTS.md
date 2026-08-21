@@ -1,6 +1,18 @@
 # 后续任务协作规则
 
-本文件是共享基线的执行约束。任务 02–06 使用独立分支/worktree 时，必须先阅读本文件、产品实现说明、统一包络、工具目录和权威矩阵。
+## 强制启动顺序
+
+任何人或 Agent 在本仓库新增业务模块、修改模块平台、接入 MCP Gateway 或执行发布前，必须依次阅读：
+
+1. 本文件；
+2. [业务模块开发与 MCP 热插拔集成规范](MODULE_DEVELOPMENT_STANDARD.md)；
+3. [README](README.md)；
+4. [统一包络](docs/contracts/envelope.md)、[工具目录](docs/contracts/tool-catalog.md)和[权威矩阵](docs/contracts/authority-matrix.md)；
+5. 与任务相关的 RFC、实现计划和 runbook。
+
+读取后先确认当前代码和合同。`MODULE_DEVELOPMENT_STANDARD.md` 定义的是下一阶段 Module Contract 和热插拔目标架构，不代表当前仓库已经实现；未经平台 RFC 和契约批准，不得直接修改静态注册表接入新模块。
+
+本文件是共享基线的执行约束。任务 02–06 使用独立分支/worktree 时，同样必须遵守上述启动顺序。
 
 ## 任务所有权
 
