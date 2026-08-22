@@ -364,6 +364,28 @@ describe("canonical control hash", () => {
       "array_invalid",
       "preview",
     );
+
+    const nestedRequest = {
+      schema_version: "2026-08-22.v1",
+      intent: "change",
+      desired_modules: previewPayload.desired_modules,
+    } as Record<string, unknown>;
+    Object.defineProperty(nestedRequest, "intent", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("must not run");
+      },
+    });
+    expectPayloadError(
+      {
+        action: "deployments.preview",
+        actor_ref: "actor_operator",
+        management_tenant_id: "tenant_demo",
+        request: nestedRequest,
+      },
+      "payload_fields_invalid",
+    );
     expect(accessorReads).toBe(0);
   });
 

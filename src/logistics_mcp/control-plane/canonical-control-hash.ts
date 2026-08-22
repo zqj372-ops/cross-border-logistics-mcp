@@ -227,6 +227,28 @@ function exactRecord(
   }
 }
 
+function ownEnumerableDataValue(
+  value: unknown,
+  key: string,
+  code: HashErrorCode,
+): unknown {
+  try {
+    if (!isPlainRecord(value)) fail(code);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      fail(code);
+    }
+    return descriptor.value;
+  } catch (error: unknown) {
+    if (error instanceof CanonicalControlHashError) throw error;
+    fail(code);
+  }
+}
+
 function exactArray(value: unknown): readonly unknown[] {
   try {
     if (!Array.isArray(value)) fail("array_invalid");
@@ -396,10 +418,12 @@ function normalizeStrictRequest(
     };
   }
   if (action === "deployments.preview") {
-    if (!isPlainRecord(value) || !Object.hasOwn(value, "intent")) {
-      fail("payload_fields_invalid");
-    }
-    if (value.intent === "change") {
+    const intent = ownEnumerableDataValue(
+      value,
+      "intent",
+      "payload_fields_invalid",
+    );
+    if (intent === "change") {
       const record = exactRecord(
         value,
         ["schema_version", "intent", "desired_modules"],
@@ -415,7 +439,7 @@ function normalizeStrictRequest(
         }),
       };
     }
-    if (value.intent === "rollback") {
+    if (intent === "rollback") {
       const record = exactRecord(
         value,
         ["schema_version", "intent", "target_release_id"],
@@ -511,21 +535,11 @@ function normalizeRequestPayload(
 function normalizePreviewPayload(
   value: Record<string, unknown>,
 ): { readonly value: CanonicalValue; readonly schemaVersion: string } {
-  let intent: unknown;
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, "intent");
-    if (
-      descriptor === undefined ||
-      !("value" in descriptor) ||
-      descriptor.enumerable !== true
-    ) {
-      fail("payload_fields_invalid");
-    }
-    intent = descriptor.value;
-  } catch (error: unknown) {
-    if (error instanceof CanonicalControlHashError) throw error;
-    fail("payload_fields_invalid");
-  }
+  const intent = ownEnumerableDataValue(
+    value,
+    "intent",
+    "payload_fields_invalid",
+  );
   if (intent !== "change" && intent !== "rollback") {
     fail("payload_fields_invalid");
   }
