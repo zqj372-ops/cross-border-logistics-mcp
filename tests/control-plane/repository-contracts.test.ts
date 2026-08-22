@@ -46,6 +46,11 @@ const useCaseMethodNames = [
   "getActiveRelease",
   "getPendingRelease",
   "getNewestUnresolvedRelease",
+  "getPreview",
+  "getApproval",
+  "getRelease",
+  "getReadback",
+  "getIdempotency",
 ] as const satisfies readonly (keyof ModuleControlRepository)[];
 
 const lifecycleMethodNames = ["close"] as const satisfies readonly (keyof ModuleControlRepository)[];
@@ -202,7 +207,7 @@ const finalResult = {
 } as const satisfies ControlFinalResult;
 
 describe("module control repository contract", () => {
-  it("exposes the eleven use-case methods and lifecycle methods without a generic write surface", () => {
+  it("exposes only narrow use-case methods and lifecycle methods without a generic write surface", () => {
     const unimplemented = async (): Promise<never> =>
       Promise.reject(new Error("contract-only implementation"));
     const repositoryContract: ModuleControlRepository = {
@@ -218,9 +223,14 @@ describe("module control repository contract", () => {
       getActiveRelease: unimplemented,
       getPendingRelease: unimplemented,
       getNewestUnresolvedRelease: unimplemented,
+      getPreview: unimplemented,
+      getApproval: unimplemented,
+      getRelease: unimplemented,
+      getReadback: unimplemented,
+      getIdempotency: unimplemented,
     };
 
-    expect(useCaseMethodNames).toHaveLength(11);
+    expect(useCaseMethodNames).toHaveLength(16);
     expect(lifecycleMethodNames).toEqual(["close"]);
     expect(Object.keys(repositoryContract)).toEqual([
       "health",
@@ -235,6 +245,11 @@ describe("module control repository contract", () => {
       "getActiveRelease",
       "getPendingRelease",
       "getNewestUnresolvedRelease",
+      "getPreview",
+      "getApproval",
+      "getRelease",
+      "getReadback",
+      "getIdempotency",
     ]);
     expect(useCaseMethodNames).not.toContain("put" as never);
     expect(useCaseMethodNames).not.toContain("get" as never);

@@ -612,6 +612,31 @@ export interface CompleteControlIdempotencyRequest {
   readonly record: ModuleControlIdempotencyRecord;
 }
 
+interface ManagementTenantQuery {
+  readonly managementTenantId: string;
+}
+
+export interface GetModulePreviewQuery extends ManagementTenantQuery {
+  readonly previewRef: string;
+}
+
+export interface GetModuleApprovalQuery extends ManagementTenantQuery {
+  readonly approvalId: string;
+}
+
+export interface GetModuleReleaseQuery extends ManagementTenantQuery {
+  readonly releaseId: string;
+}
+
+export interface GetModuleReadbackQuery extends ManagementTenantQuery {
+  readonly releaseId: string;
+}
+
+export interface GetControlIdempotencyQuery extends ManagementTenantQuery {
+  readonly action: ModuleControlAction;
+  readonly idempotencyKey: string;
+}
+
 export interface RegistrationWriteResult {
   readonly record: DeepReadonly<ModuleRegistrationRecord>;
   readonly event: DeepReadonly<ControlEventRecord>;
@@ -659,6 +684,21 @@ export interface ModuleControlRepository {
   getActiveRelease(): Promise<DeepReadonly<ModuleReleaseRecord> | null>;
   getPendingRelease(): Promise<DeepReadonly<ModuleReleaseRecord> | null>;
   getNewestUnresolvedRelease(): Promise<DeepReadonly<ModuleReleaseRecord> | null>;
+  getPreview(
+    query: GetModulePreviewQuery,
+  ): Promise<DeepReadonly<ModulePreviewRecord> | null>;
+  getApproval(
+    query: GetModuleApprovalQuery,
+  ): Promise<DeepReadonly<ModuleApprovalRecord> | null>;
+  getRelease(
+    query: GetModuleReleaseQuery,
+  ): Promise<DeepReadonly<ModuleReleaseRecord> | null>;
+  getReadback(
+    query: GetModuleReadbackQuery,
+  ): Promise<DeepReadonly<ModuleReadbackRecord> | null>;
+  getIdempotency(
+    query: GetControlIdempotencyQuery,
+  ): Promise<DeepReadonly<ModuleControlIdempotencyRecord> | null>;
 }
 
 export function assertControlRequestBinding(input: {
