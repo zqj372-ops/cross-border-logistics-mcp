@@ -26,12 +26,12 @@
 
 | 任务 | 可写目录 | 主要交付 |
 | --- | --- | --- |
-| 01 基线 | `README.md`、`AGENTS.md`、`docs/product/**`、`docs/contracts/**`、`docs/superpowers/plans/**` | 共享定位、契约、Schema、示例和实现计划 |
-| 02 平台 | `src/logistics_mcp/platform/**`、`src/logistics_mcp/server/**`、`tests/platform/**` | MCP transport、租户上下文、RBAC、envelope、审计、幂等和工具注册 |
+| 01 基线 | `README.md`、`AGENTS.md`、`docs/product/**`、`docs/contracts/**`、`docs/superpowers/plans/**`、`schemas/admin-control/**` | 共享定位、契约、Schema、示例和实现计划；Admin 控制面 Schema 由已接受 RFC 单独维护，不改变 Phase 1 工具合同 |
+| 02 平台 | `src/logistics_mcp/platform/**`、`src/logistics_mcp/server/**`、`src/logistics_mcp/control-plane/**`、`tests/platform/**`、`tests/control-plane/**` | MCP transport、租户上下文、RBAC、envelope、审计、幂等、工具注册和窄模块发布控制面 |
 | 03 货物/分泡 | `src/logistics_mcp/domains/cargo/**`、`tests/cargo/**` | CargoLine、CBM、体积重、分泡、计费重和证据模式 |
 | 04 装柜 | `src/logistics_mcp/domains/container/**`、`tests/container/**` | 理论容量/可操作容量、装载汇总、超方超重和装载顺序摘要 |
 | 05 适配器 | `src/logistics_mcp/adapters/**`、`src/logistics_mcp/domains/{quote,customs,knowledge,status,review}/**`、`tests/adapters/**`、`tests/domains/**` | 现有报价、RiskCustoms、精选知识、状态和复核任务的窄适配 |
-| 06 集成 | `tests/e2e/**`、`deploy/**`、`docs/runbooks/**`、客户端配置示例 | 多客户端、部署、安全发布、端到端和回滚验证 |
+| 06 集成 | `tests/e2e/**`、`deploy/**`、`docs/runbooks/**`、`apps/admin/**`、客户端配置示例 | 多客户端、Admin 控制台、部署、安全发布、端到端和回滚验证 |
 
 任务 06 原则上不重写 02–05 的领域实现，只通过小型集成修复解决问题。
 

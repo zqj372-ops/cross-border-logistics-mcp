@@ -32,8 +32,10 @@
 
 使用 FastAdmin 的模块中心、审批、发布、回滚信息架构，使用自托管 AdminLTE 4 样式作为
 页面外壳；后端继续使用现有 Node/TypeScript 平台。首版形成一个真实、窄语义、可审计的
-模块发布控制面：它能持久登记当前部署清单中的模块、生成差异预览、执行双人审批、发布
-启停策略、完成运行时读回，并通过同一流程回滚到上一已验证 release。
+模块发布控制面：它能在本机/fixture 受控环境中持久登记当前部署清单中的模块、生成差异
+预览、执行双人审批、发布启停策略、完成运行时读回，并通过同一流程回滚到上一已验证
+release。production Admin 写入口在 v1 保持 `blocked`；真实 JWT claim policy、Deployment
+Evidence 信任链和多实例发布在后续 RFC 完成前不得开启。
 
 首版不是完整的通用热插拔平台。它不下载或加载新代码；新模块版本必须先进入受信构建和
 部署清单，再由本控制面登记和激活。对已经随当前进程挂载的模块，发布通过调用门禁原子切换
@@ -52,6 +54,7 @@
 6. 只允许当前部署清单中的不可变模块描述符，拒绝客户端 URL、路径、源码和 secret。
 7. 保持现有九个业务工具、Agent context 工具、统一五状态和业务权威边界兼容。
 8. 提供中文、可访问、可在本机浏览器完整操作的 AdminLTE 风格模块中心。
+9. v1 只证明本机单进程 control-plane 写入；production API 对所有写操作保持 `blocked`。
 
 ### 非目标
 
@@ -59,6 +62,8 @@
 - 不实现远程仓库搜索、任意上传、在线解压、运行时 npm install、`eval` 或 `vm` 执行。
 - 不修改报价、Zone、税率、客户、订单、文档或关务主数据。
 - 不实现 T1-T3 任意代码隔离运行时、N/N-1 代码代并存或无重启版本升级。
+- 不实现或接受 `verified_release`/`production_eligible=true`；opaque ref 不作为签名证明。
+- 不开放 production Admin 写 API，不把本地 fixture token 迁入生产认证路径。
 - 不把本地 fixture、descriptor digest、HTTP 200 或进程存活写成生产发布证明。
 - 不提供共享管理员口令、header bypass 或客户端可伪造身份字段。
 
@@ -87,36 +92,53 @@ flowchart LR
 
 ### 服务端身份边界
 
-- Bearer 经现有 verifier 验证后调用 `parseExecutionContext`。
-- 生产写入要求 `admin` role、`platform:admin` scope，并命中服务端配置的
-  `MCP_ADMIN_TENANT_ID`。
+- v1 只接受 fixture assembly 中两个服务端配置的本机演示 token；它们分别映射到申请人和
+  审批人，且只在 loopback + fixture mode 生效。
+- `MCP_DATA_MODE=production` 时所有 `/admin/api/v1/control/**` POST 固定返回
+  `blocked/admin_control_production_disabled_v1`，即使 Bearer 签名有效也不进入 service。
+- 后续 production RFC 必须把 RS256 验签与 issuer、audience、subject、tenant、active role、
+  `iat`、`exp`、最大生命周期校验组成一个不可拆分的 authenticator；只调用当前 verifier
+  再 `parseExecutionContext` 不足以授权管理写入。
+- service 仍要求 `context.role === "admin"`、`roles` 包含 admin、`platform:admin` scope，
+  并命中唯一服务端配置的管理 tenant；`roles` 中出现 admin 不能提升非 admin active role。
 - 请求体 schema 明确拒绝 `tenant_id`、`actor_id`、`roles`、`scopes`、token、URL、路径和
   secret 字段。
-- preview 创建者不能批准自己的 preview；publish 必须引用当前有效、未被消费的 approval。
+- preview 创建者不能批准自己的 preview；approval 绑定 tenant、preview canonical hash、base
+  release/revision、inventory digest set、creator、approver 和 expiry，并采用 append-only final
+  CAS。reject 不可覆盖成 approve，publish 必须原子消费 preview/approval。
 
 ### 制品边界
 
 - 构建生成 `dist/control-plane/module-inventory.json`。每项只描述随当前应用构建的模块：
   `module_id`、`version`、`risk_level`、工具名、标准引用和 canonical descriptor digest。
 - descriptor digest 只证明清单描述未漂移，不冒充容器镜像或签名制品 digest。
-- 可选 release evidence 使用 opaque `source_sha_ref`、`artifact_digest_ref`、
-  `signature_ref`、`sbom_ref`、`attestation_ref`；值来自服务端部署清单，不接受浏览器输入。
-- 本地构建 inventory 标记 `evidence_level=local_build`、`production_eligible=false`。
-  只有独立发布流程注入完整证明后才能标记 `verified_release`。
+- v1 inventory 固定 `evidence_level=local_build`、`production_eligible=false`。可选本地 build
+  refs 只能由服务端构建生成，不接受浏览器输入，也不能被 UI 表述为签名已验证。
+- `verified_release` 不属于 v1 输入或状态。后续 Deployment Evidence RFC 必须定义 canonical
+  descriptor、source/build SHA、artifact/image digest、签名算法和 key/trust root、签名覆盖
+  内容、验证结果、SBOM/attestation、verified time 的绑定后，才能评估生产资格。
 
 ## 4. 组件职责
 
 ### `module-inventory`
 
-- 从实际 Module Definition 和工具贡献生成 canonical descriptor。
+- 从实际 Module Definition 和工具贡献生成 canonical descriptor。descriptor 覆盖 module
+  ID/version/risk/lifecycle/required+optional capabilities/module standards，以及每个工具的
+  owner/name/permission/kind/risk/input schema ID/output schema ID/standard refs。
 - 对 canonical JSON 计算 SHA-256。
 - 校验 module ID/version 唯一、tool owner 唯一、manifest 合法、标准引用完整。
+- v1 只接受当前固定服务端 RBAC 已知的 bundled tools；未知 tool policy 在 inventory 阶段拒绝，
+  不能出现“目录可见但永远被 RBAC 拒绝”的登记成功。
 - 运行时只读取构建产物，不从 cwd 搜索 manifest 或 Markdown。
 
 ### `SqliteModuleControlStore`
 
 - 使用独立、显式的 `MCP_CONTROL_DB_PATH`；不把控制面记录混入业务主库。
+- 新库只能由显式 fixture initializer 创建；普通 runtime open 要求文件和 v1 schema 已存在。
+  因此已启用环境中 DB 丢失不会被启动流程静默重建。
 - 数据库文件要求 regular file、`0600`、WAL、FULL synchronous、strict tables、schema version。
+- v1 使用 SQLite exclusive locking 保证同一 control DB 只有一个运行进程；第二个实例启动
+  fail closed。production 多实例不在 v1 范围。
 - 提供原子操作，不向上层暴露通用 SQL 或通用 JSON 写入口。
 - 保存模块登记、preview、approval、release、readback、幂等结果和追加式事件。
 
@@ -134,7 +156,9 @@ flowchart LR
 - 发布时一次性替换不可变 snapshot；请求开始时读取同一个 snapshot，避免半更新。
 - 禁用模块的工具仍在 `tools/list` 中；实际调用在领域 handler 前返回
   `unavailable`，reason code 为 `module_disabled_by_release`。
-- 默认没有 release 时保持现有全部静态模块启用，保证向后兼容。
+- 只有控制面功能未启用，或显式初始化的全新本机 control DB 确认 `release_count=0` 时，才保持
+  现有全部静态模块启用。`MCP_ADMIN_CONTROL_ENABLED=true` 后 control DB 缺失、损坏、锁冲突
+  或状态未知必须阻止服务监听，不能回退到全启用。
 
 ### `AdminControlApi`
 
@@ -150,16 +174,18 @@ key-value 表。
 
 | 表 | 主键/唯一约束 | 关键内容 |
 | --- | --- | --- |
-| `module_registrations` | `module_id, version, descriptor_digest` | inventory 引用、登记 actor/time、evidence level |
-| `module_previews` | `preview_ref` | intent、base release、desired refs、diff、validation、creator、expiry、consumed |
-| `module_approvals` | `approval_id`；每 preview 只允许一个当前决定 | approver、decision、reason code、time |
-| `module_releases` | `release_id`；revision 唯一递增 | desired refs、previous release、preview、approval、publisher、状态 |
-| `module_readbacks` | `release_id` | applied release/revision/module refs、verified、reason、time |
-| `module_control_idempotency` | `action, idempotency_key` | request hash、`reserved|domain_committed|completed`、domain record ref、final result、created/expiry |
+| `module_registrations` | `tenant_id, module_id, version, descriptor_digest` | inventory 引用、登记 actor/time、固定 local evidence |
+| `module_previews` | `tenant_id, preview_ref` | intent、canonical hash、base release/revision、inventory digest set、desired refs、diff、validation、creator、expiry、consumed |
+| `module_approvals` | `tenant_id, approval_id`；`tenant_id, preview_ref` 唯一 | immutable approver、decision、preview hash、expiry、reason code、time、consumed |
+| `module_releases` | `tenant_id, release_id`；tenant 内 revision 唯一递增 | desired refs、previous release、preview、approval、publisher、状态 |
+| `module_readbacks` | `tenant_id, release_id` | applied release/revision/module refs、verified、reason、time |
+| `module_control_idempotency` | `tenant_id, action, idempotency_key` | request hash、`reserved|domain_committed|completed`、domain record ref、final result、created/expiry |
 | `module_control_events` | 自增 sequence；event ID 唯一 | 脱敏动作、actor ref、对象 ref、status、reason、time |
 
-不保存 Bearer、客户地址、报价、税务材料、原始聊天、任意 URL、源码、任意文件路径或 secret
-正文。actor/tenant 只保存受控标识，UI 默认显示截断 reference。
+v1 是平台全局策略但只允许一个配置的管理 tenant；所有表仍显式保存/索引 tenant，任何其他
+tenant 在 service 前 `blocked`。不保存 Bearer、客户地址、报价、税务材料、原始聊天、任意
+URL、源码、任意文件路径或 secret 正文。actor/tenant 只保存受控标识，UI 默认显示截断
+reference。
 
 ## 6. 状态机
 
@@ -170,6 +196,7 @@ inventory candidate
   -> approved | rejected | expired
   -> published_pending_readback
   -> active_verified | manual_review
+  -> reconciled_active | reconciliation_failed
   -> superseded
 
 rollback target
@@ -185,12 +212,17 @@ rollback target
 - approval 必须来自不同 actor；reject 后 preview 不可 publish。
 - publish 创建新 release，应用 activation snapshot，再读回 exact release/revision/module set。
 - 读回不一致返回 `manual_review` 并保留事件；不得返回 success 或自动反复重试。
+- pending/manual_review release 只能通过同一 idempotency replay、启动 reconciliation 或窄
+  reconcile API 继续 exact readback；三者都固定原 release，不创建第二个 release。
 - rollback 创建新 revision，不删除、改写或重新激活旧记录本身。
 
 ## 7. HTTP API
 
 所有请求/响应在 `schemas/admin-control/**` 使用 Draft 2020-12，
-`additionalProperties: false`。所有 POST 都要求 `Idempotency-Key` 16–200 字符。
+`additionalProperties: false`。Admin 使用独立 `2026-08-22.v1` envelope，不冒充 MCP 工具
+envelope，但必须包含服务端 `request_id`、`trace_id`、`audit_id`、五状态、带 discriminator 的
+closed `data`、`reason_codes` 和 closed `readback`。`trace_id` 不能替代 `audit_id`。所有 POST
+都要求 `Idempotency-Key` 16–200 字符。
 
 ### `GET /admin/api/v1/control/state`
 
@@ -219,6 +251,14 @@ rollback target
 请求包含 preview ref 和 approval ID。服务端重验 context、preview、approval、base、inventory
 和 active set；创建 release；更新 activation registry；执行 exact readback。只有 readback
 一致才 `success`。持久化成功但进程读回未知时返回 `manual_review`。
+
+### `POST /admin/api/v1/control/deployments/reconcile`
+
+请求只包含 schema version 和服务端已返回的 `release_id`。只允许 newest
+`published_pending_readback|manual_review` release；服务端按固定 release/revision/module refs
+重新执行 activation snapshot exact readback，并完成原幂等状态。已 verified、superseded、未知
+或非当前 tenant release `blocked`。reconcile 不创建 release、不修改 desired set，也不接受
+客户端 readback 内容。
 
 ## 8. 幂等、并发与一致性
 
@@ -343,28 +383,34 @@ Git/registry URL、日期和版本号均是视觉占位，不进入实现允许�
 | --- | --- | --- |
 | 缺字段或 schema 错误 | `needs_input` | 零写入 |
 | 身份、scope、tenant、Origin、Host 不合法 | `blocked` | 零写入、零下游调用 |
+| production mode 的任意 Admin POST | `blocked` | v1 不进入 verifier/service/store |
 | 客户端 URL/path/secret/未知模块 | `blocked` | 零登记 |
-| inventory/store/verifier 不可用 | `unavailable` | 保留当前 active snapshot |
+| 控制面已启用但 inventory/store 缺失、损坏或锁冲突 | 启动失败 | 不监听、不回落全启用 |
+| 控制面未启用 | `unavailable` | 保留旧静态全启用兼容路径，不提供写 API |
 | 自批、过期 preview、base 漂移、幂等冲突 | `blocked` | 不发布 |
 | 数据库已写但 activation/readback 未知或不一致 | `manual_review` | 不宣称成功，保留事件证据 |
 | fixture 发布读回一致 | `success` + `production_eligible=false` | 只证明本地受控环境 |
-| verified release 发布读回一致 | `success` | 仍需外部部署/稳定窗口证据才能宣称生产完成 |
+| `verified_release` 或 production-eligible 登记请求 | `blocked` | v1 不接受，等待独立证据信任链 RFC |
 
 ## 11. 测试与验收
 
 ### 单元与合同
 
-- inventory canonicalization、digest、重复 ID/tool、非法 manifest 和 cwd 读取拒绝。
+- inventory canonicalization、完整工具合同 digest、重复 ID/tool、非法 manifest、未知 RBAC
+  tool、`verified_release` 输入和 cwd 读取拒绝。
 - SQLite 新库、重开、权限、schema drift、corruption、并发 revision 和原子事件。
 - register/preview/approve/publish/rollback 的正例、五状态和幂等 replay/conflict。
-- 自批、跨 tenant、缺 scope、identity override 字段、URL/path/secret 字段拒绝。
+- 自批、reject 终态、approval hash/expiry/consume、跨 tenant、非 admin active role、缺 scope、
+  identity override 字段、URL/path/secret 字段拒绝。
 - activation registry 原子替换、默认兼容、禁用调用 unavailable 和 exact readback。
 
 ### HTTP 与端到端
 
-- loopback、Host、Origin、JSON、32 KiB、Bearer、管理 tenant/role/scope 门禁。
+- loopback、Host、Origin、JSON、32 KiB、Bearer、管理 tenant/active role/scope 门禁；production
+  POST 在 verifier/service 前固定 blocked。
 - 两个 fixture 身份完成 register→preview→approve→publish→readback→rollback。
-- 重启后从 SQLite 恢复 active release；历史 release、事件和幂等重放仍可读。
+- 重启后从 SQLite 恢复 active/pending release；pending 可通过 reconcile 完成；历史 release、
+  事件和幂等重放仍可读。control DB 缺失/损坏/第二实例锁冲突时不监听。
 - 现有 MCP tools/list 保留，禁用工具可见但调用 unavailable，重新启用后恢复。
 - Admin UI 不把 draft toggle 当 runtime state，不持久化 token，不显示秘密或业务正文。
 
@@ -388,9 +434,13 @@ git diff --check
 ## 12. 发布与回滚边界
 
 - 首版只在隔离 fixture 和本地回环运行真实写流程，不连接生产业务系统。
-- production 开启控制面前必须配置独立 control DB、真实 JWT verifier、管理 tenant、精确
-  Origin/Host 和 verified release inventory。
-- 代码构建/进程版本升级仍走现有 release runbook；控制面不能下载新版本代码。
+- v1 production Admin 写固定 blocked。后续若要开启，必须先通过新 RFC 配置独立 control DB、
+  完整 JWT claim policy、管理 tenant、精确 Origin/Host、Deployment Evidence 信任链和多实例
+  fencing；不能只改环境变量解除阻断。
+- 代码构建/进程版本升级仍走现有 release runbook；控制面不能下载新版本代码。存在任一已
+  发布 module policy 后，禁止回滚到不理解 control DB/schema/activation policy 的旧镜像；
+  compatibility gate 未通过时回滚必须停止，不能让旧代码忽略数据库后全启用。
 - 紧急回滚仍需要明确目标 release、另一 actor approval、幂等和读回；不删除 SQLite 数据，
   不逆迁 migration。
-- 若控制面不可用，MCP 当前 active snapshot 保持不变；不得自动回退到未验证配置。
+- 同一进程中控制面暂不可用时保留当前 active snapshot；启用控制面的进程重启时如果不能
+  恢复 control DB 和 exact release，必须 fail closed 且不监听，不能自动回退到未验证配置。

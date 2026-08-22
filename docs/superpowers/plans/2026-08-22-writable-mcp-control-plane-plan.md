@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a real, durable, fail-closed module control plane that registers only modules bundled in the current deployment inventory, previews changes, enforces two-person approval, publishes an activation policy with exact runtime readback, and rolls back through the same audited flow.
+**Goal:** Build a real, durable, fail-closed local/fixture module control plane that registers only modules bundled in the current deployment inventory, previews changes, enforces two-person approval, publishes an activation policy with exact runtime readback, reconciles unknown results, and rolls back through the same audited flow while production Admin writes remain blocked in v1.
 
-**Architecture:** Keep the existing Node/TypeScript MCP gateway and static Module Runtime v0. Add a narrow control-plane package, a separate strict SQLite control store, an immutable activation registry that gates already-mounted module handlers, authenticated loopback Admin APIs, and an AdminLTE 4 module-center UI. FastAdmin informs information architecture only; no PHP runtime, arbitrary package loader, business-data store, or production claim is introduced.
+**Architecture:** Keep the existing Node/TypeScript MCP gateway and static Module Runtime v0. Add a narrow control-plane package, a separate strict single-process SQLite control store, an immutable activation registry that gates already-mounted module handlers, fixture-authenticated loopback Admin APIs, and an AdminLTE 4 module-center UI. FastAdmin informs information architecture only; no PHP runtime, arbitrary package loader, verified-release claim, business-data store, production Admin write, or code hot-plug is introduced.
 
 **Tech Stack:** Node.js 22, TypeScript 5.9, Zod 4, Ajv Draft 2020-12, `node:sqlite`, Vitest, native HTML/CSS/ES modules, AdminLTE 4.8.5, Bootstrap 5.3.8.
 
@@ -18,7 +18,7 @@
 - Follow test-driven development: add the smallest failing test, run it and record the failure, implement the minimum behavior, rerun the focused test, then run the task regression set.
 - Use `apply_patch` for edits. Do not connect production, add secrets, add customer/business fixtures, or modify `docs/contracts/**`.
 - Every task ends with `git diff --check`, a focused test command, self-review, and one conventional commit.
-- A successful local/fixture publish must still expose `production_eligible=false`; never rewrite it as production readiness.
+- A successful local/fixture publish must expose `evidence_level=local_build` and `production_eligible=false`; v1 rejects `verified_release` and every production Admin POST.
 
 ## Locked design references
 
@@ -41,6 +41,7 @@
 - Create: `schemas/admin-control/deployment-preview-request.schema.json`
 - Create: `schemas/admin-control/approval-request.schema.json`
 - Create: `schemas/admin-control/publish-request.schema.json`
+- Create: `schemas/admin-control/reconcile-request.schema.json`
 - Create: `schemas/admin-control/control-envelope.schema.json`
 - Create: `tests/control-plane/contracts.test.ts`
 - Create: `tests/control-plane/inventory.test.ts`
@@ -58,8 +59,8 @@ export interface ModuleInventoryEntry {
   readonly toolNames: readonly string[];
   readonly standardRefs: readonly string[];
   readonly descriptorDigest: `sha256:${string}`;
-  readonly evidenceLevel: "local_build" | "verified_release";
-  readonly productionEligible: boolean;
+  readonly evidenceLevel: "local_build";
+  readonly productionEligible: false;
   readonly evidenceRefs: Readonly<{
     sourceShaRef: string | null;
     artifactDigestRef: string | null;
@@ -82,18 +83,20 @@ export interface ModuleActivationSnapshot {
 }
 ```
 
-`createModuleInventory` receives explicit mounted module/catalog data and explicit release evidence. It canonicalizes sorted object keys and sorted set-like arrays, then computes SHA-256. It must not read cwd, files, environment variables, URLs, or Markdown. Reject duplicate module IDs, duplicate tool owners, malformed digests, `productionEligible=true` without `verified_release`, and incomplete verified evidence.
+`createModuleInventory` receives explicit mounted module/catalog data and explicit local build evidence. The canonical descriptor covers module ID/version/risk/lifecycle/required and optional capabilities/module standards plus each tool's owner/name/permission/kind/risk/input schema ID/output schema ID/standard refs. It canonicalizes object keys, sorts set-like arrays, sorts tools by name, then computes SHA-256. It must not read cwd, files, environment variables, URLs, or Markdown. Reject duplicate module IDs, duplicate tool owners, malformed digests, any `verified_release`/`productionEligible=true` input, and incomplete tool contracts. Any visible contract change must change the digest.
 
 `ModuleActivationRegistry` starts with all inventory entries active at release `null`, revision `0`. `replace(next)` validates exact inventory refs, duplicate refs, nonnegative safe revision, and monotonic revision. It replaces one frozen snapshot; `snapshot()` never exposes mutable arrays. `isActive(moduleId, version)` only checks the fixed snapshot.
 
-Admin request schemas use Zod `.strict()` at runtime and checked-in Draft 2020-12 JSON Schemas. Prohibit identity, URL/path/source/secret fields by construction. The response envelope has the existing five status strings and closed `data`, `reason_codes`, `trace_id` fields.
+Admin request schemas use Zod `.strict()` at runtime and checked-in Draft 2020-12 JSON Schemas with `ADMIN_CONTROL_SCHEMA_VERSION="2026-08-22.v1"`. Exact request shapes are register `(schema_version,module_id,version,descriptor_digest)`, preview change `(schema_version,intent,desired_modules)`, preview rollback `(schema_version,intent,target_release_id)`, approval `(schema_version,preview_ref,decision,reason_code)`, publish `(schema_version,preview_ref,approval_id)`, and reconcile `(schema_version,release_id)`. Prohibit identity, URL/path/source/secret fields by construction.
+
+The independent Admin envelope root is closed and contains `schema_version`, server `request_id`, `trace_id`, `audit_id`, existing five status strings, `reason_codes`, a closed readback object, and `data`. `trace_id` never replaces `audit_id`. `readback` is `{status:"not_applicable"|"pending"|"verified"|"mismatch"|"unknown",release_id:string|null,revision:integer|null}`. `data` is null or a closed discriminated union with `kind=control_state|registration|preview|approval|release|reconciliation`; generic `z.record`/unknown data is forbidden.
 
 ### TDD steps
 
 - [ ] Add contract tests proving every JSON Schema declares Draft 2020-12, root `additionalProperties:false`, rejects identity/URL/path/secret extras, and accepts only the documented request union.
 - [ ] Run `npx vitest run tests/control-plane/contracts.test.ts`; expect failure because contracts and schema files do not exist.
 - [ ] Implement the strict Zod contracts and static JSON Schemas; rerun until the contract test passes.
-- [ ] Add inventory tests for deterministic digest under input reordering, duplicate module/tool rejection, evidence-level truthfulness, and no filesystem/environment inputs.
+- [ ] Add inventory tests for deterministic digest under input reordering, digest changes for every module/tool contract field, duplicate module/tool rejection, local-only evidence truthfulness, and no filesystem/environment inputs.
 - [ ] Run `npx vitest run tests/control-plane/inventory.test.ts`; expect missing-module failure.
 - [ ] Implement canonical inventory construction and immutable returned entries; rerun until green.
 - [ ] Add activation tests for default-all-active, atomic replacement, exact descriptor match, duplicate/unknown rejection, stale revision rejection, and mutation resistance.
@@ -114,7 +117,7 @@ Admin request schemas use Zod `.strict()` at runtime and checked-in Draft 2020-1
 
 ### Required design
 
-The store is a separate file-backed database with `durability="durable"`. It requires a regular file, forces `0600`, rejects symlinks/non-files/non-writable paths, enables foreign keys, WAL, FULL synchronous, trusted_schema off, busy timeout, and quick check. Production does not accept `:memory:`. Tests use temporary regular files.
+The store is a separate file-backed database with `durability="durable"`. New-file creation is exposed only through an explicit initializer; normal runtime open requires an existing v1 database and never silently recreates a missing enabled store. It requires a regular file, forces `0600`, rejects symlinks/non-files/non-writable paths, enables foreign keys, WAL, FULL synchronous, trusted_schema off, busy timeout, quick check, and SQLite exclusive locking. A second process/store for the same database must fail closed. `:memory:` is forbidden. Tests use temporary regular files.
 
 Schema version 1 contains only strict narrow tables:
 
@@ -128,7 +131,7 @@ module_control_idempotency
 module_control_events
 ```
 
-Store JSON columns have `json_valid` checks. IDs and status fields have CHECK constraints. Release revision is unique and strictly increasing. Foreign keys connect preview→approval→release→readback. Unknown `user_version`, unexpected columns/tables/index drift, corruption, or failed quick check closes the DB and fails closed.
+Store JSON columns have `json_valid` checks. IDs and status fields have CHECK constraints. Every domain/idempotency key includes explicit `tenant_id`, even though v1 allows one configured management tenant. Release revision is unique and strictly increasing inside that tenant. Approval is append-only/final, uniquely bound to preview canonical hash/base revision/inventory digest set/expiry, and publish atomically consumes preview plus approval. Foreign keys connect preview→approval→release→readback. Unknown `user_version`, unexpected columns/tables/index drift, corruption, failed quick check, or lock conflict closes the DB and fails closed.
 
 Expose use-case-oriented repository methods, not raw SQL or `put(key,value)`. Required operations:
 
@@ -152,11 +155,11 @@ Publish uses compare-and-set on expected base release/revision and writes releas
 
 ### TDD steps
 
-- [ ] Add tests for secure new-file creation, schema/tables/indexes, `0600`, WAL, reopen persistence, health, idempotent close, and no business columns.
+- [ ] Add tests for explicit secure initialization, runtime missing-file rejection, schema/tables/indexes, `0600`, WAL/exclusive lock, second-store denial, reopen persistence, health, idempotent close, explicit tenant keys, and no business columns.
 - [ ] Run `npx vitest run tests/control-plane/sqlite-control-store.test.ts`; expect missing-store failure.
 - [ ] Implement secure initialization and schema verification; rerun the focused cases.
 - [ ] Add tests for exact register/preview/approval/publish/readback persistence and chronological redacted events.
-- [ ] Add tests for idempotent replay, conflict, self-consistent transaction rollback, base revision CAS, duplicate approval, unknown references, readback mismatch, and restart state recovery.
+- [ ] Add tests for idempotent replay, tenant-scoped conflict, self-consistent transaction rollback, base revision CAS, immutable reject/approve terminal decision, approval hash/expiry/consume binding, unknown references, readback mismatch, and restart state recovery.
 - [ ] Add tests that tamper `user_version`, table layout, JSON, status, and symlink path; each must fail closed with a stable typed error and no leaked SQL/value.
 - [ ] Implement the narrow repository methods and transactions; do not introduce a generic write API.
 - [ ] Run `npx vitest run tests/control-plane/sqlite-control-store.test.ts --pool=forks --no-file-parallelism --maxWorkers=1`.
@@ -186,13 +189,14 @@ registerPackage(context: ExecutionContext, request: RegisterPackageRequest, meta
 createDeploymentPreview(context: ExecutionContext, request: DeploymentPreviewRequest, meta: WriteMeta): Promise<ControlEnvelope>;
 decideApproval(context: ExecutionContext, request: ApprovalRequest, meta: WriteMeta): Promise<ControlEnvelope>;
 publish(context: ExecutionContext, request: PublishRequest, meta: WriteMeta): Promise<ControlEnvelope>;
+reconcile(context: ExecutionContext, request: ReconcileRequest, meta: WriteMeta): Promise<ControlEnvelope>;
 ```
 
-`WriteMeta` contains only server-created `idempotencyKey`, `requestHash`, and `traceId`. Authorization is rechecked in the service: role list contains admin, scope contains `platform:admin`, and context tenant equals injected admin tenant. Request bodies never supply context.
+`WriteMeta` contains only server-created `idempotencyKey`, `requestHash`, `requestId`, `traceId`, and `auditId`. Authorization is rechecked in the service: `context.role === "admin"`, roles contains admin, scope contains `platform:admin`, and context tenant equals the single injected admin tenant. Request bodies never supply context.
 
-Registration exact-matches inventory ID/version/digest and writes the inventory-owned evidence. Preview `change` requires the full desired active set. Preview `rollback` resolves the target verified release server-side and copies its active set. Both pin current base release/revision and inventory descriptors, create a redacted diff, enforce at least one active module, and prohibit duplicate/unknown/unregistered refs.
+Registration exact-matches inventory ID/version/digest and writes the inventory-owned local-build evidence. Preview `change` requires the full desired active set. Preview `rollback` resolves a target runtime-readback-verified release server-side and copies its active set; that state is not artifact production qualification. Both pin current base release/revision and inventory descriptors, create a redacted diff, enforce at least one active module, and prohibit duplicate/unknown/unregistered refs.
 
-Approval requires a different actor from preview creator. Publish revalidates nonexpired/unconsumed preview, approved decision, exact approval ID, base CAS, and current inventory. After repository publish, call `activationRegistry.replace`, perform exact runtime readback, and record readback. Return:
+Approval requires a different actor from preview creator and atomically writes one terminal decision bound to tenant, preview canonical hash, base release/revision, inventory digest set and expiry. Reject cannot be overwritten. Publish revalidates nonexpired/unconsumed preview, approved decision, exact approval ID/hash, base CAS, and current inventory, then atomically consumes preview+approval. After repository publish, call `activationRegistry.replace`, perform exact runtime readback, and record readback. Reconcile accepts only the newest fixed pending/manual-review release and repeats activation/readback for that release without creating another release. Return:
 
 - `success` only when store, activation, and exact readback agree;
 - `manual_review` when durable publish exists but activation/readback is unknown or mismatched;
@@ -205,14 +209,14 @@ Do not catch a post-commit unknown result and report `unavailable`; that would h
 ### TDD steps
 
 - [ ] Build a narrow fake repository that records method calls and can inject failures; it must implement the same interface and not duplicate service rules.
-- [ ] Add failing tests for role/scope/admin-tenant denial before repository calls and for exact inventory registration/readback.
+- [ ] Add failing tests for non-admin active role even when roles includes admin, missing role/scope/admin-tenant denial before repository calls, and exact inventory registration/readback.
 - [ ] Run `npx vitest run tests/control-plane/service.test.ts`; expect missing-service failure.
 - [ ] Implement authorization, stable errors, server ID/time injection, and registration; rerun focused tests.
-- [ ] Add failing tests for change preview, rollback preview from a verified release, duplicate/unknown/unregistered refs, redacted diff, TTL, and base pinning.
+- [ ] Add failing tests for change preview, rollback preview from a runtime-readback-verified release, duplicate/unknown/unregistered refs, redacted diff, TTL, and base pinning.
 - [ ] Implement preview behavior; rerun.
-- [ ] Add failing tests for self-approval, second decision, reject, expired/consumed preview, approval actor persistence, and idempotent replay/conflict.
+- [ ] Add failing tests for self-approval, second/overwritten decision, reject terminal state, preview-hash/base/inventory mismatch, expired/consumed preview or approval, approval actor persistence, and idempotent replay/conflict.
 - [ ] Implement approval behavior; rerun.
-- [ ] Add failing tests for publish success, active snapshot exactness, readback mismatch, activation exception after commit, base race, inventory drift, and rollback creating a new revision without mutating the target.
+- [ ] Add failing tests for publish success, active snapshot exactness, readback mismatch, activation exception after commit, base race, inventory drift, reconcile of fixed pending release, reconcile rejection for unknown/verified/superseded release, and rollback creating a new revision without mutating the target.
 - [ ] Implement publish/readback behavior and ensure unknown post-commit results are `manual_review`.
 - [ ] Run `npx vitest run tests/control-plane --pool=forks --no-file-parallelism --maxWorkers=1`.
 - [ ] Run `npm run typecheck`, `npm run lint`, and `git diff --check`.
@@ -230,7 +234,7 @@ Do not catch a post-commit unknown result and report `unavailable`; that would h
 
 ### Required design
 
-`createAdminControlApiHandler` receives the service, token authenticator, allowed admin tenant, exact allowed origins/hosts, `allowLoopbackHttp`, max body bytes, and clock. It does not read global env. Its router recognizes only:
+`createAdminControlApiHandler` receives data mode, the service, fixture-only token authenticator, allowed admin tenant, exact allowed origins/hosts, `allowLoopbackHttp`, max body bytes, and clock. It does not read global env. In production mode every POST is rejected with `blocked/admin_control_production_disabled_v1` before authenticator or service calls. Its router recognizes only:
 
 ```text
 GET  /admin/api/v1/control/state
@@ -238,11 +242,12 @@ POST /admin/api/v1/control/packages/register
 POST /admin/api/v1/control/deployments/preview
 POST /admin/api/v1/control/approvals
 POST /admin/api/v1/control/deployments/publish
+POST /admin/api/v1/control/deployments/reconcile
 ```
 
 `admin-static.ts` delegates recognized control routes before its static 404. Static assets and redacted snapshot behavior stay compatible.
 
-Security order for POST: loopback/Host/Origin → method/path → Content-Type → declared and streamed body size → Bearer extraction → verifier → `parseExecutionContext` → role/scope/admin tenant → `Idempotency-Key` → strict JSON schema → service. GET state still requires Bearer and auth but no idempotency key. Duplicate Authorization headers, query tokens, cookies as auth, missing exact Origin for writes, non-JSON, invalid length, malformed JSON, or unknown fields fail before service invocation.
+Security order for POST: loopback/Host/Origin → method/path → production-mode fixed block → Content-Type → declared and streamed body size → Bearer extraction → fixture authenticator → `parseExecutionContext` → active admin role/roles/scope/admin tenant → `Idempotency-Key` → strict JSON schema → service. GET state still requires Bearer and auth but no idempotency key. Duplicate Authorization headers, query tokens, cookies as auth, missing exact Origin for writes, non-JSON, invalid length, malformed JSON, or unknown fields fail before service invocation. Do not reuse the current signature-only production verifier for Admin writes; production support is a future RFC requiring full issuer/audience/iat/exp/max-lifetime claim policy.
 
 HTTP mapping:
 
@@ -257,14 +262,14 @@ wrong method  405 with exact Allow
 unknown route 404
 ```
 
-Every response uses existing Admin security headers and `Cache-Control:no-store`. Never echo auth input, raw parser error, stack, SQL, request body, or verifier message.
+Every response uses the exact independent Admin envelope, existing Admin security headers and `Cache-Control:no-store`. Never echo auth input, raw parser error, stack, SQL, request body, or authenticator message.
 
 ### TDD steps
 
-- [ ] Add a fake service spy and failing happy-path tests for all five routes, including server-bound context and idempotency metadata.
+- [ ] Add a fake service spy and failing happy-path tests for all six routes, including server-bound request/trace/audit/context and idempotency metadata.
 - [ ] Run `npx vitest run tests/platform/admin-control-api.test.ts`; expect missing-handler failure.
 - [ ] Implement path/method dispatch and success/status mapping; rerun focused tests.
-- [ ] Add a table-driven security test for remote address, Host, Origin, Content-Type, body size, malformed JSON, missing/duplicate Bearer, expired claims, role, scope, tenant, idempotency key, unknown fields, identity fields, URL/path/secret fields, and unknown routes. Assert zero service calls on every rejection.
+- [ ] Add a table-driven security test for remote address, Host, Origin, production-mode fixed block (zero authenticator calls), Content-Type, body size, malformed JSON, missing/duplicate Bearer, expired fixture claims, non-admin active role with admin in roles, scope, tenant, idempotency key, unknown fields, identity fields, URL/path/secret fields, and unknown routes. Assert zero service calls on every rejection.
 - [ ] Implement ordered fail-closed checks and redacted errors; rerun.
 - [ ] Update static handler tests to serve any newly allowlisted local asset and delegate control routes without weakening the original four-asset assertions until Task 6 changes the build list.
 - [ ] Run `npx vitest run tests/platform/admin-static.test.ts tests/platform/admin-control-api.test.ts --pool=forks --no-file-parallelism --maxWorkers=1`.
@@ -315,22 +320,22 @@ Refactor startup into a narrow runtime assembly that creates, in this order:
 6. HTTP server, which starts listening only after reconciliation;
 7. one close path that closes HTTP, composition and the separate control store exactly once.
 
-If control store/inventory/admin config is missing, existing MCP service can still run, but Admin control state returns `unavailable` and no writes occur. Production Admin writes additionally require `MCP_ADMIN_TENANT_ID`. Enabling Admin UI does not make MCP readiness green.
+When `MCP_ADMIN_CONTROL_ENABLED` is absent/false, existing MCP service keeps its legacy static-all-active behavior and Admin control state is unavailable. When it is true, `MCP_CONTROL_DB_PATH`, exact inventory, one `MCP_INSTANCE_ID`, and `MCP_ADMIN_TENANT_ID` are mandatory; missing/corrupt/locked state aborts startup before listen and must never fall back to all-active. V1 permits this enabled mode only with fixture/local data mode. Production Admin POST remains blocked regardless of configuration. Enabling Admin UI does not make MCP readiness green.
 
 Fixture mode adds a separate `MCP_FIXTURE_APPROVER_TOKEN` only to the loopback Admin authenticator. It maps to actor `local_approver`, admin role, `platform:admin`, same fixture tenant, distinct session/client IDs. The existing `MCP_FIXTURE_TOKEN` remains applicant `local_operator`; production verifier never accepts either as a special case.
 
-`npm run start:fixture` configures a repository-local ignored `.runtime/module-control.sqlite`, creates the parent with `0700` only in fixture startup, and sets both fixture tokens. `.runtime/` is added to `.gitignore`; no database is committed.
+Add `npm run init:control-fixture` as the explicit idempotent local initializer. It creates the ignored `.runtime` parent with `0700` and a new v1 DB only when no DB exists; it never overwrites an existing file. `npm run start:fixture` sets `MCP_ADMIN_CONTROL_ENABLED=true`, points to that existing `.runtime/module-control.sqlite`, and sets a fixture management tenant and both fixture tokens. `.runtime/` is added to `.gitignore`; no database is committed. Starting without initialization or with a second process on the same DB fails closed.
 
 ### TDD steps
 
 - [ ] Add failing tests proving disabled module calls return unavailable while tools/list metadata remains, non-module tools are unaffected, and re-enable restores behavior.
 - [ ] Run `npx vitest run tests/control-plane/runtime-activation.test.ts`; expect missing integration failure.
 - [ ] Implement the definition wrapper and composition injection; rerun.
-- [ ] Add failing startup tests for no-release default compatibility, recovery of active release from a reopened SQLite file, exact readback, missing control store fail-closed Admin state, and production admin tenant requirement.
+- [ ] Add failing startup tests for control-disabled legacy compatibility, explicitly initialized no-release fixture default, recovery/reconciliation of active or pending release from a reopened SQLite file, exact readback, enabled-mode missing/corrupt/locked control store abort before listen, and production POST fixed block.
 - [ ] Implement runtime assembly and restoration before listen; rerun.
 - [ ] Add failing fixture identity tests proving applicant cannot self-approve, approver token is distinct, both remain loopback-only, and production verifier path has no fixture branch.
 - [ ] Implement fixture Admin authenticator and update `start:fixture`/`.gitignore`.
-- [ ] Extend runtime smoke to complete API register→preview with applicant→approve with approver→publish/readback→rollback preview; assert `production_eligible=false` and persistence after process restart.
+- [ ] Extend runtime smoke to complete API register→preview with applicant→approve with approver→publish/readback→forced pending→reconcile→rollback preview; assert `evidence_level=local_build`, `production_eligible=false`, production POST zero authenticator/service calls, and persistence after process restart.
 - [ ] Run `npx vitest run tests/control-plane/runtime-activation.test.ts tests/e2e/composition-mode.test.ts tests/e2e/runtime-smoke.test.ts tests/platform/tool-registry.test.ts --pool=forks --no-file-parallelism --maxWorkers=1 --testTimeout=15000`.
 - [ ] Run `npm run typecheck`, `npm run lint`, and `git diff --check`.
 - [ ] Commit with `feat: activate bundled modules through releases`.
@@ -368,9 +373,9 @@ The module-center screen must include:
 - release rail: 登记制品→生成预览→双人审批→发布读回;
 - status cards: 已登记、待审批、当前激活;
 - table: module name, version, risk, abbreviated descriptor digest, registration state, runtime state, desired enable switch;
-- selected-module inspector using only opaque/evidence-level display, never URLs, email, raw refs, source path, token, or secret;
+- selected-module inspector using only `local_build` descriptor/evidence display, never a verified-signature claim, URLs, email, raw refs, source path, token, or secret;
 - preview diff, validation results, creator/approver distinction, release trail and rollback target;
-- actions: 保存草稿 (browser memory only), 生成预览, 提交审批, 发布并读回, 回滚到上一已验证版本.
+- actions: 保存草稿 (browser memory only), 生成预览, 提交审批, 发布并读回, 对待确认 release 重新读回, 回滚到上一已读回版本.
 
 The bearer exists only in a module-scoped JS variable. Never write it to storage, DOM text, URL, error report, or console. A visible identity dialog uses password input. `?fixture=1` may offer two clearly labeled local demo identity buttons with hardcoded non-secret fixture tokens; those buttons must never appear on the live/production query path.
 
@@ -416,14 +421,14 @@ Use the concept's true-white/light-gray palette, navy sidebar, blue accent, tabl
 
 Documentation must replace the old “write APIs not connected” statement with exact v1 truth:
 
-- module control writes are implemented and verified locally/fixture;
+- module control writes are implemented and verified locally/fixture; v1 production Admin POST is fixed blocked;
 - only current deployment inventory can be registered;
 - activation is a handler policy for already-mounted static modules, not arbitrary code hot-plug;
 - business adapters and production qualifications remain unchanged;
-- production Admin still requires an enterprise identity path, admin tenant, durable control DB, exact Origin/Host and verified release evidence;
+- production Admin cannot be enabled by environment alone and requires a future accepted RFC for complete JWT claim policy, admin tenant, durable control DB, exact Origin/Host, Deployment Evidence trust chain and multi-instance fencing;
 - full production deployment is not performed by this work.
 
-Release runbook must record control DB backup, active release/revision, inventory digest set, Admin auth/approval evidence, runtime readback, and rollback target. Rollback must use a new approved release and preserve migrations/history. Security gates must cover token memory handling, fixture identity exclusion from production, no arbitrary artifact fields, self-approval rejection, unknown-result manual review and redacted events.
+Release runbook must record control DB backup, active release/revision, inventory digest set, Admin auth/approval evidence, runtime readback, and rollback target. It must prohibit rollback to a pre-control-plane image that would ignore active policy. Rollback must use a new approved release and preserve migrations/history. Security gates must cover token memory handling, fixture identity exclusion from production, production POST fixed block, no arbitrary artifact fields, self-approval rejection, terminal approval binding, unknown-result reconciliation/manual review and redacted events.
 
 The e2e test must use a temporary SQLite file and real HTTP server to prove:
 
@@ -435,8 +440,9 @@ The e2e test must use a temporary SQLite file and real HTTP server to prove:
 6. readback records exact release/revision/module refs;
 7. same idempotency key replays and conflicting hash blocks;
 8. rollback preview/approval/publish restores behavior as a new revision;
-9. restart restores the active release and event history;
-10. responses/events contain no token, URL, path, email, business data, price, address or raw secret.
+9. pending release reconciliation uses the same release and creates no duplicate;
+10. restart restores/reconciles active release and event history, while missing/corrupt/locked enabled store prevents listen;
+11. production POST is blocked before authenticator/service and responses/events contain no token, URL, path, email, business data, price, address or raw secret.
 
 ### Verification steps
 
