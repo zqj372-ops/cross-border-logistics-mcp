@@ -394,7 +394,12 @@ describe("module deployment inventory", () => {
       ["Markdown", /["'`][^"'`\n]*\.md(?:["'`?#]|$)/i],
     ] as const;
 
-    expect(imports).toEqual(["../platform/rbac", "./types", "node:crypto"]);
+    expect(imports).toEqual([
+      "../platform/rbac",
+      "./lexical-contracts",
+      "./types",
+      "node:crypto",
+    ]);
     for (const [boundary, pattern] of forbiddenSourcePatterns) {
       expect(inventorySource, `inventory source crossed the ${boundary} boundary`).not.toMatch(pattern);
     }

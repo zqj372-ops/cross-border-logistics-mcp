@@ -4,9 +4,25 @@ import type {
   ModuleInventoryEntry,
 } from "./types";
 
-const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
-const DESCRIPTOR_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+import {
+  DESCRIPTOR_DIGEST_PATTERN,
+  IDENTIFIER_PATTERN,
+  VERSION_PATTERN,
+  hasExactOwnKeys,
+  isPlainRecord,
+} from "./lexical-contracts";
+
+const INVENTORY_ENTRY_KEYS = [
+  "moduleId",
+  "version",
+  "riskLevel",
+  "toolNames",
+  "standardRefs",
+  "descriptorDigest",
+  "evidenceLevel",
+  "productionEligible",
+  "evidenceRefs",
+] as const;
 const ACTIVE_REF_KEYS = ["moduleId", "version", "descriptorDigest"] as const;
 
 export class ModuleActivationError extends Error {
@@ -19,14 +35,8 @@ export class ModuleActivationError extends Error {
   }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], label: string): void {
-  const actual = Object.keys(value).sort();
-  const allowed = [...expected].sort();
-  if (actual.length !== allowed.length || actual.some((key, index) => key !== allowed[index])) {
+  if (!hasExactOwnKeys(value, expected)) {
     throw new ModuleActivationError("snapshot_invalid", `${label} has unsupported fields.`);
   }
 }
@@ -71,8 +81,11 @@ function freezeSnapshot(snapshot: ModuleActivationSnapshot): ModuleActivationSna
 }
 
 function inventoryRef(entry: ModuleInventoryEntry): ActiveModuleRef {
-  if (!isObject(entry)) {
-    throw new ModuleActivationError("inventory_invalid", "Inventory entries must be objects.");
+  if (!isPlainRecord(entry) || !hasExactOwnKeys(entry, INVENTORY_ENTRY_KEYS)) {
+    throw new ModuleActivationError(
+      "inventory_invalid",
+      "Inventory entries must be exact own-key records.",
+    );
   }
   assertIdentifier(entry.moduleId, "inventory.moduleId");
   assertVersion(entry.version, "inventory.version");
@@ -96,7 +109,6 @@ export class ModuleActivationRegistry {
       throw new ModuleActivationError("inventory_invalid", "Inventory must be an array.");
     }
 
-    const initialRefs: ActiveModuleRef[] = [];
     for (const entry of inventory as readonly ModuleInventoryEntry[]) {
       const ref = inventoryRef(entry);
       if (this.inventoryByKey.has(moduleKey(ref.moduleId, ref.version))) {
@@ -106,18 +118,17 @@ export class ModuleActivationRegistry {
         throw new ModuleActivationError("inventory_duplicate", `Module ID is duplicated: ${ref.moduleId}.`);
       }
       this.inventoryByKey.set(moduleKey(ref.moduleId, ref.version), ref);
-      initialRefs.push(ref);
     }
 
     this.currentSnapshot = freezeSnapshot({
       releaseId: null,
       revision: 0,
-      activeModules: initialRefs,
+      activeModules: [],
     });
   }
 
   replace(next: ModuleActivationSnapshot): void {
-    if (!isObject(next)) {
+    if (!isPlainRecord(next)) {
       throw new ModuleActivationError("snapshot_invalid", "Activation snapshot must be an object.");
     }
     assertExactKeys(next, ["releaseId", "revision", "activeModules"], "Activation snapshot");
@@ -137,7 +148,7 @@ export class ModuleActivationRegistry {
     const seen = new Set<string>();
     const refs: ActiveModuleRef[] = [];
     for (const [index, rawRef] of next.activeModules.entries()) {
-      if (!isObject(rawRef)) {
+      if (!isPlainRecord(rawRef)) {
         throw new ModuleActivationError("snapshot_invalid", `activeModules[${index}] must be an object.`);
       }
       assertExactKeys(rawRef, ACTIVE_REF_KEYS, `activeModules[${index}]`);

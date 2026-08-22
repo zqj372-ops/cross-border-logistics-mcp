@@ -105,6 +105,76 @@ const validEnvelope = {
   },
 } as const;
 
+const validModuleRef = {
+  module_id: "cargo",
+  version: "2026-08-21.v0",
+  descriptor_digest: `sha256:${"a".repeat(64)}`,
+} as const;
+
+const validControlDataCases = [
+  {
+    kind: "control_state",
+    data: {
+      kind: "control_state",
+      active_release_id: null,
+      active_revision: 0,
+      active_modules: [validModuleRef],
+      inventory_module_ids: ["cargo"],
+    },
+  },
+  {
+    kind: "registration",
+    data: {
+      kind: "registration",
+      module_id: "cargo",
+      version: "2026-08-21.v0",
+      descriptor_digest: `sha256:${"a".repeat(64)}`,
+      evidence_level: "local_build",
+      production_eligible: false,
+    },
+  },
+  {
+    kind: "preview",
+    data: {
+      kind: "preview",
+      preview_ref: "preview_2026_08_22_001",
+      intent: "change",
+      base_release_id: null,
+      base_revision: 0,
+      desired_modules: [validModuleRef],
+      target_release_id: null,
+      expires_at: "2026-08-22T17:54:00Z",
+    },
+  },
+  {
+    kind: "approval",
+    data: {
+      kind: "approval",
+      approval_id: "approval_2026_08_22_001",
+      preview_ref: "preview_2026_08_22_001",
+      decision: "approve",
+    },
+  },
+  {
+    kind: "release",
+    data: {
+      kind: "release",
+      release_id: "release_2026_08_22_001",
+      revision: 1,
+      active_modules: [validModuleRef],
+    },
+  },
+  {
+    kind: "reconciliation",
+    data: {
+      kind: "reconciliation",
+      release_id: "release_2026_08_22_001",
+      revision: 1,
+      status: "verified",
+    },
+  },
+] as const;
+
 function createAjv(): Ajv2020 {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   addFormats(ajv);
@@ -262,6 +332,92 @@ describe("admin control contracts", () => {
       ...validEnvelope,
       audit_id: undefined,
     })).toBe(false);
+  });
+
+  it("keeps every control data variant in parity between Zod and checked-in Ajv", () => {
+    const envelopeSchema = JSON.parse(
+      readFileSync(resolve(schemaDir, "control-envelope.schema.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const validateEnvelope = createAjv().compile(envelopeSchema);
+
+    for (const { kind, data } of validControlDataCases) {
+      const candidate = { ...validEnvelope, data };
+      expect(controlEnvelopeSchema.safeParse(candidate).success, `${kind}: Zod valid`).toBe(true);
+      expect(validateEnvelope(candidate), `${kind}: Ajv valid`).toBe(true);
+
+      const withUnknownField = {
+        ...validEnvelope,
+        data: { ...data, unknown_control_field: true },
+      };
+      expect(controlEnvelopeSchema.safeParse(withUnknownField).success, `${kind}: Zod unknown`).toBe(false);
+      expect(validateEnvelope(withUnknownField), `${kind}: Ajv unknown`).toBe(false);
+    }
+  });
+
+  it("keeps identifier and descriptor digest boundaries aligned", () => {
+    const envelopeSchema = JSON.parse(
+      readFileSync(resolve(schemaDir, "control-envelope.schema.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const validateEnvelope = createAjv().compile(envelopeSchema);
+    const cases = [
+      {
+        label: "maximum identifier",
+        candidate: {
+          ...validEnvelope,
+          request_id: `a${"b".repeat(127)}`,
+        },
+        valid: true,
+      },
+      {
+        label: "identifier over maximum",
+        candidate: {
+          ...validEnvelope,
+          request_id: `a${"b".repeat(128)}`,
+        },
+        valid: false,
+      },
+      {
+        label: "exact descriptor digest",
+        candidate: {
+          ...validEnvelope,
+          data: {
+            kind: "registration",
+            descriptor_digest: `sha256:${"f".repeat(64)}`,
+          },
+        },
+        valid: true,
+      },
+      {
+        label: "short descriptor digest",
+        candidate: {
+          ...validEnvelope,
+          data: {
+            kind: "registration",
+            descriptor_digest: `sha256:${"f".repeat(63)}`,
+          },
+        },
+        valid: false,
+      },
+      {
+        label: "uppercase descriptor digest",
+        candidate: {
+          ...validEnvelope,
+          data: {
+            kind: "registration",
+            descriptor_digest: `sha256:${"F".repeat(64)}`,
+          },
+        },
+        valid: false,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const zodAccepted = controlEnvelopeSchema.safeParse(testCase.candidate).success;
+      const ajvAccepted = validateEnvelope(testCase.candidate);
+      expect(zodAccepted, `${testCase.label}: Zod`).toBe(testCase.valid);
+      expect(ajvAccepted, `${testCase.label}: Ajv`).toBe(testCase.valid);
+      expect(ajvAccepted, `${testCase.label}: parity`).toBe(zodAccepted);
+    }
   });
 
   it("rejects malformed preview datetimes in both runtime and JSON Schema contracts", () => {

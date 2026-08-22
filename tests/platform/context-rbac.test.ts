@@ -10,6 +10,7 @@ import {
   ForbiddenError,
   authorizeTool,
   getToolPolicy,
+  phaseOneToolNames,
 } from "../../src/logistics_mcp/platform/rbac";
 
 const claims = (role: AuthClaims["actor_role"]): AuthClaims => ({
@@ -75,6 +76,41 @@ describe("platform context and RBAC", () => {
     );
     expect(authorizeTool(context, "quote.save_draft")).toBe(true);
     expect(() => authorizeTool(context, "rules.write")).toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("keeps returned policies and the phase-one tool list immutable", () => {
+    const viewer = parseExecutionContext({
+      ...claims("viewer"),
+      scopes: [...claims("viewer").scopes, "quote:draft_write"],
+    });
+    const readPolicy = getToolPolicy("system.get_data_status");
+    const taskPolicy = getToolPolicy("review.create_task");
+    const draftPolicy = getToolPolicy("quote.save_draft");
+
+    expect(Object.isFrozen(readPolicy)).toBe(true);
+    expect(Object.isFrozen(readPolicy.roles)).toBe(true);
+    expect(Object.isFrozen(taskPolicy)).toBe(true);
+    expect(Object.isFrozen(taskPolicy.roles)).toBe(true);
+    expect(Object.isFrozen(draftPolicy)).toBe(true);
+    expect(Object.isFrozen(draftPolicy.roles)).toBe(true);
+    expect(Object.isFrozen(phaseOneToolNames)).toBe(true);
+
+    expect(() => {
+      (draftPolicy.roles as unknown as string[]).push("viewer");
+    }).toThrow(TypeError);
+    expect(() => {
+      (draftPolicy.roles as unknown as string[])[0] = "viewer";
+    }).toThrow(TypeError);
+    expect(() => {
+      (draftPolicy as unknown as { permission: string }).permission = "system:read";
+    }).toThrow(TypeError);
+    expect(() => {
+      (phaseOneToolNames as unknown as string[]).push("rules.write");
+    }).toThrow(TypeError);
+
+    expect(() => authorizeTool(viewer, "quote.save_draft")).toThrow(
       ForbiddenError,
     );
   });

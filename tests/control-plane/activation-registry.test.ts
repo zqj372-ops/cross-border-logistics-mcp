@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { createModuleInventory } from "../../src/logistics_mcp/control-plane/inventory";
-import { ModuleActivationRegistry } from "../../src/logistics_mcp/control-plane/activation-registry";
+import {
+  ModuleActivationError,
+  ModuleActivationRegistry,
+} from "../../src/logistics_mcp/control-plane/activation-registry";
 import type {
   ActiveModuleRef,
   ModuleActivationSnapshot,
+  ModuleInventoryEntry,
   ModuleInventoryInput,
 } from "../../src/logistics_mcp/control-plane/types";
 
@@ -93,12 +97,14 @@ function makeRegistry(): {
 }
 
 describe("module activation registry", () => {
-  it("starts with every inventory entry active at release null and revision zero", () => {
+  it("starts with an empty active snapshot until a release is persisted", () => {
     const { registry, refs } = makeRegistry();
     const snapshot = registry.snapshot();
 
-    expect(snapshot).toEqual({ releaseId: null, revision: 0, activeModules: refs });
-    expect(registry.isActive("cargo", "2026-08-21.v0")).toBe(true);
+    expect(snapshot).toEqual({ releaseId: null, revision: 0, activeModules: [] });
+    expect(refs).toHaveLength(2);
+    expect(registry.isActive("cargo", "2026-08-21.v0")).toBe(false);
+    expect(registry.isActive("container", "2026-08-21.v0")).toBe(false);
     expect(registry.isActive("missing", "2026-08-21.v0")).toBe(false);
   });
 
@@ -167,5 +173,66 @@ describe("module activation registry", () => {
       (snapshot.activeModules as ActiveModuleRef[]).push(refs[1]!);
     }).toThrow();
     expect(registry.snapshot().activeModules).toHaveLength(1);
+  });
+
+  it("accepts null-prototype inventory records but rejects inherited or extra own keys", () => {
+    const inventory = createModuleInventory(inventoryInput);
+    const validEntry = inventory[0]!;
+    const inventoryKeys = [
+      "moduleId",
+      "version",
+      "riskLevel",
+      "toolNames",
+      "standardRefs",
+      "descriptorDigest",
+      "evidenceLevel",
+      "productionEligible",
+      "evidenceRefs",
+    ] as const;
+
+    const expectInventoryInvalid = (candidate: ModuleInventoryEntry) => {
+      let thrown: unknown;
+      try {
+        new ModuleActivationRegistry([candidate]);
+      } catch (error: unknown) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ModuleActivationError);
+      expect(thrown).toMatchObject({
+        code: "inventory_invalid",
+        message: "Inventory entries must be exact own-key records.",
+      });
+    };
+
+    const inheritedPrototype = Object.fromEntries(
+      inventoryKeys.map((key) => [key, validEntry[key]]),
+    );
+    expectInventoryInvalid(
+      Object.create(inheritedPrototype) as ModuleInventoryEntry,
+    );
+
+    expectInventoryInvalid({
+      ...validEntry,
+      extra: true,
+    } as unknown as ModuleInventoryEntry);
+
+    const ownProtoKey = { ...validEntry } as Record<string, unknown>;
+    Object.defineProperty(ownProtoKey, "__proto__", {
+      configurable: true,
+      enumerable: true,
+      value: "not-a-prototype",
+      writable: true,
+    });
+    expectInventoryInvalid(ownProtoKey as unknown as ModuleInventoryEntry);
+
+    const nullPrototypeEntry = Object.create(null) as Record<string, unknown>;
+    for (const key of inventoryKeys) {
+      nullPrototypeEntry[key] = validEntry[key];
+    }
+    expect(() => {
+      new ModuleActivationRegistry([
+        nullPrototypeEntry as unknown as ModuleInventoryEntry,
+      ]);
+    }).not.toThrow();
   });
 });

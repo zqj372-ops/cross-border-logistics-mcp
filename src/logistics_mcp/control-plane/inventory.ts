@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 
 import { ForbiddenError, getToolPolicy } from "../platform/rbac";
+import {
+  IDENTIFIER_PATTERN,
+  VERSION_PATTERN,
+  hasExactOwnKeys,
+  isPlainRecord,
+} from "./lexical-contracts";
 import type {
   DescriptorDigest,
   ModuleInventoryEntry,
@@ -11,8 +17,6 @@ import type {
 } from "./types";
 
 const MODULE_RISK_LEVELS = ["T0", "T1", "T2", "T3"] as const;
-const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
 const SCHEMA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 const LOCAL_REFERENCE_PATTERN = /^(?:local|fixture):[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 
@@ -62,12 +66,8 @@ export class ModuleInventoryError extends Error {
   }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function assertObject(value: unknown, code: string, label: string): asserts value is Record<string, unknown> {
-  if (!isObject(value)) {
+  if (!isPlainRecord(value)) {
     throw new ModuleInventoryError(code, `${label} must be an object.`);
   }
 }
@@ -78,9 +78,7 @@ function assertExactKeys(
   code: string,
   label: string,
 ): void {
-  const actual = Object.keys(value).sort();
-  const allowed = [...expected].sort();
-  if (actual.length !== allowed.length || actual.some((key, index) => key !== allowed[index])) {
+  if (!hasExactOwnKeys(value, expected)) {
     throw new ModuleInventoryError(code, `${label} has an unsupported or incomplete field set.`);
   }
 }
