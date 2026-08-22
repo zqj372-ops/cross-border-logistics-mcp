@@ -4,7 +4,7 @@
 
 **Goal:** Build a real, durable, fail-closed local/fixture module control plane that registers only modules bundled in the current deployment inventory, previews changes, enforces two-person approval, publishes an activation policy with exact runtime readback, reconciles unknown results, and rolls back through the same audited flow while production Admin writes remain blocked in v1.
 
-**Architecture:** Keep the existing Node/TypeScript MCP gateway and static Module Runtime v0. Add a narrow control-plane package, a separate strict single-process SQLite control store with an external immutable identity marker bound to `MCP_INSTANCE_ID`, an immutable activation registry that gates already-mounted module handlers, fixture-authenticated loopback Admin APIs, and an AdminLTE 4 module-center UI. FastAdmin informs information architecture only; no PHP runtime, arbitrary package loader, verified-release claim, business-data store, production Admin write, or code hot-plug is introduced.
+**Architecture:** Keep the existing Node/TypeScript MCP gateway and static Module Runtime v0. Add a narrow control-plane package, a separate strict single-process SQLite control store derived only from an explicit application root, an external immutable identity marker bound to `instance_id` and `management_tenant_id`, an immutable activation registry that gates already-mounted module handlers, fixture-authenticated loopback Admin APIs, and an AdminLTE 4 module-center UI. FastAdmin informs information architecture only; no PHP runtime, arbitrary package loader, verified-release claim, business-data store, production Admin write, or code hot-plug is introduced.
 
 **Tech Stack:** Node.js 22, TypeScript 5.9, Zod 4, Ajv Draft 2020-12, `node:sqlite`, Vitest, native HTML/CSS/ES modules, AdminLTE 4.8.5, Bootstrap 5.3.8.
 
@@ -19,9 +19,10 @@
 - Use `apply_patch` for edits. Do not connect production, add secrets, add customer/business fixtures, or modify `docs/contracts/**`.
 - Every task ends with `git diff --check`, a focused test command, self-review, and one conventional commit.
 - A successful local/fixture publish must expose `evidence_level=local_build` and `production_eligible=false`; v1 rejects `verified_release` and every production Admin POST.
-- `MCP_ADMIN_CONTROL_ENABLED` is never a bypass. After explicit identity initialization, `false` or
-  missing fails before listen; only a never-initialized fixed state directory with no marker/DB and
-  explicit `MCP_LEGACY_STATIC_MODE=true` may use legacy static-all-active.
+- `MCP_ADMIN_CONTROL_ENABLED` is never a bypass. The managed entrypoint may listen only after an
+  explicit initializer has installed the fixed state directory, marker, and DB; missing state,
+  identity, schema, tenant, root derivation, or a non-literal-`true` value fails before listen.
+  There is no uninitialized compatibility start or implicit activation fallback.
 - This specification revision is documentation-only. Do not modify Task 1 `src/`, `schemas/`, or
   `tests/` files while another worker is reviewing them.
 
@@ -123,9 +124,61 @@ The independent Admin envelope root is closed and contains `schema_version`, ser
 
 ### Required design
 
-The store is a separate file-backed database with `durability="durable"`. Startup always resolves a fixed absolute host anchor `MCP_INSTANCE_STATE_DIR`; fixture fixes it to `<application-root>/.runtime/mcp-instance-state`, and production fixes it in the service unit/host mount. The DB and external marker are derived fixed paths `<state_dir>/control.sqlite` and `<state_dir>/control-identity.json`; path overrides are rejected. New-file creation is exposed only through an explicit initializer; normal runtime open requires an existing v1 database and never silently recreates a missing enabled store. The initializer atomically installs a new state directory containing both files. The marker is one UTF-8/JCS JSON object plus LF with exactly `marker_format:"mcp-control-identity/v1"`, `instance_id`, absolute `control_db_path`, random `control_db_id=db_<32-lower-hex>`, and `schema_version:1`. The DB singleton `control_identity` row must match every marker field. The directory is `0700`, marker `0400`, DB `0600`; target existence, symlink, or replacement is rejected. The initializer uses staging + fsync + one directory rename; normal runtime never creates, repairs, or replaces either file.
+The store is a separate file-backed database with `durability="durable"`. The server assembly must
+explicitly provide an absolute regular `application_root`; the managed entrypoint derives exactly
+`<application-root>/.runtime/mcp-instance-state` and then exactly `<state_dir>/control.sqlite` and
+`<state_dir>/control-identity.json`. It never reads cwd and accepts no environment variable, CLI
+argument, or diagnostic path override for the root, state directory, DB, or marker. A changed root
+therefore derives a different absolute path and fails closed rather than selecting another instance.
+New-file creation is exposed only through an explicit initializer; normal runtime open requires an
+existing v1 database and never silently recreates, repairs, replaces, or ignores a missing managed
+store. The initializer atomically installs a new state directory containing both files. The marker is
+one UTF-8/JCS JSON object plus LF with exactly `marker_format:"mcp-control-identity/v1"`,
+`instance_id`, `management_tenant_id`, absolute `control_db_path`, random
+`control_db_id=db_<32-lower-hex>`, and `schema_version:1`; the DB singleton `control_identity` row
+must match every marker field, including `management_tenant_id`. The directory is `0700`, marker
+`0400`, DB `0600`; the target, every intermediate path component, and both files must be regular
+non-symlinks. `:memory:` is forbidden.
 
-Runtime open requires a regular non-symlink DB and marker, exact `MCP_INSTANCE_ID`, exact derived paths, matching `control_identity`, v1 schema and `MCP_ADMIN_CONTROL_ENABLED=true`. After initialization, false or missing enabled is a startup error even with zero releases. A marker/DB mismatch, missing marker, missing DB, new empty DB, corrupt identity, schema drift, or lock conflict fails closed before listen. With the fixed state-directory anchor present, an absent target directory and absent fixed files may select legacy only under explicit `MCP_LEGACY_STATIC_MODE=true`; if the anchor configuration itself is absent, startup fails. The flag is rejected once initialization exists. Deleting enabled/path/instance environment variables cannot hide the fixed marker. `:memory:` is forbidden. Tests use temporary regular files.
+The initializer creates a sibling staging directory on the same parent filesystem using
+`fs.mkdtemp` or an equivalent exclusive `mkdir` (never `O_CREAT` as a directory primitive), with
+mode `0700`. Inside staging it runs one transaction to create the strict v1 schema, the singleton
+`control_identity` row, and `user_version=1`, then executes `PRAGMA wal_checkpoint(TRUNCATE)` and
+closes every SQLite handle. If clean close leaves `control.sqlite-wal` or `control.sqlite-shm`, it
+fails and removes staging; otherwise it fsyncs the main DB. It writes the marker as a regular file
+with `O_CREAT|O_EXCL`, fsyncs the marker, fsyncs the staging directory, renames staging exactly once
+to a not-yet-existing final state directory, and fsyncs the parent directory. Any existing target,
+symlink, intermediate symlink, non-atomic/cross-filesystem rename, permission mismatch, or cleanup
+failure is a hard initialization failure. Normal runtime never creates, repairs, or replaces either
+file. Crash-injection tests at transaction commit, WAL checkpoint/close, marker fsync, staging-dir
+fsync, rename, and parent-dir fsync must prove that a restart sees either no installable final state
+or a complete identity-consistent state, with abandoned staging cleaned or safely ignored.
+
+Runtime open requires a regular non-symlink DB and marker, exact `MCP_INSTANCE_ID`, exact
+`management_tenant_id` from the server-managed identity, exact derived paths, matching
+`control_identity`, v1 schema, and `MCP_ADMIN_CONTROL_ENABLED=true`. After initialization, false or
+missing enabled is a startup error even with zero releases. A marker/DB mismatch, missing state
+directory, missing marker or DB, new empty DB, corrupt identity, tenant change, schema drift, path
+change, any symlink, permission/lock conflict, or failed quick check fails closed before listen.
+Deleting identity/enabled inputs cannot hide the fixed marker; it must instead fail closed. Tests use
+temporary regular application roots and prove initialization, reopen, and tenant-change failure.
+
+Task 2 owns one shared `canonicalControlHash` helper for both Task 2 and Task 3; Task 3 imports it
+instead of implementing another serializer. The helper must frame bytes exactly as
+`ASCII MCP-CONTROL-HASH`, one byte `0x00`, ASCII `v1`, one byte `0x00`, ASCII `request|preview`,
+one byte `0x00`, ASCII `schema_version`, one byte `0x00`, then RFC 8785/JCS canonical JSON UTF-8
+bytes, and hash the complete frame with SHA-256. The escaped `\x00` notation in docs is not literal
+text. Set-like arrays use UTF-8 byte lexicographic sorting; `desired_modules` and `inventory_refs`
+use the tuple `module_id NUL version NUL descriptor_digest`, while order-semantic arrays retain input
+order. The exact design/RFC golden vectors are request
+`mcp-control-hash/v1/request/sha256:1dc6b77eedfc0639d6fb264c4e0557bdeb39a46bbabb968db13a6be7ee8c86da`
+and preview
+`mcp-control-hash/v1/preview/sha256:13348c6594c3d24cc30aeb62f839e6b6fd1fe133830a2fdad11b8d4b59b6e503`;
+the same request JCS payload under the preview domain must also produce
+`mcp-control-hash/v1/preview/sha256:7f756bdf267eb3ef54b6ee5a3211a947255f491072f72f92dc7f844e6024c04b`.
+Tests must assert the NUL bytes, JCS object-key normalization, UTF-8 tuple and set ordering,
+object-key/set input reorder invariance, order-array preservation, descriptor/request/preview
+separation, domain/schema-version separation, and equal hashes after close/reopen.
 
 Schema version 1 contains only strict narrow tables:
 
@@ -140,7 +193,14 @@ module_control_events
 control_identity
 ```
 
-`control_identity` is a fixed singleton metadata table, not a generic key-value or business table. Store JSON columns have `json_valid` checks. IDs and status fields have CHECK constraints. Every domain/idempotency key includes explicit `tenant_id`, even though v1 allows one configured management tenant. Release revision is unique and strictly increasing inside that tenant. Approval is append-only/final, uniquely bound to preview canonical hash/base revision/inventory digest set/expiry, and publish atomically consumes preview plus approval. Foreign keys connect preview→approval→release→readback. Unknown `user_version`, unexpected columns/tables/index drift, corruption, failed quick check, or lock conflict closes the DB and fails closed.
+`control_identity` is a fixed singleton metadata table, not a generic key-value or business table. Store
+JSON columns have `json_valid` checks. IDs and status fields have CHECK constraints. Every domain and
+idempotency key includes explicit `management_tenant_id`, even though v1 allows one configured
+management tenant. Release revision is unique and strictly increasing inside that tenant. Approval is
+append-only/final, uniquely bound to preview canonical hash/base revision/inventory digest set/expiry,
+and publish atomically consumes preview plus approval. Foreign keys connect preview→approval→release→
+readback. Unknown `user_version`, unexpected columns/tables/index drift, corruption, failed quick
+check, or lock conflict closes the DB and fails closed.
 
 Expose use-case-oriented repository methods, not raw SQL or `put(key,value)`. Required operations:
 
@@ -159,18 +219,36 @@ getPendingRelease(): Promise<ModuleReleaseRecord | null>;
 getNewestUnresolvedRelease(): Promise<ModuleReleaseRecord | null>;
 ```
 
-Every mutation takes server-created actor/context metadata, canonical request hash, action, idempotency key, and redacted event payload. Same action/key/hash replays; same action/key/different hash is a typed conflict. Register, preview, and approval store the complete response and event in their domain transaction. Publish reserves first, then atomically writes the release/event and advances idempotency to `domain_committed` with the immutable release ID. Activation/readback advances it to `completed`. A retry that finds `domain_committed` resumes readback for that exact release and never creates another release. Expired completed keys may be pruned only inside a later transaction; never prune `reserved`/`domain_committed` records or weaken release history.
+Every mutation takes server-created actor/context metadata, canonical request hash, action, idempotency key, and redacted event payload. Same action/key/hash replays; same action/key/different hash is a typed conflict. Register, preview, and approval store the complete response and event in their domain transaction. Publish reserves first, then atomically writes the release/event and advances idempotency to `domain_committed` with the immutable release ID. Automatic exact readback from `domain_committed` is permitted only while that fixed release is `published_pending_readback`; it may never create a second release. If the fixed release is already `manual_review`, publish replay returns only the persisted final result and performs zero activation and zero readback. After the one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, using the same release/revision and desired refs. Activation/readback advances it to `completed`. Expired completed keys may be pruned only inside a later transaction; never prune `reserved`/`domain_committed` records or weaken release history.
 
-Publish uses compare-and-set on expected base release/revision and writes release status `published_pending_readback`, but rejects any newest unresolved release (`published_pending_readback` or `manual_review`) before creating a new release. `recordReadback` can move it to `active_verified` only for exact release/revision/module refs; `active_verified` means runtime exact readback only, not artifact signature or production qualification. Mismatch/unknown records `manual_review` without deleting the release. Startup performs one automatic exact readback for the newest `published_pending_readback`; it does not retry an existing `manual_review`. Only operator `reconcile` may retry either fixed unresolved release, and it never creates a release or changes desired refs.
+Publish uses compare-and-set on expected base release/revision and writes release status `published_pending_readback`, but rejects any newest unresolved release (`published_pending_readback` or `manual_review`) before creating a new release. `recordReadback` can move it to `active_verified` only for exact release/revision/module refs; `active_verified` means runtime exact readback only, not artifact signature or production qualification. Mismatch/unknown records `manual_review` without deleting the release. Startup performs one automatic exact readback for the newest `published_pending_readback`; it does not retry an existing `manual_review`. After that one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, and it never creates a release or changes desired refs.
 
 ### TDD steps
 
-- [ ] Add tests for explicit secure initialization, atomic DB+marker installation, marker format/permissions, runtime missing-file rejection, `control_identity` schema/tables/indexes, `0600`, WAL/exclusive lock, second-store denial, reopen persistence, health, idempotent close, explicit tenant keys, and no business columns.
+- [ ] Add tests for explicit secure initialization, same-parent sibling staging with `mkdtemp`/exclusive
+  mkdir, strict marker format/permissions, DB/marker atomic install, WAL checkpoint/truncate and
+  closed handles, lingering-sidecar failure and staging cleanup, DB/marker/dir/parent fsync ordering,
+  regular non-symlink checks, non-overwrite and atomic-rename rejection, crash interruption at each
+  install boundary, runtime missing-state rejection,
+  `control_identity` schema/tables/indexes, `management_tenant_id` in marker and identity row, `0600`,
+  WAL/exclusive lock, second-store denial, reopen persistence, health, idempotent close, explicit
+  management-tenant keys, tenant-change failure, and no business columns.
 - [ ] Run `npx vitest run tests/control-plane/sqlite-control-store.test.ts`; expect missing-store failure.
 - [ ] Implement secure initialization and schema verification; rerun the focused cases.
 - [ ] Add tests for exact register/preview/approval/publish/readback persistence and chronological redacted events.
-- [ ] Add tests for idempotent replay, tenant-scoped conflict, self-consistent transaction rollback, base revision CAS, immutable reject/approve terminal decision, approval hash/expiry/consume binding, unknown references, readback mismatch, and restart state recovery. Cover request/preview canonical hash stability across restart, object-key reorder, semantic collection reorder vs order-semantic arrays, schema-version separation, and request-vs-preview domain separation.
-- [ ] Add reconciliation tests proving startup automatically exact-reads `published_pending_readback` once, does not auto-retry `manual_review`, newest unresolved blocks a new publish, operator reconcile reuses the same release/revision, and reconcile never creates a second release.
+- [ ] Add tests for idempotent replay, management-tenant-scoped conflict, self-consistent transaction
+  rollback, base revision CAS, immutable reject/approve terminal decision, approval hash/expiry/consume
+  binding, unknown references, readback mismatch, and restart state recovery. Use the shared
+  `canonicalControlHash` helper and the two locked design/RFC golden vectors above; assert literal NUL
+  framing bytes, RFC 8785/JCS, UTF-8 tuple sorting, object-key and set-order invariance,
+  order-semantic-array preservation, descriptor/request/preview separation, schema-version/domain
+  separation, and request/preview equality after repository restart.
+- [ ] Add reconciliation/idempotency tests proving startup automatically exact-reads
+  `published_pending_readback` once, does not auto-retry `manual_review`, newest unresolved blocks a
+  new publish, a `domain_committed` retry only resumes pending readback, a manual-review publish replay
+  returns the persisted result with zero activation/readback, only operator `reconcile` retries an
+  unresolved release, reconcile reuses the same release/revision, and reconcile never creates a second
+  release.
 - [ ] Add tests that tamper `user_version`, table layout, JSON, status, and symlink path; each must fail closed with a stable typed error and no leaked SQL/value.
 - [ ] Implement the narrow repository methods and transactions; do not introduce a generic write API.
 - [ ] Run `npx vitest run tests/control-plane/sqlite-control-store.test.ts --pool=forks --no-file-parallelism --maxWorkers=1`.
@@ -192,6 +270,18 @@ Publish uses compare-and-set on expected base release/revision and writes releas
 
 `ModuleControlService` is the only domain entry used by HTTP. Inject inventory, repository, activation registry, clock, ID generator, preview TTL, and runtime readback function. Do not read process environment inside the service.
 
+Task 3 must import Task 2's shared `canonicalControlHash` helper and use the same strict request and
+preview payloads, JCS bytes, UTF-8 tuple sorting, and NUL framing. Service tests must assert the exact
+design/RFC request vector
+`mcp-control-hash/v1/request/sha256:1dc6b77eedfc0639d6fb264c4e0557bdeb39a46bbabb968db13a6be7ee8c86da`
+and preview vector
+`mcp-control-hash/v1/preview/sha256:13348c6594c3d24cc30aeb62f839e6b6fd1fe133830a2fdad11b8d4b59b6e503`,
+plus the domain-separated Vector 1 preview result
+`mcp-control-hash/v1/preview/sha256:7f756bdf267eb3ef54b6ee5a3211a947255f491072f72f92dc7f844e6024c04b`.
+They must cover object-key/set reorder, order-semantic arrays, schema-version separation, descriptor
+digest non-equivalence, literal `0x00` framing, and equality after service/repository restart; no
+second serializer or JSON.stringify-only substitute is allowed.
+
 Public methods:
 
 ```ts
@@ -207,7 +297,7 @@ reconcile(context: ExecutionContext, request: ReconcileRequest, meta: WriteMeta)
 
 Registration exact-matches inventory ID/version/digest and writes the inventory-owned local-build evidence. Preview `change` requires the full desired active set. Preview `rollback` resolves a target whose current runtime activation snapshot has an exact readback server-side and copies its active set; `active_verified` means runtime exact readback only, not artifact signature or production qualification. Both pin current base release/revision and inventory descriptors, create a redacted diff, enforce at least one active module, and prohibit duplicate/unknown/unregistered refs.
 
-Approval requires a different actor from preview creator and atomically writes one terminal decision bound to tenant, preview canonical hash, base release/revision, inventory digest set and expiry. Reject cannot be overwritten. Publish first rejects any newest unresolved release (`published_pending_readback|manual_review`), then revalidates nonexpired/unconsumed preview, approved decision, exact approval ID/hash, base CAS, and current inventory, and atomically consumes preview+approval. After repository publish, call `activationRegistry.replace`, perform exact runtime readback, and record readback. Startup auto-reconciles only the newest `published_pending_readback` once; it does not retry `manual_review`. Operator `reconcile` accepts only the newest fixed pending/manual-review release and repeats activation/readback for that release without creating another release or changing desired refs. Return:
+Approval requires a different actor from preview creator and atomically writes one terminal decision bound to management tenant, preview canonical hash, base release/revision, inventory digest set and expiry. Reject cannot be overwritten. Publish first rejects any newest unresolved release (`published_pending_readback|manual_review`), then revalidates nonexpired/unconsumed preview, approved decision, exact approval ID/hash, base CAS, and current inventory, and atomically consumes preview+approval. After repository publish, call `activationRegistry.replace`, perform exact runtime readback, and record readback. A `domain_committed` retry may automatically read back only its fixed `published_pending_readback` release; if that release is `manual_review`, publish replay returns only the persisted final result with zero activation and zero readback. Startup auto-reconciles only the newest `published_pending_readback` once; it does not retry `manual_review`. After that one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, and it accepts only the newest fixed pending/manual-review release without creating another release or changing desired refs. Return:
 
 - `success` only when store, activation, and exact readback agree;
 - `manual_review` when durable publish exists but activation/readback is unknown or mismatched;
@@ -228,11 +318,14 @@ Do not catch a post-commit unknown result and report `unavailable`; that would h
 - [ ] Run `npx vitest run tests/control-plane/service.test.ts`; expect missing-service failure.
 - [ ] Implement authorization, stable errors, server ID/time injection, and registration; rerun focused tests.
 - [ ] Add failing tests for change preview, rollback preview from a runtime-readback-verified release, duplicate/unknown/unregistered refs, redacted diff, TTL, and base pinning.
-- [ ] Add failing tests for request/preview canonical hashes: RFC 8785/JCS object-key normalization, semantic collection sorting vs order-semantic array preservation, schema-version/domain separation, descriptor-digest non-equivalence, and equality after service/repository restart.
+- [ ] Add failing tests for the shared request/preview canonical hashes using the exact design/RFC
+  golden vectors: literal NUL framing, RFC 8785/JCS object-key normalization, UTF-8 tuple and set
+  sorting, semantic collection sorting vs order-semantic array preservation, schema-version/domain
+  separation, descriptor-digest non-equivalence, and equality after service/repository restart.
 - [ ] Implement preview behavior; rerun.
 - [ ] Add failing tests for self-approval, second/overwritten decision, reject terminal state, preview-hash/base/inventory mismatch, expired/consumed preview or approval, approval actor persistence, and idempotent replay/conflict.
 - [ ] Implement approval behavior; rerun.
-- [ ] Add failing tests for publish success, active snapshot exactness, readback mismatch, activation exception after commit, base race, inventory drift, newest unresolved publish block, startup one-shot pending readback, no startup retry for `manual_review`, operator reconcile reusing the same release, reconcile rejection for unknown/verified/superseded release, and rollback creating a new revision without mutating the target.
+- [ ] Add failing tests for publish success, active snapshot exactness, readback mismatch, activation exception after commit, base race, inventory drift, newest unresolved publish block, `domain_committed` pending-only automatic readback, manual-review publish replay with zero activation/readback, startup one-shot pending readback, no startup retry for `manual_review`, operator-only reconcile reusing the same release, reconcile rejection for unknown/verified/superseded release, and rollback creating a new revision without mutating the target.
 - [ ] Add failing tests proving operational disable remains visible/unavailable while security quarantine, retirement, and administrator security-disable requests are `blocked` and never remove the catalog entry in v1.
 - [ ] Implement publish/readback behavior and ensure unknown post-commit results are `manual_review`.
 - [ ] Run `npx vitest run tests/control-plane --pool=forks --no-file-parallelism --maxWorkers=1`.
@@ -325,23 +418,52 @@ Composition accepts an optional `ModuleActivationRegistry`. After ModuleHost mou
 }
 ```
 
-The definition remains in tools/list with unchanged name, contract, RBAC, version, risk and standards. Non-module legacy definitions are unchanged. Re-enable restores the original handler without rebuilding the composition.
+The definition remains in tools/list with unchanged name, contract, RBAC, version, risk and standards. Non-module definitions are unchanged. Re-enable restores the original handler without rebuilding the composition.
 
-Refactor startup into a narrow runtime assembly that creates, in this order:
+Refactor startup into a narrow runtime assembly that receives an explicit absolute regular
+`application_root` from server assembly and creates, in this order:
 
 1. token verifier(s);
-2. composition and its mounted static module inventory plus default-all-active registry, without listening;
-3. fixed `MCP_INSTANCE_STATE_DIR` identity anchor and its derived control store/marker;
-4. newest `published_pending_readback` release exact-read back once against that exact inventory, then active runtime snapshot restored into the registry; an existing `manual_review` is not retried at startup;
-5. control service and Admin API using the same inventory/registry/store;
-6. HTTP server, which starts listening only after reconciliation;
-7. one close path that closes HTTP, composition and the separate control store exactly once.
+2. composition and its mounted static module inventory plus an unapplied activation registry, without listening;
+3. validates that the explicit application root is a regular non-symlink directory, derives exactly
+   `<application-root>/.runtime/mcp-instance-state/control.sqlite` and
+   `<application-root>/.runtime/mcp-instance-state/control-identity.json`, and rejects cwd,
+   state-directory environment variables, CLI, or any other path override;
+4. requires the explicit initializer to have completed before runtime open, then validates the
+   whole fixed state directory, marker, DB, `control_identity`, strict v1 schema, exact
+   `instance_id`, exact `management_tenant_id`, derived paths, permissions, and
+   `MCP_ADMIN_CONTROL_ENABLED=true`; runtime never creates, repairs, replaces, or selects another
+   state directory, and any missing/changed root, deleted state directory, missing file, fresh DB,
+   corruption, schema drift, symlink, tenant/identity mismatch, or lock conflict aborts before listen;
+5. exact-reads the newest `published_pending_readback` release once against that exact inventory, then
+   restores its active runtime snapshot into the registry; an existing `manual_review` is not retried
+   at startup;
+6. control service and Admin API using the same inventory/registry/store;
+7. HTTP server, which starts listening only after validation and the one-shot pending readback;
+8. one close path that closes HTTP, composition and the separate control store exactly once.
 
-`MCP_ADMIN_CONTROL_ENABLED` is never a bypass. A never-initialized fixed state-directory path with no marker/DB may retain legacy static-all-active only when `MCP_LEGACY_STATIC_MODE=true`; the absolute `MCP_INSTANCE_STATE_DIR` host configuration itself is mandatory, and deleting that anchor configuration is a startup error, not a fresh-mode signal. Before initialization the target directory may be absent only under the explicit legacy flag; once explicit initialization creates the marker and `control_identity` row, even a zero-release DB is sticky enabled: `MCP_ADMIN_CONTROL_ENABLED=false` or missing, marker/DB missing or damaged, DB path mismatch, a replacement fresh empty DB, identity/schema mismatch, or lock conflict aborts startup before listen and never falls back to all-active. An initialized run must provide the fixed `MCP_INSTANCE_STATE_DIR`, one `MCP_INSTANCE_ID`, exact derived DB/marker paths, exact inventory, and `MCP_ADMIN_TENANT_ID`; `MCP_ADMIN_CONTROL_ENABLED=true` is required as a consistency assertion. V1 permits this enabled mode only with fixture/local data mode. Production Admin POST remains blocked regardless of configuration. Enabling Admin UI does not make MCP readiness green.
+`MCP_ADMIN_CONTROL_ENABLED` is never a bypass or initializer. There is no uninitialized start branch,
+no implicit activation fallback, and no path environment anchor. An initialized run must provide the
+server-managed `instance_id` and `management_tenant_id` that match marker/DB, exact inventory, and
+literal `MCP_ADMIN_CONTROL_ENABLED=true`; a missing/non-true value fails closed even with zero releases.
+V1 permits this managed mode only with fixture/local data mode. Production Admin POST remains blocked
+regardless of configuration. Enabling Admin UI does not make MCP readiness green.
 
 Fixture mode adds a separate `MCP_FIXTURE_APPROVER_TOKEN` only to the loopback Admin authenticator. It maps to actor `local_approver`, admin role, `platform:admin`, same fixture tenant, distinct session/client IDs. The existing `MCP_FIXTURE_TOKEN` remains applicant `local_operator`; production verifier never accepts either as a special case.
 
-Add `npm run init:control-fixture` as the explicit local initializer. It creates a new ignored `.runtime/mcp-instance-state/` directory with `0700`, atomically installs `.runtime/mcp-instance-state/control.sqlite` (`0600`) and sibling `.runtime/mcp-instance-state/control-identity.json` (`0400`), and never overwrites an existing target. The marker binds `MCP_INSTANCE_ID`, the absolute DB path, random `control_db_id`, and `schema_version=1`; the DB singleton must match. `npm run start:fixture` always supplies the same stable `MCP_INSTANCE_STATE_DIR`, sets `MCP_ADMIN_CONTROL_ENABLED=true`, derives those fixed paths, and sets a fixture management tenant and both fixture tokens. `.runtime/` is added to `.gitignore`; no database or marker is committed. Starting without explicit initialization, with a fresh replacement DB, with the marker missing, after deleting the enabled/path/instance control variables, or with a second process on the same DB fails closed.
+Add `npm run init:control-fixture` as the explicit local initializer. The fixture assembly supplies an
+explicit application root; the initializer derives a new ignored `.runtime/mcp-instance-state/`
+directory with `0700`, atomically installs `.runtime/mcp-instance-state/control.sqlite` (`0600`) and
+sibling `.runtime/mcp-instance-state/control-identity.json` (`0400`), and never overwrites an existing
+target. The marker binds `MCP_INSTANCE_ID`, the fixture `management_tenant_id`, the absolute DB path,
+random `control_db_id`, and `schema_version=1`; the DB singleton must match. `npm run start:fixture`
+passes the same explicit application root through assembly, sets `MCP_ADMIN_CONTROL_ENABLED=true`,
+and supplies the fixture management tenant and both fixture tokens; it does not read cwd or accept a
+state-path environment override. `.runtime/` is added to `.gitignore`; no database or marker is
+committed. Starting without explicit initialization, after deleting the entire derived state
+directory, with a fresh replacement DB, with the marker missing, after changing the application root,
+after changing/deleting identity or enabled inputs, or with a second process on the same DB fails
+closed.
 
 ### TDD steps
 
@@ -349,8 +471,16 @@ Add `npm run init:control-fixture` as the explicit local initializer. It creates
 - [ ] Add failing tests proving `module_disabled_by_release` is ordinary operational unavailable only; security quarantine, retirement, and administrator security-disable requests are `blocked` and never remove the tool from `tools/list` in v1.
 - [ ] Run `npx vitest run tests/control-plane/runtime-activation.test.ts`; expect missing integration failure.
 - [ ] Implement the definition wrapper and composition injection; rerun.
-- [ ] Add failing startup tests for the never-initialized no-marker legacy case; explicit initialized no-release default; after initialization with `MCP_ADMIN_CONTROL_ENABLED=false` or missing; after a release with `MCP_ADMIN_CONTROL_ENABLED=false` or missing; fresh replacement DB; marker missing/corrupt; marker/DB `control_db_id`, absolute path, instance, and schema mismatch; missing/corrupt/locked store abort before listen; and production POST fixed block. Assert zero implicit DB/marker creation.
-- [ ] Add failing startup/reconciliation tests proving `published_pending_readback` gets one automatic exact readback before serving, `manual_review` gets no automatic retry, newest unresolved blocks publish, and operator reconcile reuses the same release/revision without creating another release.
+- [ ] Add failing startup tests proving explicit initializer is required; no-marker, missing-whole-state-directory,
+  fresh replacement DB, changed application root/derived path, any symlink, marker/DB `control_db_id`,
+  absolute path, `instance_id`, `management_tenant_id`, and schema mismatch; missing/corrupt/locked
+  store; and non-literal-`true`/missing `MCP_ADMIN_CONTROL_ENABLED` all abort before listen. Assert
+  zero implicit DB/marker creation, zero cwd/path-env discovery, and production POST fixed block.
+- [ ] Add failing startup/reconciliation/idempotency tests proving `published_pending_readback` gets
+  one automatic exact readback before serving, `manual_review` gets no automatic retry, a
+  `domain_committed` retry is pending-only, manual-review publish replay performs zero activation and
+  zero readback, newest unresolved blocks publish, and only operator reconcile reuses the same
+  release/revision without creating another release.
 - [ ] Implement runtime assembly and restoration before listen; rerun.
 - [ ] Add failing fixture identity tests proving applicant cannot self-approve, approver token is distinct, both remain loopback-only, and production verifier path has no fixture branch.
 - [ ] Implement fixture Admin authenticator and update `start:fixture`/`.gitignore`.
@@ -444,12 +574,14 @@ Documentation must replace the old “write APIs not connected” statement with
 - only current deployment inventory can be registered;
 - activation is a handler policy for already-mounted static modules, not arbitrary code hot-plug;
 - business adapters and production qualifications remain unchanged;
-- `MCP_ADMIN_CONTROL_ENABLED=false`/missing cannot disable an initialized policy or recover legacy mode; only the fixed state-directory path with no marker/DB plus explicit `MCP_LEGACY_STATIC_MODE=true` may select fresh legacy static-all-active;
+- an explicit initializer and the explicit application root are mandatory; missing or incomplete
+  derived state, root changes, identity/tenant drift, or `MCP_ADMIN_CONTROL_ENABLED=false`/missing
+  fails closed before listen, with no uninitialized compatibility branch or implicit activation fallback;
 - ordinary `module_disabled_by_release` keeps tools/list visibility and returns `unavailable`; security quarantine, retirement, and administrator security-disable requests are `blocked` and require a future catalog-removal contract;
 - production Admin cannot be enabled by environment alone and requires a future accepted RFC for complete JWT claim policy, admin tenant, durable control DB plus external marker identity, exact Origin/Host, Deployment Evidence trust chain and multi-instance fencing;
 - full production deployment is not performed by this work.
 
-This is the only task that may update the release, security, rollback, and integration-handoff runbooks; this current specification revision must not edit them. The final release runbook must record control DB/marker backup and identity tuple, active release/revision, inventory digest set, Admin auth/approval evidence, runtime exact readback, and rollback target. The final rollback runbook must prohibit any pre-control-plane image that could ignore active policy; enforce a control DB/schema/activation-policy compatibility gate; preserve DB, release, and event history; and roll a module profile back only through preview→two-person approval→new release→exact readback using the UI phrase “回滚到上一已读回版本（本地受控环境）”. Security gates must cover token memory handling, fixture identity exclusion from production, production POST fixed block before authenticator/service, no arbitrary artifact fields, self-approval rejection, terminal approval binding, one-shot pending vs manual-review reconciliation, unresolved publish block, redacted events, and single-process SQLite lock. Final handoff acceptance must explicitly prove production Admin POST=`blocked`, fixture identities absent from production, and the single-process lock.
+This is the only task that may update the release, security, rollback, and integration-handoff runbooks; this current specification revision must not edit them. Until Task 7 updates and accepts those documents, the existing release/security/rollback runbooks are historical application/integration references, not authority for the new control plane. That gate blocks declaring Task 5 complete and blocks final acceptance, but does not block Task 2's store implementation. The final release runbook must record control DB/marker backup and identity tuple, active release/revision, inventory digest set, Admin auth/approval evidence, runtime exact readback, and rollback target. The final rollback runbook must reject every pre-control-plane image that could ignore active policy, isolate or remove the old static entry from managed rollback targets, enforce a control DB/schema/activation-policy compatibility gate, preserve DB, release, and event history, and roll a module profile back only through preview→two-person approval→new release→exact readback using the UI phrase “回滚到上一已读回版本（本地受控环境）”. Security gates must cover token memory handling, fixture identity exclusion from production, production POST fixed block before authenticator/service, no arbitrary artifact fields, self-approval rejection, terminal approval binding, one-shot pending vs manual-review reconciliation, domain-committed pending-only readback, manual-review replay with zero activation/readback, operator-only reconcile, unresolved publish block, redacted events, application-root/marker/DB/management-tenant continuity, and single-process SQLite lock. Final handoff acceptance must explicitly prove production Admin POST=`blocked`, fixture identities absent from production, the initializer/root gate, the single-process lock, and all red tests below.
 
 The e2e test must use a temporary SQLite file and real HTTP server to prove:
 
@@ -459,10 +591,20 @@ The e2e test must use a temporary SQLite file and real HTTP server to prove:
 4. distinct approver can approve;
 5. publish changes a bundled module from callable to unavailable while retaining tools/list visibility;
 6. readback records exact release/revision/module refs;
-7. same idempotency key replays and conflicting hash blocks;
-8. rollback preview/approval/publish restores behavior as a new revision;
-9. `published_pending_readback` gets one startup exact readback, `manual_review` gets no startup retry, newest unresolved blocks new publish, and operator reconcile uses the same release/revision without creating a duplicate;
-10. restart restores/reconciles active release and event history, while missing/corrupt/locked enabled store, missing/corrupt marker, path/DB identity mismatch, fresh replacement DB, and enabled=false/missing after initialization or after a release prevent listen;
+7. same idempotency key replays and conflicting hash blocks; `domain_committed` automatic readback is
+   pending-only, manual-review publish replay returns the persisted result with zero activation and
+   zero readback, and only operator reconcile can retry an unresolved release;
+8. the shared canonical hash helper matches the two exact design/RFC golden vectors, uses literal NUL
+   framing, RFC 8785/JCS, UTF-8 tuple and set ordering, preserves order-semantic arrays, and proves
+   object-key/set input reorder, schema-version/domain separation, descriptor/request/preview
+   separation, and cross-restart stability;
+9. rollback preview/approval/publish restores behavior as a new revision;
+10. an explicit initializer is required; restart restores/reconciles active release and event history,
+    while missing/corrupt/locked derived state, missing/corrupt marker, `control_db_id`/absolute path/
+    `instance_id`/`management_tenant_id`/schema mismatch, deleted whole state directory, changed
+    application root, any symlink, fresh replacement DB, and non-literal-`true`/missing enabled or
+    identity inputs after initialization or after a release prevent listen and never create implicit
+    state;
 11. ordinary operational disable keeps tools/list and returns unavailable, while security quarantine/retirement/administrator security-disable requests are blocked;
 12. production POST is blocked before authenticator/service and responses/events contain no token, URL, path, email, business data, price, address or raw secret.
 
