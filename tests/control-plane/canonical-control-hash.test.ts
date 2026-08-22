@@ -389,6 +389,22 @@ describe("canonical control hash", () => {
     expect(accessorReads).toBe(0);
   });
 
+  it("normalizes hostile proxy trap failures to typed errors", () => {
+    const getPrototypeProxy = new Proxy(registerPayload, {
+      getPrototypeOf() {
+        throw new Error("proxy prototype trap");
+      },
+    });
+    const ownKeysProxy = new Proxy(registerPayload, {
+      ownKeys() {
+        throw new Error("proxy ownKeys trap");
+      },
+    });
+
+    expectPayloadError(getPrototypeProxy, "payload_fields_invalid");
+    expectPayloadError(ownKeysProxy, "payload_fields_invalid");
+  });
+
   it("returns a digest distinct from descriptor digests", () => {
     const result = canonicalControlHash({
       domain: "request",

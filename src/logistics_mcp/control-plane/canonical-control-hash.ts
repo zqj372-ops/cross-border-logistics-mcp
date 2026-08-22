@@ -578,14 +578,19 @@ function normalizePreviewPayload(
 function normalizePayload(
   value: unknown,
 ): { readonly value: CanonicalValue; readonly schemaVersion: string } {
-  if (!isPlainRecord(value)) fail("payload_fields_invalid");
-  if (
-    hasExactOwnKeys(value, REQUEST_PAYLOAD_KEYS) &&
-    Object.hasOwn(value, "actor_ref")
-  ) {
-    return normalizeRequestPayload(value);
+  try {
+    if (!isPlainRecord(value)) fail("payload_fields_invalid");
+    if (
+      hasExactOwnKeys(value, REQUEST_PAYLOAD_KEYS) &&
+      Object.hasOwn(value, "actor_ref")
+    ) {
+      return normalizeRequestPayload(value);
+    }
+    return normalizePreviewPayload(value);
+  } catch (error: unknown) {
+    if (error instanceof CanonicalControlHashError) throw error;
+    fail("payload_fields_invalid");
   }
-  return normalizePreviewPayload(value);
 }
 
 function jcs(value: CanonicalValue): string {
