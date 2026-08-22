@@ -185,6 +185,9 @@ and preview
 `mcp-control-hash/v1/preview/sha256:13348c6594c3d24cc30aeb62f839e6b6fd1fe133830a2fdad11b8d4b59b6e503`;
 the same request JCS payload under the preview domain must also produce
 `mcp-control-hash/v1/preview/sha256:7f756bdf267eb3ef54b6ee5a3211a947255f491072f72f92dc7f844e6024c04b`.
+The preview payload is a closed union: `intent="change"` omits and rejects `target_release_id`, while
+`intent="rollback"` requires it. Vector 2 is the change branch; tests must cover both branches and reject
+`target_release_id:null` or any cross-branch field leakage.
 Tests must assert the NUL bytes, JCS object-key normalization, UTF-8 tuple and set ordering,
 object-key/set input reorder invariance, order-array preservation, descriptor/request/preview
 separation, domain/schema-version separation, and equal hashes after close/reopen.
