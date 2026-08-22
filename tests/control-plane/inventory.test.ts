@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   createModuleInventory,
+  ModuleInventoryError,
 } from "../../src/logistics_mcp/control-plane/inventory";
 import type {
   MountedModuleData,
@@ -214,6 +218,102 @@ describe("module deployment inventory", () => {
     expect(Object.isFrozen(first.toolNames)).toBe(true);
     expect(Object.isFrozen(first.standardRefs)).toBe(true);
     expect(Object.isFrozen(first.evidenceRefs)).toBe(true);
+  });
+
+  it("rejects non-local evidence levels explicitly", () => {
+    const untrustedEvidence = {
+      ...localEvidence("cargo"),
+      evidenceLevel: "verified_release",
+    } as unknown as ModuleLocalEvidence;
+
+    let thrown: unknown;
+    try {
+      createModuleInventory(input({
+        localEvidence: [
+          untrustedEvidence,
+          localEvidence("container", { sourceShaRef: "local:source:container-v1" }, "2026-08-21.v1"),
+        ],
+      }));
+    } catch (error: unknown) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ModuleInventoryError);
+    expect(thrown).toMatchObject({ code: "local_evidence_invalid" });
+  });
+
+  it("binds evidence refs into the digest while preserving set-order canonicalization", () => {
+    const base = createModuleInventory(input());
+    const reordered = createModuleInventory({
+      mountedModules: [
+        moduleData("container", {
+          version: "2026-08-21.v1",
+          requiredCapabilities: ["tenant_context", "audit"],
+          standardRefs: ["module-runtime.v0", "platform.contracts"],
+        }),
+        moduleData("cargo", {
+          requiredCapabilities: ["tenant_context", "audit"],
+          standardRefs: ["module-runtime.v0", "platform.contracts"],
+        }),
+      ],
+      catalog: [
+        toolData("container", "container.plan_summary", {
+          permission: "container:calculate",
+          standardRefs: ["module-runtime.v0", "platform.contracts"],
+        }),
+        toolData("cargo", "cargo.calculate", {
+          standardRefs: ["module-runtime.v0", "platform.contracts"],
+        }),
+      ],
+      localEvidence: [
+        localEvidence("container", { sourceShaRef: "local:source:container-v1" }, "2026-08-21.v1"),
+        localEvidence("cargo"),
+      ],
+    });
+    const changedEvidence = createModuleInventory(input({
+      localEvidence: [
+        localEvidence("cargo", { attestationRef: "fixture:attestation:cargo-v1" }),
+        localEvidence("container", { sourceShaRef: "local:source:container-v1" }, "2026-08-21.v1"),
+      ],
+    }));
+
+    expect(reordered).toEqual(base);
+    expect(changedEvidence.find((entry) => entry.moduleId === "cargo")?.descriptorDigest)
+      .not.toBe(base.find((entry) => entry.moduleId === "cargo")?.descriptorDigest);
+  });
+
+  it("has a static and runtime dependency gate against cwd, files, URLs, Markdown, and network", () => {
+    const inventorySource = readFileSync(
+      resolve(import.meta.dirname, "../../src/logistics_mcp/control-plane/inventory.ts"),
+      "utf8",
+    );
+    const imports = [...inventorySource.matchAll(/\bfrom\s+["']([^"']+)["']/g)]
+      .map((match) => match[1])
+      .sort();
+    const forbiddenSourcePatterns = [
+      ["cwd", /process\.cwd\s*\(/],
+      ["environment", /process\.env\b/],
+      ["network", /\bfetch\s*\(/],
+      ["URL", /\bnew\s+URL\s*\(/],
+      ["dynamic dependency", /\b(?:import|require)\s*\(/],
+      ["Markdown", /["'`][^"'`\n]*\.md(?:["'`?#]|$)/i],
+    ] as const;
+
+    expect(imports).toEqual(["./types", "node:crypto"]);
+    for (const [boundary, pattern] of forbiddenSourcePatterns) {
+      expect(inventorySource, `inventory source crossed the ${boundary} boundary`).not.toMatch(pattern);
+    }
+
+    const cwdSpy = vi.spyOn(process, "cwd");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      createModuleInventory(input());
+      expect(cwdSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      cwdSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
   });
 
   it("does not derive inventory from process environment or a filesystem location", () => {

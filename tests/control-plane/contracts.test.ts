@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import addFormats from "ajv-formats";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
@@ -104,7 +105,9 @@ const validEnvelope = {
 } as const;
 
 function createAjv(): Ajv2020 {
-  return new Ajv2020({ allErrors: true, strict: true });
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(ajv);
+  return ajv;
 }
 
 describe("admin control contracts", () => {
@@ -258,5 +261,42 @@ describe("admin control contracts", () => {
       ...validEnvelope,
       audit_id: undefined,
     })).toBe(false);
+  });
+
+  it("rejects malformed preview datetimes in both runtime and JSON Schema contracts", () => {
+    const envelopeSchema = JSON.parse(
+      readFileSync(resolve(schemaDir, "control-envelope.schema.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const validateEnvelope = createAjv().compile(envelopeSchema);
+    const malformed = {
+      ...validEnvelope,
+      data: { kind: "preview", expires_at: "not-a-date" },
+    };
+
+    expect(controlEnvelopeSchema.safeParse(malformed).success).toBe(false);
+    expect(validateEnvelope(malformed)).toBe(false);
+  });
+
+  it("rejects every revision above the JavaScript safe-integer maximum", () => {
+    const envelopeSchema = JSON.parse(
+      readFileSync(resolve(schemaDir, "control-envelope.schema.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const validateEnvelope = createAjv().compile(envelopeSchema);
+    const unsafeRevision = 9_007_199_254_740_992;
+    const candidates = [
+      { ...validEnvelope, data: { kind: "control_state", active_revision: unsafeRevision } },
+      { ...validEnvelope, data: { kind: "preview", base_revision: unsafeRevision } },
+      { ...validEnvelope, data: { kind: "release", revision: unsafeRevision } },
+      { ...validEnvelope, data: { kind: "reconciliation", revision: unsafeRevision } },
+      {
+        ...validEnvelope,
+        readback: { status: "verified", release_id: "release_1", revision: unsafeRevision },
+      },
+    ];
+
+    for (const candidate of candidates) {
+      expect(controlEnvelopeSchema.safeParse(candidate).success).toBe(false);
+      expect(validateEnvelope(candidate)).toBe(false);
+    }
   });
 });
