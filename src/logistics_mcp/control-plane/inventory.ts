@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { ForbiddenError, getToolPolicy } from "../platform/rbac";
 import type {
   DescriptorDigest,
   ModuleInventoryEntry,
@@ -190,6 +191,27 @@ function validateTool(value: unknown, index: number): MountedToolContract {
   assertString(value.outputSchemaId, SCHEMA_ID_PATTERN, "tool_contract_incomplete", `catalog[${index}].outputSchemaId`);
   assertArray(value.standardRefs, "tool_contract_incomplete", `catalog[${index}].standardRefs`);
   assertNonemptyUniqueStrings(value.standardRefs, "tool_contract_incomplete", `catalog[${index}].standardRefs`);
+  let policy: ReturnType<typeof getToolPolicy>;
+  try {
+    policy = getToolPolicy(value.name);
+  } catch (error: unknown) {
+    if (error instanceof ForbiddenError) {
+      throw new ModuleInventoryError("tool_policy_unknown", "Tool policy is not defined.");
+    }
+    throw error;
+  }
+  if (value.permission !== policy.permission) {
+    throw new ModuleInventoryError(
+      "tool_permission_mismatch",
+      `Tool permission does not match the fixed RBAC policy: ${value.name}`,
+    );
+  }
+  if (value.kind !== policy.kind) {
+    throw new ModuleInventoryError(
+      "tool_kind_mismatch",
+      `Tool kind does not match the fixed RBAC policy: ${value.name}`,
+    );
+  }
   return {
     owner: value.owner,
     name: value.name,

@@ -7,6 +7,12 @@ import {
   createModuleInventory,
   ModuleInventoryError,
 } from "../../src/logistics_mcp/control-plane/inventory";
+import {
+  agentContextToolName,
+  ForbiddenError,
+  getToolPolicy,
+  phaseOneToolNames,
+} from "../../src/logistics_mcp/platform/rbac";
 import type {
   MountedModuleData,
   MountedToolContract,
@@ -84,6 +90,15 @@ function input(overrides: Partial<ModuleInventoryInput> = {}): ModuleInventoryIn
   };
 }
 
+function captureInventoryError(candidate: ModuleInventoryInput): unknown {
+  try {
+    createModuleInventory(candidate);
+  } catch (error: unknown) {
+    return error;
+  }
+  return undefined;
+}
+
 describe("module deployment inventory", () => {
   it("has deterministic per-module digests under input and set-like array reordering", () => {
     const first = createModuleInventory(input());
@@ -130,14 +145,12 @@ describe("module deployment inventory", () => {
       input({ mountedModules: [moduleData("cargo", { requiredCapabilities: ["audit"] }), moduleData("container", { version: "2026-08-21.v1" })] }),
       input({ mountedModules: [moduleData("cargo", { optionalCapabilities: ["safe_http"] }), moduleData("container", { version: "2026-08-21.v1" })] }),
       input({ mountedModules: [moduleData("cargo", { standardRefs: ["module-runtime.v0"] }), moduleData("container", { version: "2026-08-21.v1" })] }),
-      input({ catalog: [toolData("cargo", "cargo.calculate", { permission: "quote:draft_write" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
-      input({ catalog: [toolData("cargo", "cargo.calculate", { kind: "write" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
       input({ catalog: [toolData("cargo", "cargo.calculate", { riskLevel: "T1" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
       input({ catalog: [toolData("cargo", "cargo.calculate", { inputSchemaId: "urn:input:cargo.v2" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
       input({ catalog: [toolData("cargo", "cargo.calculate", { outputSchemaId: "urn:output:cargo.v2" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
       input({ catalog: [toolData("cargo", "cargo.calculate", { standardRefs: ["module-runtime.v0"] }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
       input({ catalog: [toolData("container", "cargo.calculate", { inputSchemaId: "urn:input:cargo", outputSchemaId: "urn:output:cargo" }), toolData("cargo", "container.plan_summary", { permission: "container:calculate" })] }),
-      input({ catalog: [toolData("cargo", "cargo.changed", { inputSchemaId: "urn:input:cargo", outputSchemaId: "urn:output:cargo" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
+      input({ catalog: [toolData("cargo", "quote.canada_final_mile.calculate", { inputSchemaId: "urn:input:cargo.calculate", outputSchemaId: "urn:output:cargo.calculate" }), toolData("container", "container.plan_summary", { permission: "container:calculate" })] }),
     ];
 
     for (const variant of variants) {
@@ -159,17 +172,80 @@ describe("module deployment inventory", () => {
       .not.toBe(base.find((entry) => entry.moduleId === "cargo")?.descriptorDigest);
   });
 
+  it("maps unknown RBAC tools to a stable non-disclosing inventory error", () => {
+    for (const unknownToolName of ["future.tool", "future:read"]) {
+      const thrown = captureInventoryError(input({
+        catalog: [
+          toolData("cargo", unknownToolName),
+          toolData("container", "container.plan_summary", { permission: "container:calculate" }),
+        ],
+      }));
+
+      expect(thrown).toBeInstanceOf(ModuleInventoryError);
+      expect(thrown).not.toBeInstanceOf(ForbiddenError);
+      expect(thrown).toMatchObject({ code: "tool_policy_unknown" });
+      expect(thrown).not.toHaveProperty("message", expect.stringContaining(unknownToolName));
+    }
+  });
+
+  it("rejects a known tool whose permission differs from its fixed RBAC policy", () => {
+    const thrown = captureInventoryError(input({
+      catalog: [
+        toolData("cargo", "cargo.calculate", { permission: "system:read" }),
+        toolData("container", "container.plan_summary", { permission: "container:calculate" }),
+      ],
+    }));
+
+    expect(thrown).toBeInstanceOf(ModuleInventoryError);
+    expect(thrown).toMatchObject({ code: "tool_permission_mismatch" });
+  });
+
+  it("rejects a known tool whose kind differs from its fixed RBAC policy", () => {
+    const thrown = captureInventoryError(input({
+      catalog: [
+        toolData("cargo", "cargo.calculate", { kind: "write" }),
+        toolData("container", "container.plan_summary", { permission: "container:calculate" }),
+      ],
+    }));
+
+    expect(thrown).toBeInstanceOf(ModuleInventoryError);
+    expect(thrown).toMatchObject({ code: "tool_kind_mismatch" });
+  });
+
+  it("accepts every existing bundled tool with its fixed RBAC policy", () => {
+    const bundledToolNames = [...phaseOneToolNames, agentContextToolName];
+
+    for (const [index, toolName] of bundledToolNames.entries()) {
+      const owner = `policy-${index}`;
+      const policy = getToolPolicy(toolName);
+      const inventory = createModuleInventory({
+        mountedModules: [moduleData(owner)],
+        catalog: [toolData(owner, toolName, {
+          permission: policy.permission,
+          kind: policy.kind,
+        })],
+        localEvidence: [localEvidence(owner)],
+      });
+
+      expect(inventory).toHaveLength(1);
+      expect(inventory[0]?.toolNames).toEqual([toolName]);
+    }
+  });
+
   it("rejects duplicate module IDs, duplicate tool owners, and malformed local evidence refs", () => {
     expect(() => createModuleInventory(input({
       mountedModules: [moduleData("cargo"), moduleData("cargo", { version: "2026-08-21.v1" })],
     }))).toThrow(/module.*duplicate|duplicate.*module/i);
 
     expect(() => createModuleInventory(input({
-      catalog: [toolData("cargo", "same.tool"), toolData("container", "same.tool")],
+      catalog: [toolData("cargo", "cargo.calculate"), toolData("container", "cargo.calculate")],
     }))).toThrow(/tool.*duplicate|duplicate.*tool/i);
 
     expect(() => createModuleInventory(input({
-      catalog: [toolData("cargo", "cargo.calculate"), toolData("cargo", "cargo.other")],
+      catalog: [
+        toolData("cargo", "cargo.calculate"),
+        toolData("cargo", "system.get_data_status", { permission: "system:read" }),
+      ],
     }))).toThrow(/owner.*duplicate|duplicate.*owner/i);
 
     expect(() => createModuleInventory(input({
@@ -299,7 +375,7 @@ describe("module deployment inventory", () => {
       ["Markdown", /["'`][^"'`\n]*\.md(?:["'`?#]|$)/i],
     ] as const;
 
-    expect(imports).toEqual(["./types", "node:crypto"]);
+    expect(imports).toEqual(["../platform/rbac", "./types", "node:crypto"]);
     for (const [boundary, pattern] of forbiddenSourcePatterns) {
       expect(inventorySource, `inventory source crossed the ${boundary} boundary`).not.toMatch(pattern);
     }

@@ -6,6 +6,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import {
+  ADMIN_CONTROL_RFC3339_PATTERN,
   approvalRequestSchema,
   controlEnvelopeSchema,
   deploymentPreviewRequestSchema,
@@ -275,6 +276,44 @@ describe("admin control contracts", () => {
 
     expect(controlEnvelopeSchema.safeParse(malformed).success).toBe(false);
     expect(validateEnvelope(malformed)).toBe(false);
+  });
+
+  it("keeps the strict RFC3339 datetime subset identical in Zod and JSON Schema", () => {
+    const envelopeSchema = JSON.parse(
+      readFileSync(resolve(schemaDir, "control-envelope.schema.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const validateEnvelope = createAjv().compile(envelopeSchema);
+    const definitions = envelopeSchema.$defs as Record<string, Record<string, unknown>>;
+    const preview = definitions.preview;
+    if (preview === undefined) {
+      throw new Error("control-envelope schema is missing the preview definition");
+    }
+    const previewProperties = preview.properties as Record<string, Record<string, unknown>>;
+    expect(previewProperties.expires_at?.pattern).toBe(ADMIN_CONTROL_RFC3339_PATTERN.source);
+    expect(previewProperties.expires_at).not.toHaveProperty("format");
+    const cases = [
+      { label: "UTC Z", value: "2026-08-22T17:54:00Z", valid: true },
+      { label: "colon offset", value: "2026-08-22T17:54:00+08:00", valid: true },
+      { label: "fractional seconds", value: "2026-08-22T17:54:00.123456789Z", valid: true },
+      { label: "offset without colon", value: "2026-08-22T17:54:00+0000", valid: false },
+      { label: "lowercase separators", value: "2026-08-22t17:54:00z", valid: false },
+      { label: "missing timezone", value: "2026-08-22T17:54:00", valid: false },
+      { label: "invalid hour", value: "2026-08-22T24:00:00Z", valid: false },
+      { label: "invalid month", value: "2026-13-22T17:54:00Z", valid: false },
+    ] as const;
+
+    for (const testCase of cases) {
+      const candidate = {
+        ...validEnvelope,
+        data: { kind: "preview", expires_at: testCase.value },
+      };
+      const zodAccepted = controlEnvelopeSchema.safeParse(candidate).success;
+      const jsonSchemaAccepted = validateEnvelope(candidate);
+
+      expect.soft(zodAccepted, `${testCase.label}: Zod result`).toBe(testCase.valid);
+      expect.soft(jsonSchemaAccepted, `${testCase.label}: JSON Schema result`).toBe(testCase.valid);
+      expect.soft(jsonSchemaAccepted, `${testCase.label}: contract parity`).toBe(zodAccepted);
+    }
   });
 
   it("rejects every revision above the JavaScript safe-integer maximum", () => {
