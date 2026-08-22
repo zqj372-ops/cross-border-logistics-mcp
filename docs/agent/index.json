@@ -49,6 +49,15 @@
       "summary": "Current workstream ownership and RFC escalation path."
     },
     {
+      "standard_id": "writable-module-control-plane-v1",
+      "version": "2026-08-22.v1",
+      "path": "docs/rfcs/2026-08-22-writable-module-control-plane-v1.md",
+      "priority": 85,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["CONTROL-WRITE-001", "CONTROL-AUTH-001", "CONTROL-RELEASE-001"],
+      "summary": "Accepted local/fixture module-control rules for static mounted modules; profiles provide standard content only, not HTTP permissions; production Admin POST remains blocked."
+    },
+    {
       "standard_id": "release-agent-adapters",
       "version": "2026-08-21.v1",
       "path": "docs/standards/release-agent-adapters.md",

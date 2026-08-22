@@ -5,14 +5,14 @@
     {
       "workstream_id": "01-baseline",
       "owner": "baseline",
-      "writable_paths": ["README.md", "AGENTS.md", "docs/product/**", "docs/contracts/**", "docs/superpowers/plans/**"],
-      "primary_delivery": "shared positioning, contracts, schemas, examples and plans"
+      "writable_paths": ["README.md", "AGENTS.md", "docs/product/**", "docs/contracts/**", "docs/superpowers/plans/**", "schemas/admin-control/**"],
+      "primary_delivery": "shared positioning, contracts, schemas, examples and plans; Admin control-plane schemas are maintained by the accepted RFC without changing Phase 1 tool contracts"
     },
     {
       "workstream_id": "02-platform",
       "owner": "platform",
-      "writable_paths": ["src/logistics_mcp/platform/**", "src/logistics_mcp/server/**", "src/logistics_mcp/module-runtime/**", "src/logistics_mcp/agent-context/**", "tests/platform/**", "tests/module-runtime/**", "tests/agent-context/**"],
-      "primary_delivery": "MCP transport, context, RBAC, envelope, audit, idempotency, module runtime and Agent access"
+      "writable_paths": ["src/logistics_mcp/platform/**", "src/logistics_mcp/server/**", "src/logistics_mcp/control-plane/**", "src/logistics_mcp/module-runtime/**", "src/logistics_mcp/agent-context/**", "tests/platform/**", "tests/control-plane/**", "tests/module-runtime/**", "tests/agent-context/**"],
+      "primary_delivery": "MCP transport, tenant context, RBAC, envelope, audit, idempotency, tool registry and narrow module release control plane"
     },
     {
       "workstream_id": "03-cargo",
@@ -35,8 +35,8 @@
     {
       "workstream_id": "06-integration",
       "owner": "integration",
-      "writable_paths": ["tests/e2e/**", "deploy/**", "docs/runbooks/**"],
-      "primary_delivery": "multi-client, deployment, security release, end-to-end and rollback verification"
+      "writable_paths": ["tests/e2e/**", "deploy/**", "docs/runbooks/**", "apps/admin/**"],
+      "primary_delivery": "multi-client, Admin control console, deployment, security release, end-to-end and rollback verification"
     }
   ],
   "escalation": "Changes to shared contracts require a dated RFC and baseline maintainer acceptance before docs/contracts is modified."
