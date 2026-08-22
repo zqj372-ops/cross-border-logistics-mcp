@@ -204,8 +204,64 @@ function exactRecord(
   keys: readonly string[],
   code: HashErrorCode,
 ): Record<string, unknown> {
-  if (!isPlainRecord(value) || !hasExactOwnKeys(value, keys)) fail(code);
-  return value;
+  try {
+    if (!isPlainRecord(value)) fail(code);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (!hasExactOwnKeys(descriptors, keys)) fail(code);
+    const snapshot: Record<string, unknown> = {};
+    for (const key of keys) {
+      const descriptor = descriptors[key];
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true
+      ) {
+        fail(code);
+      }
+      snapshot[key] = descriptor.value;
+    }
+    return snapshot;
+  } catch (error: unknown) {
+    if (error instanceof CanonicalControlHashError) throw error;
+    fail(code);
+  }
+}
+
+function exactArray(value: unknown): readonly unknown[] {
+  try {
+    if (!Array.isArray(value)) fail("array_invalid");
+    const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
+      PropertyKey,
+      PropertyDescriptor
+    >;
+    const lengthDescriptor = descriptors["length"];
+    if (
+      lengthDescriptor === undefined ||
+      !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0 ||
+      Reflect.ownKeys(descriptors).length !== lengthDescriptor.value + 1
+    ) {
+      fail("array_invalid");
+    }
+    const snapshot: unknown[] = [];
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true
+      ) {
+        fail("array_invalid");
+      }
+      snapshot.push(descriptor.value);
+    }
+    return snapshot;
+  } catch (error: unknown) {
+    if (error instanceof CanonicalControlHashError) throw error;
+    fail("array_invalid");
+  }
 }
 
 function hasWellFormedUnicode(value: string): boolean {
@@ -282,8 +338,9 @@ function moduleTuple(ref: ControlHashModuleRef): string {
 }
 
 function normalizeModuleRefs(value: unknown): readonly NormalizedModuleRef[] {
-  if (!Array.isArray(value) || value.length === 0) fail("array_invalid");
-  const refs = value.map((candidate) => {
+  const candidates = exactArray(value);
+  if (candidates.length === 0) fail("array_invalid");
+  const refs = candidates.map((candidate) => {
     const record = exactRecord(candidate, MODULE_REF_KEYS, "payload_fields_invalid");
     return Object.freeze({
       module_id: identifier(record.module_id),
@@ -301,8 +358,7 @@ function normalizeModuleRefs(value: unknown): readonly NormalizedModuleRef[] {
 }
 
 function normalizeStringSet(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) fail("array_invalid");
-  const values = value.map(identifier);
+  const values = exactArray(value).map(identifier);
   if (new Set(values).size !== values.length) fail("set_duplicate");
   return Object.freeze([...values].sort(compareUtf8));
 }
@@ -434,15 +490,19 @@ function normalizeStrictRequest(
 function normalizeRequestPayload(
   value: Record<string, unknown>,
 ): { readonly value: CanonicalValue; readonly schemaVersion: string } {
-  if (!hasExactOwnKeys(value, REQUEST_PAYLOAD_KEYS)) fail("payload_fields_invalid");
-  if (typeof value.action !== "string") fail("action_invalid");
-  const request = normalizeStrictRequest(value.action, value.request);
+  const record = exactRecord(
+    value,
+    REQUEST_PAYLOAD_KEYS,
+    "payload_fields_invalid",
+  );
+  if (typeof record.action !== "string") fail("action_invalid");
+  const request = normalizeStrictRequest(record.action, record.request);
   return {
     schemaVersion: request.schemaVersion,
     value: Object.freeze({
-      action: value.action,
-      management_tenant_id: identifier(value.management_tenant_id),
-      actor_ref: identifier(value.actor_ref),
+      action: record.action,
+      management_tenant_id: identifier(record.management_tenant_id),
+      actor_ref: identifier(record.actor_ref),
       request: request.value,
     }),
   };
@@ -451,37 +511,52 @@ function normalizeRequestPayload(
 function normalizePreviewPayload(
   value: Record<string, unknown>,
 ): { readonly value: CanonicalValue; readonly schemaVersion: string } {
-  if (value.intent !== "change" && value.intent !== "rollback") {
+  let intent: unknown;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "intent");
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      fail("payload_fields_invalid");
+    }
+    intent = descriptor.value;
+  } catch (error: unknown) {
+    if (error instanceof CanonicalControlHashError) throw error;
     fail("payload_fields_invalid");
   }
-  const keys = value.intent === "change" ? PREVIEW_CHANGE_KEYS : PREVIEW_ROLLBACK_KEYS;
-  if (!hasExactOwnKeys(value, keys)) fail("payload_fields_invalid");
-  if (value.action !== "deployments.preview") fail("action_invalid");
-  if (value.policy_version !== "writable-module-control-plane-v1") {
+  if (intent !== "change" && intent !== "rollback") {
     fail("payload_fields_invalid");
   }
-  const normalizedSchemaVersion = schemaVersion(value.schema_version);
+  const keys = intent === "change" ? PREVIEW_CHANGE_KEYS : PREVIEW_ROLLBACK_KEYS;
+  const record = exactRecord(value, keys, "payload_fields_invalid");
+  if (record.action !== "deployments.preview") fail("action_invalid");
+  if (record.policy_version !== "writable-module-control-plane-v1") {
+    fail("payload_fields_invalid");
+  }
+  const normalizedSchemaVersion = schemaVersion(record.schema_version);
   const common = {
     action: "deployments.preview",
-    base_release_revision: safeInteger(value.base_release_revision),
-    creator_actor_ref: identifier(value.creator_actor_ref),
-    desired_modules: normalizeModuleRefs(value.desired_modules),
-    intent: value.intent,
-    inventory_refs: normalizeModuleRefs(value.inventory_refs),
-    management_tenant_id: identifier(value.management_tenant_id),
+    base_release_revision: safeInteger(record.base_release_revision),
+    creator_actor_ref: identifier(record.creator_actor_ref),
+    desired_modules: normalizeModuleRefs(record.desired_modules),
+    intent,
+    inventory_refs: normalizeModuleRefs(record.inventory_refs),
+    management_tenant_id: identifier(record.management_tenant_id),
     policy_version: "writable-module-control-plane-v1",
-    preview_ttl_seconds: safeInteger(value.preview_ttl_seconds, true),
+    preview_ttl_seconds: safeInteger(record.preview_ttl_seconds, true),
     schema_version: normalizedSchemaVersion,
-    validation: normalizeValidation(value.validation),
+    validation: normalizeValidation(record.validation),
   } as const;
   return {
     schemaVersion: normalizedSchemaVersion,
     value:
-      value.intent === "change"
+      intent === "change"
         ? Object.freeze(common)
         : Object.freeze({
             ...common,
-            target_release_id: identifier(value.target_release_id),
+            target_release_id: identifier(record.target_release_id),
           }),
   };
 }

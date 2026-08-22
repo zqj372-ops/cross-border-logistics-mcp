@@ -310,6 +310,63 @@ describe("canonical control hash", () => {
     );
   });
 
+  it("rejects sparse or decorated collection arrays", () => {
+    const extraKeyModules = [...previewPayload.desired_modules] as unknown[] & {
+      unexpected?: string;
+    };
+    extraKeyModules.unexpected = "hidden-from-map";
+
+    const symbolModules = [...previewPayload.desired_modules] as unknown[] & {
+      [key: symbol]: string;
+    };
+    symbolModules[Symbol("hidden")] = "hidden-from-map";
+
+    expectPayloadError(
+      { ...previewPayload, desired_modules: extraKeyModules },
+      "array_invalid",
+      "preview",
+    );
+    expectPayloadError(
+      { ...previewPayload, desired_modules: symbolModules },
+      "array_invalid",
+      "preview",
+    );
+    expectPayloadError(
+      { ...previewPayload, desired_modules: new Array(1) },
+      "array_invalid",
+      "preview",
+    );
+  });
+
+  it("rejects accessors without evaluating them", () => {
+    const accessorPayload = { ...registerPayload } as Record<string, unknown>;
+    let accessorReads = 0;
+    Object.defineProperty(accessorPayload, "actor_ref", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("must not run");
+      },
+    });
+
+    expectPayloadError(accessorPayload, "payload_fields_invalid");
+
+    const accessorModules = [...previewPayload.desired_modules] as unknown[];
+    Object.defineProperty(accessorModules, "0", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("must not run");
+      },
+    });
+    expectPayloadError(
+      { ...previewPayload, desired_modules: accessorModules },
+      "array_invalid",
+      "preview",
+    );
+    expect(accessorReads).toBe(0);
+  });
+
   it("returns a digest distinct from descriptor digests", () => {
     const result = canonicalControlHash({
       domain: "request",
