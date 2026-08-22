@@ -239,6 +239,89 @@ rollback target
 
 视觉基准采用 AdminLTE 4 的深色侧栏、白色主画布和表格主导布局；不照搬示例业务数据。
 
+### 9.1 视觉实现清单
+
+概念图原生画布为 1536×1024；浏览器主验收使用 1440×900，并额外验证 390×844。页面没有
+需要切出的位图资产，全部可见文本、表格、按钮、状态和图标都必须保持 code-native。
+
+| Token | 值 | 用途 |
+| --- | --- | --- |
+| `--control-bg` | `#f4f6f9` | 主画布浅灰背景 |
+| `--control-surface` | `#ffffff` | 表格、详情、预览表面；保持真白 |
+| `--control-sidebar` | `#0b1f3a` | 左侧固定导航 |
+| `--control-text` | `#172033` | 标题和主要正文 |
+| `--control-muted` | `#667085` | 次要说明和未选中状态 |
+| `--control-border` | `#d8dee8` | 表格、分区和控件边界 |
+| `--control-accent` | `#0d6efd` | 选中导航、主按钮、当前阶段 |
+| `--control-success` | `#198754` | 已登记、已验证读回 |
+| `--control-warning` | `#b26a00` | 待审批、待适配验证 |
+| `--control-danger` | `#b42318` | blocked、reject、readback mismatch |
+
+- 字体：`-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`。
+- 页面标题 28/36、600；分区标题 18/26、600；正文与表格 14/22、400；控件文字
+  13/20、500；说明 12/18、400。按钮和输入不能依赖浏览器默认字号。
+- 间距只使用 4、8、12、16、20、24、32；左侧栏桌面 184–208 px，主区最小 0，详情栏
+  约占内容区 34%。
+- 表面圆角 4–6 px，输入/按钮 4 px；不使用大圆角、悬浮玻璃或嵌套卡片。
+- 阴影只允许顶部栏和浮层使用一层低对比阴影；表格/详情/预览使用 1 px border 分区。
+- 动效只用于 120–180 ms 的焦点、选中和折叠反馈；`prefers-reduced-motion` 下关闭位移。
+
+### 9.2 容器与组件族
+
+- App shell：固定深色 sidebar、白色 topbar、浅灰 main、无营销 hero。
+- Release rail：四个等权阶段，以线和编号表达当前/完成/待处理，不使用装饰性 badge。
+- Status summary：只保留三张横向状态卡，每张一个数字和一句范围说明，不引入趋势或假指标。
+- Module table：桌面表格是主容器；移动端保持表格语义并提供可聚焦横向滚动，不改成卡片堆。
+- Detail inspector：不可变 descriptor/evidence 字段的定义列表；复制动作只复制 opaque ref。
+- Preview region：diff、validation、creator/approver、release trail 四个明确区域；按钮状态由服务端
+  对象和本地 desired draft 共同派生。
+- Identity dialog：password input、连接、清除身份、fixture 双身份按钮；关闭后 token 仍只在内存，
+  刷新即消失。
+- Icons：使用单一 20 px outline SVG 家族，`currentColor`、1.75–2 px stroke、round cap/join；
+  导航、状态、复制和 disclosure 不得混用 emoji 或文本箭头。
+
+### 9.3 首屏允许文案
+
+首屏可以显示且只显示以下产品文案及由 API 返回的模块事实；实现不得自行增加生产声明：
+
+```text
+跨境物流 MCP 控制台
+本地受控环境
+管理员身份未绑定 / 管理员身份已绑定
+报价、关务与客户数据仍由外部权威系统管理
+模块中心
+登记制品
+生成预览
+双人审批
+发布读回
+已登记
+待审批
+当前激活
+受控模块清单
+制品详情
+仅允许部署清单内制品
+发布预览与验证
+保存草稿
+生成预览
+提交审批
+发布并读回
+回滚到上一已验证版本
+待适配验证
+未获生产资格
+```
+
+模块 ID/version/risk/digest、状态数字和 reason code 必须来自已校验 API。概念图中的 email、
+Git/registry URL、日期和版本号均是视觉占位，不进入实现允许文案。
+
+### 9.4 响应式规则
+
+- ≥1200 px：模块表格与详情 inspector 两列，preview 主区与 release trail 两列。
+- 768–1199 px：详情 inspector 移到表格下方，状态卡仍保持一行或 2+1，操作按钮允许换行。
+- <768 px：sidebar 由明确按钮展开；状态卡单列；表格横向滚动；preview 区域单列；主要操作
+  保持至少 44 px 触控高度，页面不得出现整体横向溢出。
+- 焦点顺序为导航→身份→release rail 摘要→表格→详情→preview→动作→trail；切换视图后焦点
+  回到主标题，API 结果通过 `aria-live` 宣告但不朗读 token 或完整 digest。
+
 - 导航：总览、模块中心、Agent 接入、适配器状态、审批与发布、审计日志。
 - 模块中心主屏：四阶段发布轨、三张状态卡、模块表格、右侧不可变制品详情、下方预览/
   验证/审批/发布轨迹。
