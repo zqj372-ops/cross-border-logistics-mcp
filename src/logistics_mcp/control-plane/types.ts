@@ -6,6 +6,8 @@ export const ADMIN_CONTROL_SCHEMA_VERSION = "2026-08-22.v1" as const;
 
 export type DescriptorDigest = `sha256:${string}`;
 
+declare const TRUSTED_MODULE_INVENTORY_BRAND: unique symbol;
+
 export interface ModuleInventoryEntry {
   readonly moduleId: string;
   readonly version: string;
@@ -23,6 +25,10 @@ export interface ModuleInventoryEntry {
     attestationRef: string | null;
   }>;
 }
+
+export type TrustedModuleInventory = readonly ModuleInventoryEntry[] & {
+  readonly [TRUSTED_MODULE_INVENTORY_BRAND]: "trusted-module-inventory";
+};
 
 export interface ActiveModuleRef {
   readonly moduleId: string;
