@@ -742,6 +742,7 @@ function registerMcpTools(
 function registerAgentResources(
   server: McpServer,
   runtime: AgentAccessRuntime,
+  context: ExecutionContext,
 ): void {
   for (const resource of AGENT_RESOURCE_DEFINITIONS) {
     server.registerResource(
@@ -752,7 +753,7 @@ function registerAgentResources(
         mimeType: resource.mimeType,
       },
       (uri) => {
-        const content = runtime.readResource(uri.toString());
+        const content = runtime.readResource(uri.toString(), context);
         return {
           contents: [
             {
@@ -841,7 +842,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       requestSignals,
     );
     if (options.agentAccessRuntime !== undefined) {
-      registerAgentResources(server, options.agentAccessRuntime);
+      registerAgentResources(server, options.agentAccessRuntime, context);
     }
     const runtime: SessionRuntimeHandle = { transport, server };
     let registered = false;

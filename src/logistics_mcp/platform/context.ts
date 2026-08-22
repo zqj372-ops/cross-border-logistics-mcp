@@ -51,6 +51,18 @@ export interface ExecutionContext {
   readonly expiresAt: number;
 }
 
+const trustedExecutionContexts = new WeakSet<object>();
+
+export function isTrustedExecutionContext(
+  value: unknown,
+): value is ExecutionContext {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    trustedExecutionContexts.has(value)
+  );
+}
+
 function invalidClaims(): AuthenticationError {
   return new AuthenticationError("Verified authentication claims are invalid.");
 }
@@ -80,14 +92,16 @@ export function parseExecutionContext(input: unknown): ExecutionContext {
     throw new AuthenticationError("Authentication token is expired.");
   }
 
-  return {
+  const context: ExecutionContext = Object.freeze({
     tenantId: claims.tenant_id,
     actorId: claims.actor_id,
     role: claims.actor_role,
-    roles: [...claims.roles],
-    scopes: [...claims.scopes],
+    roles: Object.freeze([...claims.roles]),
+    scopes: Object.freeze([...claims.scopes]),
     clientId: claims.client_id,
     sessionId: claims.session_id,
     expiresAt: claims.expires_at,
-  };
+  });
+  trustedExecutionContexts.add(context);
+  return context;
 }

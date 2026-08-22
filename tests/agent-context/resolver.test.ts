@@ -9,6 +9,17 @@ import {
   type AgentStandardPack,
 } from "../../src/logistics_mcp/agent-context/resolver";
 import { buildAgentStandardPack } from "../../src/logistics_mcp/agent-context/pack";
+import { findAgentArtifactSafetyIssues } from "./safety-assertions";
+
+type DeepMutable<T> = T extends readonly (infer Item)[]
+  ? DeepMutable<Item>[]
+  : T extends object
+    ? { -readonly [Key in keyof T]: DeepMutable<T[Key]> }
+    : T;
+
+function mutableClone<T>(value: T): DeepMutable<T> {
+  return structuredClone(value) as DeepMutable<T>;
+}
 
 const rootDir = resolve(import.meta.dirname, "../..");
 
@@ -29,7 +40,7 @@ describe("Agent context resolver", () => {
     expect(result.modules).toEqual(
       expect.arrayContaining([expect.objectContaining({ module_id: "cargo" })]),
     );
-    expect(JSON.stringify(result)).not.toMatch(/(?:\/Users\/|-----BEGIN|Bearer\s+[A-Za-z0-9_-]{20,}|sk-|ghp_|AIza)/i);
+    expect(findAgentArtifactSafetyIssues(result)).toEqual([]);
   });
 
   it("resolves the accepted control-plane standard only for its developer, reviewer and operator audiences", () => {
@@ -67,6 +78,25 @@ describe("Agent context resolver", () => {
     expect(result.modules.map((module) => module.module_id).sort()).toEqual(["cargo", "container"]);
   });
 
+  it("rejects a forged broadened pack before it can project control-plane rules", () => {
+    const broadened = mutableClone(buildAgentStandardPack(rootDir));
+    const runtimeCaller = broadened.profiles.find(
+      (profile) => profile.profile_id === "runtime-caller",
+    );
+    const controlStandard = broadened.standards.find(
+      (standard) => standard.standard_id === "writable-module-control-plane-v1",
+    );
+    if (runtimeCaller === undefined || controlStandard === undefined) {
+      throw new Error("Expected runtime-caller and control standard fixtures.");
+    }
+    runtimeCaller.standard_ids.push(controlStandard.standard_id);
+    runtimeCaller.allowed_rule_ids.push(...controlStandard.rule_ids);
+
+    expect(() => resolveAgentContextFromPack(broadened, {
+      profileId: "runtime-caller",
+    })).toThrow(AgentContextResolutionError);
+  });
+
   it("rejects a same-priority conflicting rule instead of guessing", () => {
     const pack = buildAgentStandardPack(rootDir);
     const conflicting: AgentStandardPack = {
@@ -96,5 +126,40 @@ describe("Agent context resolver", () => {
         profileId: "module-developer",
       }),
     ).toThrow(AgentContextResolutionError);
+  });
+
+  it("does not reflect unknown profile or standard identifiers in errors", () => {
+    const pack = buildAgentStandardPack(rootDir);
+    const unknownProfile = "unknown-profile-sensitive-value";
+    let profileError: unknown;
+    try {
+      resolveAgentContextFromPack(pack, { profileId: unknownProfile });
+    } catch (error: unknown) {
+      profileError = error;
+    }
+    expect(profileError).toBeInstanceOf(AgentContextResolutionError);
+    expect((profileError as AgentContextResolutionError).message).not.toContain(
+      unknownProfile,
+    );
+
+    const unknownStandard = "unknown-standard-sensitive-value";
+    const malformed: AgentStandardPack = {
+      ...pack,
+      profiles: pack.profiles.map((profile) =>
+        profile.profile_id === "module-developer"
+          ? { ...profile, standard_ids: [unknownStandard] }
+          : profile,
+      ),
+    };
+    let standardError: unknown;
+    try {
+      resolveAgentContextFromPack(malformed, { profileId: "module-developer" });
+    } catch (error: unknown) {
+      standardError = error;
+    }
+    expect(standardError).toBeInstanceOf(AgentContextResolutionError);
+    expect((standardError as AgentContextResolutionError).message).not.toContain(
+      unknownStandard,
+    );
   });
 });

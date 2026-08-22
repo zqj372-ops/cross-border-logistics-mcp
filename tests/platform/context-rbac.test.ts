@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import * as executionContextModule from "../../src/logistics_mcp/platform/context";
 import {
   AuthenticationError,
   parseExecutionContext,
@@ -44,6 +45,36 @@ describe("platform context and RBAC", () => {
       roles: ["sales"],
     });
     expect(context.scopes).toContain("quote:calculate");
+  });
+
+  it("deep-freezes parsed contexts and records unforgeable module provenance", () => {
+    const context = parseExecutionContext(claims("sales"));
+    const checker = (
+      executionContextModule as typeof executionContextModule & {
+        readonly isTrustedExecutionContext?: (value: unknown) => boolean;
+      }
+    ).isTrustedExecutionContext;
+
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.roles)).toBe(true);
+    expect(Object.isFrozen(context.scopes)).toBe(true);
+    expect(checker).toBeTypeOf("function");
+    expect(checker?.(context)).toBe(true);
+
+    const forged = {
+      ...context,
+      roles: [...context.roles],
+      scopes: [...context.scopes],
+    };
+    expect(checker?.(forged)).toBe(false);
+
+    expect(() => {
+      (context.roles as unknown as string[]).push("admin");
+    }).toThrow(TypeError);
+    expect(() => {
+      (context as unknown as { actorId: string }).actorId = "forged_actor";
+    }).toThrow(TypeError);
+    expect(context.actorId).toBe("actor_sales");
   });
 
   it("rejects missing or expired authentication claims", () => {

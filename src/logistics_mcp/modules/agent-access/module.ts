@@ -29,7 +29,7 @@ export function createAgentAccessModule(
         kind: "read",
         riskLevel: "T0",
         standardRefs: ["module-runtime.v0", "platform.contracts", "agent-access.v0"],
-        handler: (input) => runtime.getContext(input),
+        handler: (input, context) => runtime.getContext(input, context),
         inputSchema: agentContextToolContract.inputSchema,
         validateOutput: agentContextToolContract.validateOutput,
         ...(agentContextToolContract.outputSchema === undefined

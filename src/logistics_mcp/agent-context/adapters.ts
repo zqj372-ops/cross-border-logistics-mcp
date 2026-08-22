@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+
+import { readRegisteredText } from "./registry";
 
 const requiredTool = "system.agent_context.get";
 const requiredResources = [
@@ -21,7 +21,7 @@ function rootDefault(): string {
 }
 
 function read(rootDir: string, path: string): string {
-  return readFileSync(resolve(rootDir, path), "utf8");
+  return readRegisteredText(rootDir, path);
 }
 
 function validateJsonAdapter(rootDir: string, path: string, failures: string[]): void {
