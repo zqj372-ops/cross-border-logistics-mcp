@@ -1,14 +1,23 @@
 import { isDeepStrictEqual, types as nodeUtilTypes } from "node:util";
+import { randomUUID } from "node:crypto";
 
 import { controlEnvelopeSchema } from "../../src/logistics_mcp/control-plane/contracts";
-import { IDENTIFIER_PATTERN } from "../../src/logistics_mcp/control-plane/lexical-contracts";
+import {
+  DESCRIPTOR_DIGEST_PATTERN,
+  IDENTIFIER_PATTERN,
+  VERSION_PATTERN,
+} from "../../src/logistics_mcp/control-plane/lexical-contracts";
 import {
   assertControlEventInstantOrder,
   assertControlEventLifecycleCardinality,
   assertControlRequestBinding,
+  assertRequestHash,
+  assertReadbackAttemptObservation,
+  assertReadbackAttemptRecord,
   assertModulePreviewAuthoritySemantics,
   createControlEventLifecycleCounts,
   deepFreezeControlRecord,
+  deepFreezeReadbackAttempt,
   ModuleControlRepositoryError,
   MODULE_CONTROL_ACTIONS,
   resolveMonotonicControlEventOccurredAt,
@@ -21,6 +30,7 @@ import type {
   ApprovalWriteResult,
   CanonicalRequestHash,
   CompleteControlIdempotencyRequest,
+  ClaimReadbackAttemptRequest,
   ControlEventLifecycleCounts,
   ControlEventRecord,
   ControlFinalResult,
@@ -39,16 +49,27 @@ import type {
   ModuleControlIdempotencyRecord,
   ModuleControlRef,
   ModuleControlRepository,
+  ModuleControlReadbackAttemptRepository,
   ModuleControlRepositoryErrorCode,
   ModuleControlState,
   ModulePreviewRecord,
   ModuleReleaseHistoryEntry,
   ModuleReadbackRecord,
+  ModuleTerminalReadbackRecord,
   ModuleRegistrationRecord,
   ModuleReleaseRecord,
   PreviewWriteResult,
   PublishReleaseRecordRequest,
   ReadbackWriteResult,
+  ReadbackAttemptClaimResult,
+  ReadbackAttemptObservation,
+  ReadbackAttemptOwnerCapability,
+  ReadbackAttemptRecord,
+  ReadbackAttemptRequestMetadata,
+  ReadbackFinalizationResult,
+  FinalizeReadbackAndCompleteRequest,
+  GetReadbackAttemptHistoryQuery,
+  GetUnfinishedReadbackAttemptQuery,
   RecordReadbackRequest,
   RegisterModuleRecordRequest,
   RegistrationWriteResult,
@@ -87,6 +108,46 @@ export type FakeControlRepositoryMethodName =
   (typeof FAKE_CONTROL_REPOSITORY_METHOD_NAMES)[number];
 export type FakeControlRepositoryFailurePhase =
   (typeof FAKE_CONTROL_REPOSITORY_FAILURE_PHASES)[number];
+
+export const FAKE_READBACK_ATTEMPT_FAILURE_PHASES = Object.freeze([
+  "method_entry",
+  "after_idempotency",
+  "after_attempt",
+  "after_reconciliation_event",
+  "after_completion_event",
+  "after_readback",
+  "after_release_status_change",
+  "after_health",
+] as const);
+
+export const FAKE_READBACK_ATTEMPT_METHOD_NAMES = Object.freeze([
+  "claimReadbackAttempt",
+  "finalizeReadbackAndComplete",
+] as const);
+
+export const FAKE_READBACK_ATTEMPT_CLAIM_FAILURE_PHASES = Object.freeze([
+  "method_entry",
+  "after_idempotency",
+  "after_attempt",
+  "after_health",
+] as const);
+
+export const FAKE_READBACK_ATTEMPT_FINALIZE_FAILURE_PHASES = Object.freeze([
+  "method_entry",
+  "after_reconciliation_event",
+  "after_completion_event",
+  "after_readback",
+  "after_release_status_change",
+  "after_attempt",
+  "after_idempotency",
+  "after_health",
+] as const);
+
+export type FakeReadbackAttemptMethodName =
+  (typeof FAKE_READBACK_ATTEMPT_METHOD_NAMES)[number];
+
+export type FakeReadbackAttemptFailurePhase =
+  (typeof FAKE_READBACK_ATTEMPT_FAILURE_PHASES)[number];
 
 const FAILURE_PHASE_ALLOWLIST: Readonly<
   Record<FakeControlRepositoryMethodName, readonly FakeControlRepositoryFailurePhase[]>
@@ -175,9 +236,11 @@ export interface FakeModuleControlRepositoryRecords {
   readonly approvals?: readonly ModuleApprovalRecord[];
   readonly releases?: readonly ModuleReleaseRecord[];
   readonly readbacks?: readonly ModuleReadbackRecord[];
+  readonly attempts?: readonly ReadbackAttemptRecord[];
   readonly idempotency?: readonly ModuleControlIdempotencyRecord[];
   readonly events?: readonly ControlEventRecord[];
   readonly eventAuthorities?: readonly FakeModuleControlRepositoryEventAuthority[];
+  readonly attemptEventAuthorities?: readonly FakeReadbackAttemptEventAuthority[];
 }
 
 export interface FakeModuleControlRepositoryEventAuthority {
@@ -187,9 +250,17 @@ export interface FakeModuleControlRepositoryEventAuthority {
   readonly requestHash: CanonicalRequestHash;
 }
 
+export interface FakeReadbackAttemptEventAuthority {
+  readonly eventId: string;
+  readonly attemptId: string;
+  readonly role: "reconciliation" | "completion";
+}
+
 export interface FakeModuleControlRepositoryOptions {
   readonly managementTenantId: string;
   readonly records?: FakeModuleControlRepositoryRecords;
+  readonly ownerBootId?: string;
+  readonly clock?: () => string;
 }
 
 interface CloneBudget {
@@ -202,9 +273,13 @@ interface PersistentSnapshot {
   readonly approvals: readonly (readonly [string, ModuleApprovalRecord])[];
   readonly releases: readonly (readonly [string, ModuleReleaseRecord])[];
   readonly readbacks: readonly (readonly [string, ModuleReadbackRecord])[];
+  readonly attempts: readonly (readonly [string, ReadbackAttemptRecord])[];
   readonly idempotency: readonly (readonly [string, ModuleControlIdempotencyRecord])[];
   readonly events: readonly ControlEventRecord[];
   readonly eventAuthorities: readonly (readonly [string, string])[];
+  readonly attemptEventAuthorities: readonly (
+    readonly [string, { readonly attemptId: string; readonly role: "reconciliation" | "completion" }]
+  )[];
   readonly nextEventSequence: number;
 }
 
@@ -606,16 +681,161 @@ function validateFinalResult(
   }) as ControlFinalResult;
 }
 
-export class FakeModuleControlRepository implements ModuleControlRepository {
+function exactObjectKeys(
+  value: unknown,
+  expectedKeys: readonly string[],
+): Record<string, unknown> {
+  assertPlainObject(value);
+  const actualKeys = Reflect.ownKeys(value);
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some(
+      (key) => typeof key !== "string" || !expectedKeys.includes(key),
+    )
+  ) {
+    invalidState();
+  }
+  for (const key of expectedKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) invalidState();
+  }
+  return value;
+}
+
+function assertAttemptModuleRefs(value: unknown): asserts value is readonly ModuleControlRef[] {
+  if (!Array.isArray(value)) invalidState();
+  const seen = new Set<string>();
+  for (const item of value) {
+    const ref = exactObjectKeys(item, ["moduleId", "version", "descriptorDigest"]);
+    if (
+      typeof ref.moduleId !== "string" ||
+      !IDENTIFIER_PATTERN.test(ref.moduleId) ||
+      typeof ref.version !== "string" ||
+      !VERSION_PATTERN.test(ref.version) ||
+      typeof ref.descriptorDigest !== "string" ||
+      !DESCRIPTOR_DIGEST_PATTERN.test(ref.descriptorDigest)
+    ) {
+      invalidState();
+    }
+    const key = `${ref.moduleId}\0${ref.version}\0${ref.descriptorDigest}`;
+    if (seen.has(key)) repositoryError("conflict");
+    seen.add(key);
+  }
+}
+
+function assertAttemptMetadata(value: unknown): ReadbackAttemptRequestMetadata {
+  const record = exactObjectKeys(value, [
+    "managementTenantId",
+    "actorRef",
+    "action",
+    "idempotencyKey",
+    "requestHash",
+    "requestId",
+    "traceId",
+    "auditId",
+  ]);
+  for (const key of [
+    "managementTenantId",
+    "actorRef",
+    "idempotencyKey",
+    "requestId",
+    "traceId",
+    "auditId",
+  ]) {
+    assertRepositoryIdentifier(record[key]);
+  }
+  if (
+    record.action !== "deployments.publish" &&
+    record.action !== "deployments.reconcile"
+  ) {
+    invalidState();
+  }
+  assertRequestHash(record.requestHash);
+  return record as unknown as ReadbackAttemptRequestMetadata;
+}
+
+function compareNullableSequence(
+  left: number | null,
+  right: number | null,
+): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return right - left;
+}
+
+const SENSITIVE_ATTEMPT_FIELD_PATTERN =
+  /^(?:address|authorization|chat|password|path|quote|raw(?:_|-)?response|secret|tax|token)$/i;
+const SENSITIVE_ATTEMPT_VALUE_PATTERN =
+  /(?:\bBearer\s+|-----BEGIN|(?:password|secret|token)\s*[:=]|\/(?:Users|private|var|tmp)\/)/i;
+
+function assertNoSensitiveAttemptContent(value: unknown): void {
+  const visit = (candidate: unknown): void => {
+    if (typeof candidate === "string") {
+      if (SENSITIVE_ATTEMPT_VALUE_PATTERN.test(candidate)) invalidState();
+      return;
+    }
+    if (candidate === null || typeof candidate !== "object") return;
+    for (const key of Reflect.ownKeys(candidate)) {
+      if (typeof key === "string" && SENSITIVE_ATTEMPT_FIELD_PATTERN.test(key)) {
+        invalidState();
+      }
+      visit(Reflect.get(candidate, key));
+    }
+  };
+  visit(value);
+}
+
+const RECOVERY_FINALIZE = Symbol("fake-readback-recovery-finalize");
+const RECOVERY_SECRET = Symbol("fake-readback-recovery-secret");
+const RECOVERY_ACTOR_REF = "system_startup_recovery";
+
+type FakeRecoverySecret = { readonly [RECOVERY_SECRET]: true };
+type FakeRecoveryFinalizeRequest = Omit<
+  FinalizeReadbackAndCompleteRequest,
+  "ownerCapability"
+>;
+
+export interface FakeReadbackRecoveryDriver {
+  finalizePriorBootAttempt(
+    request: FakeRecoveryFinalizeRequest,
+  ): Promise<ReadbackFinalizationResult>;
+}
+
+export interface FakeModuleControlRepositoryWithRecovery {
+  readonly repository: FakeModuleControlRepository;
+  readonly recoveryDriver: FakeReadbackRecoveryDriver;
+}
+
+const RECOVERY_SECRETS = new WeakMap<
+  FakeModuleControlRepository,
+  FakeRecoverySecret
+>();
+
+export class FakeModuleControlRepository
+  implements ModuleControlRepository, ModuleControlReadbackAttemptRepository
+{
   private readonly managementTenantId: string;
+  private readonly ownerBootId: string;
+  private readonly clock: () => string;
   private readonly registrationRecords = new Map<string, ModuleRegistrationRecord>();
   private readonly previewRecords = new Map<string, ModulePreviewRecord>();
   private readonly approvalRecords = new Map<string, ModuleApprovalRecord>();
   private readonly releaseRecords = new Map<string, ModuleReleaseRecord>();
   private readonly readbackRecords = new Map<string, ModuleReadbackRecord>();
+  private readonly attemptRecords = new Map<string, ReadbackAttemptRecord>();
   private readonly idempotencyRecords = new Map<string, ModuleControlIdempotencyRecord>();
   private readonly eventRecords: ControlEventRecord[] = [];
   private readonly eventAuthorityKeys = new Map<string, string>();
+  private readonly attemptEventAuthorityKeys = new Map<
+    string,
+    { readonly attemptId: string; readonly role: "reconciliation" | "completion" }
+  >();
+  #ownerCapabilities = new WeakMap<
+    object,
+    { readonly attemptId: string }
+  >();
+  #consumedOwnerCapabilities = new WeakSet<object>();
+  private readonly recoverySecret: FakeRecoverySecret;
   private readonly failureQueues = new Map<string, ModuleControlRepositoryError[]>();
   private readonly callLog: FakeControlRepositoryCall[] = [];
   private nextEventSequence = 1;
@@ -625,6 +845,15 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     assertRepositoryIdentifier(options.managementTenantId);
     assertWellFormedString(options.managementTenantId);
     this.managementTenantId = options.managementTenantId;
+    this.ownerBootId =
+      options.ownerBootId ??
+      ("fake_boot_" + randomUUID().replaceAll("-", ""));
+    assertRepositoryIdentifier(this.ownerBootId);
+    this.clock = options.clock ?? (() => new Date().toISOString());
+    this.recoverySecret = Object.freeze({
+      [RECOVERY_SECRET]: true,
+    } as const);
+    RECOVERY_SECRETS.set(this, this.recoverySecret);
     try {
       this.seed(options.records);
     } catch (error: unknown) {
@@ -655,11 +884,38 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     else queue.push(typedFailure);
   }
 
+  queueReadbackAttemptFailure(
+    method: FakeReadbackAttemptMethodName,
+    phase: FakeReadbackAttemptFailurePhase,
+    failure: ModuleControlRepositoryErrorCode | ModuleControlRepositoryError =
+      "conflict",
+  ): void {
+    if (!FAKE_READBACK_ATTEMPT_METHOD_NAMES.includes(method)) invalidState();
+    if (!FAKE_READBACK_ATTEMPT_FAILURE_PHASES.includes(phase)) invalidState();
+    if (
+      (method === "claimReadbackAttempt" &&
+        !(FAKE_READBACK_ATTEMPT_CLAIM_FAILURE_PHASES as readonly string[]).includes(phase)) ||
+      (method === "finalizeReadbackAndComplete" &&
+        !(FAKE_READBACK_ATTEMPT_FINALIZE_FAILURE_PHASES as readonly string[]).includes(phase))
+    ) {
+      invalidState();
+    }
+    const typedFailure =
+      failure instanceof ModuleControlRepositoryError
+        ? new ModuleControlRepositoryError(failure.code)
+        : new ModuleControlRepositoryError(failure);
+    const key = this.readbackAttemptFailureKey(method, phase);
+    const queue = this.failureQueues.get(key);
+    if (queue === undefined) this.failureQueues.set(key, [typedFailure]);
+    else queue.push(typedFailure);
+  }
+
   async health(): Promise<{ readonly ready: boolean }> {
     this.recordCall("health", null);
     await Promise.resolve();
     if (this.closed) return Object.freeze({ ready: false });
     this.consumeFailure("health", "method_entry");
+    this.validateSeedGraph();
     return Object.freeze({ ready: true });
   }
 
@@ -842,6 +1098,252 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     });
   }
 
+  async claimReadbackAttempt(
+    request: ClaimReadbackAttemptRequest,
+  ): Promise<ReadbackAttemptClaimResult> {
+    if (this.closed) repositoryError("closed");
+    this.consumeReadbackAttemptFailure(
+      "claimReadbackAttempt",
+      "method_entry",
+    );
+    await Promise.resolve();
+    const safeRequest = this.assertClaimReadbackAttemptRequest(request);
+    const metadata = safeRequest.metadata;
+    if (metadata.actorRef === RECOVERY_ACTOR_REF) {
+      repositoryError("conflict");
+    }
+    this.assertTenant(metadata.managementTenantId);
+    if (safeRequest.ownerBootId !== this.ownerBootId) {
+      repositoryError("conflict");
+    }
+    const key = idempotencyKey(
+      this.managementTenantId,
+      metadata.action,
+      metadata.idempotencyKey,
+    );
+    const existingIdempotency = this.idempotencyRecords.get(key) ?? null;
+    const existingAttempt = this.findAttemptByIdempotency(metadata);
+    if (existingIdempotency !== null) {
+      this.assertReadbackAttemptIdempotencyBinding(
+        existingIdempotency,
+        metadata,
+      );
+      if (existingIdempotency.domainRecordRef === null) {
+        repositoryError("invalid_state");
+      }
+      if (existingAttempt !== null) {
+        this.assertReadbackAttemptRequestBinding(existingAttempt, safeRequest);
+        return Object.freeze({
+          disposition: "existing",
+          attempt: deepFreezeReadbackAttempt(existingAttempt),
+        });
+      }
+      if (
+        metadata.action !== "deployments.publish" ||
+        existingIdempotency.status !== "domain_committed"
+      ) {
+        repositoryError("invalid_state");
+      }
+    }
+
+    const release = this.releaseRecords.get(
+      recordKey(this.managementTenantId, safeRequest.releaseId),
+    );
+    if (release === undefined) repositoryError("not_found");
+    if (
+      release.revision !== safeRequest.revision ||
+      !sameModuleRefs(release.desiredModules, safeRequest.desiredModules)
+    ) {
+      repositoryError("conflict");
+    }
+    if (metadata.action === "deployments.publish") {
+      if (
+        existingIdempotency === null ||
+        existingIdempotency.domainRecordRef !== release.releaseId ||
+        release.status !== "published_pending_readback"
+      ) {
+        repositoryError("conflict");
+      }
+    } else {
+      const newest = this.findReleaseByStatusRecord(
+        "published_pending_readback",
+        "manual_review",
+      );
+      if (
+        newest === null ||
+        newest.releaseId !== release.releaseId ||
+        newest.revision !== release.revision ||
+        (release.status !== "published_pending_readback" &&
+          release.status !== "manual_review")
+      ) {
+        repositoryError("conflict");
+      }
+    }
+    for (const attempt of this.attemptRecords.values()) {
+      if (
+        attempt.phase === "claimed" &&
+        attempt.releaseId === release.releaseId &&
+        attempt.revision === release.revision
+      ) {
+        repositoryError("conflict");
+      }
+      if (
+        attempt.attemptId === safeRequest.attemptId ||
+        attempt.readbackRef === safeRequest.readbackRef
+      ) {
+        repositoryError("conflict");
+      }
+    }
+    for (const readback of this.readbackRecords.values()) {
+      if (readback.readbackRef === safeRequest.readbackRef) {
+        repositoryError("conflict");
+      }
+    }
+    const claimedAt = safeRequest.claimedAt ?? this.readbackClock();
+    if (
+      compareRfc3339Instants(
+        existingIdempotency?.createdAt ?? claimedAt,
+        claimedAt,
+      ) === null ||
+      (existingIdempotency !== null &&
+        this.compareInstants(existingIdempotency.createdAt, claimedAt) > 0)
+    ) {
+      repositoryError("conflict");
+    }
+    const attempt = this.createClaimedAttempt(safeRequest, claimedAt);
+    const committed =
+      existingIdempotency ??
+      this.domainCommittedAttemptIdempotencyCandidate(metadata, release.releaseId, claimedAt);
+    return this.withReadbackAtomicWrite(() => {
+      if (existingIdempotency === null) {
+        this.insertIdempotency(committed);
+        this.consumeReadbackAttemptFailure(
+          "claimReadbackAttempt",
+          "after_idempotency",
+        );
+      }
+      this.attemptRecords.set(
+        recordKey(this.managementTenantId, attempt.attemptId),
+        attempt,
+      );
+      this.consumeReadbackAttemptFailure(
+        "claimReadbackAttempt",
+        "after_attempt",
+      );
+      this.validateSeedGraph();
+      this.consumeReadbackAttemptFailure(
+        "claimReadbackAttempt",
+        "after_health",
+      );
+      const ownerCapability = this.createOwnerCapability(attempt.attemptId);
+      return Object.freeze({
+        disposition: "created",
+        attempt: deepFreezeReadbackAttempt(attempt),
+        ownerCapability,
+      });
+    });
+  }
+
+  async finalizeReadbackAndComplete(
+    request: FinalizeReadbackAndCompleteRequest,
+  ): Promise<ReadbackFinalizationResult> {
+    if (this.closed) repositoryError("closed");
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "method_entry",
+    );
+    await Promise.resolve();
+    this.assertFinalizeReadbackRequest(request, true);
+    return this.withReadbackAtomicWrite(() =>
+      this.finalizeReadbackAndCompleteInternal(request, "owner"),
+    );
+  }
+
+  async getUnfinishedReadbackAttempt(
+    query: GetUnfinishedReadbackAttemptQuery,
+  ): Promise<DeepReadonly<ReadbackAttemptRecord> | null> {
+    if (this.closed) repositoryError("closed");
+    await Promise.resolve();
+    const safeQuery = exactObjectKeys(query, ["managementTenantId", "attemptId"]);
+    this.assertTenantValue(safeQuery.managementTenantId);
+    assertRepositoryIdentifier(safeQuery.attemptId);
+    const attempt = this.attemptRecords.get(
+      recordKey(this.managementTenantId, safeQuery.attemptId),
+    );
+    return attempt?.phase === "claimed"
+      ? deepFreezeReadbackAttempt(attempt)
+      : null;
+  }
+
+  async listUnfinishedReadbackAttempts(): Promise<
+    readonly DeepReadonly<ReadbackAttemptRecord>[]
+  > {
+    if (this.closed) repositoryError("closed");
+    await Promise.resolve();
+    const attempts = [...this.attemptRecords.values()]
+      .filter((attempt) => attempt.phase === "claimed")
+      .sort(
+        (left, right) =>
+          this.compareInstants(left.claimedAt, right.claimedAt) ||
+          compareStrings(left.releaseId, right.releaseId) ||
+          left.revision - right.revision ||
+          compareStrings(left.attemptId, right.attemptId),
+      );
+    return Object.freeze(attempts.map((attempt) => deepFreezeReadbackAttempt(attempt)));
+  }
+
+  async getReadbackAttemptHistory(
+    query: GetReadbackAttemptHistoryQuery,
+  ): Promise<readonly DeepReadonly<ReadbackAttemptRecord>[]> {
+    if (this.closed) repositoryError("closed");
+    await Promise.resolve();
+    const keys = Object.prototype.hasOwnProperty.call(query, "revision")
+      ? ["managementTenantId", "releaseId", "revision"]
+      : ["managementTenantId", "releaseId"];
+    const safeQuery = exactObjectKeys(query, keys);
+    this.assertTenantValue(safeQuery.managementTenantId);
+    assertRepositoryIdentifier(safeQuery.releaseId);
+    if (Object.prototype.hasOwnProperty.call(safeQuery, "revision")) {
+      if (
+        !Number.isSafeInteger(safeQuery.revision) ||
+        (safeQuery.revision as number) < 1
+      ) {
+        invalidState();
+      }
+    }
+    const revision = safeQuery.revision as number | undefined;
+    const attempts = [...this.attemptRecords.values()]
+      .filter(
+        (attempt) =>
+          attempt.releaseId === safeQuery.releaseId &&
+          (revision === undefined || attempt.revision === revision),
+      )
+      .sort(
+        (left, right) =>
+          compareNullableSequence(left.reconciliationEventSequence, right.reconciliationEventSequence) ||
+          compareStrings(right.attemptId, left.attemptId),
+      );
+    return Object.freeze(attempts.map((attempt) => deepFreezeReadbackAttempt(attempt)));
+  }
+
+  async [RECOVERY_FINALIZE](
+    request: FakeRecoveryFinalizeRequest,
+    secret: FakeRecoverySecret,
+  ): Promise<ReadbackFinalizationResult> {
+    if (RECOVERY_SECRETS.get(this) !== secret) invalidState();
+    if (this.closed) repositoryError("closed");
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "method_entry",
+    );
+    await Promise.resolve();
+    this.assertFinalizeReadbackRequest(request, false);
+    return this.withReadbackAtomicWrite(() =>
+      this.finalizeReadbackAndCompleteInternal(request, "recovery"),
+    );
+  }
+
+  // TODO(SQLite promotion): retain only for pre-attempt fixture compatibility; never service-facing.
   async recordReadback(request: RecordReadbackRequest): Promise<ReadbackWriteResult> {
     const safeRequest = this.begin("recordReadback", request);
     await Promise.resolve();
@@ -1011,6 +1513,7 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     });
   }
 
+  // TODO(SQLite promotion): retain only for pre-attempt fixture compatibility; never service-facing.
   async completeIdempotency(
     request: CompleteControlIdempotencyRequest,
   ): Promise<DeepReadonly<ModuleControlIdempotencyRecord>> {
@@ -1125,11 +1628,7 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
         (record) => record.decidedAt,
         (record) => record.approvalId,
       ),
-      latestReadback: this.latestBy(
-        this.readbackRecords.values(),
-        (record) => record.checkedAt,
-        (record) => record.releaseId,
-      ),
+      latestReadback: this.latestCurrentReadback(),
       releaseHistory: projectReleaseHistory(
         this.managementTenantId,
         this.releaseRecords.values(),
@@ -1241,6 +1740,684 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     );
   }
 
+  private assertClaimReadbackAttemptRequest(
+    request: ClaimReadbackAttemptRequest,
+  ): DeepReadonly<ClaimReadbackAttemptRequest> {
+    const keys = Object.prototype.hasOwnProperty.call(request, "claimedAt")
+      ? [
+          "metadata",
+          "attemptId",
+          "readbackRef",
+          "releaseId",
+          "revision",
+          "desiredModules",
+          "ownerBootId",
+          "claimedAt",
+        ]
+      : [
+          "metadata",
+          "attemptId",
+          "readbackRef",
+          "releaseId",
+          "revision",
+          "desiredModules",
+          "ownerBootId",
+        ];
+    const raw = exactObjectKeys(request, keys);
+    assertAttemptMetadata(raw.metadata);
+    for (const key of ["attemptId", "readbackRef", "releaseId", "ownerBootId"]) {
+      assertRepositoryIdentifier(raw[key]);
+    }
+    if (!Number.isSafeInteger(raw.revision) || (raw.revision as number) < 1) {
+      invalidState();
+    }
+    assertAttemptModuleRefs(raw.desiredModules);
+    if (Object.prototype.hasOwnProperty.call(raw, "claimedAt")) {
+      this.assertAttemptTimestamp(raw.claimedAt);
+    }
+    return freezeSnapshot(request);
+  }
+
+  private assertFinalizeReadbackRequest(
+    request: FakeRecoveryFinalizeRequest | FinalizeReadbackAndCompleteRequest,
+    owner: boolean,
+  ): void {
+    const keys = owner
+      ? Object.prototype.hasOwnProperty.call(request, "finalizedAt")
+        ? ["attemptId", "ownerCapability", "observation", "finalResult", "finalizedAt"]
+        : ["attemptId", "ownerCapability", "observation", "finalResult"]
+      : Object.prototype.hasOwnProperty.call(request, "finalizedAt")
+        ? ["attemptId", "observation", "finalResult", "finalizedAt"]
+        : ["attemptId", "observation", "finalResult"];
+    const raw = exactObjectKeys(request, keys);
+    assertRepositoryIdentifier(raw.attemptId);
+    if (owner) {
+      if (
+        typeof raw.ownerCapability !== "object" ||
+        raw.ownerCapability === null ||
+        Array.isArray(raw.ownerCapability) ||
+        nodeUtilTypes.isProxy(raw.ownerCapability)
+      ) {
+        invalidState();
+      }
+    }
+    assertReadbackAttemptObservation(raw.observation);
+    if (Object.prototype.hasOwnProperty.call(raw, "finalizedAt")) {
+      this.assertAttemptTimestamp(raw.finalizedAt);
+    }
+  }
+
+  private assertReadbackAttemptIdempotencyBinding(
+    existing: ModuleControlIdempotencyRecord,
+    metadata: ReadbackAttemptRequestMetadata,
+  ): void {
+    if (
+      existing.managementTenantId !== metadata.managementTenantId ||
+      existing.action !== metadata.action ||
+      existing.idempotencyKey !== metadata.idempotencyKey ||
+      existing.requestHash !== metadata.requestHash ||
+      existing.actorRef !== metadata.actorRef
+    ) {
+      repositoryError(
+        existing.managementTenantId !== metadata.managementTenantId
+          ? "tenant_mismatch"
+          : "conflict",
+      );
+    }
+  }
+
+  private assertReadbackAttemptRequestBinding(
+    attempt: ReadbackAttemptRecord,
+    request: DeepReadonly<ClaimReadbackAttemptRequest>,
+  ): void {
+    if (
+      attempt.attemptId !== request.attemptId ||
+      attempt.readbackRef !== request.readbackRef ||
+      attempt.releaseId !== request.releaseId ||
+      attempt.revision !== request.revision ||
+      !sameModuleRefs(attempt.desiredModules, request.desiredModules) ||
+      attempt.ownerBootId === "" ||
+      attempt.action !== request.metadata.action ||
+      attempt.idempotencyKey !== request.metadata.idempotencyKey ||
+      attempt.requestHash !== request.metadata.requestHash ||
+      attempt.actorRef !== request.metadata.actorRef ||
+      attempt.requestId !== request.metadata.requestId ||
+      attempt.traceId !== request.metadata.traceId ||
+      attempt.auditId !== request.metadata.auditId
+    ) {
+      repositoryError("conflict");
+    }
+  }
+
+  private findAttemptByIdempotency(
+    metadata: ReadbackAttemptRequestMetadata,
+  ): ReadbackAttemptRecord | null {
+    let found: ReadbackAttemptRecord | null = null;
+    for (const attempt of this.attemptRecords.values()) {
+      if (
+        attempt.action !== metadata.action ||
+        attempt.idempotencyKey !== metadata.idempotencyKey
+      ) {
+        continue;
+      }
+      if (found !== null) invalidState();
+      found = attempt;
+    }
+    return found;
+  }
+
+  private createClaimedAttempt(
+    request: DeepReadonly<ClaimReadbackAttemptRequest>,
+    claimedAt: string,
+  ): ReadbackAttemptRecord {
+    return deepFreezeReadbackAttempt({
+      managementTenantId: this.managementTenantId,
+      attemptId: request.attemptId,
+      action: request.metadata.action,
+      idempotencyKey: request.metadata.idempotencyKey,
+      requestHash: request.metadata.requestHash,
+      actorRef: request.metadata.actorRef,
+      requestId: request.metadata.requestId,
+      traceId: request.metadata.traceId,
+      auditId: request.metadata.auditId,
+      releaseId: request.releaseId,
+      revision: request.revision,
+      desiredModules: request.desiredModules,
+      readbackRef: request.readbackRef,
+      ownerBootId: request.ownerBootId,
+      phase: "claimed",
+      claimedAt,
+      finalizedAt: null,
+      terminalStatus: null,
+      appliedReleaseId: null,
+      appliedRevision: null,
+      appliedModules: [],
+      reasonCodes: [],
+      checkedAt: null,
+      finalizedByActorRef: null,
+      reconciliationEventSequence: null,
+      completionEventSequence: null,
+    }) as ReadbackAttemptRecord;
+  }
+
+  private domainCommittedAttemptIdempotencyCandidate(
+    metadata: ReadbackAttemptRequestMetadata,
+    releaseId: string,
+    createdAt: string,
+  ): ModuleControlIdempotencyRecord {
+    return this.snapshotRecord({
+      managementTenantId: this.managementTenantId,
+      action: metadata.action,
+      idempotencyKey: metadata.idempotencyKey,
+      requestHash: metadata.requestHash,
+      actorRef: metadata.actorRef,
+      status: "domain_committed",
+      domainRecordRef: releaseId,
+      finalResult: null,
+      createdAt,
+      expiresAt: idempotencyExpiresAt(createdAt),
+    });
+  }
+
+  private createOwnerCapability(
+    attemptId: string,
+  ): ReadbackAttemptOwnerCapability {
+    const capability = Object.create(null) as object;
+    Object.freeze(capability);
+    this.#ownerCapabilities.set(capability, { attemptId });
+    return capability as ReadbackAttemptOwnerCapability;
+  }
+
+  private consumeOwnerCapability(
+    capability: ReadbackAttemptOwnerCapability,
+    attemptId: string,
+  ): void {
+    if (
+      typeof capability !== "object" ||
+      capability === null ||
+      Array.isArray(capability) ||
+      nodeUtilTypes.isProxy(capability) ||
+      this.#consumedOwnerCapabilities.has(capability) ||
+      this.#ownerCapabilities.get(capability)?.attemptId !== attemptId
+    ) {
+      repositoryError("conflict");
+    }
+  }
+
+  private finalizeReadbackAndCompleteInternal(
+    request: FakeRecoveryFinalizeRequest | FinalizeReadbackAndCompleteRequest,
+    mode: "owner" | "recovery",
+  ): ReadbackFinalizationResult {
+    const attempt = this.attemptRecords.get(
+      recordKey(this.managementTenantId, request.attemptId),
+    );
+    if (attempt === undefined) repositoryError("not_found");
+    if (mode === "owner") {
+      this.consumeOwnerCapability(
+        (request as FinalizeReadbackAndCompleteRequest).ownerCapability,
+        attempt.attemptId,
+      );
+      if (attempt.ownerBootId !== this.ownerBootId) repositoryError("conflict");
+    } else if (attempt.ownerBootId === this.ownerBootId) {
+      repositoryError("conflict");
+    }
+
+    const existingIdempotency = this.idempotencyRecords.get(
+      idempotencyKey(
+        this.managementTenantId,
+        attempt.action,
+        attempt.idempotencyKey,
+      ),
+    );
+    if (existingIdempotency === undefined) invalidState();
+    if (
+      existingIdempotency.action !== attempt.action ||
+      existingIdempotency.requestHash !== attempt.requestHash ||
+      existingIdempotency.actorRef !== attempt.actorRef ||
+      existingIdempotency.domainRecordRef !== attempt.releaseId
+    ) {
+      invalidState();
+    }
+    if (attempt.phase === "finalized") {
+      if (
+        mode !== "recovery" ||
+        existingIdempotency.status !== "completed" ||
+        existingIdempotency.finalResult === null ||
+        !isDeepStrictEqual(existingIdempotency.finalResult, request.finalResult)
+      ) {
+        repositoryError("conflict");
+      }
+      return this.readbackFinalizationResultFromExisting(attempt, existingIdempotency);
+    }
+    if (attempt.phase !== "claimed") invalidState();
+    if (existingIdempotency.status !== "domain_committed") {
+      repositoryError("conflict");
+    }
+    assertReadbackAttemptObservation(request.observation);
+    const release = this.releaseRecords.get(
+      recordKey(this.managementTenantId, attempt.releaseId),
+    );
+    if (release === undefined) repositoryError("not_found");
+    if (
+      release.revision !== attempt.revision ||
+      (release.status !== "published_pending_readback" &&
+        release.status !== "manual_review")
+    ) {
+      repositoryError("conflict");
+    }
+    if (!sameModuleRefs(release.desiredModules, attempt.desiredModules)) {
+      repositoryError("conflict");
+    }
+    const validatedFinal = validateFinalResult(
+      request.finalResult,
+      attempt.action,
+      attempt.releaseId,
+      attempt.revision,
+    );
+    this.assertAttemptFinalResultBinding(validatedFinal, attempt);
+    const observation = request.observation;
+    this.assertAttemptFinalResultSemantics(
+      validatedFinal,
+      attempt,
+      observation.status,
+      observation.reasonCodes,
+    );
+    if (
+      mode === "recovery" &&
+      (observation.status !== "unknown" ||
+        !isDeepStrictEqual(observation.reasonCodes, ["readback.interrupted"]) ||
+        validatedFinal.envelope.status !== "manual_review")
+    ) {
+      repositoryError("conflict");
+    }
+    if (
+      observation.status === "verified" &&
+      (observation.appliedReleaseId !== release.releaseId ||
+        observation.appliedRevision !== release.revision ||
+        !sameModuleRefs(observation.appliedModules, release.desiredModules))
+    ) {
+      repositoryError("conflict");
+    }
+    if (observation.status === "verified" && validatedFinal.envelope.status !== "success") {
+      repositoryError("conflict");
+    }
+    if (observation.status !== "verified" && validatedFinal.envelope.status !== "manual_review") {
+      repositoryError("conflict");
+    }
+    const finalizedAt = request.finalizedAt ?? this.readbackClock();
+    if (
+      this.compareInstants(attempt.claimedAt, finalizedAt) > 0 ||
+      this.compareInstants(attempt.claimedAt, observation.checkedAt) > 0 ||
+      this.compareInstants(observation.checkedAt, finalizedAt) > 0
+    ) {
+      repositoryError("conflict");
+    }
+    const previousEvent = this.eventRecords.at(-1) ?? null;
+    if (
+      previousEvent !== null &&
+      this.compareInstants(previousEvent.occurredAt, finalizedAt) > 0
+    ) {
+      repositoryError("conflict");
+    }
+    const finalizerActorRef =
+      mode === "recovery" ? RECOVERY_ACTOR_REF : attempt.actorRef;
+    const reconciliationEvent = this.appendReadbackAttemptEvent(
+      attempt,
+      "reconciliation",
+      observation.status,
+      observation.reasonCodes,
+      finalizedAt,
+      finalizerActorRef,
+    );
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_reconciliation_event",
+    );
+    const completionEvent = this.appendReadbackAttemptEvent(
+      attempt,
+      "completion",
+      "completed",
+      [],
+      finalizedAt,
+      finalizerActorRef,
+    );
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_completion_event",
+    );
+    const readback = this.createTerminalReadback(
+      attempt,
+      observation,
+    );
+    this.readbackRecords.set(
+      recordKey(this.managementTenantId, attempt.releaseId),
+      readback,
+    );
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_readback",
+    );
+    const updatedRelease = this.updateReleaseForObservation(
+      release,
+      readback,
+    );
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_release_status_change",
+    );
+    const finalizedAttempt = deepFreezeReadbackAttempt({
+      ...attempt,
+      phase: "finalized",
+      finalizedAt,
+      terminalStatus: observation.status,
+      appliedReleaseId: observation.appliedReleaseId,
+      appliedRevision: observation.appliedRevision,
+      appliedModules: observation.appliedModules,
+      reasonCodes: observation.reasonCodes,
+      checkedAt: observation.checkedAt,
+      finalizedByActorRef: finalizerActorRef,
+      reconciliationEventSequence: reconciliationEvent.sequence,
+      completionEventSequence: completionEvent.sequence,
+    }) as ReadbackAttemptRecord;
+    this.attemptRecords.set(
+      recordKey(this.managementTenantId, attempt.attemptId),
+      finalizedAttempt,
+    );
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_attempt",
+    );
+    const completed = this.snapshotRecord({
+      ...existingIdempotency,
+      status: "completed",
+      finalResult: validatedFinal,
+    });
+    this.idempotencyRecords.set(
+      idempotencyKey(
+        this.managementTenantId,
+        attempt.action,
+        attempt.idempotencyKey,
+      ),
+      completed,
+    );
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_idempotency",
+    );
+    this.validateSeedGraph();
+    this.consumeReadbackAttemptFailure(
+      "finalizeReadbackAndComplete",
+      "after_health",
+    );
+    if (mode === "owner") {
+      this.#consumedOwnerCapabilities.add(
+        (request as FinalizeReadbackAndCompleteRequest).ownerCapability,
+      );
+    }
+    return Object.freeze({
+      disposition: "finalized",
+      replayed: false,
+      attempt: deepFreezeReadbackAttempt(finalizedAttempt),
+      readback: this.deepFreezeReadback(finalizedAttempt, readback),
+      release: this.snapshotRecord(updatedRelease),
+      idempotency: this.snapshotRecord(completed),
+      reconciliationEvent: this.snapshotRecord(reconciliationEvent),
+      completionEvent: this.snapshotRecord(completionEvent),
+      finalResult: freezeSnapshot(validatedFinal),
+    });
+  }
+
+  private createTerminalReadback(
+    attempt: ReadbackAttemptRecord,
+    observation: ReadbackAttemptObservation,
+  ): ModuleTerminalReadbackRecord {
+    const record = {
+      managementTenantId: this.managementTenantId,
+      readbackRef: attempt.readbackRef,
+      releaseId: attempt.releaseId,
+      attemptId: attempt.attemptId,
+      revision: attempt.revision,
+      appliedReleaseId: observation.appliedReleaseId,
+      appliedRevision: observation.appliedRevision,
+      appliedModules: observation.appliedModules,
+      status: observation.status,
+      reasonCodes: observation.reasonCodes,
+      checkedAt: observation.checkedAt,
+    } as ModuleTerminalReadbackRecord;
+    return this.snapshotRecord(record);
+  }
+
+  private assertAttemptFinalResultBinding(
+    finalResult: ControlFinalResult,
+    attempt: ReadbackAttemptRecord,
+  ): void {
+    if (
+      finalResult.envelope.request_id !== attempt.requestId ||
+      finalResult.envelope.trace_id !== attempt.traceId ||
+      finalResult.envelope.audit_id !== attempt.auditId
+    ) {
+      repositoryError("conflict");
+    }
+  }
+
+  private assertAttemptFinalResultSemantics(
+    finalResult: ControlFinalResult,
+    attempt: ReadbackAttemptRecord,
+    status: "verified" | "mismatch" | "unknown",
+    reasonCodes: readonly string[],
+  ): void {
+    const parsed = controlEnvelopeSchema.safeParse(finalResult.envelope);
+    if (!parsed.success) invalidState();
+    if (
+      parsed.data.readback.status !== status ||
+      parsed.data.readback.release_id !== attempt.releaseId ||
+      parsed.data.readback.revision !== attempt.revision ||
+      !isDeepStrictEqual(parsed.data.reason_codes, reasonCodes)
+    ) {
+      repositoryError("conflict");
+    }
+    if (attempt.action === "deployments.publish") {
+      const data = parsed.data.data;
+      if (
+        data?.kind !== "release" ||
+        !sameModuleRefs(envelopeModuleRefs(data.active_modules), attempt.desiredModules)
+      ) {
+        repositoryError("conflict");
+      }
+    } else {
+      const data = parsed.data.data;
+      if (data?.kind !== "reconciliation" || data.status !== status) {
+        repositoryError("conflict");
+      }
+    }
+  }
+
+  private updateReleaseForObservation(
+    release: ModuleReleaseRecord,
+    readback: ModuleTerminalReadbackRecord,
+  ): ModuleReleaseRecord {
+    if (readback.status === "verified") {
+      const previousActive = this.findReleaseByStatusRecord("active_verified");
+      if (
+        previousActive !== null &&
+        previousActive.releaseId !== release.releaseId
+      ) {
+        this.releaseRecords.set(
+          recordKey(this.managementTenantId, previousActive.releaseId),
+          this.snapshotRecord({
+            ...previousActive,
+            status: "superseded",
+            supersededByReleaseId: release.releaseId,
+          } as ModuleReleaseRecord),
+        );
+      }
+      const updated = this.snapshotRecord({
+        ...release,
+        publishedAt: release.publishedAt ?? release.createdAt,
+        status: "active_verified",
+        readbackRef: readback.readbackRef,
+        reasonCodes: [],
+        supersededByReleaseId: null,
+      });
+      this.releaseRecords.set(
+        recordKey(this.managementTenantId, release.releaseId),
+        updated,
+      );
+      return updated;
+    }
+    const updated = this.snapshotRecord({
+      ...release,
+      publishedAt: release.publishedAt ?? release.createdAt,
+      status: "manual_review",
+      readbackRef: readback.readbackRef,
+      reasonCodes: readback.reasonCodes,
+      supersededByReleaseId: null,
+    });
+    this.releaseRecords.set(
+      recordKey(this.managementTenantId, release.releaseId),
+      updated,
+    );
+    return updated;
+  }
+
+  private appendReadbackAttemptEvent(
+    attempt: ReadbackAttemptRecord,
+    role: "reconciliation" | "completion",
+    status: "verified" | "mismatch" | "unknown" | "completed",
+    reasonCodes: readonly string[],
+    occurredAt: string,
+    actorRef: string,
+  ): ControlEventRecord {
+    let eventId = `fake_attempt_event_${this.nextEventSequence}`;
+    const usedEventIds = new Set(this.eventRecords.map((event) => event.eventId));
+    while (usedEventIds.has(eventId)) {
+      eventId = `fake_attempt_event_${this.nextEventSequence}_${randomUUID().replaceAll("-", "")}`;
+    }
+    const event = this.snapshotRecord({
+      managementTenantId: this.managementTenantId,
+      eventId,
+      sequence: this.nextEventSequence,
+      actorRef,
+      action: attempt.action,
+      objectRef:
+        role === "reconciliation"
+          ? attempt.releaseId
+          : `idempotency:${attempt.action}:${attempt.idempotencyKey}`,
+      kind: role === "reconciliation" ? "reconciliation" : "idempotency",
+      status,
+      reasonCodes,
+      detail:
+        role === "reconciliation"
+          ? {
+              kind: "reconciliation",
+              releaseId: attempt.releaseId,
+              revision: attempt.revision,
+              readbackRef: attempt.readbackRef,
+              status,
+            }
+          : {
+              kind: "idempotency",
+              recordRef: `idempotency:${attempt.action}:${attempt.idempotencyKey}`,
+              domainRecordRef: attempt.releaseId,
+              status: "completed",
+            },
+      occurredAt,
+    } as ControlEventRecord);
+    this.eventRecords.push(event);
+    this.nextEventSequence += 1;
+    const authorityKey = idempotencyKey(
+      this.managementTenantId,
+      attempt.action,
+      attempt.idempotencyKey,
+    );
+    this.eventAuthorityKeys.set(event.eventId, authorityKey);
+    this.attemptEventAuthorityKeys.set(event.eventId, { attemptId: attempt.attemptId, role });
+    return event;
+  }
+
+  private readbackFinalizationResultFromExisting(
+    attempt: ReadbackAttemptRecord,
+    idempotency: ModuleControlIdempotencyRecord,
+  ): ReadbackFinalizationResult {
+    if (
+      idempotency.status !== "completed" ||
+      idempotency.finalResult === null ||
+      attempt.reconciliationEventSequence === null ||
+      attempt.completionEventSequence === null
+    ) {
+      invalidState();
+    }
+    const readback = this.readbackRecords.get(
+      recordKey(this.managementTenantId, attempt.releaseId),
+    );
+    const release = this.releaseRecords.get(
+      recordKey(this.managementTenantId, attempt.releaseId),
+    );
+    const reconciliationEvent = this.eventRecords.find(
+      (event) => event.sequence === attempt.reconciliationEventSequence,
+    );
+    const completionEvent = this.eventRecords.find(
+      (event) => event.sequence === attempt.completionEventSequence,
+    );
+    if (
+      readback === undefined ||
+      readback.status === "pending" ||
+      readback.attemptId !== attempt.attemptId ||
+      release === undefined ||
+      reconciliationEvent === undefined ||
+      completionEvent === undefined
+    ) {
+      invalidState();
+    }
+    return Object.freeze({
+      disposition: "replayed",
+      replayed: true,
+      attempt: deepFreezeReadbackAttempt(attempt),
+      readback: this.deepFreezeReadback(attempt, readback),
+      release: this.snapshotRecord(release),
+      idempotency: this.snapshotRecord(idempotency),
+      reconciliationEvent: this.snapshotRecord(reconciliationEvent),
+      completionEvent: this.snapshotRecord(completionEvent),
+      finalResult: freezeSnapshot(idempotency.finalResult),
+    });
+  }
+
+  private assertAttemptTimestamp(value: unknown): asserts value is string {
+    if (typeof value !== "string" || compareRfc3339Instants(value, value) === null) {
+      invalidState();
+    }
+  }
+
+  private readbackClock(): string {
+    const value = this.clock();
+    this.assertAttemptTimestamp(value);
+    return value;
+  }
+
+  private compareInstants(left: string, right: string): number {
+    const comparison = compareRfc3339Instants(left, right);
+    if (comparison === null) invalidState();
+    return comparison;
+  }
+
+  private assertTenantValue(value: unknown): asserts value is string {
+    assertRepositoryIdentifier(value);
+    this.assertTenant(value);
+  }
+
+  private deepFreezeReadback(
+    _attempt: ReadbackAttemptRecord,
+    readback: ModuleReadbackRecord,
+  ): DeepReadonly<ModuleTerminalReadbackRecord> {
+    if (readback.status === "pending" || readback.attemptId === undefined) {
+      invalidState();
+    }
+    return this.snapshotRecord({
+      ...readback,
+      attemptId: readback.attemptId,
+    });
+  }
+
   private begin<M extends FakeControlRepositoryMethodName>(
     method: M,
     request: FakeControlRepositoryRequestByMethod[M],
@@ -1279,6 +2456,24 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     phase: FakeControlRepositoryFailurePhase,
   ): void {
     const queue = this.failureQueues.get(this.failureKey(method, phase));
+    const failure = queue?.shift();
+    if (failure !== undefined) throw failure;
+  }
+
+  private readbackAttemptFailureKey(
+    method: FakeReadbackAttemptMethodName,
+    phase: FakeReadbackAttemptFailurePhase,
+  ): string {
+    return `${method}\0${phase}`;
+  }
+
+  private consumeReadbackAttemptFailure(
+    method: FakeReadbackAttemptMethodName,
+    phase: FakeReadbackAttemptFailurePhase,
+  ): void {
+    const queue = this.failureQueues.get(
+      this.readbackAttemptFailureKey(method, phase),
+    );
     const failure = queue?.shift();
     if (failure !== undefined) throw failure;
   }
@@ -1840,6 +3035,43 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     return result;
   }
 
+  private latestCurrentReadback(): ModuleReadbackRecord | null {
+    const terminal = [...this.readbackRecords.values()].filter(
+      (record) => record.status !== "pending" && record.attemptId !== undefined,
+    );
+    if (terminal.length !== 0) {
+      let latest: ModuleReadbackRecord | null = null;
+      let latestSequence = -1;
+      for (const readback of terminal) {
+        const attempt = this.attemptRecords.get(
+          recordKey(this.managementTenantId, readback.attemptId as string),
+        );
+        if (
+          attempt === undefined ||
+          attempt.phase !== "finalized" ||
+          attempt.reconciliationEventSequence === null
+        ) {
+          invalidState();
+        }
+        if (
+          attempt.reconciliationEventSequence > latestSequence ||
+          (attempt.reconciliationEventSequence === latestSequence &&
+            latest !== null &&
+            (readback.attemptId as string) > (latest.attemptId as string))
+        ) {
+          latest = readback;
+          latestSequence = attempt.reconciliationEventSequence;
+        }
+      }
+      return latest;
+    }
+    return this.latestBy(
+      this.readbackRecords.values(),
+      (record) => record.checkedAt,
+      (record) => record.releaseId,
+    );
+  }
+
   private findReleaseByStatusRecord(
     ...statuses: readonly ModuleReleaseRecord["status"][]
   ): ModuleReleaseRecord | null {
@@ -1864,9 +3096,11 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       approvals: [...this.approvalRecords.entries()],
       releases: [...this.releaseRecords.entries()],
       readbacks: [...this.readbackRecords.entries()],
+      attempts: [...this.attemptRecords.entries()],
       idempotency: [...this.idempotencyRecords.entries()],
       events: [...this.eventRecords],
       eventAuthorities: [...this.eventAuthorityKeys.entries()],
+      attemptEventAuthorities: [...this.attemptEventAuthorityKeys.entries()],
       nextEventSequence: this.nextEventSequence,
     };
   }
@@ -1882,9 +3116,11 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     this.restoreMap(this.approvalRecords, snapshot.approvals);
     this.restoreMap(this.releaseRecords, snapshot.releases);
     this.restoreMap(this.readbackRecords, snapshot.readbacks);
+    this.restoreMap(this.attemptRecords, snapshot.attempts);
     this.restoreMap(this.idempotencyRecords, snapshot.idempotency);
     this.eventRecords.splice(0, this.eventRecords.length, ...snapshot.events);
     this.restoreMap(this.eventAuthorityKeys, snapshot.eventAuthorities);
+    this.restoreMap(this.attemptEventAuthorityKeys, snapshot.attemptEventAuthorities);
     this.nextEventSequence = snapshot.nextEventSequence;
   }
 
@@ -1892,6 +3128,16 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     _method: FakeControlRepositoryMethodName,
     operation: () => T,
   ): T {
+    const snapshot = this.persistentSnapshot();
+    try {
+      return operation();
+    } catch (error: unknown) {
+      this.restorePersistentSnapshot(snapshot);
+      throw error;
+    }
+  }
+
+  private withReadbackAtomicWrite<T>(operation: () => T): T {
     const snapshot = this.persistentSnapshot();
     try {
       return operation();
@@ -1909,6 +3155,7 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
     const approvalPreviews = new Set<string>();
     const releaseRevisions = new Set<number>();
     const readbackRefs = new Set<string>();
+    const attemptIds = new Set<string>();
 
     for (const record of safeRecords.registrations ?? []) {
       const frozen = this.seedRecord(record);
@@ -1963,8 +3210,31 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       readbackRefs.add(frozen.readbackRef);
       this.readbackRecords.set(key, frozen);
     }
+    for (const record of safeRecords.attempts ?? []) {
+      assertReadbackAttemptRecord(record);
+      if (record.managementTenantId !== this.managementTenantId) {
+        repositoryError("tenant_mismatch");
+      }
+      if (record.actorRef === RECOVERY_ACTOR_REF) invalidState();
+      const frozen = deepFreezeReadbackAttempt(record) as ReadbackAttemptRecord;
+      const key = recordKey(this.managementTenantId, frozen.attemptId);
+      const currentProjection = [...this.readbackRecords.values()].find(
+        (readback) => readback.readbackRef === frozen.readbackRef,
+      );
+      if (
+        attemptIds.has(frozen.attemptId) ||
+        (readbackRefs.has(frozen.readbackRef) &&
+          currentProjection?.attemptId !== frozen.attemptId)
+      ) {
+        invalidState();
+      }
+      attemptIds.add(frozen.attemptId);
+      readbackRefs.add(frozen.readbackRef);
+      this.attemptRecords.set(key, frozen);
+    }
     for (const record of safeRecords.idempotency ?? []) {
       const frozen = this.seedRecord(record);
+      if (frozen.actorRef === RECOVERY_ACTOR_REF) invalidState();
       const key = idempotencyKey(
         this.managementTenantId,
         frozen.action,
@@ -2028,6 +3298,49 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
         ),
       );
     }
+    const attemptEventAuthorityIds = new Set<string>();
+    for (const binding of safeRecords.attemptEventAuthorities ?? []) {
+      assertRepositoryIdentifier(binding.eventId);
+      assertRepositoryIdentifier(binding.attemptId);
+      if (
+        attemptEventAuthorityIds.has(binding.eventId) ||
+        (binding.role !== "reconciliation" && binding.role !== "completion")
+      ) {
+        invalidState();
+      }
+      const event = this.eventRecords.find(
+        (candidate) => candidate.eventId === binding.eventId,
+      );
+      const attempt = this.attemptRecords.get(
+        recordKey(this.managementTenantId, binding.attemptId),
+      );
+      if (
+        event === undefined ||
+        attempt === undefined ||
+        attempt.phase !== "finalized" ||
+        (binding.role === "reconciliation" &&
+          attempt.reconciliationEventSequence !== event.sequence) ||
+        (binding.role === "completion" &&
+          attempt.completionEventSequence !== event.sequence)
+      ) {
+        invalidState();
+      }
+      const existingRole = this.attemptEventAuthorityKeys.get(event.eventId);
+      if (existingRole !== undefined) invalidState();
+      attemptEventAuthorityIds.add(binding.eventId);
+      this.attemptEventAuthorityKeys.set(event.eventId, {
+        attemptId: binding.attemptId,
+        role: binding.role,
+      });
+      const authorityKey = idempotencyKey(
+        this.managementTenantId,
+        attempt.action,
+        attempt.idempotencyKey,
+      );
+      const oldAuthority = this.eventAuthorityKeys.get(event.eventId);
+      if (oldAuthority !== undefined && oldAuthority !== authorityKey) invalidState();
+      this.eventAuthorityKeys.set(event.eventId, authorityKey);
+    }
     this.validateSeedGraph();
   }
 
@@ -2038,6 +3351,12 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
   }
 
   private validateSeedGraph(): void {
+    for (const attempt of this.attemptRecords.values()) {
+      if (attempt.actorRef === RECOVERY_ACTOR_REF) invalidState();
+    }
+    for (const idempotency of this.idempotencyRecords.values()) {
+      if (idempotency.actorRef === RECOVERY_ACTOR_REF) invalidState();
+    }
     const releaseHistory = projectReleaseHistory(
       this.managementTenantId,
       this.releaseRecords.values(),
@@ -2285,6 +3604,12 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
         }
       }
       if (readback !== undefined) {
+        const readbackAttempt =
+          readback.attemptId === undefined
+            ? null
+            : this.attemptRecords.get(
+                recordKey(this.managementTenantId, readback.attemptId),
+              ) ?? null;
         const readbackEvent = this.findEvent(
           (event) =>
             event.kind === "reconciliation" &&
@@ -2297,7 +3622,11 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
             event.detail.readbackRef === readback.readbackRef &&
             event.status === readback.status &&
             event.detail.status === readback.status &&
-            event.occurredAt === readback.checkedAt,
+            (event.occurredAt === readback.checkedAt ||
+              (readbackAttempt !== null &&
+                readbackAttempt.phase === "finalized" &&
+                readbackAttempt.reconciliationEventSequence === event.sequence &&
+                event.occurredAt === readbackAttempt.finalizedAt)),
         );
         if (readbackEvent === null) invalidState();
       }
@@ -2344,6 +3673,8 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       }
     }
 
+    this.validateReadbackAttemptGraph();
+
     const lifecycleCounts = new Map<string, ControlEventLifecycleCounts>();
     for (const key of this.idempotencyRecords.keys()) {
       lifecycleCounts.set(key, createControlEventLifecycleCounts());
@@ -2386,7 +3717,289 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       this.validateSeedIdempotency(record);
       const counts = lifecycleCounts.get(key);
       if (counts === undefined) invalidState();
+      if (
+        (record.action === "deployments.publish" ||
+          record.action === "deployments.reconcile") &&
+        this.findAttemptByIdempotency({
+          managementTenantId: record.managementTenantId,
+          actorRef: record.actorRef,
+          action: record.action,
+          idempotencyKey: record.idempotencyKey,
+          requestHash: record.requestHash,
+          requestId: "seed_request",
+          traceId: "seed_trace",
+          auditId: "seed_audit",
+        }) !== null
+      ) {
+        continue;
+      }
       assertControlEventLifecycleCardinality(record, counts);
+    }
+  }
+
+  private validateReadbackAttemptGraph(): void {
+    if (this.attemptRecords.size === 0) return;
+    const usedSequences = new Set<number>();
+    const finalizedByRelease = new Map<string, ReadbackAttemptRecord[]>();
+    const referencedEventIds = new Set<string>();
+    for (const attempt of this.attemptRecords.values()) {
+      assertReadbackAttemptRecord(attempt);
+      assertNoSensitiveAttemptContent(attempt);
+      if (attempt.managementTenantId !== this.managementTenantId) {
+        repositoryError("tenant_mismatch");
+      }
+      const release = this.releaseRecords.get(
+        recordKey(this.managementTenantId, attempt.releaseId),
+      );
+      const idempotency = this.idempotencyRecords.get(
+        idempotencyKey(
+          this.managementTenantId,
+          attempt.action,
+          attempt.idempotencyKey,
+        ),
+      );
+      if (
+        release === undefined ||
+        release.revision !== attempt.revision ||
+        !sameModuleRefs(release.desiredModules, attempt.desiredModules) ||
+        idempotency === undefined ||
+        idempotency.action !== attempt.action ||
+        idempotency.requestHash !== attempt.requestHash ||
+        idempotency.actorRef !== attempt.actorRef ||
+        idempotency.domainRecordRef !== attempt.releaseId ||
+        this.compareInstants(idempotency.createdAt, attempt.claimedAt) > 0
+      ) {
+        invalidState();
+      }
+      if (attempt.phase === "claimed") {
+        const currentReadback = this.readbackRecords.get(
+          recordKey(this.managementTenantId, attempt.releaseId),
+        );
+        if (
+          idempotency.status !== "domain_committed" ||
+          idempotency.finalResult !== null ||
+          currentReadback?.attemptId === attempt.attemptId ||
+          [...this.attemptEventAuthorityKeys.values()].some(
+            (authority) => authority.attemptId === attempt.attemptId,
+          )
+        ) {
+          invalidState();
+        }
+        continue;
+      }
+      if (
+        idempotency.status !== "completed" ||
+        idempotency.finalResult === null ||
+        attempt.reconciliationEventSequence === null ||
+        attempt.completionEventSequence === null ||
+        attempt.finalizedAt === null ||
+        attempt.checkedAt === null ||
+        this.compareInstants(attempt.claimedAt, attempt.checkedAt) > 0 ||
+        this.compareInstants(attempt.checkedAt, attempt.finalizedAt) > 0
+      ) {
+        invalidState();
+      }
+      const finalizerActorRef = attempt.finalizedByActorRef;
+      const isRecoveryFinalization = finalizerActorRef === RECOVERY_ACTOR_REF;
+      const isOwnerFinalization = finalizerActorRef === attempt.actorRef;
+      if (!isOwnerFinalization && !isRecoveryFinalization) invalidState();
+      if (
+        isRecoveryFinalization &&
+        (attempt.terminalStatus !== "unknown" ||
+          !isDeepStrictEqual(attempt.reasonCodes, ["readback.interrupted"]) ||
+          idempotency.finalResult.envelope.status !== "manual_review")
+      ) {
+        invalidState();
+      }
+      if (
+        usedSequences.has(attempt.reconciliationEventSequence) ||
+        usedSequences.has(attempt.completionEventSequence)
+      ) {
+        invalidState();
+      }
+      usedSequences.add(attempt.reconciliationEventSequence);
+      usedSequences.add(attempt.completionEventSequence);
+      const reconciliationEvent = this.eventRecords.find(
+        (event) => event.sequence === attempt.reconciliationEventSequence,
+      );
+      const completionEvent = this.eventRecords.find(
+        (event) => event.sequence === attempt.completionEventSequence,
+      );
+      if (reconciliationEvent === undefined || completionEvent === undefined) {
+        invalidState();
+      }
+      const reconciliationAuthority = this.attemptEventAuthorityKeys.get(
+        reconciliationEvent.eventId,
+      );
+      const completionAuthority = this.attemptEventAuthorityKeys.get(
+        completionEvent.eventId,
+      );
+      if (
+        reconciliationAuthority?.attemptId !== attempt.attemptId ||
+        reconciliationAuthority.role !== "reconciliation" ||
+        completionAuthority?.attemptId !== attempt.attemptId ||
+        completionAuthority.role !== "completion" ||
+        this.eventAuthorityKeys.get(reconciliationEvent.eventId) !==
+          idempotencyKey(
+            this.managementTenantId,
+            attempt.action,
+            attempt.idempotencyKey,
+          ) ||
+        this.eventAuthorityKeys.get(completionEvent.eventId) !==
+          idempotencyKey(
+            this.managementTenantId,
+            attempt.action,
+            attempt.idempotencyKey,
+          )
+      ) {
+        invalidState();
+      }
+      referencedEventIds.add(reconciliationEvent.eventId);
+      referencedEventIds.add(completionEvent.eventId);
+      validateFinalResult(
+        idempotency.finalResult,
+        attempt.action,
+        attempt.releaseId,
+        attempt.revision,
+      );
+      assertNoSensitiveAttemptContent(idempotency.finalResult);
+      this.assertAttemptFinalResultBinding(idempotency.finalResult, attempt);
+      this.assertAttemptFinalResultSemantics(
+        idempotency.finalResult,
+        attempt,
+        attempt.terminalStatus,
+        attempt.reasonCodes,
+      );
+      if (
+        attempt.terminalStatus === "verified" &&
+        (idempotency.finalResult.envelope.status !== "success" ||
+          !sameModuleRefs(attempt.appliedModules, attempt.desiredModules))
+      ) {
+        invalidState();
+      }
+      if (
+        attempt.terminalStatus !== "verified" &&
+        idempotency.finalResult.envelope.status !== "manual_review"
+      ) {
+        invalidState();
+      }
+      this.validateReadbackAttemptEvent(
+        reconciliationEvent,
+        attempt,
+        "reconciliation",
+      );
+      this.validateReadbackAttemptEvent(completionEvent, attempt, "completion");
+      assertNoSensitiveAttemptContent(reconciliationEvent);
+      assertNoSensitiveAttemptContent(completionEvent);
+      const releaseAttempts = finalizedByRelease.get(attempt.releaseId) ?? [];
+      releaseAttempts.push(attempt);
+      finalizedByRelease.set(attempt.releaseId, releaseAttempts);
+    }
+    for (const [releaseId, attempts] of finalizedByRelease) {
+      attempts.sort(
+        (left, right) =>
+          (right.reconciliationEventSequence as number) -
+            (left.reconciliationEventSequence as number) ||
+          compareStrings(right.attemptId, left.attemptId),
+      );
+      const latest = attempts[0];
+      if (latest === undefined) invalidState();
+      const readback = this.readbackRecords.get(
+        recordKey(this.managementTenantId, releaseId),
+      );
+      const release = this.releaseRecords.get(
+        recordKey(this.managementTenantId, releaseId),
+      );
+      if (
+        readback === undefined ||
+        readback.status === "pending" ||
+        readback.attemptId !== latest.attemptId ||
+        readback.readbackRef !== latest.readbackRef ||
+        readback.revision !== latest.revision ||
+        readback.status !== latest.terminalStatus ||
+        readback.appliedReleaseId !== latest.appliedReleaseId ||
+        readback.appliedRevision !== latest.appliedRevision ||
+        !sameModuleRefs(readback.appliedModules, latest.appliedModules) ||
+        !isDeepStrictEqual(readback.reasonCodes, latest.reasonCodes) ||
+        readback.checkedAt !== latest.checkedAt ||
+        release === undefined
+      ) {
+        invalidState();
+      }
+      if (latest.terminalStatus === "verified") {
+        if (
+          release.status !== "active_verified" ||
+          release.readbackRef !== latest.readbackRef ||
+          release.reasonCodes.length !== 0
+        ) {
+          invalidState();
+        }
+      } else if (
+        release.status !== "manual_review" ||
+        release.readbackRef !== latest.readbackRef ||
+        !isDeepStrictEqual(release.reasonCodes, latest.reasonCodes)
+      ) {
+        invalidState();
+      }
+    }
+    for (const [eventId, authority] of this.attemptEventAuthorityKeys) {
+      const event = this.eventRecords.find((candidate) => candidate.eventId === eventId);
+      const attempt = this.attemptRecords.get(
+        recordKey(this.managementTenantId, authority.attemptId),
+      );
+      if (
+        event === undefined ||
+        attempt === undefined ||
+        attempt.phase !== "finalized" ||
+        !referencedEventIds.has(eventId)
+      ) {
+        invalidState();
+      }
+    }
+  }
+
+  private validateReadbackAttemptEvent(
+    event: ControlEventRecord,
+    attempt: ReadbackAttemptRecord,
+    role: "reconciliation" | "completion",
+  ): void {
+    const expectedActor = attempt.finalizedByActorRef;
+    if (
+      expectedActor === null ||
+      event.managementTenantId !== this.managementTenantId ||
+      event.action !== attempt.action ||
+      event.actorRef !== expectedActor ||
+      event.occurredAt !== attempt.finalizedAt
+    ) {
+      invalidState();
+    }
+    if (role === "reconciliation") {
+      if (
+        event.kind !== "reconciliation" ||
+        event.objectRef !== attempt.releaseId ||
+        event.status !== attempt.terminalStatus ||
+        event.detail.kind !== "reconciliation" ||
+        event.detail.releaseId !== attempt.releaseId ||
+        event.detail.revision !== attempt.revision ||
+        event.detail.readbackRef !== attempt.readbackRef ||
+        event.detail.status !== attempt.terminalStatus ||
+        !isDeepStrictEqual(event.reasonCodes, attempt.reasonCodes)
+      ) {
+        invalidState();
+      }
+      return;
+    }
+    if (
+      event.kind !== "idempotency" ||
+      event.objectRef !== `idempotency:${attempt.action}:${attempt.idempotencyKey}` ||
+      event.status !== "completed" ||
+      event.detail.kind !== "idempotency" ||
+      event.detail.recordRef !== event.objectRef ||
+      event.detail.domainRecordRef !== attempt.releaseId ||
+      event.detail.status !== "completed" ||
+      event.reasonCodes.length !== 0
+    ) {
+      invalidState();
     }
   }
 
@@ -2492,6 +4105,20 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       return;
     }
     if (event.kind === "reconciliation") {
+      const attemptAuthority = this.attemptEventAuthorityKeys.get(event.eventId);
+      if (attemptAuthority !== undefined) {
+        const attempt = this.attemptRecords.get(
+          recordKey(this.managementTenantId, attemptAuthority.attemptId),
+        );
+        if (
+          attempt === undefined ||
+          attemptAuthority.role !== "reconciliation"
+        ) {
+          invalidState();
+        }
+        this.validateReadbackAttemptEvent(event, attempt, "reconciliation");
+        return;
+      }
       const release = this.releaseRecords.get(
         recordKey(this.managementTenantId, event.objectRef),
       );
@@ -2532,6 +4159,17 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       return;
     }
     if (event.kind === "idempotency") {
+      const attemptAuthority = this.attemptEventAuthorityKeys.get(event.eventId);
+      if (attemptAuthority !== undefined) {
+        const attempt = this.attemptRecords.get(
+          recordKey(this.managementTenantId, attemptAuthority.attemptId),
+        );
+        if (attempt === undefined || attemptAuthority.role !== "completion") {
+          invalidState();
+        }
+        this.validateReadbackAttemptEvent(event, attempt, "completion");
+        return;
+      }
       if (event.detail.kind !== "idempotency") invalidState();
       const record = authority;
       const expectedRef =
@@ -2622,6 +4260,34 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
   private validateSeedIdempotency(record: ModuleControlIdempotencyRecord): void {
     if (record.expiresAt !== idempotencyExpiresAt(record.createdAt)) invalidState();
     if (record.status === "reserved") return;
+    const attempt = this.findAttemptByIdempotency({
+      managementTenantId: record.managementTenantId,
+      actorRef: record.actorRef,
+      action:
+        record.action === "deployments.publish" ||
+        record.action === "deployments.reconcile"
+          ? record.action
+          : "deployments.publish",
+      idempotencyKey: record.idempotencyKey,
+      requestHash: record.requestHash,
+      requestId: "seed_request",
+      traceId: "seed_trace",
+      auditId: "seed_audit",
+    });
+    if (
+      attempt !== null &&
+      (record.action === "deployments.publish" ||
+        record.action === "deployments.reconcile")
+    ) {
+      if (
+        attempt.requestHash !== record.requestHash ||
+        attempt.actorRef !== record.actorRef ||
+        record.domainRecordRef !== attempt.releaseId
+      ) {
+        invalidState();
+      }
+      return;
+    }
     const domainRef = record.domainRecordRef;
     if (record.action === "packages.register") {
       const domain = [...this.registrationRecords.values()].find(
@@ -2766,4 +4432,19 @@ export class FakeModuleControlRepository implements ModuleControlRepository {
       }
     }
   }
+}
+
+export function createFakeModuleControlRepositoryWithRecovery(
+  options: FakeModuleControlRepositoryOptions,
+): FakeModuleControlRepositoryWithRecovery {
+  const repository = new FakeModuleControlRepository(options);
+  const secret = RECOVERY_SECRETS.get(repository);
+  if (secret === undefined) invalidState();
+  const recoveryDriver = Object.freeze({
+    finalizePriorBootAttempt: (
+      request: FakeRecoveryFinalizeRequest,
+    ): Promise<ReadbackFinalizationResult> =>
+      repository[RECOVERY_FINALIZE](request, secret),
+  });
+  return Object.freeze({ repository, recoveryDriver });
 }

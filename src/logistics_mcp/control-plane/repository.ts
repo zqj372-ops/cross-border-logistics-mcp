@@ -39,6 +39,20 @@ export const MODULE_READBACK_STATUSES = Object.freeze([
 ] as const);
 export type ModuleReadbackStatus = (typeof MODULE_READBACK_STATUSES)[number];
 
+export const READBACK_ATTEMPT_PHASES = Object.freeze([
+  "claimed",
+  "finalized",
+] as const);
+export type ReadbackAttemptPhase = (typeof READBACK_ATTEMPT_PHASES)[number];
+
+export const READBACK_ATTEMPT_TERMINAL_STATUSES = Object.freeze([
+  "verified",
+  "mismatch",
+  "unknown",
+] as const);
+export type ReadbackAttemptTerminalStatus =
+  (typeof READBACK_ATTEMPT_TERMINAL_STATUSES)[number];
+
 export const MODULE_CONTROL_ACTIONS = Object.freeze([
   "packages.register",
   "deployments.preview",
@@ -281,6 +295,11 @@ interface ModuleReadbackRecordBase {
   readonly managementTenantId: string;
   readonly readbackRef: string;
   readonly releaseId: string;
+  /**
+   * Legacy readback fixtures may omit this until SQLite promotion. New attempt
+   * finalization always supplies the non-empty attempt identifier.
+   */
+  readonly attemptId?: string;
   readonly revision: number;
   readonly appliedModules: readonly ModuleControlRef[];
   readonly checkedAt: string;
@@ -319,6 +338,154 @@ export type ModuleReadbackRecord =
   | ModuleVerifiedReadbackRecord
   | ModuleMismatchReadbackRecord
   | ModuleUnknownReadbackRecord;
+
+type TerminalReadbackWithAttempt<T extends ModuleReadbackRecord> = Omit<
+  T,
+  "attemptId"
+> & {
+  readonly attemptId: string;
+};
+
+export type ModuleTerminalReadbackRecord =
+  | TerminalReadbackWithAttempt<ModuleVerifiedReadbackRecord>
+  | TerminalReadbackWithAttempt<ModuleMismatchReadbackRecord>
+  | TerminalReadbackWithAttempt<ModuleUnknownReadbackRecord>;
+
+declare const READBACK_ATTEMPT_OWNER_CAPABILITY_BRAND: unique symbol;
+
+export type ReadbackAttemptOwnerCapability = Readonly<{
+  readonly [READBACK_ATTEMPT_OWNER_CAPABILITY_BRAND]: "readback-attempt-owner";
+}>;
+
+export type ReadbackAttemptAction =
+  | "deployments.publish"
+  | "deployments.reconcile";
+
+interface ReadbackAttemptRecordBase {
+  readonly managementTenantId: string;
+  readonly attemptId: string;
+  readonly action: ReadbackAttemptAction;
+  readonly idempotencyKey: string;
+  readonly requestHash: CanonicalRequestHash;
+  readonly actorRef: string;
+  readonly requestId: string;
+  readonly traceId: string;
+  readonly auditId: string;
+  readonly releaseId: string;
+  readonly revision: number;
+  readonly desiredModules: readonly ModuleControlRef[];
+  readonly readbackRef: string;
+  readonly ownerBootId: string;
+}
+
+export interface ClaimedReadbackAttemptRecord
+  extends ReadbackAttemptRecordBase {
+  readonly phase: "claimed";
+  readonly claimedAt: string;
+  readonly finalizedAt: null;
+  readonly terminalStatus: null;
+  readonly appliedReleaseId: null;
+  readonly appliedRevision: null;
+  readonly appliedModules: readonly [];
+  readonly reasonCodes: readonly [];
+  readonly checkedAt: null;
+  readonly finalizedByActorRef: null;
+  readonly reconciliationEventSequence: null;
+  readonly completionEventSequence: null;
+}
+
+export interface FinalizedReadbackAttemptRecord
+  extends ReadbackAttemptRecordBase {
+  readonly phase: "finalized";
+  readonly claimedAt: string;
+  readonly finalizedAt: string;
+  readonly terminalStatus: ReadbackAttemptTerminalStatus;
+  readonly appliedReleaseId: string | null;
+  readonly appliedRevision: number | null;
+  readonly appliedModules: readonly ModuleControlRef[];
+  readonly reasonCodes: readonly string[];
+  readonly checkedAt: string;
+  readonly finalizedByActorRef: string;
+  readonly reconciliationEventSequence: number;
+  readonly completionEventSequence: number;
+}
+
+export type ReadbackAttemptRecord =
+  | ClaimedReadbackAttemptRecord
+  | FinalizedReadbackAttemptRecord;
+
+export interface ReadbackAttemptObservation {
+  readonly status: ReadbackAttemptTerminalStatus;
+  readonly appliedReleaseId: string | null;
+  readonly appliedRevision: number | null;
+  readonly appliedModules: readonly ModuleControlRef[];
+  readonly reasonCodes: readonly string[];
+  readonly checkedAt: string;
+}
+
+export interface ReadbackAttemptRequestMetadata {
+  readonly managementTenantId: string;
+  readonly actorRef: string;
+  readonly action: ReadbackAttemptAction;
+  readonly idempotencyKey: string;
+  readonly requestHash: CanonicalRequestHash;
+  readonly requestId: string;
+  readonly traceId: string;
+  readonly auditId: string;
+}
+
+export interface ClaimReadbackAttemptRequest {
+  readonly metadata: ReadbackAttemptRequestMetadata;
+  readonly attemptId: string;
+  readonly readbackRef: string;
+  readonly releaseId: string;
+  readonly revision: number;
+  readonly desiredModules: readonly ModuleControlRef[];
+  readonly ownerBootId: string;
+  readonly claimedAt?: string;
+}
+
+export interface FinalizeReadbackAndCompleteRequest {
+  readonly attemptId: string;
+  readonly ownerCapability: ReadbackAttemptOwnerCapability;
+  readonly observation: ReadbackAttemptObservation;
+  readonly finalResult: ControlFinalResult;
+  readonly finalizedAt?: string;
+}
+
+export interface GetUnfinishedReadbackAttemptQuery {
+  readonly managementTenantId: string;
+  readonly attemptId: string;
+}
+
+export interface GetReadbackAttemptHistoryQuery {
+  readonly managementTenantId: string;
+  readonly releaseId: string;
+  readonly revision?: number;
+}
+
+export type ReadbackAttemptClaimResult =
+  | {
+      readonly disposition: "created";
+      readonly attempt: DeepReadonly<ReadbackAttemptRecord>;
+      readonly ownerCapability: ReadbackAttemptOwnerCapability;
+    }
+  | {
+      readonly disposition: "existing";
+      readonly attempt: DeepReadonly<ReadbackAttemptRecord>;
+    };
+
+export interface ReadbackFinalizationResult {
+  readonly disposition: "finalized" | "replayed";
+  readonly replayed: boolean;
+  readonly attempt: DeepReadonly<ReadbackAttemptRecord>;
+  readonly readback: DeepReadonly<ModuleTerminalReadbackRecord>;
+  readonly release: DeepReadonly<ModuleReleaseRecord>;
+  readonly idempotency: DeepReadonly<CompletedModuleControlIdempotencyRecord>;
+  readonly reconciliationEvent: DeepReadonly<ControlEventRecord>;
+  readonly completionEvent: DeepReadonly<ControlEventRecord>;
+  readonly finalResult: DeepReadonly<ControlFinalResult>;
+}
 
 export interface ControlFinalResult {
   readonly domainRecordRef: string;
@@ -707,7 +874,9 @@ export interface ModuleControlRepository {
   publishRelease(
     request: PublishReleaseRecordRequest,
   ): Promise<ReleaseWriteResult>;
+  /** TODO(SQLite promotion): remove this legacy compatibility write entry. */
   recordReadback(request: RecordReadbackRequest): Promise<ReadbackWriteResult>;
+  /** TODO(SQLite promotion): remove this legacy compatibility write entry. */
   completeIdempotency(
     request: CompleteControlIdempotencyRequest,
   ): Promise<DeepReadonly<ControlIdempotencyRecord>>;
@@ -730,6 +899,24 @@ export interface ModuleControlRepository {
   getIdempotency(
     query: GetControlIdempotencyQuery,
   ): Promise<DeepReadonly<ModuleControlIdempotencyRecord> | null>;
+}
+
+export interface ModuleControlReadbackAttemptRepository {
+  claimReadbackAttempt(
+    request: ClaimReadbackAttemptRequest,
+  ): Promise<ReadbackAttemptClaimResult>;
+  finalizeReadbackAndComplete(
+    request: FinalizeReadbackAndCompleteRequest,
+  ): Promise<ReadbackFinalizationResult>;
+  getUnfinishedReadbackAttempt(
+    query: GetUnfinishedReadbackAttemptQuery,
+  ): Promise<DeepReadonly<ReadbackAttemptRecord> | null>;
+  listUnfinishedReadbackAttempts(): Promise<
+    readonly DeepReadonly<ReadbackAttemptRecord>[]
+  >;
+  getReadbackAttemptHistory(
+    query: GetReadbackAttemptHistoryQuery,
+  ): Promise<readonly DeepReadonly<ReadbackAttemptRecord>[]>;
 }
 
 export function assertControlRequestBinding(input: {
@@ -1579,8 +1766,195 @@ function assertReleaseHistoryEntry(
   invalidState();
 }
 
-function assertReadback(value: unknown): void {
+export function assertReadbackAttemptObservation(
+  value: unknown,
+): asserts value is ReadbackAttemptObservation {
   const record = exactKeys(value, [
+    "status",
+    "appliedReleaseId",
+    "appliedRevision",
+    "appliedModules",
+    "reasonCodes",
+    "checkedAt",
+  ]);
+  if (
+    !READBACK_ATTEMPT_TERMINAL_STATUSES.includes(
+      record.status as ReadbackAttemptTerminalStatus,
+    )
+  ) {
+    invalidState();
+  }
+  if (record.appliedReleaseId !== null) assertIdentifier(record.appliedReleaseId);
+  if (record.appliedRevision !== null) assertPositiveInteger(record.appliedRevision);
+  assertModuleRefArray(record.appliedModules);
+  assertStringArray(record.reasonCodes);
+  assertTimestamp(record.checkedAt);
+  const bothNull =
+    record.appliedReleaseId === null && record.appliedRevision === null;
+  const bothPresent =
+    typeof record.appliedReleaseId === "string" &&
+    Number.isSafeInteger(record.appliedRevision) &&
+    (record.appliedRevision as number) > 0;
+  if (!bothNull && !bothPresent) invalidState();
+  if (
+    record.status === "verified" &&
+    (bothNull || record.reasonCodes.length !== 0)
+  ) {
+    invalidState();
+  }
+  if (
+    (record.status === "mismatch" || record.status === "unknown") &&
+    record.reasonCodes.length === 0
+  ) {
+    invalidState();
+  }
+}
+
+export function assertReadbackAttemptRecord(
+  value: unknown,
+): asserts value is ReadbackAttemptRecord {
+  const record = exactKeys(value, [
+    "managementTenantId",
+    "attemptId",
+    "action",
+    "idempotencyKey",
+    "requestHash",
+    "actorRef",
+    "requestId",
+    "traceId",
+    "auditId",
+    "releaseId",
+    "revision",
+    "desiredModules",
+    "readbackRef",
+    "ownerBootId",
+    "phase",
+    "claimedAt",
+    "finalizedAt",
+    "terminalStatus",
+    "appliedReleaseId",
+    "appliedRevision",
+    "appliedModules",
+    "reasonCodes",
+    "checkedAt",
+    "finalizedByActorRef",
+    "reconciliationEventSequence",
+    "completionEventSequence",
+  ]);
+  assertIdentifier(record.managementTenantId);
+  assertIdentifier(record.attemptId);
+  if (
+    record.action !== "deployments.publish" &&
+    record.action !== "deployments.reconcile"
+  ) {
+    invalidState();
+  }
+  assertIdentifier(record.idempotencyKey);
+  assertRequestHash(record.requestHash);
+  assertIdentifier(record.actorRef);
+  assertIdentifier(record.requestId);
+  assertIdentifier(record.traceId);
+  assertIdentifier(record.auditId);
+  assertIdentifier(record.releaseId);
+  assertPositiveInteger(record.revision);
+  assertModuleRefArray(record.desiredModules);
+  assertIdentifier(record.readbackRef);
+  assertIdentifier(record.ownerBootId);
+  if (!READBACK_ATTEMPT_PHASES.includes(record.phase as ReadbackAttemptPhase)) {
+    invalidState();
+  }
+  assertTimestamp(record.claimedAt);
+  assertModuleRefArray(record.appliedModules);
+  assertStringArray(record.reasonCodes);
+  if (record.finalizedAt !== null) assertTimestamp(record.finalizedAt);
+  if (record.checkedAt !== null) assertTimestamp(record.checkedAt);
+  if (record.finalizedByActorRef !== null) {
+    assertIdentifier(record.finalizedByActorRef);
+  }
+  if (record.reconciliationEventSequence !== null) {
+    assertPositiveInteger(record.reconciliationEventSequence);
+  }
+  if (record.completionEventSequence !== null) {
+    assertPositiveInteger(record.completionEventSequence);
+  }
+  if (record.phase === "claimed") {
+    if (
+      record.finalizedAt !== null ||
+      record.terminalStatus !== null ||
+      record.appliedReleaseId !== null ||
+      record.appliedRevision !== null ||
+      record.appliedModules.length !== 0 ||
+      record.reasonCodes.length !== 0 ||
+      record.checkedAt !== null ||
+      record.finalizedByActorRef !== null ||
+      record.reconciliationEventSequence !== null ||
+      record.completionEventSequence !== null
+    ) {
+      invalidState();
+    }
+    return;
+  }
+
+  if (
+    !READBACK_ATTEMPT_TERMINAL_STATUSES.includes(
+      record.terminalStatus as ReadbackAttemptTerminalStatus,
+    ) ||
+    record.finalizedAt === null ||
+    record.checkedAt === null ||
+    record.finalizedByActorRef === null ||
+    record.reconciliationEventSequence === null ||
+    record.completionEventSequence === null ||
+    record.reconciliationEventSequence === record.completionEventSequence ||
+    record.completionEventSequence !== record.reconciliationEventSequence + 1
+  ) {
+    invalidState();
+  }
+  const finalizedOrder = compareRfc3339Instants(
+    record.claimedAt,
+    record.finalizedAt,
+  );
+  if (finalizedOrder === null || finalizedOrder > 0) invalidState();
+  const observationOrder = compareRfc3339Instants(
+    record.claimedAt,
+    record.checkedAt,
+  );
+  if (observationOrder === null || observationOrder > 0) invalidState();
+  const finalizationObservationOrder = compareRfc3339Instants(
+    record.checkedAt,
+    record.finalizedAt,
+  );
+  if (
+    finalizationObservationOrder === null ||
+    finalizationObservationOrder > 0
+  ) {
+    invalidState();
+  }
+  const observation = {
+    status: record.terminalStatus,
+    appliedReleaseId: record.appliedReleaseId,
+    appliedRevision: record.appliedRevision,
+    appliedModules: record.appliedModules,
+    reasonCodes: record.reasonCodes,
+    checkedAt: record.checkedAt,
+  };
+  assertReadbackAttemptObservation(observation);
+  if (record.terminalStatus === "verified") {
+    if (
+      record.appliedReleaseId !== record.releaseId ||
+      record.appliedRevision !== record.revision ||
+      !moduleRefSetsEqual(record.appliedModules, record.desiredModules)
+    ) {
+      invalidState();
+    }
+  }
+}
+
+function assertReadback(value: unknown): void {
+  const candidate =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const keys = [
     "managementTenantId",
     "readbackRef",
     "releaseId",
@@ -1591,10 +1965,17 @@ function assertReadback(value: unknown): void {
     "status",
     "reasonCodes",
     "checkedAt",
-  ]);
+  ];
+  if (candidate !== null && Object.prototype.hasOwnProperty.call(candidate, "attemptId")) {
+    keys.push("attemptId");
+  }
+  const record = exactKeys(value, keys);
   assertIdentifier(record.managementTenantId);
   assertIdentifier(record.readbackRef);
   assertIdentifier(record.releaseId);
+  if (Object.prototype.hasOwnProperty.call(record, "attemptId")) {
+    assertIdentifier(record.attemptId);
+  }
   assertPositiveInteger(record.revision);
   assertModuleRefArray(record.appliedModules);
   assertStringArray(record.reasonCodes);
@@ -1602,6 +1983,7 @@ function assertReadback(value: unknown): void {
   switch (record.status) {
     case "pending":
       if (
+        Object.prototype.hasOwnProperty.call(record, "attemptId") ||
         record.appliedReleaseId !== null ||
         record.appliedRevision !== null ||
         record.reasonCodes.length !== 0
@@ -2124,6 +2506,8 @@ function assertControlRecord(value: unknown): void {
     assertControlState(record);
   } else if (has("eventId") && has("detail")) {
     assertEvent(record);
+  } else if (has("attemptId") && has("phase") && has("terminalStatus")) {
+    assertReadbackAttemptRecord(record);
   } else if (has("idempotencyKey") && has("finalResult")) {
     assertIdempotency(record);
   } else if (has("readbackRef") && has("appliedModules")) {
@@ -2162,4 +2546,19 @@ export function deepFreezeControlRecord<T extends ControlRecord>(
     invalidState();
   }
   return clone as DeepReadonly<T>;
+}
+
+export function deepFreezeReadbackAttempt(
+  record: ReadbackAttemptRecord,
+): DeepReadonly<ReadbackAttemptRecord> {
+  let clone: unknown;
+  try {
+    clone = cloneControlValue(record, new WeakSet<object>(), { nodes: 0 }, 0);
+    assertReadbackAttemptRecord(clone);
+    freezeRecursively(clone);
+  } catch (error: unknown) {
+    if (error instanceof ModuleControlRepositoryError) throw error;
+    invalidState();
+  }
+  return clone;
 }

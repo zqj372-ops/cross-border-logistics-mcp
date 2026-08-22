@@ -15,6 +15,7 @@ import { addRfc3339Milliseconds } from "../../src/logistics_mcp/control-plane/rf
 import type { ApprovalControlEventInput } from "../../src/logistics_mcp/control-plane/repository";
 import type {
   CompleteControlIdempotencyRequest,
+  ClaimReadbackAttemptRequest,
   ControlEnvelope,
   ControlEventRecord,
   ControlFinalResult,
@@ -31,6 +32,7 @@ import type {
   ModuleChangePreviewRecord,
   ModuleControlIdempotencyRecord,
   ModuleControlRepository,
+  FinalizeReadbackAndCompleteRequest,
   ModuleControlRef,
   ModuleManualReviewReleaseRecord,
   ModulePendingReadbackRecord,
@@ -42,6 +44,8 @@ import type {
   ReservedModuleControlIdempotencyRecord,
   ModuleUnknownReadbackRecord,
   ModuleVerifiedReadbackRecord,
+  ReadbackAttemptObservation,
+  ReadbackAttemptOwnerCapability,
   PublishReadbackRequestMetadata,
   PublishReleaseRecordRequest,
   ReadbackWriteResult,
@@ -53,12 +57,15 @@ import type {
 import {
   FAKE_CONTROL_REPOSITORY_FAILURE_PHASES,
   FAKE_CONTROL_REPOSITORY_METHOD_NAMES,
+  FAKE_READBACK_ATTEMPT_FAILURE_PHASES,
+  createFakeModuleControlRepositoryWithRecovery,
   FakeModuleControlRepository,
 } from "./fake-control-repository";
 import type { FakeModuleControlRepositoryRecords } from "./fake-control-repository";
 
 const MANAGEMENT_TENANT_ID = "tenant_demo";
 const OTHER_TENANT_ID = "tenant_other";
+const RECOVERY_ACTOR_REF = "system_startup_recovery";
 const DESCRIPTOR_DIGEST = `sha256:${"b".repeat(64)}` as const;
 const SECOND_DESCRIPTOR_DIGEST = `sha256:${"c".repeat(64)}` as const;
 const REQUEST_HASH =
@@ -1324,7 +1331,815 @@ function exactIdempotencyQuery(
   };
 }
 
+function attemptClaimRequest(
+  overrides: Partial<ClaimReadbackAttemptRequest> = {},
+): ClaimReadbackAttemptRequest {
+  return {
+    metadata: {
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      actorRef: pendingRelease.publisherActorRef,
+      action: "deployments.publish",
+      idempotencyKey: publishRequest.metadata.idempotencyKey,
+      requestHash: REQUEST_HASH,
+      requestId: "request_publish_001",
+      traceId: "trace_publish_001",
+      auditId: "audit_publish_001",
+    },
+    attemptId: "attempt_publish_001",
+    readbackRef: "readback_attempt_publish_001",
+    releaseId: pendingRelease.releaseId,
+    revision: pendingRelease.revision,
+    desiredModules: pendingRelease.desiredModules,
+    ownerBootId: "boot_current",
+    claimedAt: "2026-08-22T00:12:00.000000000Z",
+    ...overrides,
+  };
+}
+
+const verifiedAttemptObservation: ReadbackAttemptObservation = {
+  status: "verified",
+  appliedReleaseId: pendingRelease.releaseId,
+  appliedRevision: pendingRelease.revision,
+  appliedModules: pendingRelease.desiredModules,
+  reasonCodes: [],
+  checkedAt: "2026-08-22T00:12:00.000000000Z",
+};
+
 describe("FakeModuleControlRepository", () => {
+  it("claims and atomically finalizes a terminal attempt without a pending projection", async () => {
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      clock: () => "2026-08-22T00:12:00.000000000Z",
+      records: validPendingAuthorityGraph(),
+    });
+    const claim = await repository.claimReadbackAttempt(attemptClaimRequest());
+    expect(claim.disposition).toBe("created");
+    if (claim.disposition !== "created") throw new Error("claim was not created");
+    expect((await repository.getControlState()).latestReadback).toBeNull();
+    expect(Object.isFrozen(claim.attempt)).toBe(true);
+    expect(Object.getPrototypeOf(claim.ownerCapability)).toBeNull();
+    expect(
+      repository.calls.some(
+        (call) => (call.method as string) === "claimReadbackAttempt",
+      ),
+    ).toBe(false);
+
+    const replay = await repository.claimReadbackAttempt(attemptClaimRequest());
+    expect(replay).toMatchObject({ disposition: "existing" });
+    if (replay.disposition !== "existing") throw new Error("claim did not replay");
+    expect(replay.attempt).toEqual(claim.attempt);
+    await expect(
+      repository.claimReadbackAttempt({
+        ...attemptClaimRequest(),
+        metadata: {
+          ...attemptClaimRequest().metadata,
+          requestHash: `mcp-control-hash/v1/request/sha256:${"c".repeat(64)}`,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+
+    const finalizeRequest: FinalizeReadbackAndCompleteRequest = {
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: claim.ownerCapability,
+      observation: verifiedAttemptObservation,
+      finalResult: publishFinalResult,
+      finalizedAt: "2026-08-22T00:12:00.000000000Z",
+    };
+    const finalized = await repository.finalizeReadbackAndComplete(finalizeRequest);
+    expect(finalized.disposition).toBe("finalized");
+    expect(finalized.attempt.phase).toBe("finalized");
+    expect(finalized.readback.status).toBe("verified");
+    expect(finalized.readback.attemptId).toBe(claim.attempt.attemptId);
+    expect(finalized.release.status).toBe("active_verified");
+    expect(finalized.idempotency.status).toBe("completed");
+    expect(finalized.idempotency.finalResult).toEqual(publishFinalResult);
+    expect(finalized.reconciliationEvent.sequence + 1).toBe(
+      finalized.completionEvent.sequence,
+    );
+    expect(finalized.reconciliationEvent.occurredAt).toBe(finalized.completionEvent.occurredAt);
+    expect(finalized.reconciliationEvent.occurredAt).toBe(finalized.attempt.finalizedAt);
+    expect((await repository.getControlState()).latestReadback?.status).toBe("verified");
+    await expect(repository.finalizeReadbackAndComplete(finalizeRequest)).rejects.toMatchObject({
+      code: "conflict",
+    });
+  });
+
+  it("rejects reserved recovery actor claims before durable writes", async () => {
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    const request: ClaimReadbackAttemptRequest = {
+      ...attemptClaimRequest({
+        attemptId: "attempt_reserved_recovery_actor",
+        readbackRef: "readback_reserved_recovery_actor",
+      }),
+      metadata: {
+        ...attemptClaimRequest().metadata,
+        action: "deployments.reconcile",
+        idempotencyKey: "idem_reserved_recovery_actor",
+        actorRef: RECOVERY_ACTOR_REF,
+        requestId: "request_reserved_recovery_actor",
+        traceId: "trace_reserved_recovery_actor",
+        auditId: "audit_reserved_recovery_actor",
+      },
+    };
+    const before = await repository.getControlState();
+    await expect(repository.claimReadbackAttempt(request)).rejects.toMatchObject({
+      code: "conflict",
+    });
+    expect(
+      await repository.getUnfinishedReadbackAttempt({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        attemptId: request.attemptId,
+      }),
+    ).toBeNull();
+    await expect(
+      repository.getIdempotency({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        action: request.metadata.action,
+        idempotencyKey: request.metadata.idempotencyKey,
+      }),
+    ).resolves.toBeNull();
+    expect((await repository.getControlState()).events).toEqual(before.events);
+  });
+
+  it("rejects cloned, proxied, borrowed, and reused owner capabilities", async () => {
+    const first = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    const claim = await first.claimReadbackAttempt(attemptClaimRequest());
+    if (claim.disposition !== "created") throw new Error("claim was not created");
+    const base = {
+      attemptId: claim.attempt.attemptId,
+      observation: verifiedAttemptObservation,
+      finalResult: publishFinalResult,
+      finalizedAt: "2026-08-22T00:12:00.000000000Z",
+    };
+    expect(Reflect.ownKeys(first)).not.toContain("ownerCapabilities");
+    expect(Reflect.ownKeys(first)).not.toContain("consumedOwnerCapabilities");
+    const forgedCapability = Object.freeze(Object.create(null)) as ReadbackAttemptOwnerCapability;
+    const forgedOwnerCapabilities = new WeakMap<object, { readonly attemptId: string }>();
+    forgedOwnerCapabilities.set(forgedCapability, {
+      attemptId: claim.attempt.attemptId,
+    });
+    Reflect.set(first, "ownerCapabilities", forgedOwnerCapabilities);
+    Reflect.set(first, "consumedOwnerCapabilities", new WeakSet<object>());
+    await expect(
+      first.finalizeReadbackAndComplete({
+        ...base,
+        ownerCapability: forgedCapability,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    const clone = structuredClone(claim.ownerCapability);
+    const jsonCapability = JSON.parse(
+      JSON.stringify(claim.ownerCapability),
+    ) as ReadbackAttemptOwnerCapability;
+    await expect(
+      first.finalizeReadbackAndComplete({ ...base, ownerCapability: clone }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      first.finalizeReadbackAndComplete({
+        ...base,
+        ownerCapability: jsonCapability,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      first.finalizeReadbackAndComplete({
+        ...base,
+        ownerCapability: { ...claim.ownerCapability },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      first.finalizeReadbackAndComplete({
+        ...base,
+        ownerCapability: new Proxy(claim.ownerCapability, {}),
+      }),
+    ).rejects.toThrow();
+    const second = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    await expect(
+      second.finalizeReadbackAndComplete({
+        ...base,
+        ownerCapability: claim.ownerCapability,
+      }),
+    ).rejects.toThrow();
+    const finalized = await first.finalizeReadbackAndComplete({
+      ...base,
+      ownerCapability: claim.ownerCapability,
+    });
+    expect(finalized.disposition).toBe("finalized");
+    await expect(
+      first.finalizeReadbackAndComplete({
+        ...base,
+        ownerCapability: claim.ownerCapability,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("keeps multiple reconcile attempts immutable and projects the latest terminal attempt", async () => {
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    const reconcileFinal = (
+      status: "mismatch" | "unknown",
+      reason: string,
+      requestId: string,
+      traceId: string,
+      auditId: string,
+    ): ControlFinalResult => ({
+      domainRecordRef: pendingRelease.releaseId,
+      envelope: {
+        ...publishFinalResult.envelope,
+        request_id: requestId,
+        trace_id: traceId,
+        audit_id: auditId,
+        status: "manual_review",
+        data: {
+          kind: "reconciliation",
+          release_id: pendingRelease.releaseId,
+          revision: pendingRelease.revision,
+          status,
+        },
+        reason_codes: [reason],
+        readback: {
+          status,
+          release_id: pendingRelease.releaseId,
+          revision: pendingRelease.revision,
+        },
+      },
+    });
+    const firstClaim = await repository.claimReadbackAttempt({
+      ...attemptClaimRequest({
+        attemptId: "attempt_reconcile_001",
+        readbackRef: "readback_reconcile_001",
+        claimedAt: "2026-08-22T00:12:00.000000001Z",
+      }),
+      metadata: {
+        ...attemptClaimRequest().metadata,
+        action: "deployments.reconcile",
+        idempotencyKey: "idem_reconcile_001",
+        actorRef: "actor_reconciler",
+        requestId: "request_reconcile_001",
+        traceId: "trace_reconcile_001",
+        auditId: "audit_reconcile_001",
+      },
+    });
+    if (firstClaim.disposition !== "created") throw new Error("first reconcile claim was not created");
+    const first = await repository.finalizeReadbackAndComplete({
+      attemptId: firstClaim.attempt.attemptId,
+      ownerCapability: firstClaim.ownerCapability,
+      observation: {
+        status: "mismatch",
+        appliedReleaseId: null,
+        appliedRevision: null,
+        appliedModules: [],
+        reasonCodes: ["runtime.mismatch"],
+        checkedAt: "2026-08-22T00:12:00.000000002Z",
+      },
+      finalResult: reconcileFinal(
+        "mismatch",
+        "runtime.mismatch",
+        "request_reconcile_001",
+        "trace_reconcile_001",
+        "audit_reconcile_001",
+      ),
+      finalizedAt: "2026-08-22T00:12:00.000000003Z",
+    });
+    const secondClaim = await repository.claimReadbackAttempt({
+      ...attemptClaimRequest({
+        attemptId: "attempt_reconcile_002",
+        readbackRef: "readback_reconcile_002",
+        claimedAt: "2026-08-22T00:12:00.000000004Z",
+      }),
+      metadata: {
+        ...attemptClaimRequest().metadata,
+        action: "deployments.reconcile",
+        idempotencyKey: "idem_reconcile_002",
+        actorRef: "actor_reconciler",
+        requestId: "request_reconcile_002",
+        traceId: "trace_reconcile_002",
+        auditId: "audit_reconcile_002",
+      },
+    });
+    if (secondClaim.disposition !== "created") throw new Error("second reconcile claim was not created");
+    const second = await repository.finalizeReadbackAndComplete({
+      attemptId: secondClaim.attempt.attemptId,
+      ownerCapability: secondClaim.ownerCapability,
+      observation: {
+        status: "unknown",
+        appliedReleaseId: null,
+        appliedRevision: null,
+        appliedModules: [],
+        reasonCodes: ["runtime.unknown"],
+        checkedAt: "2026-08-22T00:12:00.000000005Z",
+      },
+      finalResult: reconcileFinal(
+        "unknown",
+        "runtime.unknown",
+        "request_reconcile_002",
+        "trace_reconcile_002",
+        "audit_reconcile_002",
+      ),
+      finalizedAt: "2026-08-22T00:12:00.000000006Z",
+    });
+    expect(first.attempt.attemptId).not.toBe(second.attempt.attemptId);
+    expect(second.release.status).toBe("manual_review");
+    expect(second.readback.attemptId).toBe(second.attempt.attemptId);
+    const history = await repository.getReadbackAttemptHistory({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+    });
+    expect(history.map((attempt) => attempt.attemptId)).toEqual([
+      second.attempt.attemptId,
+      first.attempt.attemptId,
+    ]);
+    expect(Object.isFrozen(history[0])).toBe(true);
+    expect((await repository.getControlState()).latestReadback?.attemptId).toBe(
+      second.attempt.attemptId,
+    );
+  });
+
+  it("rolls back every finalize phase without a sequence gap", async () => {
+    for (const phase of FAKE_READBACK_ATTEMPT_FAILURE_PHASES) {
+      const repository = new FakeModuleControlRepository({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        ownerBootId: "boot_current",
+        records: validPendingAuthorityGraph(),
+      });
+      const claim = await repository.claimReadbackAttempt(
+        attemptClaimRequest({
+          attemptId: `attempt_failure_${phase}`,
+          readbackRef: `readback_failure_${phase}`,
+        }),
+      );
+      if (claim.disposition !== "created") throw new Error("claim was not created");
+      const before = await repository.getControlState();
+      repository.queueReadbackAttemptFailure("finalizeReadbackAndComplete", phase);
+      await expect(
+        repository.finalizeReadbackAndComplete({
+          attemptId: claim.attempt.attemptId,
+          ownerCapability: claim.ownerCapability,
+          observation: verifiedAttemptObservation,
+          finalResult: publishFinalResult,
+          finalizedAt: "2026-08-22T00:12:00.000000000Z",
+        }),
+      ).rejects.toMatchObject({ code: "conflict" });
+      const after = await repository.getControlState();
+      expect(after.events).toEqual(before.events);
+      expect(after.latestReadback).toBeNull();
+      const unfinished = await repository.getUnfinishedReadbackAttempt({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        attemptId: claim.attempt.attemptId,
+      });
+      expect(unfinished?.phase).toBe("claimed");
+
+      const retried = await repository.finalizeReadbackAndComplete({
+        attemptId: claim.attempt.attemptId,
+        ownerCapability: claim.ownerCapability,
+        observation: verifiedAttemptObservation,
+        finalResult: publishFinalResult,
+        finalizedAt: "2026-08-22T00:12:00.000000000Z",
+      });
+      expect(retried.disposition).toBe("finalized");
+      expect(retried.reconciliationEvent.sequence).toBe(before.events.length + 1);
+      expect(retried.completionEvent.sequence).toBe(before.events.length + 2);
+      expect((await repository.getControlState()).events.map((event) => event.sequence)).toEqual([
+        1,
+        2,
+        3,
+        4,
+        5,
+      ]);
+      await expect(
+        repository.finalizeReadbackAndComplete({
+          attemptId: claim.attempt.attemptId,
+          ownerCapability: claim.ownerCapability,
+          observation: verifiedAttemptObservation,
+          finalResult: publishFinalResult,
+          finalizedAt: "2026-08-22T00:12:00.000000000Z",
+        }),
+      ).rejects.toMatchObject({ code: "conflict" });
+    }
+  });
+
+  it("rolls back every claim sub-write", async () => {
+    for (const phase of [
+      "method_entry",
+      "after_idempotency",
+      "after_attempt",
+      "after_health",
+    ] as const) {
+      const repository = new FakeModuleControlRepository({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        ownerBootId: "boot_current",
+        records: validPendingAuthorityGraph(),
+      });
+      const request = {
+        ...attemptClaimRequest({
+          attemptId: `attempt_claim_failure_${phase}`,
+          readbackRef: `readback_claim_failure_${phase}`,
+        }),
+        metadata: {
+          ...attemptClaimRequest().metadata,
+          action: "deployments.reconcile" as const,
+          idempotencyKey: `idem_claim_failure_${phase}`,
+          actorRef: "actor_reconciler",
+          requestId: `request_claim_failure_${phase}`,
+          traceId: `trace_claim_failure_${phase}`,
+          auditId: `audit_claim_failure_${phase}`,
+        },
+      } satisfies ClaimReadbackAttemptRequest;
+      const before = await repository.getControlState();
+      repository.queueReadbackAttemptFailure("claimReadbackAttempt", phase);
+      await expect(repository.claimReadbackAttempt(request)).rejects.toThrow();
+      const after = await repository.getControlState();
+      expect(after.events).toEqual(before.events);
+      expect(after.latestReadback).toBeNull();
+      expect(
+        await repository.getUnfinishedReadbackAttempt({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          attemptId: request.attemptId,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("uses an assembly-only recovery driver for prior-boot claims", async () => {
+    const claimTime = "2026-08-22T00:12:00.000000000Z";
+    const priorAttempt = {
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      attemptId: "attempt_prior_boot_001",
+      action: "deployments.publish",
+      idempotencyKey: publishRequest.metadata.idempotencyKey,
+      requestHash: REQUEST_HASH,
+      actorRef: pendingRelease.publisherActorRef,
+      requestId: "request_publish_001",
+      traceId: "trace_publish_001",
+      auditId: "audit_publish_001",
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+      desiredModules: pendingRelease.desiredModules,
+      readbackRef: "readback_prior_boot_001",
+      ownerBootId: "boot_prior",
+      phase: "claimed",
+      claimedAt: claimTime,
+      finalizedAt: null,
+      terminalStatus: null,
+      appliedReleaseId: null,
+      appliedRevision: null,
+      appliedModules: [],
+      reasonCodes: [],
+      checkedAt: null,
+      finalizedByActorRef: null,
+      reconciliationEventSequence: null,
+      completionEventSequence: null,
+    } as const;
+    const { repository, recoveryDriver } = createFakeModuleControlRepositoryWithRecovery({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: {
+        ...validPendingAuthorityGraph(),
+        attempts: [priorAttempt],
+      },
+    });
+    await expect(
+      repository.finalizeReadbackAndComplete({
+        attemptId: priorAttempt.attemptId,
+        ownerCapability: Object.freeze(Object.create(null)) as never,
+        observation: {
+          status: "unknown",
+          appliedReleaseId: null,
+          appliedRevision: null,
+          appliedModules: [],
+          reasonCodes: ["readback.interrupted"],
+          checkedAt: claimTime,
+        },
+        finalResult: {
+          domainRecordRef: pendingRelease.releaseId,
+          envelope: {
+            ...publishFinalResult.envelope,
+            status: "manual_review",
+            data: {
+              kind: "release",
+              release_id: pendingRelease.releaseId,
+              revision: pendingRelease.revision,
+              active_modules: pendingRelease.desiredModules.map((ref) => ({
+                module_id: ref.moduleId,
+                version: ref.version,
+                descriptor_digest: ref.descriptorDigest,
+              })),
+            },
+            reason_codes: ["readback.interrupted"],
+            readback: {
+              status: "unknown",
+              release_id: pendingRelease.releaseId,
+              revision: pendingRelease.revision,
+            },
+          },
+        },
+        finalizedAt: "2026-08-22T00:12:00.000000000Z",
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    const recovered = await recoveryDriver.finalizePriorBootAttempt({
+      attemptId: priorAttempt.attemptId,
+      observation: {
+        status: "unknown",
+        appliedReleaseId: null,
+        appliedRevision: null,
+        appliedModules: [],
+        reasonCodes: ["readback.interrupted"],
+        checkedAt: claimTime,
+      },
+      finalResult: {
+        domainRecordRef: pendingRelease.releaseId,
+        envelope: {
+          ...publishFinalResult.envelope,
+          status: "manual_review",
+          data: {
+            kind: "release",
+            release_id: pendingRelease.releaseId,
+            revision: pendingRelease.revision,
+            active_modules: pendingRelease.desiredModules.map((ref) => ({
+              module_id: ref.moduleId,
+              version: ref.version,
+              descriptor_digest: ref.descriptorDigest,
+            })),
+          },
+          reason_codes: ["readback.interrupted"],
+          readback: {
+            status: "unknown",
+            release_id: pendingRelease.releaseId,
+            revision: pendingRelease.revision,
+          },
+        },
+      },
+      finalizedAt: "2026-08-22T00:12:00.000000000Z",
+    });
+    expect(recovered.attempt.actorRef).toBe(pendingRelease.publisherActorRef);
+    expect(recovered.idempotency.actorRef).toBe(pendingRelease.publisherActorRef);
+    expect(recovered.attempt.finalizedByActorRef).toBe(RECOVERY_ACTOR_REF);
+    expect(recovered.reconciliationEvent.actorRef).toBe(RECOVERY_ACTOR_REF);
+    expect(recovered.completionEvent.actorRef).toBe(RECOVERY_ACTOR_REF);
+    expect(recovered.readback.status).toBe("unknown");
+    expect(recovered.release.status).toBe("manual_review");
+
+    const recoveryState = await repository.getControlState();
+    const completedRecoveryIdempotency = {
+      ...publishDomainCommittedIdempotencyRecord,
+      status: "completed",
+      finalResult: recovered.finalResult,
+    } as const;
+    const recoverySeedRecords = {
+      ...validPendingAuthorityGraph(),
+      releases: [recovered.release],
+      readbacks: [recovered.readback],
+      attempts: [recovered.attempt],
+      idempotency: [
+        previewSeedIdempotency,
+        approvalSeedIdempotency,
+        completedRecoveryIdempotency,
+      ],
+      events: recoveryState.events,
+      attemptEventAuthorities: [
+        {
+          eventId: recovered.reconciliationEvent.eventId,
+          attemptId: recovered.attempt.attemptId,
+          role: "reconciliation",
+        },
+        {
+          eventId: recovered.completionEvent.eventId,
+          attemptId: recovered.attempt.attemptId,
+          role: "completion",
+        },
+      ],
+    } as const;
+    const reopenedRecovery = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_recovery_reopened_different",
+      records: recoverySeedRecords as never,
+    });
+    await expect(reopenedRecovery.health()).resolves.toEqual({ ready: true });
+    const recoveryHistory = await reopenedRecovery.getReadbackAttemptHistory({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+    });
+    expect(recoveryHistory[0]?.ownerBootId).toBe("boot_prior");
+    expect(recoveryHistory[0]?.finalizedByActorRef).toBe("system_startup_recovery");
+
+    const illegalRecoveryReasonRecords = {
+      ...recoverySeedRecords,
+      attempts: [
+        {
+          ...recovered.attempt,
+          reasonCodes: ["readback.invalid"],
+        },
+      ],
+    } as never;
+    expect(
+      () =>
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_recovery_reopened_different",
+          records: illegalRecoveryReasonRecords,
+        }),
+    ).toThrowError(expect.objectContaining({ code: "invalid_state" }));
+
+    const illegalRecoveryStatusRecords = {
+      ...recoverySeedRecords,
+      attempts: [
+        {
+          ...recovered.attempt,
+          terminalStatus: "mismatch",
+        },
+      ],
+    } as never;
+    expect(
+      () =>
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_recovery_reopened_different",
+          records: illegalRecoveryStatusRecords,
+        }),
+    ).toThrowError(expect.objectContaining({ code: "invalid_state" }));
+  });
+
+  it("rejects the reserved recovery actor in seeded attempts and idempotency", async () => {
+    const source = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    const claim = await source.claimReadbackAttempt({
+      ...attemptClaimRequest({
+        attemptId: "attempt_seed_reserved_actor",
+        readbackRef: "readback_seed_reserved_actor",
+      }),
+      metadata: {
+        ...attemptClaimRequest().metadata,
+        action: "deployments.reconcile",
+        idempotencyKey: "idem_seed_reserved_actor",
+        actorRef: "actor_reconciler",
+        requestId: "request_seed_reserved_actor",
+        traceId: "trace_seed_reserved_actor",
+        auditId: "audit_seed_reserved_actor",
+      },
+    });
+    if (claim.disposition !== "created") throw new Error("claim was not created");
+    const idempotency = await source.getIdempotency({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      action: "deployments.reconcile",
+      idempotencyKey: "idem_seed_reserved_actor",
+    });
+    if (idempotency === null) throw new Error("idempotency was not created");
+    const state = await source.getControlState();
+    const reservedAttemptGraph = {
+      ...validPendingAuthorityGraph(),
+      attempts: [
+        {
+          ...claim.attempt,
+          actorRef: RECOVERY_ACTOR_REF,
+        },
+      ],
+      idempotency: [
+        previewSeedIdempotency,
+        approvalSeedIdempotency,
+        publishDomainCommittedIdempotencyRecord,
+        {
+          ...idempotency,
+          actorRef: RECOVERY_ACTOR_REF,
+        },
+      ],
+      events: state.events,
+    } as never;
+    expect(
+      () =>
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_reopened",
+          records: reservedAttemptGraph,
+        }),
+    ).toThrowError(expect.objectContaining({ code: "invalid_state" }));
+
+    const reservedIdempotencyGraph = {
+      ...validPendingAuthorityGraph(),
+      idempotency: [
+        previewSeedIdempotency,
+        approvalSeedIdempotency,
+        publishDomainCommittedIdempotencyRecord,
+        {
+          ...reservedIdempotencyRecord,
+          actorRef: RECOVERY_ACTOR_REF,
+        },
+      ],
+    } as never;
+    expect(
+      () =>
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_reopened",
+          records: reservedIdempotencyGraph,
+        }),
+    ).toThrowError(expect.objectContaining({ code: "invalid_state" }));
+  });
+
+  it("requires explicit event authority when seeding a finalized attempt", async () => {
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    const claim = await repository.claimReadbackAttempt(attemptClaimRequest());
+    if (claim.disposition !== "created") throw new Error("claim was not created");
+    const finalized = await repository.finalizeReadbackAndComplete({
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: claim.ownerCapability,
+      observation: verifiedAttemptObservation,
+      finalResult: publishFinalResult,
+      finalizedAt: "2026-08-22T00:12:00.000000000Z",
+    });
+    const state = await repository.getControlState();
+    const completedPublish = {
+      ...publishDomainCommittedIdempotencyRecord,
+      status: "completed",
+      finalResult: publishFinalResult,
+    } as const;
+    const seededRecords = {
+      ...validPendingAuthorityGraph(),
+      releases: [finalized.release],
+      readbacks: [finalized.readback],
+      attempts: [finalized.attempt],
+      idempotency: [
+        previewSeedIdempotency,
+        approvalSeedIdempotency,
+        completedPublish,
+      ],
+      events: state.events,
+      attemptEventAuthorities: [
+        {
+          eventId: finalized.reconciliationEvent.eventId,
+          attemptId: finalized.attempt.attemptId,
+          role: "reconciliation",
+        },
+        {
+          eventId: finalized.completionEvent.eventId,
+          attemptId: finalized.attempt.attemptId,
+          role: "completion",
+        },
+      ],
+    } as const;
+    expect(
+      () =>
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_current",
+          records: seededRecords as never,
+        }),
+    ).not.toThrow();
+    const reopened = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_reopened_different",
+      records: seededRecords as never,
+    });
+    await expect(reopened.health()).resolves.toEqual({ ready: true });
+    const reopenedHistory = await reopened.getReadbackAttemptHistory({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+    });
+    expect(reopenedHistory[0]?.ownerBootId).toBe("boot_current");
+    expect(reopenedHistory[0]?.finalizedByActorRef).toBe(
+      pendingRelease.publisherActorRef,
+    );
+    expect(
+      (await reopened.getControlState()).events.slice(-2).map((event) => event.actorRef),
+    ).toEqual([
+      pendingRelease.publisherActorRef,
+      pendingRelease.publisherActorRef,
+    ]);
+    const ambiguous = { ...seededRecords } as Record<string, unknown>;
+    delete ambiguous.attemptEventAuthorities;
+    expect(
+      () =>
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_current",
+          records: ambiguous,
+        }),
+    ).toThrowError(expect.objectContaining({ code: "invalid_state" }));
+  });
+
   it("implements the complete narrow repository key set without generic put/get methods", () => {
     const repository: ModuleControlRepository = newRepository();
 

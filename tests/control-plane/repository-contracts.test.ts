@@ -27,6 +27,7 @@ import type {
   ModuleActiveVerifiedReleaseRecord,
   ModuleManualReviewReleaseRecord,
   ModuleControlRepository,
+  ModuleControlReadbackAttemptRepository,
   ModuleControlRepositoryErrorCode,
   ModuleControlIdempotencyRecord,
   ModuleControlState,
@@ -63,6 +64,14 @@ const useCaseMethodNames = [
 ] as const satisfies readonly (keyof ModuleControlRepository)[];
 
 const lifecycleMethodNames = ["close"] as const satisfies readonly (keyof ModuleControlRepository)[];
+
+const attemptMethodNames = [
+  "claimReadbackAttempt",
+  "finalizeReadbackAndComplete",
+  "getUnfinishedReadbackAttempt",
+  "listUnfinishedReadbackAttempts",
+  "getReadbackAttemptHistory",
+] as const satisfies readonly (keyof ModuleControlReadbackAttemptRepository)[];
 
 const descriptorDigest = `sha256:${"b".repeat(64)}` as const;
 const secondDescriptorDigest = `sha256:${"c".repeat(64)}` as const;
@@ -1613,6 +1622,7 @@ const compileContractChecks = (): void => {
   };
 
   void [
+    attemptMethodNames,
     _invalidAction,
     _invalidChange,
     _invalidVerified,
