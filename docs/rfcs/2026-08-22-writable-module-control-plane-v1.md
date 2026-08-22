@@ -30,9 +30,11 @@ rule_ids: CONTROL-WRITE-001,CONTROL-AUTH-001,CONTROL-RELEASE-001
 3. 构建生成只包含当前应用内静态可信模块的 module inventory 和 canonical descriptor
    digest。客户端只能按 exact ID/version/digest 登记，不能提交 URL、路径、源码或 secret。
    v1 inventory 只允许 `local_build`、`production_eligible=false`；不接受 `verified_release`。
-4. 新增独立 SQLite control store，路径由启动必查的固定 `MCP_INSTANCE_STATE_DIR` 派生（
-   `control.sqlite`，`MCP_CONTROL_DB_PATH` 仅为等值诊断引用）。表是窄语义 release/preview/
-   approval/readback/event/identity 表，不提供通用 key-value 或 SQL 写入口。
+4. 新增独立 SQLite control store，路径由 server assembly 传入的绝对 application root 固定派生
+   为 `<application-root>/.runtime/mcp-instance-state/control.sqlite`，marker 固定为同一 state
+   directory 下的 `control-identity.json`。不接受环境变量、请求参数或诊断引用作为 DB/marker 路径
+   override。表是窄语义 release/preview/approval/readback/event/identity 表，不提供通用
+   key-value 或 SQL 写入口。
 5. 新增管理 API：读取 control state、登记部署清单模块、生成部署/回滚 preview、审批、发布，
    以及对固定 `published_pending_readback|manual_review` release 做 exact readback reconciliation。
    启动只自动处理前者一次；后者只由操作员调用 reconcile。
@@ -52,13 +54,12 @@ rule_ids: CONTROL-WRITE-001,CONTROL-AUTH-001,CONTROL-RELEASE-001
     不引入其 PHP runtime、权限表、ORM 或插件安装器。
 11. v1 只允许 loopback fixture/local 写入；`MCP_DATA_MODE=production` 的 Admin POST 固定
     `blocked`。生产认证、Deployment Evidence 和多实例发布必须另行 RFC，不能靠配置打开。
-12. 控制面使用固定、启动必查的 `MCP_INSTANCE_STATE_DIR/control-identity.json`，marker 与
-    `MCP_INSTANCE_ID`、绝对 DB path、`control_db_id` 和 schema version 绑定；显式初始化后即
-    sticky enabled，不能用 `MCP_ADMIN_CONTROL_ENABLED=false`/缺失、删除旧 path/instance env
-    或 legacy flag 绕过已有 activation policy。只有 state directory、marker、DB 都不存在且
-    显式 `MCP_LEGACY_STATIC_MODE=true` 的全新实例才允许 legacy static-all-active；已初始化
-    实例的 enabled=false/缺失、DB path/identity/schema/marker 不一致或换新空 DB 均 fail closed、
-    不监听。
+12. 控制面使用由 application root 固定派生、启动必查的 state directory；marker 与
+   `MCP_INSTANCE_ID`、`MCP_ADMIN_TENANT_ID`、绝对 DB path、`control_db_id` 和 schema version
+   绑定。显式 initializer 成功后才允许 entrypoint 打开 control state；
+   `MCP_ADMIN_CONTROL_ENABLED` 缺失或不是字面 `true`、state directory 整体缺失/不完整、root
+   变化、任何 symlink、marker/DB identity/schema/tenant 不一致或换新空 DB 均 fail closed、不监听。
+   初始化不是 runtime 的隐式恢复机制；不存在 release 也不能改变该 managed policy 或假设 active set。
 13. request canonical hash 与 preview canonical hash 均使用 UTF-8 RFC 8785/JCS + SHA-256、固定
     `v1/domain/schema_version` domain prefix 和明确的集合排序规则；descriptor digest 继续是
     无 control domain 的 `sha256:<64 lowercase hex>`，三者不互换。
@@ -85,33 +86,78 @@ envelope，必须另行提交共享合同 RFC。
 - 新 API 位于 `/admin/api/v1/control/**`，不是 MCP 业务工具，不进入现有工具目录。
 - Admin API 使用独立 `2026-08-22.v1` closed envelope，包含 request ID、trace ID、audit ID、
   五状态、discriminated data、reason codes 和 readback；不声称复用完整 MCP envelope。
-- 控制面未启用，或全新 control DB 明确没有 release 时默认启用当前全部静态模块。控制面已
-  启用但 DB/状态不可恢复时启动失败，不回落全启用。
+- managed control-plane entrypoint 必须先由显式 initializer 建立并校验 state directory、marker、
+  DB、identity 和 schema；没有 release 不改变 managed policy 或 active set。初始化后 DB/状态
+  不可恢复、根路径变化、symlink、tenant/identity 漂移或 `MCP_ADMIN_CONTROL_ENABLED` 缺失/非
+  `true` 时启动失败，不监听。
 - 新版本模块代码仍需应用构建和进程发布；control plane 不宣称跨代码版本 hot-plug。
 
 ## Canonical hash contract
 
 request canonical hash 与 preview canonical hash 是两个不同的可审计值。二者都对 UTF-8、无
 BOM 的 RFC 8785/JCS canonical JSON 做 SHA-256；等价实现必须逐字节遵守 JCS，不能使用未经
-补充规则的 `JSON.stringify`。hash preimage 固定为：
+补充规则的 `JSON.stringify`。hash preimage 的字节序列固定为：ASCII `MCP-CONTROL-HASH`，
+单字节 NUL `0x00`，ASCII `v1`，单字节 NUL `0x00`，ASCII domain `request` 或 `preview`，单字节
+NUL `0x00`，ASCII `schema_version`，单字节 NUL `0x00`，再接 RFC 8785/JCS canonical JSON
+的 UTF-8 bytes；文档中的 `\0`/`\x00` 只是 escaped display，绝不是反斜杠字符文本。最后对
+整段 framed bytes 做 SHA-256，输出固定为
+`mcp-control-hash/v1/<domain>/sha256:<64 lowercase hex>`。
+
+RFC 8785/JCS 负责 number、string、`null` 和 object-key 的逐字节规范化；不能以未经 JCS
+约束的 `JSON.stringify` 代替。所有 set-like arrays 必须先规范化元素，再按元素 UTF-8 bytes
+的 lexicographic 升序排序。`desired_modules` 与 `inventory_refs` 的唯一排序 tuple 是
+`module_id NUL version NUL descriptor_digest`；`required_capabilities`、`optional_capabilities`、
+`capability_refs`、`standard_refs`、`evidence_ref_ids`、`tool_names`、`reason_codes` 和
+`source_ref_ids` 是字符串集合，均按 UTF-8 bytes 排序。`approval_history`、`event_history`、
+`calculation_trace` 和任何明确的 order-semantic array 保持输入顺序，不能全局排序；集合排序
+规则不能由客户端自行解释。
+
+request hash 的 closed payload 精确为：
+`{"action":<one of packages.register|deployments.preview|approvals.decide|deployments.publish|deployments.reconcile>,"management_tenant_id":<server-authenticated tenant>,"actor_ref":<server-authenticated actor>,"request":<the exact strict request object>}`。
+strict request object 只允许 register 的 `schema_version,module_id,version,descriptor_digest`；
+preview change 的 `schema_version,intent,desired_modules`；preview rollback 的
+`schema_version,intent,target_release_id`；approval 的 `schema_version,preview_ref,decision,reason_code`；
+publish 的 `schema_version,preview_ref,approval_id`；或 reconcile 的 `schema_version,release_id`。
+request hash 排除 `request_id`、`trace_id`、`audit_id`、`idempotency_key`、新生成的
+preview/approval/release IDs、所有 timestamps 和 HTTP 包装；strict request 中显式的 domain
+reference 仍是语义输入。
+
+preview hash 的 closed payload 精确为：
+`{"action":"deployments.preview","management_tenant_id":<server-authenticated tenant>,"creator_actor_ref":<server-authenticated creator>,"intent":<change|rollback>,"base_release_revision":<integer>,"target_release_id":<string|null>,"inventory_refs":<sorted tuple array>,"desired_modules":<sorted tuple array>,"policy_version":"writable-module-control-plane-v1","schema_version":"2026-08-22.v1","validation":{"base_matches":<boolean>,"desired_modules_valid":<boolean>,"inventory_matches":<boolean>,"minimum_active_modules":<boolean>,"reason_codes":<sorted string array>},"preview_ttl_seconds":<integer>}`。
+它排除 `preview_ref`、`request_id`、`trace_id`、`audit_id`、`idempotency_key`、release/approval
+IDs generated by this operation、`created_at`、`expires_at`、`published_at` 和其他
+transport/event timestamps；`target_release_id` 是 rollback strict-request 的 semantic reference,
+not a generated execution ID。No implementation may add fields to either payload without a
+schema/RFC version。
+
+#### Golden vectors (Node `node:crypto`, schema `2026-08-22.v1`)
+
+以下输入已经按上述规则排序。每行 `canonical JCS` 是对象键和数组规范化后的精确 UTF-8 输入；
+`framed escaped` 使用 `\x00` 表示单字节 `0x00`，并拼接完全相同的 JSON bytes。使用 Node
+`node:crypto` 复算必须得到以下 closed hash。
 
 ```text
-MCP-CONTROL-HASH\0v1\0<domain>\0<schema_version>\0<JCS bytes>
+Vector 1 — request
+canonical JCS = {"action":"packages.register","actor_ref":"actor_operator","management_tenant_id":"tenant_demo","request":{"descriptor_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","module_id":"cargo","schema_version":"2026-08-22.v1","version":"1.0.0"}}
+framed escaped = MCP-CONTROL-HASH\x00v1\x00request\x002026-08-22.v1\x00{"action":"packages.register","actor_ref":"actor_operator","management_tenant_id":"tenant_demo","request":{"descriptor_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","module_id":"cargo","schema_version":"2026-08-22.v1","version":"1.0.0"}}
+expected = mcp-control-hash/v1/request/sha256:1dc6b77eedfc0639d6fb264c4e0557bdeb39a46bbabb968db13a6be7ee8c86da
+
+Vector 2 — preview
+canonical JCS = {"action":"deployments.preview","base_release_revision":0,"creator_actor_ref":"actor_operator","desired_modules":[{"descriptor_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","module_id":"cargo","version":"1.0.0"}],"intent":"change","inventory_refs":[{"descriptor_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","module_id":"cargo","version":"1.0.0"}],"management_tenant_id":"tenant_demo","policy_version":"writable-module-control-plane-v1","preview_ttl_seconds":900,"schema_version":"2026-08-22.v1","validation":{"base_matches":true,"desired_modules_valid":true,"inventory_matches":true,"minimum_active_modules":true,"reason_codes":[]}}
+framed escaped = MCP-CONTROL-HASH\x00v1\x00preview\x002026-08-22.v1\x00{"action":"deployments.preview","base_release_revision":0,"creator_actor_ref":"actor_operator","desired_modules":[{"descriptor_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","module_id":"cargo","version":"1.0.0"}],"intent":"change","inventory_refs":[{"descriptor_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","module_id":"cargo","version":"1.0.0"}],"management_tenant_id":"tenant_demo","policy_version":"writable-module-control-plane-v1","preview_ttl_seconds":900,"schema_version":"2026-08-22.v1","validation":{"base_matches":true,"desired_modules_valid":true,"inventory_matches":true,"minimum_active_modules":true,"reason_codes":[]}}
+expected = mcp-control-hash/v1/preview/sha256:13348c6594c3d24cc30aeb62f839e6b6fd1fe133830a2fdad11b8d4b59b6e503
 ```
 
-`<domain>` 只能是 `request` 或 `preview`，当前 `<schema_version>` 是 `2026-08-22.v1`；
-输出固定为 `mcp-control-hash/v1/<domain>/sha256:<64 lowercase hex>`。request payload 必须
-含 action 和完整已校验请求；preview payload 必须含服务端绑定的 tenant/creator、intent、base
-release/revision、inventory digest set、desired refs、policy/schema version、validation 和
-expiry。对象键按 JCS 排序；`desired refs`、inventory digest set、`reason_codes` 等集合数组
-按稳定键排序；有顺序语义的数组保持顺序。跨重启计算结果必须一致；更换 schema version 或
-domain 必须产生不同 hash。
+使用 Vector 1 的同一 canonical JSON、只把 domain 换为 `preview`，应得到
+`mcp-control-hash/v1/preview/sha256:7f756bdf267eb3ef54b6ee5a3211a947255f491072f72f92dc7f844e6024c04b`，
+以证明 domain separation；只修改 schema version 也必须改变 framed bytes 和 hash。
+`descriptor_digest` 仍独立为 `sha256:<64 lowercase hex>`，对完整 canonical module descriptor
+计算且不加 control framing，不能等同 request/preview hash。
 
-inventory descriptor digest 仍是 `sha256:<64 lowercase hex>`，只对完整 canonical descriptor
-做 SHA-256，不带 control hash domain prefix。它只证明 deployment descriptor 未漂移，不能替代
-request/preview hash、artifact/image digest、签名或生产 qualification。Task 1 当前只负责
-descriptor/inventory 公共合同，本次不改其源码、schema 或测试；Task 2/3 必须提供共享 helper
-和跨重启、对象键序、集合输入顺序、顺序数组、schema/domain separation 回归测试。
+descriptor digest 只证明 deployment descriptor 未漂移，不能替代 request/preview hash、
+artifact/image digest、签名或生产 qualification。Task 1 当前只负责 descriptor/inventory
+公共合同，本次不改其源码、schema 或测试；Task 2/3 必须提供共享 helper 和跨重启、对象键序、
+集合输入顺序、顺序数组、schema/domain separation 回归测试。
 
 ## 安全
 
@@ -132,47 +178,68 @@ descriptor/inventory 公共合同，本次不改其源码、schema 或测试；T
 ## 数据与迁移
 
 - 使用独立 control DB，schema 从 v1 开始，避免隐式改变现有 production platform store。
-- 新 DB 与 marker 只由显式 initializer 原子创建；普通 runtime 不自动重建缺失的 enabled DB，
+- 新 DB 与 marker 只由显式 initializer 原子创建；普通 runtime 不自动重建缺失的 managed DB，
   也不修复/替换 marker。
 - 数据库启用 strict tables、foreign keys、WAL、FULL synchronous、quick check 和 `0600`。
 - v1 使用 SQLite exclusive locking，只允许一个进程持有同一 control DB。
 - v1 只支持新库创建和同版本重开；未知 user_version 或 schema drift 失败闭合。
 - 已应用 schema 不在紧急回滚中逆迁；回滚应用代码时保留 control DB 和 release 历史。
-- 测试必须保留 fixed `MCP_INSTANCE_STATE_DIR`，初始化后同时删除
-  `MCP_ADMIN_CONTROL_ENABLED`、`MCP_CONTROL_DB_PATH`、`MCP_CONTROL_MARKER_PATH` 和
-  `MCP_INSTANCE_ID`，并证明启动仍发现 `control-identity.json` 后 fail closed，而不是进入
-  never-initialized legacy。
+- 测试必须保留同一 application root，初始化后同时删除
+  `MCP_ADMIN_CONTROL_ENABLED`、`MCP_INSTANCE_ID` 和 `MCP_ADMIN_TENANT_ID`，并证明启动仍发现
+  `control-identity.json` 后 fail closed，而不是把缺失身份当作未初始化。
+
+控制面 strict data model 的 tenant 字段统一为 `management_tenant_id`，不得用含义不明的
+`tenant_id` 替代：
+
+| 记录 | 必填 management tenant 绑定 | 关键约束 |
+| --- | --- | --- |
+| `control_identity` | `management_tenant_id` | 与 marker、服务端当前管理 tenant 逐字一致；缺失/变化 fail closed |
+| `module_registrations`、`module_previews`、`module_approvals` | `management_tenant_id` | 作为租户范围和唯一约束组成部分，不能跨 tenant 读取或重放 |
+| `module_releases`、`module_readbacks` | `management_tenant_id` | release、revision、readback 必须属于同一管理 tenant |
+| `module_control_idempotency`、`module_control_events` | `management_tenant_id` | 幂等键、事件和最终结果不能跨 tenant 复用；缺失/变化 fail closed |
 
 ### Identity marker
 
-初始化配置固定提供一个启动时无条件解析的绝对 host 锚点 `MCP_INSTANCE_STATE_DIR`。fixture
-固定为 `<application-root>/.runtime/mcp-instance-state`；生产必须由 host/service unit 固定一个
-持久挂载路径，缺少该锚点本身即 fail closed。v1 从该目录固定派生
-`control.sqlite` 与其外部 marker `control-identity.json`，不接受可通过删除环境变量旁路的任意
-DB/marker path：
+server assembly 固定提供一个启动时无条件解析的绝对 regular `application-root`。fixture 与生产
+都从该 root 固定派生 state directory；生产 root 由受管 host/service unit 固定，缺少或变化即
+fail closed。v1 从该目录固定派生 `control.sqlite` 与 `control-identity.json`，不接受任何环境
+变量、请求参数或诊断引用作为 DB/marker path override：
 
 ```text
-MCP_INSTANCE_STATE_DIR=/absolute/stable/mcp-instance-state
-MCP_CONTROL_DB_PATH=<MCP_INSTANCE_STATE_DIR>/control.sqlite
-MCP_CONTROL_MARKER_PATH=<MCP_INSTANCE_STATE_DIR>/control-identity.json
+state_dir  = <application-root>/.runtime/mcp-instance-state
+control_db = <state_dir>/control.sqlite
+marker     = <state_dir>/control-identity.json
 ```
 
-marker 是 UTF-8、无 BOM、单个 JCS JSON 对象加一个 LF，唯一字段为：
+managed entrypoint 只能在部署/测试显式调用 initializer 成功后打开 control state；initializer 是
+唯一创建者，runtime open 不创建、修复、替换或删除任何状态文件。入口必须先解析 application
+root、派生固定路径、验证 marker/DB/identity tuple 和 control schema，再构造监听器；任一检查失败
+都必须不监听。state directory 整体删除、缺失、不完整，root 派生 path 改变、权限/锁冲突或任何
+symlink 均 fail closed。
+
+marker 是 regular file、UTF-8、无 BOM、单个 RFC 8785/JCS JSON object 加一个 LF；未知字段、重复
+键、额外字节和 symlink 一律拒绝，唯一字段为：
 
 ```json
-{"control_db_id":"db_<32-lower-hex>","control_db_path":"/absolute/path/to/control.sqlite","instance_id":"<MCP_INSTANCE_ID>","marker_format":"mcp-control-identity/v1","schema_version":1}
+{"control_db_id":"db_<32-lower-hex>","control_db_path":"/absolute/path/to/application-root/.runtime/mcp-instance-state/control.sqlite","instance_id":"<MCP_INSTANCE_ID>","management_tenant_id":"<MCP_ADMIN_TENANT_ID>","marker_format":"mcp-control-identity/v1","schema_version":1}
 ```
 
-DB 另有固定 singleton `control_identity` 行保存相同的 instance/path/db-id/schema tuple；
-`control_db_id` 是 initializer 生成的随机 128-bit ID。identity directory `0700`、marker
-`0400`、DB `0600`，均拒绝 symlink。initializer 在 sibling staging directory 中完成 schema、
-identity row、fsync 和 marker 的 `O_CREAT|O_EXCL` 写入，再以一次 directory rename 原子安装
-DB+marker；目标已存在时拒绝，普通启动绝不隐式创建。marker 缺失/损坏、DB path 不匹配、换新
-空 DB、DB row/marker/instance/schema 不一致或 control policy enabled=false/缺失时均不监听。
-只有 state directory、marker、DB 都不存在且显式 `MCP_LEGACY_STATIC_MODE=true` 的从未初始化
-新实例，才可以 legacy static-all-active；legacy flag 在 marker 出现后永远无效。即使操作者
-同时删除 `MCP_ADMIN_CONTROL_ENABLED`、旧的 DB/marker path override 和 `MCP_INSTANCE_ID`，
-启动仍会从固定 state directory 发现 sentinel 并 fail closed，而不是判断 never-initialized。
+DB 另有固定 singleton `control_identity` 行保存完全相同的 `management_tenant_id`、instance、
+path、db-id 和 schema tuple；`control_db_id` 是 initializer 生成的随机 128-bit ID，不从 path、
+tenant 或 release 推导。identity directory `0700`、marker `0400`、DB `0600`，均拒绝 symlink。
+initializer 必须在同一父文件系统内用 `fs.mkdtemp` 或等价的 exclusive `mkdir` 创建 sibling staging
+directory（不能把 `O_CREAT` 描述成创建目录），目录权限 `0700`；staging DB 事务内建立 strict v1
+schema、identity row 和 `user_version=1`，执行 `PRAGMA wal_checkpoint(TRUNCATE)` 并关闭所有
+SQLite handles。若 clean close 后仍有 `control.sqlite-wal` 或 `control.sqlite-shm`，initializer
+必须失败并清理 staging；否则 fsync 主 DB。marker 再以 `O_CREAT|O_EXCL` regular file 写入并
+fsync，fsync staging directory 后才允许把 staging directory rename 到不存在的 final state
+directory；最后 fsync parent directory。目标已存在、目标为 symlink、任一中间节点为 symlink 或
+rename 非原子时拒绝。
+
+启动时必须校验当前 `MCP_INSTANCE_ID` 与 `MCP_ADMIN_TENANT_ID` 都存在且逐字匹配 marker/DB。
+tenant 缺失、变化或与服务端管理 tenant 不一致，instance 缺失/变化，`MCP_ADMIN_CONTROL_ENABLED`
+缺失/不是字面 `true`，marker/DB 缺失、损坏、path/schema/identity 不一致、换新空 DB 或锁冲突，
+均 fail closed、不监听；不存在 release 也不能改变 managed policy 或 active set。
 
 ## 发布语义
 
@@ -182,8 +249,10 @@ DB+marker；目标已存在时拒绝，普通启动绝不隐式创建。marker �
   reject/expired/consumed 不可发布或覆盖。
 - publish：先拒绝 newest unresolved release；无 `published_pending_readback|manual_review` 时才
   compare-and-set base，创建 release，应用 activation，读回 exact snapshot。
-- publish 幂等记录在 release 事务中进入 `domain_committed` 并固定 release ID；进程中断后的
-  同键重试只能恢复该 release 的 readback，不能创建第二个 release。
+- publish 幂等记录在 release 事务中进入 `domain_committed`，固定 release ID，并将 release
+  置为 `published_pending_readback`；从 `domain_committed` 自动 readback 仅限该 pending 状态。
+  进程中断后的同键重试不能创建第二个 release；若固定 release 已为 `manual_review`，publish
+  replay 只返回持久化结果，零 activation、零 readback。
 - success：只说明当前环境中的控制写入和运行时读回成功；是否 production eligible 由 inventory
   evidence 单独给出。
 - manual_review：数据库写入已发生但 activation/readback 未知或不一致。
@@ -218,15 +287,17 @@ DB+marker；目标已存在时拒绝，普通启动绝不隐式创建。marker �
 2. 应用代码只能回滚到仍理解 control DB/schema/activation policy 的 control-plane-aware image
    digest；`active_verified` 不是 artifact 签名或生产资格证明。不删除 control DB、不逆迁 schema。
 3. 禁止回滚到不认识 control DB/schema/activation policy 的旧代码；compatibility gate 未通过
-   时停止回滚，不能忽略独立文件后默认全部启用。
+   时停止回滚，不能让旧代码忽略独立控制面文件后启动。
 4. 若需恢复某个 module profile，使用仍可运行的新版本控制面按“回滚到上一已读回版本（本地
    受控环境）”生成 rollback preview→双人审批→新 release→exact readback，不直接编辑 SQLite。
 5. 验收必须验证 tools/list、普通 operational disable 的 `unavailable`、重新启用、audit 和
    active release readback；security quarantine/退役/管理员安全禁用请求必须是 `blocked`，不移除目录。
 
-本次不修改 release/security/rollback runbook；Task 7 才能写入最终操作步骤。Task 7 的最终交接
-验收必须固定 production Admin POST=`blocked`、fixture identities 不进入 production、SQLite
-single-process lock、marker/DB identity continuity 和 compatibility gate 证据。
+本次不修改 release/security/rollback runbook。Task 7 更新并验收前，它们仍是旧应用/集成流程的
+参考，不是新控制面发布权威；这阻塞 Task 5 和最终验收，但不阻塞 Task 2 的 store 实现。Task 7
+才能写入最终操作步骤；最终交接验收必须固定 production Admin POST=`blocked`、fixture identities
+不进入 production、SQLite single-process lock、marker/DB/management-tenant identity continuity
+和 compatibility gate 证据。
 
 ## 验证
 
