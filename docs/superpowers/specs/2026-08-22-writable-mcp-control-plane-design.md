@@ -278,6 +278,9 @@ domain separation 都必须有回归测试。
 - v1 使用 SQLite exclusive locking 保证同一 control DB 只有一个运行进程；第二个实例启动
   fail closed。production 多实例不在 v1 范围。
 - 提供原子操作，不向上层暴露通用 SQL 或通用 JSON 写入口。
+- 只允许按管理 tenant 加精确 `preview_ref`、`approval_id`、`release_id` 或
+  `action + idempotency_key` 的窄查询，用于 rollback target、审批/发布绑定和持久 replay；不提供
+  table selector、任意 key 空间或通用 `get`。
 - 保存 `control_identity`、模块登记、preview、approval、release、readback、幂等结果和追加式事件；
   `control_identity` 是唯一的窄语义元数据行，不是通用 key-value 表。
 

@@ -229,7 +229,16 @@ getControlState(): Promise<ModuleControlState>;
 getActiveRelease(): Promise<ModuleReleaseRecord | null>;
 getPendingRelease(): Promise<ModuleReleaseRecord | null>;
 getNewestUnresolvedRelease(): Promise<ModuleReleaseRecord | null>;
+getPreview(query: { managementTenantId: string; previewRef: string }): Promise<ModulePreviewRecord | null>;
+getApproval(query: { managementTenantId: string; approvalId: string }): Promise<ModuleApprovalRecord | null>;
+getRelease(query: { managementTenantId: string; releaseId: string }): Promise<ModuleReleaseRecord | null>;
+getReadback(query: { managementTenantId: string; releaseId: string }): Promise<ModuleReadbackRecord | null>;
+getIdempotency(query: { managementTenantId: string; action: ModuleControlAction; idempotencyKey: string }): Promise<ModuleControlIdempotencyRecord | null>;
 ```
+
+The five exact-reference lookups are required for rollback targets, approval/publish binding and
+persisted idempotency replay. They remain tenant-scoped, typed use cases; they do not authorize a
+generic `get`, table selector, SQL surface or caller-selected key space.
 
 Every mutation takes server-created actor/context metadata, canonical request hash, action, idempotency key, and redacted event payload. Same action/key/hash replays; same action/key/different hash is a typed conflict. Register, preview, and approval store the complete response and event in their domain transaction. For a new publish key, the service checks the unresolved gate before reserving idempotency; it then atomically writes the release/event and advances the idempotency record to `domain_committed` with the immutable release ID. Automatic exact readback from `domain_committed` is permitted only while that fixed release is `published_pending_readback`; it may never create a second release. If the fixed release is already `manual_review`, publish replay returns only the persisted final result and performs zero activation and zero readback. After the one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, using the same release/revision and desired refs. Only `module_control_idempotency.status` becomes `completed`; `module_releases.status` becomes `active_verified`; Admin `readback.status` becomes `verified`. Expired completed keys may be pruned only inside a later transaction; never prune `reserved`/`domain_committed` records or weaken release history.
 Publish processing is ordered: first inspect the existing same-tenant/action/key idempotency record and

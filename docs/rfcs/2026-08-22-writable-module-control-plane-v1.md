@@ -189,6 +189,8 @@ artifact/image digest、签名或生产 qualification。Task 1 当前只负责 d
 - 数据库启用 strict tables、foreign keys、WAL、FULL synchronous、quick check 和 `0600`。
 - v1 使用 SQLite exclusive locking，只允许一个进程持有同一 control DB。
 - v1 只支持新库创建和同版本重开；未知 user_version 或 schema drift 失败闭合。
+- Repository 只增加管理 tenant 范围内的精确 preview、approval、release、readback 和 idempotency
+  查询，以支撑指定 rollback target、四眼绑定和 persisted replay；这些不是通用表读取或任意 key API。
 - 已应用 schema 不在紧急回滚中逆迁；回滚应用代码时保留 control DB 和 release 历史。
 - 测试必须保留同一 application root，初始化后同时删除
   `MCP_ADMIN_CONTROL_ENABLED`、`MCP_INSTANCE_ID` 和 `MCP_ADMIN_TENANT_ID`，并证明启动仍发现
