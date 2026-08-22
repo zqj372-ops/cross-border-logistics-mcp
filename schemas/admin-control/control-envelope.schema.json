@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-22/admin-control/control-envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "trace_id", "audit_id", "status", "data", "reason_codes", "readback"],
+  "properties": {
+    "schema_version": {"const": "2026-08-22.v1"},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "trace_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "audit_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "status": {"enum": ["success", "needs_input", "manual_review", "blocked", "unavailable"]},
+    "data": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/controlState"},
+        {"$ref": "#/$defs/registration"},
+        {"$ref": "#/$defs/preview"},
+        {"$ref": "#/$defs/approval"},
+        {"$ref": "#/$defs/release"},
+        {"$ref": "#/$defs/reconciliation"}
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+    },
+    "readback": {"$ref": "#/$defs/readback"}
+  },
+  "$defs": {
+    "moduleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_id", "version", "descriptor_digest"],
+      "properties": {
+        "module_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"},
+        "descriptor_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    },
+    "controlState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"const": "control_state"},
+        "active_release_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "active_revision": {"type": "integer", "minimum": 0},
+        "active_modules": {"type": "array", "items": {"$ref": "#/$defs/moduleRef"}},
+        "inventory_module_ids": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}}
+      }
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"const": "registration"},
+        "module_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"},
+        "descriptor_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "evidence_level": {"const": "local_build"},
+        "production_eligible": {"const": false}
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"const": "preview"},
+        "preview_ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "intent": {"enum": ["change", "rollback"]},
+        "base_release_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "base_revision": {"type": "integer", "minimum": 0},
+        "desired_modules": {"type": "array", "items": {"$ref": "#/$defs/moduleRef"}},
+        "target_release_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "expires_at": {"type": ["string", "null"]}
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"const": "approval"},
+        "approval_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "preview_ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "decision": {"enum": ["approve", "reject"]}
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"const": "release"},
+        "release_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "revision": {"type": "integer", "minimum": 0},
+        "active_modules": {"type": "array", "items": {"$ref": "#/$defs/moduleRef"}}
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"const": "reconciliation"},
+        "release_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "revision": {"type": ["integer", "null"], "minimum": 0},
+        "status": {"enum": ["pending", "verified", "mismatch", "unknown"]}
+      }
+    },
+    "readback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "release_id", "revision"],
+      "properties": {
+        "status": {"enum": ["not_applicable", "pending", "verified", "mismatch", "unknown"]},
+        "release_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "revision": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}

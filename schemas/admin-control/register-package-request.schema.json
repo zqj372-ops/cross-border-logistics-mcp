@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-22/admin-control/register-package-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "module_id", "version", "descriptor_digest"],
+  "properties": {
+    "schema_version": {"const": "2026-08-22.v1"},
+    "module_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"},
+    "descriptor_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+  }
+}

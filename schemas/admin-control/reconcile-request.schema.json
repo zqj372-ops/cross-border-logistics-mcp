@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-22/admin-control/reconcile-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release_id"],
+  "properties": {
+    "schema_version": {"const": "2026-08-22.v1"},
+    "release_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  }
+}

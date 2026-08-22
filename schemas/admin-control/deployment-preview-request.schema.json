@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-22/admin-control/deployment-preview-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intent"],
+  "properties": {
+    "schema_version": {"const": "2026-08-22.v1"},
+    "intent": {"enum": ["change", "rollback"]},
+    "desired_modules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/moduleRef"}
+    },
+    "target_release_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "intent", "desired_modules"],
+      "properties": {
+        "schema_version": {"const": "2026-08-22.v1"},
+        "intent": {"const": "change"},
+        "desired_modules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/moduleRef"}
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "intent", "target_release_id"],
+      "properties": {
+        "schema_version": {"const": "2026-08-22.v1"},
+        "intent": {"const": "rollback"},
+        "target_release_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+      }
+    }
+  ],
+  "$defs": {
+    "moduleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_id", "version", "descriptor_digest"],
+      "properties": {
+        "module_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"},
+        "descriptor_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    }
+  }
+}
