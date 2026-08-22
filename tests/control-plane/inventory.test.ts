@@ -188,6 +188,25 @@ describe("module deployment inventory", () => {
     }
   });
 
+  it("maps inherited RBAC tool names to a stable non-disclosing inventory error", () => {
+    for (const toolName of ["constructor", "toString"]) {
+      const thrown = captureInventoryError(input({
+        catalog: [
+          toolData("cargo", toolName),
+          toolData("container", "container.plan_summary", { permission: "container:calculate" }),
+        ],
+      }));
+
+      expect(thrown).toBeInstanceOf(ModuleInventoryError);
+      expect(thrown).not.toBeInstanceOf(ForbiddenError);
+      expect(thrown).toMatchObject({
+        code: "tool_policy_unknown",
+        message: "Tool policy is not defined.",
+      });
+      expect(thrown).not.toHaveProperty("message", expect.stringContaining(toolName));
+    }
+  });
+
   it("rejects a known tool whose permission differs from its fixed RBAC policy", () => {
     const thrown = captureInventoryError(input({
       catalog: [

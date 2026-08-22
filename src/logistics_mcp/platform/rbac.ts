@@ -123,10 +123,10 @@ export function authorizeTool(
 ): true {
   assertTenantScope(context, targetTenantId);
 
-  const policy = (toolPolicies as Partial<Record<string, ToolPolicy>>)[toolName];
-  if (policy === undefined) {
+  if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");
   }
+  const policy = toolPolicies[toolName as KnownToolName];
   if (!context.roles.some((role) => policy.roles.includes(role))) {
     throw new ForbiddenError("The authenticated role cannot use this tool.");
   }
@@ -138,9 +138,9 @@ export function authorizeTool(
 }
 
 export function getToolPolicy(toolName: string): ToolPolicy {
-  const policy = toolPolicies[toolName as KnownToolName];
-  if (policy === undefined) {
+  if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");
   }
+  const policy = toolPolicies[toolName as KnownToolName];
   return policy;
 }

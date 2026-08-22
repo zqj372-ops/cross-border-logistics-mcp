@@ -9,6 +9,7 @@ import {
   CrossTenantAccessError,
   ForbiddenError,
   authorizeTool,
+  getToolPolicy,
 } from "../../src/logistics_mcp/platform/rbac";
 
 const claims = (role: AuthClaims["actor_role"]): AuthClaims => ({
@@ -76,6 +77,42 @@ describe("platform context and RBAC", () => {
     expect(() => authorizeTool(context, "rules.write")).toThrow(
       ForbiddenError,
     );
+  });
+
+  it("rejects inherited tool-policy names without disclosing the input", () => {
+    const context = parseExecutionContext(claims("sales"));
+    const expectedMessage = "The requested MCP tool is not allowlisted.";
+
+    for (const toolName of ["constructor", "toString"]) {
+      let policyError: unknown;
+      try {
+        getToolPolicy(toolName);
+      } catch (error: unknown) {
+        policyError = error;
+      }
+
+      expect(policyError).toBeInstanceOf(ForbiddenError);
+      expect(policyError).toMatchObject({ message: expectedMessage });
+      expect(policyError).not.toHaveProperty(
+        "message",
+        expect.stringContaining(toolName),
+      );
+
+      let authorizationError: unknown;
+      try {
+        authorizeTool(context, toolName);
+      } catch (error: unknown) {
+        authorizationError = error;
+      }
+
+      expect(authorizationError).toBeInstanceOf(ForbiddenError);
+      expect(authorizationError).not.toBeInstanceOf(TypeError);
+      expect(authorizationError).toMatchObject({ message: expectedMessage });
+      expect(authorizationError).not.toHaveProperty(
+        "message",
+        expect.stringContaining(toolName),
+      );
+    }
   });
 
   it("blocks a target tenant that differs from the authenticated tenant", () => {
