@@ -1,13 +1,16 @@
-import {
-  ADMIN_CONTROL_RFC3339_PATTERN,
-  controlEnvelopeSchema,
-} from "./contracts";
+import { isDeepStrictEqual, types as nodeUtilTypes } from "node:util";
+
+import { controlEnvelopeSchema } from "./contracts";
 import type { ControlEnvelope } from "./contracts";
 import {
   DESCRIPTOR_DIGEST_PATTERN,
   IDENTIFIER_PATTERN,
   VERSION_PATTERN,
 } from "./lexical-contracts";
+import {
+  ADMIN_CONTROL_RFC3339_PATTERN,
+  compareRfc3339Instants,
+} from "./rfc3339-instant";
 import type { DescriptorDigest } from "./types";
 
 export type { ControlEnvelope } from "./contracts";
@@ -258,6 +261,22 @@ export type ModuleReleaseRecord =
   | ModuleActiveVerifiedReleaseRecord
   | ModuleSupersededReleaseRecord;
 
+export interface ModuleChangeReleaseHistoryEntry {
+  readonly release: ModuleReleaseRecord;
+  readonly intent: "change";
+  readonly rollbackTargetReleaseId: null;
+}
+
+export interface ModuleRollbackReleaseHistoryEntry {
+  readonly release: ModuleReleaseRecord;
+  readonly intent: "rollback";
+  readonly rollbackTargetReleaseId: string;
+}
+
+export type ModuleReleaseHistoryEntry =
+  | ModuleChangeReleaseHistoryEntry
+  | ModuleRollbackReleaseHistoryEntry;
+
 interface ModuleReadbackRecordBase {
   readonly managementTenantId: string;
   readonly readbackRef: string;
@@ -311,6 +330,7 @@ interface ModuleControlIdempotencyRecordBase {
   readonly action: ModuleControlAction;
   readonly idempotencyKey: string;
   readonly requestHash: CanonicalRequestHash;
+  readonly actorRef: string;
   readonly createdAt: string;
   readonly expiresAt: string;
 }
@@ -510,6 +530,15 @@ interface ControlEventRecordFields {
 
 export type ControlEventRecord = ControlEventInput & ControlEventRecordFields;
 
+export interface ControlEventLifecycleCounts {
+  approval: number;
+  completion: number;
+  preview: number;
+  reconciliation: number;
+  registration: number;
+  release: number;
+}
+
 interface ControlRequestMetadataBase<
   Action extends ModuleControlAction,
   Event extends ControlEventInput & { action: Action },
@@ -571,7 +600,9 @@ export interface ModuleControlState {
   readonly latestPreview: ModulePreviewRecord | null;
   readonly latestApproval: ModuleApprovalRecord | null;
   readonly latestReadback: ModuleReadbackRecord | null;
+  readonly releaseHistory: readonly ModuleReleaseHistoryEntry[];
   readonly events: readonly ControlEventRecord[];
+  readonly eventsTruncated: boolean;
 }
 
 export type ControlRecord =
@@ -755,6 +786,7 @@ export function assertControlRequestBinding(input: {
       (record as ModuleControlIdempotencyRecord).action !== metadata.action ||
       (record as ModuleControlIdempotencyRecord).idempotencyKey !== metadata.idempotencyKey ||
       (record as ModuleControlIdempotencyRecord).requestHash !== metadata.requestHash ||
+      (record as ModuleControlIdempotencyRecord).actorRef !== metadata.actorRef ||
       event.detail.recordRef !== event.objectRef ||
       event.detail.domainRecordRef !==
         (record as ModuleControlIdempotencyRecord).domainRecordRef ||
@@ -859,6 +891,8 @@ export type DeepReadonly<T> = T extends readonly (infer Item)[]
 const MAX_CONTROL_RECORD_DEPTH = 64;
 const MAX_CONTROL_RECORD_NODES = 100_000;
 const MAX_CONTROL_ARRAY_LENGTH = 10_000;
+const MAX_CONTROL_STATE_RELEASE_HISTORY = 128;
+const MAX_CONTROL_STATE_EVENTS = 256;
 
 interface CloneBudget {
   nodes: number;
@@ -898,6 +932,7 @@ function cloneControlValue(
     return value;
   }
   if (typeof value !== "object") invalidState();
+  if (nodeUtilTypes.isProxy(value)) invalidState();
   if (stack.has(value)) invalidState();
 
   if (Array.isArray(value)) {
@@ -934,9 +969,9 @@ function cloneControlValue(
   }
 
   const prototype = Reflect.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) invalidState();
+  if (prototype !== Object.prototype) invalidState();
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const clone = Object.create(null) as Record<string, unknown>;
+  const clone = {} as Record<string, unknown>;
   stack.add(value);
   for (const key of Reflect.ownKeys(descriptors)) {
     if (typeof key !== "string") invalidState();
@@ -948,18 +983,24 @@ function cloneControlValue(
     ) {
       invalidState();
     }
-    clone[key] = cloneControlValue(descriptor.value, stack, budget, depth + 1);
+    Object.defineProperty(clone, key, {
+      configurable: true,
+      enumerable: true,
+      value: cloneControlValue(descriptor.value, stack, budget, depth + 1),
+      writable: true,
+    });
   }
   stack.delete(value);
   return clone;
 }
 
 function exactKeys(value: unknown, keys: readonly string[]): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null) {
     invalidState();
   }
+  if (nodeUtilTypes.isProxy(value) || Array.isArray(value)) invalidState();
   const prototype = Reflect.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) invalidState();
+  if (prototype !== Object.prototype) invalidState();
   const record = value as Record<string, unknown>;
   const ownKeys = Reflect.ownKeys(record);
   if (ownKeys.some((key) => typeof key !== "string")) invalidState();
@@ -1049,6 +1090,264 @@ function moduleRefArraysEqual(
   );
 }
 
+function moduleRefKey(ref: ModuleControlRef): string {
+  return `${ref.moduleId}\0${ref.version}\0${ref.descriptorDigest}`;
+}
+
+function moduleRefSetsEqual(
+  left: readonly ModuleControlRef[],
+  right: readonly ModuleControlRef[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const rightKeys = new Set(right.map(moduleRefKey));
+  return rightKeys.size === right.length && left.every((ref) => rightKeys.has(moduleRefKey(ref)));
+}
+
+export function assertModulePreviewAuthoritySemantics(
+  preview: ModulePreviewRecord,
+  baseRelease: ModuleReleaseRecord | null,
+  rollbackTargetRelease: ModuleReleaseRecord | null,
+  releaseHistory: readonly ModuleReleaseHistoryEntry[],
+): void {
+  if (releaseHistory.length > MAX_CONTROL_STATE_RELEASE_HISTORY) invalidState();
+  const historyReleaseIds = new Set<string>();
+  const historyRevisions = new Set<number>();
+  let previousHistoryRevision: number | null = null;
+  for (const entry of releaseHistory) {
+    const release = entry.release;
+    if (
+      release.managementTenantId !== preview.managementTenantId ||
+      historyReleaseIds.has(release.releaseId) ||
+      historyRevisions.has(release.revision) ||
+      (previousHistoryRevision !== null && release.revision >= previousHistoryRevision)
+    ) {
+      invalidState();
+    }
+    historyReleaseIds.add(release.releaseId);
+    historyRevisions.add(release.revision);
+    previousHistoryRevision = release.revision;
+  }
+
+  let baseModules: readonly ModuleControlRef[];
+  if (preview.baseReleaseId === null) {
+    if (preview.baseRevision !== 0 || baseRelease !== null) invalidState();
+    baseModules = [];
+  } else {
+    if (
+      baseRelease === null ||
+      baseRelease.managementTenantId !== preview.managementTenantId ||
+      baseRelease.releaseId !== preview.baseReleaseId ||
+      baseRelease.revision !== preview.baseRevision ||
+      (baseRelease.status !== "active_verified" &&
+        baseRelease.status !== "superseded")
+    ) {
+      invalidState();
+    }
+    baseModules = baseRelease.desiredModules;
+  }
+
+  const baseKeys = new Set(baseModules.map(moduleRefKey));
+  const desiredKeys = new Set(preview.desiredModules.map(moduleRefKey));
+  const inventoryKeys = new Set(preview.inventoryRefs.map(moduleRefKey));
+  const expectedAdded = preview.desiredModules.filter(
+    (ref) => !baseKeys.has(moduleRefKey(ref)),
+  );
+  const expectedRemoved = baseModules.filter(
+    (ref) => !desiredKeys.has(moduleRefKey(ref)),
+  );
+  const expectedRetained = preview.desiredModules.filter(
+    (ref) => baseKeys.has(moduleRefKey(ref)),
+  );
+  if (
+    !moduleRefSetsEqual(preview.diff.added, expectedAdded) ||
+    !moduleRefSetsEqual(preview.diff.removed, expectedRemoved) ||
+    !moduleRefSetsEqual(preview.diff.retained, expectedRetained)
+  ) {
+    invalidState();
+  }
+
+  const inventoryMatches = preview.desiredModules.every((ref) =>
+    inventoryKeys.has(moduleRefKey(ref)),
+  );
+  const minimumActiveModules = preview.desiredModules.length > 0;
+  const validation = preview.validation;
+  const allValid =
+    validation.baseMatches &&
+    validation.desiredModulesValid &&
+    validation.inventoryMatches &&
+    validation.minimumActiveModules;
+  if (
+    validation.baseMatches !== true ||
+    validation.desiredModulesValid !== true ||
+    validation.inventoryMatches !== inventoryMatches ||
+    validation.minimumActiveModules !== minimumActiveModules ||
+    (validation.reasonCodes.length === 0) !== allValid
+  ) {
+    invalidState();
+  }
+
+  if (preview.intent === "rollback") {
+    const boundedTarget = releaseHistory.find(
+      (entry) => entry.release.releaseId === preview.targetReleaseId,
+    );
+    if (
+      boundedTarget === undefined ||
+      rollbackTargetRelease === null ||
+      !isDeepStrictEqual(boundedTarget.release, rollbackTargetRelease) ||
+      rollbackTargetRelease.managementTenantId !== preview.managementTenantId ||
+      rollbackTargetRelease.releaseId !== preview.targetReleaseId ||
+      rollbackTargetRelease.revision >= preview.baseRevision ||
+      (rollbackTargetRelease.status !== "active_verified" &&
+        rollbackTargetRelease.status !== "superseded") ||
+      !moduleRefSetsEqual(
+        rollbackTargetRelease.desiredModules,
+        preview.desiredModules,
+      )
+    ) {
+      invalidState();
+    }
+  } else if (rollbackTargetRelease !== null) {
+    invalidState();
+  }
+}
+
+export function assertControlEventInstantOrder(
+  previous: ControlEventRecord | null,
+  current: ControlEventRecord,
+): void {
+  if (previous === null) return;
+  const comparison = compareRfc3339Instants(
+    previous.occurredAt,
+    current.occurredAt,
+  );
+  if (comparison === null || comparison > 0) invalidState();
+}
+
+export function resolveMonotonicControlEventOccurredAt(
+  authorityAt: string,
+  previous: ControlEventRecord | null,
+): string {
+  assertTimestamp(authorityAt);
+  if (previous === null) return authorityAt;
+  const comparison = compareRfc3339Instants(
+    authorityAt,
+    previous.occurredAt,
+  );
+  if (comparison === null) invalidState();
+  return comparison < 0 ? previous.occurredAt : authorityAt;
+}
+
+export function createControlEventLifecycleCounts(): ControlEventLifecycleCounts {
+  return {
+    approval: 0,
+    completion: 0,
+    preview: 0,
+    reconciliation: 0,
+    registration: 0,
+    release: 0,
+  };
+}
+
+export function assertControlEventLifecycleCardinality(
+  record: ModuleControlIdempotencyRecord,
+  counts: ControlEventLifecycleCounts,
+): void {
+  for (const count of [
+    counts.approval,
+    counts.completion,
+    counts.preview,
+    counts.reconciliation,
+    counts.registration,
+    counts.release,
+  ]) {
+    assertNonnegativeInteger(count);
+  }
+  if (record.status === "reserved") {
+    if (
+      counts.approval !== 0 ||
+      counts.completion !== 0 ||
+      counts.preview !== 0 ||
+      counts.reconciliation !== 0 ||
+      counts.registration !== 0 ||
+      counts.release !== 0
+    ) {
+      invalidState();
+    }
+    return;
+  }
+  const completionExpected =
+    (record.action === "deployments.publish" ||
+      record.action === "deployments.reconcile") &&
+    record.status === "completed";
+  if (
+    counts.completion > 1 ||
+    (record.status !== "completed" && counts.completion !== 0) ||
+    (completionExpected && counts.completion !== 1)
+  ) {
+    invalidState();
+  }
+  switch (record.action) {
+    case "packages.register":
+      if (
+        counts.registration !== 1 ||
+        counts.preview !== 0 ||
+        counts.approval !== 0 ||
+        counts.release !== 0 ||
+        counts.reconciliation !== 0
+      ) {
+        invalidState();
+      }
+      return;
+    case "deployments.preview":
+      if (
+        counts.preview !== 1 ||
+        counts.registration !== 0 ||
+        counts.approval !== 0 ||
+        counts.release !== 0 ||
+        counts.reconciliation !== 0
+      ) {
+        invalidState();
+      }
+      return;
+    case "approvals.decide":
+      if (
+        counts.approval !== 1 ||
+        counts.registration !== 0 ||
+        counts.preview !== 0 ||
+        counts.release !== 0 ||
+        counts.reconciliation !== 0
+      ) {
+        invalidState();
+      }
+      return;
+    case "deployments.publish":
+      if (
+        counts.release !== 1 ||
+        counts.registration !== 0 ||
+        counts.preview !== 0 ||
+        counts.approval !== 0 ||
+        counts.reconciliation > 1 ||
+        (record.status === "completed" && counts.reconciliation !== 1)
+      ) {
+        invalidState();
+      }
+      return;
+    case "deployments.reconcile":
+      if (
+        counts.reconciliation !== 1 ||
+        counts.registration !== 0 ||
+        counts.preview !== 0 ||
+        counts.approval !== 0 ||
+        counts.release !== 0
+      ) {
+        invalidState();
+      }
+      return;
+    default:
+      invalidState();
+  }
+}
+
 function assertRegistration(value: unknown): void {
   const record = exactKeys(value, [
     "managementTenantId",
@@ -1131,7 +1430,9 @@ function assertPreview(value: unknown): void {
   assertIdentifier(record.creatorActorRef);
   assertTimestamp(record.createdAt);
   assertTimestamp(record.expiresAt);
-  if (Date.parse(record.expiresAt) <= Date.parse(record.createdAt)) invalidState();
+  if (compareRfc3339Instants(record.createdAt, record.expiresAt) !== -1) {
+    invalidState();
+  }
   assertBoolean(record.consumed);
 }
 
@@ -1200,7 +1501,22 @@ function assertRelease(value: unknown): void {
   assertIdentifier(record.publisherActorRef);
   assertTimestamp(record.createdAt);
   if (record.publishedAt !== null) assertTimestamp(record.publishedAt);
+  if (record.publishedAt !== null) {
+    const publicationComparison = compareRfc3339Instants(
+      record.createdAt,
+      record.publishedAt,
+    );
+    if (publicationComparison === null || publicationComparison === 1) {
+      invalidState();
+    }
+  }
   assertStringArray(record.reasonCodes);
+  if (
+    record.status !== "published_pending_readback" &&
+    record.publishedAt === null
+  ) {
+    invalidState();
+  }
   switch (record.status) {
     case "published_pending_readback":
       if (
@@ -1231,6 +1547,36 @@ function assertRelease(value: unknown): void {
     default:
       invalidState();
   }
+}
+
+function assertReleaseHistoryEntry(
+  value: unknown,
+): ModuleReleaseHistoryEntry {
+  const record = exactKeys(value, [
+    "release",
+    "intent",
+    "rollbackTargetReleaseId",
+  ]);
+  assertRelease(record.release);
+  const release = record.release as ModuleReleaseRecord;
+  if (record.intent === "change") {
+    if (record.rollbackTargetReleaseId !== null) invalidState();
+    return {
+      release,
+      intent: "change",
+      rollbackTargetReleaseId: null,
+    };
+  }
+  if (record.intent === "rollback") {
+    assertIdentifier(record.rollbackTargetReleaseId);
+    if (record.rollbackTargetReleaseId === release.releaseId) invalidState();
+    return {
+      release,
+      intent: "rollback",
+      rollbackTargetReleaseId: record.rollbackTargetReleaseId,
+    };
+  }
+  invalidState();
 }
 
 function assertReadback(value: unknown): void {
@@ -1387,6 +1733,7 @@ function assertIdempotency(value: unknown): void {
     "action",
     "idempotencyKey",
     "requestHash",
+    "actorRef",
     "status",
     "domainRecordRef",
     "finalResult",
@@ -1397,9 +1744,12 @@ function assertIdempotency(value: unknown): void {
   if (!isModuleControlAction(record.action)) invalidState();
   assertIdentifier(record.idempotencyKey);
   assertRequestHash(record.requestHash);
+  assertIdentifier(record.actorRef);
   assertTimestamp(record.createdAt);
   assertTimestamp(record.expiresAt);
-  if (Date.parse(record.expiresAt) <= Date.parse(record.createdAt)) invalidState();
+  if (compareRfc3339Instants(record.createdAt, record.expiresAt) !== -1) {
+    invalidState();
+  }
   if (record.status === "reserved") {
     if (record.domainRecordRef !== null || record.finalResult !== null) invalidState();
   } else if (record.status === "domain_committed") {
@@ -1570,34 +1920,150 @@ function assertControlState(value: unknown): void {
     "latestPreview",
     "latestApproval",
     "latestReadback",
+    "releaseHistory",
     "events",
+    "eventsTruncated",
   ]);
   assertIdentifier(record.managementTenantId);
   assertNonnegativeInteger(record.activeRevision);
   assertModuleRefArray(record.activeModules);
-  if (!Array.isArray(record.registrations) || !Array.isArray(record.events)) {
+  if (
+    !Array.isArray(record.registrations) ||
+    !Array.isArray(record.releaseHistory) ||
+    !Array.isArray(record.events)
+  ) {
     invalidState();
   }
+  assertBoolean(record.eventsTruncated);
   for (const item of record.registrations) {
     assertRegistration(item);
     if ((item as ModuleRegistrationRecord).managementTenantId !== record.managementTenantId) {
       invalidState();
     }
   }
-  let previousSequence = 0;
+
+  if (record.releaseHistory.length > MAX_CONTROL_STATE_RELEASE_HISTORY) {
+    invalidState();
+  }
+  const releaseHistory = record.releaseHistory.map((item) =>
+    assertReleaseHistoryEntry(item),
+  );
+  const releaseIds = new Set<string>();
+  const releaseRevisions = new Set<number>();
+  for (const entry of releaseHistory) {
+    const release = entry.release;
+    if (
+      release.managementTenantId !== record.managementTenantId ||
+      releaseIds.has(release.releaseId) ||
+      releaseRevisions.has(release.revision) ||
+      release.previousReleaseId === release.releaseId
+    ) {
+      invalidState();
+    }
+    releaseIds.add(release.releaseId);
+    releaseRevisions.add(release.revision);
+  }
+  if (releaseHistory[0]?.release.status === "superseded") invalidState();
+  for (let index = 1; index < releaseHistory.length; index += 1) {
+    const newer = releaseHistory[index - 1]!.release;
+    const older = releaseHistory[index]!.release;
+    if (
+      newer.revision !== older.revision + 1 ||
+      newer.previousReleaseId !== older.releaseId
+    ) {
+      invalidState();
+    }
+    if (
+      index === 1 &&
+      (newer.status === "published_pending_readback" ||
+        newer.status === "manual_review")
+    ) {
+      if (
+        older.status !== "active_verified" ||
+        older.supersededByReleaseId !== null
+      ) {
+        invalidState();
+      }
+    } else if (
+      older.status !== "superseded" ||
+      older.supersededByReleaseId !== newer.releaseId
+    ) {
+      invalidState();
+    }
+  }
+  const oldestRelease = releaseHistory.at(-1)?.release;
+  if (oldestRelease !== undefined) {
+    if (
+      (oldestRelease.revision === 1 && oldestRelease.previousReleaseId !== null) ||
+      (oldestRelease.revision > 1 && oldestRelease.previousReleaseId === null)
+    ) {
+      invalidState();
+    }
+  }
+  const activeHistory = releaseHistory.filter(
+    (entry) => entry.release.status === "active_verified",
+  );
+  const unresolvedHistory = releaseHistory.filter(
+    (entry) =>
+      entry.release.status === "published_pending_readback" ||
+      entry.release.status === "manual_review",
+  );
+  if (activeHistory.length > 1 || unresolvedHistory.length > 1) invalidState();
+  for (const entry of releaseHistory) {
+    if (entry.intent !== "rollback") continue;
+    const target = releaseHistory.find(
+      (candidate) =>
+        candidate.release.releaseId === entry.rollbackTargetReleaseId,
+    );
+    if (
+      target !== undefined &&
+      target.release.revision >= entry.release.revision
+    ) {
+      invalidState();
+    }
+  }
+
+  if (!Array.isArray(record.events) || record.events.length > MAX_CONTROL_STATE_EVENTS) {
+    invalidState();
+  }
+  const eventIds = new Set<string>();
+  let previousSequence: number | null = null;
+  let previousEvent: ControlEventRecord | null = null;
   for (const item of record.events) {
     assertEvent(item);
     const event = item as ControlEventRecord;
     if (
       event.managementTenantId !== record.managementTenantId ||
-      event.sequence <= previousSequence
+      eventIds.has(event.eventId) ||
+      (previousSequence !== null && event.sequence !== previousSequence + 1)
     ) {
       invalidState();
     }
+    assertControlEventInstantOrder(previousEvent, event);
+    eventIds.add(event.eventId);
     previousSequence = event.sequence;
+    previousEvent = event;
+  }
+  if (record.events.length === 0) {
+    if (record.eventsTruncated) invalidState();
+  } else if (record.eventsTruncated) {
+    if (
+      record.events.length !== MAX_CONTROL_STATE_EVENTS ||
+      (record.events[0] as ControlEventRecord).sequence <= 1
+    ) {
+      invalidState();
+    }
+  } else if ((record.events[0] as ControlEventRecord).sequence !== 1) {
+    invalidState();
   }
   if (record.activeRelease === null) {
-    if (record.activeRevision !== 0 || record.activeModules.length !== 0) invalidState();
+    if (
+      record.activeRevision !== 0 ||
+      record.activeModules.length !== 0 ||
+      activeHistory.length !== 0
+    ) {
+      invalidState();
+    }
   } else {
     assertRelease(record.activeRelease);
     const activeRelease = record.activeRelease as ModuleReleaseRecord;
@@ -1605,7 +2071,9 @@ function assertControlState(value: unknown): void {
       activeRelease.managementTenantId !== record.managementTenantId ||
       activeRelease.status !== "active_verified" ||
       activeRelease.revision !== record.activeRevision ||
-      !moduleRefArraysEqual(activeRelease.desiredModules, record.activeModules)
+      !moduleRefArraysEqual(activeRelease.desiredModules, record.activeModules) ||
+      activeHistory.length !== 1 ||
+      !isDeepStrictEqual(activeHistory[0]!.release, activeRelease)
     ) {
       invalidState();
     }
@@ -1626,6 +2094,22 @@ function assertControlState(value: unknown): void {
     assertReadback(record.latestReadback);
     if ((record.latestReadback as ModuleReadbackRecord).managementTenantId !== record.managementTenantId) {
       invalidState();
+    }
+  }
+  if (record.latestPreview !== null) {
+    const latestPreview = record.latestPreview as ModulePreviewRecord;
+    for (const entry of releaseHistory) {
+      if (entry.release.previewRef !== latestPreview.previewRef) continue;
+      const expectedTarget =
+        latestPreview.intent === "rollback"
+          ? latestPreview.targetReleaseId
+          : null;
+      if (
+        entry.intent !== latestPreview.intent ||
+        entry.rollbackTargetReleaseId !== expectedTarget
+      ) {
+        invalidState();
+      }
     }
   }
 }
