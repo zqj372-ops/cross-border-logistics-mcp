@@ -22,6 +22,15 @@
       "summary": "Schema, status, units, evidence and write-boundary invariants."
     },
     {
+      "standard_id": "readback-attempt-finalization-v1",
+      "version": "2026-08-23.v1",
+      "path": "docs/rfcs/2026-08-23-readback-attempt-finalization-v1.md",
+      "priority": 87,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["CONTROL-ATTEMPT-001", "CONTROL-FINALIZE-001", "CONTROL-RECOVERY-001"],
+      "summary": "Accepted terminal-only readback-attempt lineage, atomic finalization, startup recovery and runtime-barrier contract."
+    },
+    {
       "standard_id": "module-runtime.v0",
       "version": "2026-08-21.v0",
       "path": "docs/standards/module-runtime-v0.md",
