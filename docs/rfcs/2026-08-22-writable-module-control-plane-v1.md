@@ -28,8 +28,9 @@ rule_ids: CONTROL-WRITE-001,CONTROL-AUTH-001,CONTROL-RELEASE-001
 2. 新增 `schemas/admin-control/**`，定义 Admin 管理 API 的 Draft 2020-12 请求/响应。该目录
    不改变 `docs/contracts/**` 的 Phase 1 MCP 工具合同。
 3. 构建生成只包含当前应用内静态可信模块的 module inventory 和 canonical descriptor
-   digest。客户端只能按 exact ID/version/digest 登记，不能提交 URL、路径、源码或 secret。
-   v1 inventory 只允许 `local_build`、`production_eligible=false`；不接受 `verified_release`。
+   digest。inventory 仅是登记/激活 allowlist，不是默认 active 集合；客户端只能按 exact
+   ID/version/digest 登记，不能提交 URL、路径、源码或 secret。v1 inventory 只允许 `local_build`、
+   `production_eligible=false`；不接受 `verified_release`。
 4. 新增独立 SQLite control store，路径由 server assembly 传入的绝对 application root 固定派生
    为 `<application-root>/.runtime/mcp-instance-state/control.sqlite`，marker 固定为同一 state
    directory 下的 `control-identity.json`。不接受环境变量、请求参数或诊断引用作为 DB/marker 路径
@@ -42,9 +43,14 @@ rule_ids: CONTROL-WRITE-001,CONTROL-AUTH-001,CONTROL-RELEASE-001
 6. 管理写入要求 active role 为 admin、roles 包含 admin、`platform:admin` scope 和服务端配置的管理 tenant。preview creator
    与 approver 必须是不同 actor。
 7. 新增 `ModuleActivationRegistry`。它只切换已挂载模块的调用门禁，不加载代码、不卸载
-   lease、不改变工具公共合同。普通 `module_disabled_by_release` 保留工具目录可见性，调用
-   返回 `unavailable`；security quarantine、退役和管理员安全禁用不属于 v1，请求必须
-   `blocked`，未来合同另行定义目录移除。
+   lease、不改变工具公共合同。inventory 只提供 allowlist；初始 snapshot 严格为
+   `releaseId:null`、`revision:0`、`activeModules:[]`，不得把 inventory 全量设为 active。没有
+   `active_verified` release 时模块不可路由，调用返回 `unavailable`，reason
+   `module_policy_not_released`，但工具仍保留在 `tools/list`，非模块工具不受影响。首次激活
+   必须完整经过登记→preview→不同 actor 四眼 approval→publish→runtime exact readback；只有
+   readback 成功后的 release 才能放行模块路由。普通 `module_disabled_by_release` 保留工具目录
+   可见性，调用返回 `unavailable`；security quarantine、退役和管理员安全禁用不属于 v1，请求
+   必须 `blocked`，未来合同另行定义目录移除。
 8. publish 必须在持久化后应用不可变 activation snapshot，并对 release/revision/module refs
    做 exact readback。`active_verified`/`verified` 只表示当前 runtime exact readback，不表示
    artifact signature、source attestation 或 production qualification；读回未知或不一致返回
@@ -87,9 +93,9 @@ envelope，必须另行提交共享合同 RFC。
 - Admin API 使用独立 `2026-08-22.v1` closed envelope，包含 request ID、trace ID、audit ID、
   五状态、discriminated data、reason codes 和 readback；不声称复用完整 MCP envelope。
 - managed control-plane entrypoint 必须先由显式 initializer 建立并校验 state directory、marker、
-  DB、identity 和 schema；没有 release 不改变 managed policy 或 active set。初始化后 DB/状态
-  不可恢复、根路径变化、symlink、tenant/identity 漂移或 `MCP_ADMIN_CONTROL_ENABLED` 缺失/非
-  `true` 时启动失败，不监听。
+  DB、identity 和 schema；没有 release 时保留 managed policy，但 active snapshot 仍是空集，模块
+  不可路由。初始化后 DB/状态不可恢复、根路径变化、symlink、tenant/identity 漂移或
+  `MCP_ADMIN_CONTROL_ENABLED` 缺失/非 `true` 时启动失败，不监听。
 - 新版本模块代码仍需应用构建和进程发布；control plane 不宣称跨代码版本 hot-plug。
 
 ## Canonical hash contract
@@ -244,15 +250,24 @@ tenant 缺失、变化或与服务端管理 tenant 不一致，instance 缺失/�
 ## 发布语义
 
 - 登记：exact match 当前 build inventory；只说明当前构建包含该 descriptor。
+- inventory 是 allowlist，不是 activation policy；初始 snapshot 为
+  `releaseId:null`、`revision:0`、`activeModules:[]`。没有 `active_verified` release 时模块调用
+  返回 `unavailable`/`module_policy_not_released`，但 `tools/list` 保持可见。
+- 首次激活只能走完整登记→preview→不同 actor 四眼 approval→publish→runtime exact readback，
+  不得从 inventory、启动恢复或 draft 推导 active policy。
 - preview：固定 base release、desired refs、diff、validation、creator 和 expiry。
 - approval：另一 actor 决定并绑定 preview hash/base/inventory/expiry；append-only 终态，
   reject/expired/consumed 不可发布或覆盖。
-- publish：先拒绝 newest unresolved release；无 `published_pending_readback|manual_review` 时才
-  compare-and-set base，创建 release，应用 activation，读回 exact snapshot。
+- publish 的顺序固定为：先按 tenant/action/idempotency key 查记录并比较 request hash；同 key
+  不同 hash 返回 `blocked/idempotency_conflict`，同 key 同 hash 先走持久化 replay。固定 release
+  为 `manual_review` 时是 final replay，零 activation、零 readback；只有 `domain_committed` 且
+  固定 release 仍为 `published_pending_readback` 时才允许 pending-only readback resume，不创建
+  第二个 release。只有新 key 才检查 newest unresolved；存在 `published_pending_readback` 或
+  `manual_review` 时 `blocked`。通过后才 compare-and-set base、预留幂等记录、创建 release、应用
+  activation 并 exact readback。
 - publish 幂等记录在 release 事务中进入 `domain_committed`，固定 release ID，并将 release
   置为 `published_pending_readback`；从 `domain_committed` 自动 readback 仅限该 pending 状态。
-  进程中断后的同键重试不能创建第二个 release；若固定 release 已为 `manual_review`，publish
-  replay 只返回持久化结果，零 activation、零 readback。
+  进程中断后的同键重试不能创建第二个 release。
 - success：只说明当前环境中的控制写入和运行时读回成功；是否 production eligible 由 inventory
   evidence 单独给出。
 - manual_review：数据库写入已发生但 activation/readback 未知或不一致。
@@ -261,6 +276,10 @@ tenant 缺失、变化或与服务端管理 tenant 不一致，instance 缺失/�
   最新固定 release，不创建新 release；任一 newest unresolved release 阻止新的 publish。
 - `active_verified`/`verified`：仅为当前 runtime activation exact readback 结果，不是 artifact
   signature 或 production qualification。
+- successful publish 的三个对象状态必须明确分离：Only `module_control_idempotency.status` becomes
+  `completed`; `module_releases.status` becomes `active_verified`; Admin `readback.status` becomes
+  `verified`。这三者同时成立才是成功发布的三态；`domain_committed`、`published_pending_readback`、
+  `pending` 或 `manual_review` 不能被互换或提前包装成这组三态。
 - rollback：复制目标的 runtime exact-readback profile 形成新 release，保留完整历史；UI/操作文案
   统一为“回滚到上一已读回版本（本地受控环境）”。
 

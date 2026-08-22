@@ -91,11 +91,18 @@ export interface ModuleActivationSnapshot {
 
 `createModuleInventory` receives explicit mounted module/catalog data and explicit local build evidence. The canonical descriptor covers module ID/version/risk/lifecycle/required and optional capabilities/module standards plus each tool's owner/name/permission/kind/risk/input schema ID/output schema ID/standard refs. It canonicalizes object keys, sorts set-like arrays by stable keys, sorts tools by name, then computes the descriptor digest as `sha256:<64 lowercase hex>`. It must not read cwd, files, environment variables, URLs, or Markdown. Reject duplicate module IDs, duplicate tool owners, malformed digests, any `verified_release`/`productionEligible=true` input, and incomplete tool contracts. Any visible contract change must change the digest. The request/preview control hashes are separate: RFC 8785/JCS UTF-8 + SHA-256 over `MCP-CONTROL-HASH\0v1\0<request|preview>\0<schema_version>\0<JCS bytes>`, formatted as `mcp-control-hash/v1/<domain>/sha256:<64 lowercase hex>`; set-like arrays are stably sorted, order-semantic arrays retain order, and schema/domain changes must change the hash.
 
-`ModuleActivationRegistry` starts with all inventory entries active at release `null`, revision `0`. `replace(next)` validates exact inventory refs, duplicate refs, nonnegative safe revision, and monotonic revision. It replaces one frozen snapshot; `snapshot()` never exposes mutable arrays. `isActive(moduleId, version)` only checks the fixed snapshot.
+inventory is an allowlist only, not an activation policy. `ModuleActivationRegistry` starts with the exact
+empty snapshot `{releaseId:null, revision:0, activeModules:[]}`; it must not derive active entries from
+inventory. Without an `active_verified` release, module handlers are not routable and return
+`unavailable` with reason `module_policy_not_released`, while `tools/list` remains visible and non-module
+tools are unaffected. The first activation must complete registration→preview→different-actor approval→
+publish→runtime exact readback before any module is routable. `replace(next)` validates exact inventory
+refs, duplicate refs, nonnegative safe revision, and monotonic revision. It replaces one frozen snapshot;
+`snapshot()` never exposes mutable arrays. `isActive(moduleId, version)` only checks the fixed snapshot.
 
 Admin request schemas use Zod `.strict()` at runtime and checked-in Draft 2020-12 JSON Schemas with `ADMIN_CONTROL_SCHEMA_VERSION="2026-08-22.v1"`. Exact request shapes are register `(schema_version,module_id,version,descriptor_digest)`, preview change `(schema_version,intent,desired_modules)`, preview rollback `(schema_version,intent,target_release_id)`, approval `(schema_version,preview_ref,decision,reason_code)`, publish `(schema_version,preview_ref,approval_id)`, and reconcile `(schema_version,release_id)`. Prohibit identity, URL/path/source/secret fields by construction.
 
-The independent Admin envelope root is closed and contains `schema_version`, server `request_id`, `trace_id`, `audit_id`, existing five status strings, `reason_codes`, a closed readback object, and `data`. `trace_id` never replaces `audit_id`. `readback` is `{status:"not_applicable"|"pending"|"verified"|"mismatch"|"unknown",release_id:string|null,revision:integer|null}`; `verified` here means runtime activation exact readback only, never artifact signature or production qualification. `data` is null or a closed discriminated union with `kind=control_state|registration|preview|approval|release|reconciliation`; generic `z.record`/unknown data is forbidden.
+The independent Admin envelope root is closed and contains `schema_version`, server `request_id`, `trace_id`, `audit_id`, existing five status strings, `reason_codes`, a closed readback object, and `data`. `trace_id` never replaces `audit_id`. `readback` is `{status:"not_applicable"|"pending"|"verified"|"mismatch"|"unknown",release_id:string|null,revision:integer|null}`; `verified` here means runtime activation exact readback only, never artifact signature or production qualification. A successful publish must keep the three state fields distinct and simultaneous: Only `module_control_idempotency.status` becomes `completed`; `module_releases.status` becomes `active_verified`; Admin `readback.status` becomes `verified`. `domain_committed`, `published_pending_readback`, `pending`, and `manual_review` are intermediate/unresolved states and cannot be substituted. `data` is null or a closed discriminated union with `kind=control_state|registration|preview|approval|release|reconciliation`; generic `z.record`/unknown data is forbidden.
 
 ### TDD steps
 
@@ -106,7 +113,7 @@ The independent Admin envelope root is closed and contains `schema_version`, ser
 - [ ] Keep Task 1's existing descriptor/inventory implementation scope unchanged in this revision; record the follow-up contract tests for request/preview canonical hashes: cross-restart stability, object-key order, semantic collection input order, preserved order-semantic arrays, schema-version separation, domain separation, and explicit distinction from `descriptorDigest`. If the shared helper is not owned by Task 1, implement it in Task 2/3 before those tests are marked complete.
 - [ ] Run `npx vitest run tests/control-plane/inventory.test.ts`; expect missing-module failure.
 - [ ] Implement canonical inventory construction and immutable returned entries; rerun until green.
-- [ ] Add activation tests for default-all-active, atomic replacement, exact descriptor match, duplicate/unknown rejection, stale revision rejection, and mutation resistance.
+- [ ] Add activation tests for the exact initial empty snapshot (`releaseId:null`, `revision:0`, `activeModules:[]`), inventory-only allowlist semantics, unavailable `module_policy_not_released` routing before any `active_verified` release, complete first activation through distinct-actor four-eyes publish/readback, atomic replacement, exact descriptor match, duplicate/unknown rejection, stale revision rejection, and mutation resistance.
 - [ ] Run `npx vitest run tests/control-plane/activation-registry.test.ts`; expect missing-module failure.
 - [ ] Implement the activation registry; rerun until green.
 - [ ] Run `npx vitest run tests/control-plane --pool=forks --no-file-parallelism --maxWorkers=1`.
@@ -124,12 +131,14 @@ The independent Admin envelope root is closed and contains `schema_version`, ser
 
 ### Required design
 
-The store is a separate file-backed database with `durability="durable"`. The server assembly must
-explicitly provide an absolute regular `application_root`; the managed entrypoint derives exactly
-`<application-root>/.runtime/mcp-instance-state` and then exactly `<state_dir>/control.sqlite` and
-`<state_dir>/control-identity.json`. It never reads cwd and accepts no environment variable, CLI
-argument, or diagnostic path override for the root, state directory, DB, or marker. A changed root
-therefore derives a different absolute path and fails closed rather than selecting another instance.
+The store is a separate file-backed database with `durability="durable"`. The trusted server assembly
+is the only caller that may inject an absolute regular `application_root`; the managed entrypoint derives
+exactly `<application-root>/.runtime/mcp-instance-state` and then exactly `<state_dir>/control.sqlite`
+and `<state_dir>/control-identity.json`. Store/initializer options, CLI arguments, diagnostic objects and
+configuration objects must reject explicit `stateDir`, `controlDbPath`, or `markerPath` values. The
+runtime never reads cwd and rejects any environment-variable path override for the root, state directory,
+DB, or marker. A changed root therefore derives a different absolute path and fails closed rather than
+selecting another instance.
 New-file creation is exposed only through an explicit initializer; normal runtime open requires an
 existing v1 database and never silently recreates, repairs, replaces, or ignores a missing managed
 store. The initializer atomically installs a new state directory containing both files. The marker is
@@ -219,9 +228,24 @@ getPendingRelease(): Promise<ModuleReleaseRecord | null>;
 getNewestUnresolvedRelease(): Promise<ModuleReleaseRecord | null>;
 ```
 
-Every mutation takes server-created actor/context metadata, canonical request hash, action, idempotency key, and redacted event payload. Same action/key/hash replays; same action/key/different hash is a typed conflict. Register, preview, and approval store the complete response and event in their domain transaction. Publish reserves first, then atomically writes the release/event and advances idempotency to `domain_committed` with the immutable release ID. Automatic exact readback from `domain_committed` is permitted only while that fixed release is `published_pending_readback`; it may never create a second release. If the fixed release is already `manual_review`, publish replay returns only the persisted final result and performs zero activation and zero readback. After the one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, using the same release/revision and desired refs. Activation/readback advances it to `completed`. Expired completed keys may be pruned only inside a later transaction; never prune `reserved`/`domain_committed` records or weaken release history.
+Every mutation takes server-created actor/context metadata, canonical request hash, action, idempotency key, and redacted event payload. Same action/key/hash replays; same action/key/different hash is a typed conflict. Register, preview, and approval store the complete response and event in their domain transaction. For a new publish key, the service checks the unresolved gate before reserving idempotency; it then atomically writes the release/event and advances the idempotency record to `domain_committed` with the immutable release ID. Automatic exact readback from `domain_committed` is permitted only while that fixed release is `published_pending_readback`; it may never create a second release. If the fixed release is already `manual_review`, publish replay returns only the persisted final result and performs zero activation and zero readback. After the one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, using the same release/revision and desired refs. Only `module_control_idempotency.status` becomes `completed`; `module_releases.status` becomes `active_verified`; Admin `readback.status` becomes `verified`. Expired completed keys may be pruned only inside a later transaction; never prune `reserved`/`domain_committed` records or weaken release history.
+Publish processing is ordered: first inspect the existing same-tenant/action/key idempotency record and
+request hash; same-key conflict is returned immediately, same-key replay returns the persisted result,
+`manual_review` replay performs zero activation/readback, and `domain_committed` may resume only the fixed
+`published_pending_readback` readback. Only a new key checks newest unresolved releases; after that gate
+passes, reserve idempotency and atomically create the release. Only
+`module_control_idempotency.status` becomes `completed`; `module_releases.status` becomes
+`active_verified`; Admin `readback.status` becomes `verified`.
 
-Publish uses compare-and-set on expected base release/revision and writes release status `published_pending_readback`, but rejects any newest unresolved release (`published_pending_readback` or `manual_review`) before creating a new release. `recordReadback` can move it to `active_verified` only for exact release/revision/module refs; `active_verified` means runtime exact readback only, not artifact signature or production qualification. Mismatch/unknown records `manual_review` without deleting the release. Startup performs one automatic exact readback for the newest `published_pending_readback`; it does not retry an existing `manual_review`. After that one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, and it never creates a release or changes desired refs.
+Publish uses compare-and-set on expected base release/revision and writes release status
+`published_pending_readback`. For a new idempotency key only, it rejects any newest unresolved release
+(`published_pending_readback` or `manual_review`) before creating a new release. `recordReadback` can move
+it to `active_verified` only for exact release/revision/module refs; `active_verified` means runtime exact
+readback only, not artifact signature or production qualification. Mismatch/unknown records
+`manual_review` without deleting the release. Startup performs one automatic exact readback for the
+newest `published_pending_readback`; it does not retry an existing `manual_review`. After that one-shot
+pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, and it
+never creates a release or changes desired refs.
 
 ### TDD steps
 
@@ -233,6 +257,10 @@ Publish uses compare-and-set on expected base release/revision and writes releas
   `control_identity` schema/tables/indexes, `management_tenant_id` in marker and identity row, `0600`,
   WAL/exclusive lock, second-store denial, reopen persistence, health, idempotent close, explicit
   management-tenant keys, tenant-change failure, and no business columns.
+- [ ] Add path-boundary tests that pass `stateDir`, `controlDbPath`, and `markerPath` as explicit
+  constructor/initializer parameters, CLI flags, diagnostic values, and config values; each must be
+  rejected before filesystem open/listen. Also test cwd and every environment-variable path override;
+  the trusted assembly may inject only `applicationRoot`, and all three derived paths must remain fixed.
 - [ ] Run `npx vitest run tests/control-plane/sqlite-control-store.test.ts`; expect missing-store failure.
 - [ ] Implement secure initialization and schema verification; rerun the focused cases.
 - [ ] Add tests for exact register/preview/approval/publish/readback persistence and chronological redacted events.
@@ -245,10 +273,10 @@ Publish uses compare-and-set on expected base release/revision and writes releas
   separation, and request/preview equality after repository restart.
 - [ ] Add reconciliation/idempotency tests proving startup automatically exact-reads
   `published_pending_readback` once, does not auto-retry `manual_review`, newest unresolved blocks a
-  new publish, a `domain_committed` retry only resumes pending readback, a manual-review publish replay
-  returns the persisted result with zero activation/readback, only operator `reconcile` retries an
-  unresolved release, reconcile reuses the same release/revision, and reconcile never creates a second
-  release.
+  new-key publish, same-key/hash replay/conflict is evaluated before that unresolved gate, a
+  `domain_committed` retry only resumes pending readback, a manual-review publish replay returns the
+  persisted result with zero activation/readback, only operator `reconcile` retries an unresolved release,
+  reconcile reuses the same release/revision, and reconcile never creates a second release.
 - [ ] Add tests that tamper `user_version`, table layout, JSON, status, and symlink path; each must fail closed with a stable typed error and no leaked SQL/value.
 - [ ] Implement the narrow repository methods and transactions; do not introduce a generic write API.
 - [ ] Run `npx vitest run tests/control-plane/sqlite-control-store.test.ts --pool=forks --no-file-parallelism --maxWorkers=1`.
@@ -297,7 +325,7 @@ reconcile(context: ExecutionContext, request: ReconcileRequest, meta: WriteMeta)
 
 Registration exact-matches inventory ID/version/digest and writes the inventory-owned local-build evidence. Preview `change` requires the full desired active set. Preview `rollback` resolves a target whose current runtime activation snapshot has an exact readback server-side and copies its active set; `active_verified` means runtime exact readback only, not artifact signature or production qualification. Both pin current base release/revision and inventory descriptors, create a redacted diff, enforce at least one active module, and prohibit duplicate/unknown/unregistered refs.
 
-Approval requires a different actor from preview creator and atomically writes one terminal decision bound to management tenant, preview canonical hash, base release/revision, inventory digest set and expiry. Reject cannot be overwritten. Publish first rejects any newest unresolved release (`published_pending_readback|manual_review`), then revalidates nonexpired/unconsumed preview, approved decision, exact approval ID/hash, base CAS, and current inventory, and atomically consumes preview+approval. After repository publish, call `activationRegistry.replace`, perform exact runtime readback, and record readback. A `domain_committed` retry may automatically read back only its fixed `published_pending_readback` release; if that release is `manual_review`, publish replay returns only the persisted final result with zero activation and zero readback. Startup auto-reconciles only the newest `published_pending_readback` once; it does not retry `manual_review`. After that one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, and it accepts only the newest fixed pending/manual-review release without creating another release or changing desired refs. Return:
+Approval requires a different actor from preview creator and atomically writes one terminal decision bound to management tenant, preview canonical hash, base release/revision, inventory digest set and expiry. Reject cannot be overwritten. Publish first looks up the same-tenant/action/idempotency-key record and compares the request hash: conflict blocks immediately; same-key replay returns the persisted result; a `manual_review` replay performs zero activation and zero readback; only a `domain_committed` record whose fixed release is still `published_pending_readback` may resume pending-only readback. Only a new key then checks newest unresolved (`published_pending_readback|manual_review`); after that gate it revalidates nonexpired/unconsumed preview, approved decision, exact approval ID/hash, base CAS, and current inventory, and atomically consumes preview+approval while creating the release. After repository publish, call `activationRegistry.replace`, perform exact runtime readback, and record readback. Startup auto-reconciles only the newest `published_pending_readback` once; it does not retry `manual_review`. After that one-shot pending attempt, operator `reconcile` is the only retry entry point for an unresolved release, and it accepts only the newest fixed pending/manual-review release without creating another release or changing desired refs. Only `module_control_idempotency.status` becomes `completed`; `module_releases.status` becomes `active_verified`; Admin `readback.status` becomes `verified`. Return:
 
 - `success` only when store, activation, and exact readback agree;
 - `manual_review` when durable publish exists but activation/readback is unknown or mismatched;
@@ -418,10 +446,10 @@ Composition accepts an optional `ModuleActivationRegistry`. After ModuleHost mou
 }
 ```
 
-The definition remains in tools/list with unchanged name, contract, RBAC, version, risk and standards. Non-module definitions are unchanged. Re-enable restores the original handler without rebuilding the composition.
+The definition remains in tools/list with unchanged name, contract, RBAC, version, risk and standards. Non-module definitions are unchanged. Before any `active_verified` release exists, module definitions return `unavailable` with `module_policy_not_released`; the first activation must complete the full distinct-actor preview→approval→publish→exact-readback flow. Re-enable restores the original handler without rebuilding the composition.
 
-Refactor startup into a narrow runtime assembly that receives an explicit absolute regular
-`application_root` from server assembly and creates, in this order:
+Refactor startup into a narrow runtime assembly that receives only an explicit absolute regular
+`application_root` from the trusted server assembly and creates, in this order:
 
 1. token verifier(s);
 2. composition and its mounted static module inventory plus an unapplied activation registry, without listening;
@@ -436,8 +464,10 @@ Refactor startup into a narrow runtime assembly that receives an explicit absolu
    state directory, and any missing/changed root, deleted state directory, missing file, fresh DB,
    corruption, schema drift, symlink, tenant/identity mismatch, or lock conflict aborts before listen;
 5. exact-reads the newest `published_pending_readback` release once against that exact inventory, then
-   restores its active runtime snapshot into the registry; an existing `manual_review` is not retried
-   at startup;
+   restores only the resulting `active_verified` runtime snapshot into the registry; an existing
+   `manual_review` is not retried at startup, and if no `active_verified` release exists the registry
+   remains at `releaseId:null`, `revision:0`, `activeModules:[]` so module calls return
+   `unavailable/module_policy_not_released`;
 6. control service and Admin API using the same inventory/registry/store;
 7. HTTP server, which starts listening only after validation and the one-shot pending readback;
 8. one close path that closes HTTP, composition and the separate control store exactly once.
@@ -467,7 +497,9 @@ closed.
 
 ### TDD steps
 
-- [ ] Add failing tests proving disabled module calls return unavailable while tools/list metadata remains, non-module tools are unaffected, and re-enable restores behavior.
+- [ ] Add failing tests proving the initial empty snapshot and no-`active_verified` module calls return
+  `unavailable/module_policy_not_released` while tools/list metadata remains, non-module tools are
+  unaffected, and re-enable restores behavior only after the complete four-eyes publish/readback flow.
 - [ ] Add failing tests proving `module_disabled_by_release` is ordinary operational unavailable only; security quarantine, retirement, and administrator security-disable requests are `blocked` and never remove the tool from `tools/list` in v1.
 - [ ] Run `npx vitest run tests/control-plane/runtime-activation.test.ts`; expect missing integration failure.
 - [ ] Implement the definition wrapper and composition injection; rerun.

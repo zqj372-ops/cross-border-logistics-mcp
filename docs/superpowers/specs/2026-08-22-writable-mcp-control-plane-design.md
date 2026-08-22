@@ -42,12 +42,20 @@ Evidence 信任链和多实例发布在后续 RFC 完成前不得开启。
 启用状态，工具继续出现在目录中但禁用模块调用返回 `unavailable`。这符合“暂时不可用仍
 保留可见性”的现行标准，也避免伪装成代码级 hot-plug。
 
+inventory 仅是登记和激活的 allowlist，不是 activation policy，也不提供默认启用集合。
+`ModuleActivationRegistry` 的初始 snapshot 必须严格为 `releaseId: null`、`revision: 0`、
+`activeModules: []`，不得从 inventory 推导 active modules。当前没有 `active_verified` release
+时，任何模块请求都不可路由，handler 必须返回 `unavailable`，reason code 为
+`module_policy_not_released`；模块仍保留在 `tools/list`，非模块工具不受影响。首次激活必须完整
+经过登记（若尚未登记）→ preview → 不同 actor 的四眼 approval → publish → runtime exact
+readback，且只有读回成功后该 release 才能成为 `active_verified` 并提供模块路由。
+
 控制面 policy 的启用由 managed instance identity continuity 决定，不由 release 数量或可关闭的
 配置决定。显式 initializer 成功写入 marker 与 control DB 后，entrypoint 才能打开 control state；
-即使尚无 release，也必须恢复已初始化的 managed policy，不能把当前全部静态模块当作默认 active
-set。`MCP_ADMIN_CONTROL_ENABLED` 只作为已初始化实例的必需一致性断言；缺失或不是字面 `true`
-都必须在监听前 fail closed。未成功初始化、state directory/marker/DB 缺失或不完整的 entrypoint
-没有兼容启动分支。
+即使尚无 release，也必须恢复已初始化的 managed policy，但不得假设存在 active policy。
+`MCP_ADMIN_CONTROL_ENABLED` 只作为已初始化实例的必需一致性断言；缺失或不是字面 `true` 都必须
+在监听前 fail closed。未成功初始化、state directory/marker/DB 缺失或不完整的 entrypoint 没有
+兼容启动分支。
 
 ## 2. 目标与非目标
 
@@ -283,7 +291,12 @@ domain separation 都必须有回归测试。
 ### `ModuleActivationRegistry`
 
 - 保存当前进程已应用的 `release_id`、revision 和 active module refs。
-- 只有 inventory 内已挂载模块能被设为 active。
+- inventory 只提供可登记/可激活的 allowlist；只有其中已挂载模块能被设为 active。初始 snapshot
+  固定为 `releaseId: null`、`revision: 0`、`activeModules: []`，不把 inventory 全量转成 active。
+- 没有 `active_verified` release 时，模块 handler 不可路由并返回
+  `unavailable/module_policy_not_released`；模块仍可见于 `tools/list`，非模块工具不受影响。
+- 首次激活必须完成登记→preview→不同 actor approval→publish→runtime exact readback；未完成
+  四眼发布读回前不得填充初始 snapshot 或放行模块路由。
 - 发布时一次性替换不可变 snapshot；请求开始时读取同一个 snapshot，避免半更新。
 - 禁用模块的工具仍在 `tools/list` 中；实际调用在领域 handler 前返回
   `unavailable`，reason code 为 `module_disabled_by_release`。
@@ -342,6 +355,12 @@ rollback target
   -> active_verified | manual_review
 ```
 
+- inventory 仅是 allowlist，不是默认 active 集合。实例初始 runtime snapshot 固定为
+  `releaseId: null`、`revision: 0`、`activeModules: []`。
+- 初始 snapshot 或任何没有 `active_verified` release 的状态都不可提供模块路由；模块调用返回
+  `unavailable`，reason code 为 `module_policy_not_released`，但 `tools/list` 保持可见。
+- 首次激活只能通过完整的登记→preview→不同 actor 四眼 approval→publish→exact readback
+  流程；`active_verified` 是放行模块路由的必要结果，不得由 inventory、启动或 draft 推导。
 - `registered` 只说明部署清单匹配，不说明生产资格。
 - preview 固定 base release、inventory descriptor refs、desired active set、creator 和 expiry。
 - base release 或 inventory 变化后 publish 必须 `blocked`，不能静默重算。
@@ -395,10 +414,23 @@ closed `data`、`reason_codes` 和 closed `readback`。`trace_id` 不能替代 `
 ### `POST /admin/api/v1/control/deployments/publish`
 
 请求包含 preview ref 和 approval ID。服务端重验 context、preview、approval、base、inventory
-和 active set；先检查 newest unresolved release；只要存在 `published_pending_readback` 或
-`manual_review`，就 `blocked`，不得创建新的 release。无 unresolved release 时才创建 release、
-更新 activation registry 并执行 exact readback。只有 readback 一致才 `success`；持久化成功但
-进程读回未知时返回 `manual_review`。
+和 active set，并按以下不可变顺序处理：
+
+1. 先按 management tenant、action 和 `Idempotency-Key` 查幂等记录并比较 request hash。same-key
+   不同 hash 立即返回 `blocked/idempotency_conflict`；same-key 同 hash 直接重放已持久化结果。
+2. 同 hash 已关联 `manual_review` release 时，publish 是 final replay，只返回持久化结果，零
+   activation、零 readback。只有同 hash 已处于 `domain_committed` 且其固定 release 仍为
+   `published_pending_readback` 时，才允许 pending-only exact readback resume；不得创建第二个
+   release。
+   成功发布的三种状态必须分别是幂等记录 `completed`、release `active_verified`、
+   envelope `readback.status=verified`。
+3. 只有查无记录的新 key 才检查 newest unresolved release；存在
+   `published_pending_readback` 或 `manual_review` 时返回 `blocked`，不得创建 release。
+4. 新 key 在 unresolved gate 通过后，才重验 preview、approval、base、inventory 和 active set，
+   预留幂等记录并原子创建 release、应用 activation、执行 exact readback。
+
+只有 readback 一致才 `success`；持久化成功但进程读回未知时返回 `manual_review`。`domain_committed`
+只能是 release 已持久化而 pending readback 尚未完成的中间幂等状态，不能代替上述成功三态。
 
 ### `POST /admin/api/v1/control/deployments/reconcile`
 
@@ -414,11 +446,16 @@ closed `data`、`reason_codes` 和 closed `readback`。`trace_id` 不能替代 `
 - action + idempotency key 构成唯一键；请求 canonical hash 固定。
 - 同键同 hash 返回首次完整结果；同键不同 hash 返回 `blocked/idempotency_conflict`。
 - register、preview 和 approval 可在同一事务内完成 domain write、event 和 final result。
-- publish 先预留幂等记录，再在 release 事务中把它推进到 `domain_committed`，固定 `release_id`，
-  并将 release 置为 `published_pending_readback`。从 `domain_committed` 自动 exact readback
-  只允许针对该 pending 状态；如果 readback 不一致/未知则持久化为 `manual_review`。
-- publish replay 若固定 release 已是 `manual_review`，只返回持久化结果，不做 activation 或
-  readback；只有 operator `reconcile` 可以重试，绝不创建第二个 release。
+- publish 必须先完成同 key/hash 的幂等 replay/conflict 分支；固定 release 为 `manual_review` 时
+  final replay 零 activation、零 readback；`domain_committed` 只允许针对其固定的
+  `published_pending_readback` release resume exact readback。
+- 只有新 key 才检查 newest unresolved；通过后才预留幂等记录，并在 release 事务中把它推进到
+  `domain_committed`，固定 `release_id`，将 release 置为 `published_pending_readback`。任何该路径
+  都不能创建第二个 release。
+- successful publish 的三态必须逐字段落位：Only `module_control_idempotency.status` becomes
+  `completed`; `module_releases.status` becomes `active_verified`; Admin `readback.status` becomes
+  `verified`。三者不是同义字段；`published_pending_readback`、`domain_committed`、`pending` 和
+  `manual_review` 都不能被包装成这组三态。
 - preview、approval 和 publish 都使用数据库事务和 compare-and-set base release。
 - 每个 publish 生成递增 revision；两个并发 publish 只有一个能命中 base revision。
 - activation snapshot 为不可变对象，一次替换；handler 在请求开始时固定读取。
@@ -541,6 +578,7 @@ Git/registry URL、日期和版本号均是视觉占位，不进入实现允许�
 | 客户端 URL/path/secret/未知模块 | `blocked` | 零登记 |
 | managed inventory/store 校验失败、损坏或锁冲突 | 启动失败 | 不监听，不假设 active set |
 | initializer 未成功完成，或 application-root 派生的 state directory/marker/DB 缺失、不完整、漂移 | 启动失败 | 不监听，不假设 active set，不提供写 API |
+| 没有 `active_verified` release（包括初始空 snapshot） | `unavailable` | 模块不可路由，reason=`module_policy_not_released`；`tools/list` 保持可见 |
 | 已初始化但 `MCP_ADMIN_CONTROL_ENABLED=false`/缺失，或 marker/DB identity 不一致 | 启动失败 | 从固定派生 state directory 发现 sentinel，不监听 |
 | 自批、过期 preview、base 漂移、幂等冲突 | `blocked` | 不发布 |
 | 数据库已写但 activation/readback 未知或不一致 | `manual_review` | 不宣称成功，保留事件证据 |
@@ -561,10 +599,11 @@ Git/registry URL、日期和版本号均是视觉占位，不进入实现允许�
 - register/preview/approve/publish/rollback 的正例、五状态和幂等 replay/conflict。
 - 自批、reject 终态、approval hash/expiry/consume、跨 tenant、非 admin active role、缺 scope、
   identity override 字段、URL/path/secret 字段拒绝。
-- activation registry 原子替换、initializer-required managed identity、无 release 不默认全 active、
-  初始化后 `enabled=false` fail-closed、删除 enabled/identity env 后仍发现固定 sentinel、
-  application-root 派生 path/空 DB/marker/DB/tenant mismatch、禁用调用 unavailable 和 exact
-  readback。
+- activation registry 原子替换、inventory-only allowlist、初始空 snapshot、无
+  `active_verified` release 时以 `module_policy_not_released` 返回 unavailable、首次激活必须四眼
+  发布读回、initializer-required managed identity、初始化后 `enabled=false` fail-closed、删除
+  enabled/identity env 后仍发现固定 sentinel、application-root 派生 path/空 DB/marker/DB/tenant
+  mismatch、禁用调用 unavailable 和 exact readback。
 
 ### HTTP 与端到端
 
