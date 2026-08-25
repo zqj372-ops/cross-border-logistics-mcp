@@ -1,10 +1,11 @@
 # RiskCustoms M2M 插件候选版本说明
 
-版本标识：`riskcustoms-m2m-plugin v0.1.0-rc.1`。
+版本标识：`riskcustoms-m2m-plugin v0.1.0-rc.2`。
 
 这是 MCP 仓库的候选集成版本说明，不是 RiskCustoms 上游服务的发布证明；本仓库的
-`package.json` 版本仍为 `0.1.0`。本版本不修改 MCP 工具目录、Schema、响应包络或
-外部 RiskCustoms 仓库，不自动启用生产连接。
+`package.json` 版本仍为 `0.1.0`。本版本不修改对外 MCP 工具目录、工具 Schema 或响应
+包络；RiskCustoms 服务端合同由独立仓库
+[PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2) 提供。本候选不自动启用生产连接。
 
 ## 版本目标
 
@@ -59,18 +60,33 @@ Compose 文件、客户端配置或 PR。
 在获得批准的 context-aware status source 之前，不能用 `system.get_data_status` 的结果
 替代 M2M status，也不能把静态 health 或浏览器会话当作 M2M 联通证明。
 
-本候选未把尚未存在的上游路由当作已实现合同。对本地只读核对的 RiskCustoms `main`，
-当前 Worker 注册的是 `/api/query`、`/api/status`、`/api/exchange-rates` 和
-`/api/sources/*`，没有 `/api/m2m/status` 或 `/api/m2m/query`。因此 M2M 路由、Bearer
-校验、client/tenant 绑定、限流、审计、release identity 和 source/hash 合同仍需上游
-正式发布并由独立 staging 验收；MCP adapter 保持默认关闭，不把浏览器 `/api/query` 暴露为
-M2M，也不做匿名或旧路由回退。
+RiskCustoms `main@de2229190873cca523c9aef379a2bf2b07401df2` 已通过独立
+[PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2) 合入
+`/api/m2m/status` 与 `/api/m2m/query`；服务端实现提交为
+`5e61c5b4904ef0317c78e5a87ceacb85cb271fa2`。该实现包含 Bearer hash、client/tenant
+绑定、认证前/后限流、D1 审计、release/snapshot identity 和严格来源合同，但其 OpenAPI
+仍明确标记 `x-deployment-status: disabled`，生产配置门禁也保持 blocked。因此这里确认的是
+精确代码合同，不是 endpoint 已部署、token 已生效或正式 release 已就绪。MCP adapter 继续
+默认关闭，不把浏览器 `/api/query` 暴露为 M2M，也不做匿名、在线搜索或旧路由回退。
+
+### rc.2 合同对齐
+
+- status、query 顶层和 query `dataStatus` 都要求相同的 `ruleDate` 与发布身份；
+- 权威查询 mode 只允许 `exact_code`、`name_search`、`degraded_search`，明确拒绝 `online_search`；
+- `material`/`use` 只允许最长 200 字符的字符串，`contains_steel_aluminum` 只允许 boolean，
+  `originCountry` 固定为 `CN`；
+- release/query identifier 最长 128 字符；ISO datetime 接受标准时区 offset；
+- `ready=true` 必须同时满足 `testData=false`、完整 hashes/releases 且 `reasons=[]`；
+  `ready=false` 必须给出 reason；
+- rate category 增加 `excise_duty`、`excise_tax`、`gst`、`official_fee`，并继续禁止
+  tax、fee、excise、GST 和 official fee 进入 confirmed duty total。
 
 ## 兼容性与回滚
 
 - 未设置 `MCP_RISK_CUSTOMS_ENABLED=true` 时，现有默认 `RiskCustomsAdapter` 行为不变，
   业务工具保持 disabled/unavailable。
-- 本版本没有 Schema、工具名、数据库 migration 或客户端配置 breaking change。
+- 本版本没有对外 MCP 工具 Schema、工具名、数据库 migration 或客户端 transport breaking
+  change；rc.2 收紧的是尚未启用的 RiskCustoms 上游 wire contract。
 - 回滚时移除 RiskCustoms 专用环境变量/override 并重启 MCP；服务会恢复默认 disabled，
   不删除 SQLite、审计、幂等或 session 数据。
 - 是否可以进入 staging/production，仍须通过外部服务的正式非测试 release、身份映射、
@@ -84,3 +100,13 @@ query response hash source evidence 和失败闭合。GitHub Actions 已实际�
 但本机没有 Docker daemon，因此不能把本机 image smoke 当作通过。它不证明真实 RiskCustoms
 M2M endpoint 已经部署、token 已经生效、tenant mapping 已经发布或正式 release 已就绪；
 当前没有执行 staging/production 连接、密钥配置或部署操作。
+
+本次 MCP 本地验证：
+
+- `npm test`：52 files / 406 tests；
+- `npm run typecheck`、`npm run lint`、`npm run build`：通过；
+- `npm run validate:schemas`：17 schemas / 11 examples；
+- `npm run validate:agent-standards`：8 standards / 5 profiles / 3 modules / 5 resources；
+- `npm run validate:agent-adapters`：3 adapters；
+- `npm run verify:runtime`：2/2；
+- `npm run build:agent-pack` 与 `git diff --check`：通过。

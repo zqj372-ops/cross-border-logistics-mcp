@@ -22,13 +22,15 @@ const CONTRACT_VERSION = "riskcustoms-query.v1";
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const HEX_HASH = /^[a-f0-9]{64}$/u;
+const DateTimeSchema = z.string().datetime({ offset: true });
 
 const identitySchema = z
   .object({
     contractVersion: z.literal(CONTRACT_VERSION),
     serviceVersion: z.string().min(1),
-    publishedAt: z.string().datetime().nullable(),
+    publishedAt: DateTimeSchema.nullable(),
     supportedOperations: z.tuple([z.literal("status"), z.literal("query")]),
+    ruleDate: z.string().date(),
     releaseIds: z.array(z.string().min(1)),
     snapshotHash: z.string().regex(HEX_HASH).nullable(),
     releaseHash: z.string().regex(HEX_HASH).nullable(),
@@ -37,8 +39,8 @@ const identitySchema = z
 
 const statusResponseBaseSchema = identitySchema
   .extend({
-    evaluatedAt: z.string().datetime().nullable(),
-    lastSourceCheckAt: z.string().datetime().nullable(),
+    evaluatedAt: DateTimeSchema.nullable(),
+    lastSourceCheckAt: DateTimeSchema.nullable(),
     ready: z.boolean(),
     testData: z.boolean(),
     reasons: z.array(z.string()),
@@ -47,24 +49,27 @@ const statusResponseBaseSchema = identitySchema
 
 function readyStatusIsComplete(value: {
   readonly ready: boolean;
+  readonly testData: boolean;
   readonly publishedAt: string | null;
   readonly releaseIds: readonly string[];
   readonly snapshotHash: string | null;
   readonly releaseHash: string | null;
   readonly reasons: readonly string[];
 }): boolean {
-  return !value.ready || (
+  if (!value.ready) return value.reasons.length > 0;
+  return (
     value.publishedAt !== null &&
     value.releaseIds.length > 0 &&
     value.snapshotHash !== null &&
     value.releaseHash !== null &&
-    value.reasons.length === 0
+    value.reasons.length === 0 &&
+    value.testData === false
   );
 }
 
 const statusResponseSchema = statusResponseBaseSchema.refine(
   readyStatusIsComplete,
-  { message: "A ready publication must include complete release and snapshot identity" },
+  { message: "Readiness facts must include a complete non-test identity or a non-empty unavailable reason" },
 );
 
 const dataNotReadyErrorSchema = z
@@ -79,7 +84,7 @@ const statusResponseWithErrorSchema = statusResponseBaseSchema
   .strict()
   .refine(
     readyStatusIsComplete,
-    { message: "A ready publication must include complete release and snapshot identity" },
+    { message: "Readiness facts must include a complete non-test identity or a non-empty unavailable reason" },
   );
 
 const legalNameSchema = z
@@ -131,7 +136,19 @@ const rateLineSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     treatment: z.string().min(1),
-    category: z.enum(["export_duty", "provisional_export_duty", "base_duty", "additional_duty", "trade_remedy", "tax", "fee"]),
+    category: z.enum([
+      "export_duty",
+      "provisional_export_duty",
+      "base_duty",
+      "additional_duty",
+      "trade_remedy",
+      "excise_duty",
+      "excise_tax",
+      "gst",
+      "official_fee",
+      "tax",
+      "fee",
+    ]),
     kind: z.enum(["free", "ad_valorem", "specific", "compound", "text"]),
     rateExpressionRaw: z.string().min(1),
     displayValue: z.string().min(1),
@@ -151,8 +168,19 @@ const rateLineSchema = z
     if (value.includedInConfirmedTotal && !value.confirmed) {
       ctx.addIssue({ code: "custom", path: ["includedInConfirmedTotal"], message: "A confirmed total cannot include an unconfirmed rate" });
     }
-    if (value.includedInConfirmedTotal && (value.category === "tax" || value.category === "fee")) {
-      ctx.addIssue({ code: "custom", path: ["includedInConfirmedTotal"], message: "Tax and fee rates cannot be included in the confirmed total" });
+    if (value.includedInConfirmedTotal && (
+      value.category === "tax" ||
+      value.category === "fee" ||
+      value.category === "excise_duty" ||
+      value.category === "excise_tax" ||
+      value.category === "gst" ||
+      value.category === "official_fee"
+    )) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["includedInConfirmedTotal"],
+        message: "Tax, excise, GST, and official-fee rates cannot be included in the confirmed total",
+      });
     }
   });
 
@@ -242,7 +270,7 @@ const sourceSchema = z
       .transform((value) => value.slice(0, 10)),
     effectiveFrom: z.string().date(),
     effectiveTo: z.string().date().nullable(),
-    retrievedAt: z.string().datetime(),
+    retrievedAt: DateTimeSchema,
     sourceLocator: z.string().min(1),
   })
   .strict()
@@ -259,7 +287,7 @@ const sourceSchema = z
 const queryResponseSchema = identitySchema
   .extend({
     queryId: z.string().min(1),
-    mode: z.enum(["exact_code", "name_search", "degraded_search", "online_search"]),
+    mode: z.enum(["exact_code", "name_search", "degraded_search"]),
     ruleDate: z.string().date(),
     selectedHs6: z.string().regex(/^\d{6}$/u).nullable(),
     nextQuestion: nextQuestionSchema.nullable(),
@@ -434,6 +462,7 @@ function identityFields(value: Identity): readonly unknown[] {
     value.serviceVersion,
     value.publishedAt,
     value.supportedOperations,
+    value.ruleDate,
     value.releaseIds,
     value.snapshotHash,
     value.releaseHash,
@@ -610,6 +639,9 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
       if (parsed === null) {
         return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
       }
+      if (parsed.value.ruleDate !== ruleDate) {
+        return failure("unavailable", "customs.rule_date_mismatch", "RiskCustoms returned status for a different rule date.");
+      }
       const mapped = mappedStatus(parsed.value);
       if (mapped === null) {
         return failure("unavailable", "customs.status_mapping_invalid", "RiskCustoms status could not be mapped to the MCP contract.");
@@ -676,6 +708,9 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
         const statusResponse = parseStatusResponse(await this.fetchStatus(ruleDate, context!, requestSignal));
         if (statusResponse === null) {
           return failure("unavailable", "customs.status_contract_invalid", "RiskCustoms returned a status outside its verified M2M contract.");
+        }
+        if (statusResponse.value.ruleDate !== ruleDate) {
+          return failure("unavailable", "customs.rule_date_mismatch", "RiskCustoms returned status for a different rule date.");
         }
         const mapped = mappedStatus(statusResponse.value);
         if (mapped === null) {
@@ -823,15 +858,20 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     query: string,
     ruleDate: string,
   ): Record<string, unknown> | null {
-    const attributes: Record<string, string | number | boolean> = {};
+    const attributes: Record<string, string | boolean> = {};
     if (input.product_attributes !== undefined && input.product_attributes !== null) {
       if (typeof input.product_attributes !== "object" || Array.isArray(input.product_attributes)) return null;
       const value = input.product_attributes as Record<string, unknown>;
       for (const key of ["material", "use", "origin_country", "contains_steel_aluminum"] as const) {
         const item = value[key];
         if (item === undefined || item === null) continue;
-        if (typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean") return null;
-        if (typeof item === "number" && !Number.isFinite(item)) return null;
+        if (key === "contains_steel_aluminum") {
+          if (typeof item !== "boolean") return null;
+          attributes[key] = item;
+          continue;
+        }
+        if (typeof item !== "string") return null;
+        if ((key === "material" || key === "use") && item.length > 200) return null;
         attributes[key === "origin_country" ? "originCountry" : key] = item;
       }
     }
@@ -856,10 +896,10 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     const parsed = queryResponseSchema.safeParse(rawResponse);
     if (!parsed.success) return failure("unavailable", "customs.query_contract_invalid", "RiskCustoms returned a query response outside its verified M2M contract.");
     const response = parsed.data;
+    if (response.ruleDate !== ruleDate) return failure("unavailable", "customs.rule_date_mismatch", "RiskCustoms returned data for a different rule date.");
     if (!identitiesEqual(status, response) || !identitiesEqual(status, response.dataStatus)) {
       return failure("manual_review", "customs.identity_mismatch", "RiskCustoms status and query publication identities do not match.");
     }
-    if (response.ruleDate !== ruleDate) return failure("unavailable", "customs.rule_date_mismatch", "RiskCustoms returned data for a different rule date.");
     if (!response.dataStatus.ready || response.testData || response.dataStatus.testData) {
       return failure("unavailable", "customs.query_not_ready", "RiskCustoms query data is not ready for M2M use.");
     }

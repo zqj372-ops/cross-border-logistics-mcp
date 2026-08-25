@@ -27,6 +27,7 @@ const RISK_CUSTOMS_IDENTITY = {
   serviceVersion: "riskcustoms-service.fixture-1",
   publishedAt: "2026-08-11T00:00:00.000Z",
   supportedOperations: ["status", "query"],
+  ruleDate: API_DATE,
   releaseIds: ["release-ca-1"],
   snapshotHash: "a".repeat(64),
   releaseHash: "b".repeat(64),

@@ -22,6 +22,7 @@ const statusPayload = {
   serviceVersion: "m2m-test-release",
   publishedAt: "2026-08-20T00:00:00.000Z",
   supportedOperations: ["status", "query"],
+  ruleDate: "2026-08-21",
   releaseIds: ["release-1"],
   snapshotHash: "a".repeat(64),
   releaseHash: "b".repeat(64),
