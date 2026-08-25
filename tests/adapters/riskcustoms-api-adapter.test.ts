@@ -5,6 +5,7 @@ import {
   createFetchJsonClient,
   type FetchImplementation,
 } from "../../src/logistics_mcp/adapters/http-client";
+import { hashPayload } from "../../src/logistics_mcp/platform/idempotency";
 import {
   RiskCustomsApiAdapter,
   type RiskCustomsApiAdapterOptions,
@@ -454,7 +455,8 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
   });
 
   it("allows query only when ready and non-test status facts are independently true", async () => {
-    const fake = fakeFetch([{ body: statusResponse() }, { body: queryResponse() }]);
+    const query = queryResponse();
+    const fake = fakeFetch([{ body: statusResponse() }, { body: query }]);
     const customs = adapter(fake);
 
     const response = await customs.search(searchInput(), context);
@@ -467,6 +469,12 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
         release_ids: ["release-ca-1"],
       },
     });
+    expect(response.sourceRefs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        locator: "opaque://riskcustoms/m2m/query",
+        content_hash: hashPayload(query),
+      }),
+    ]));
   });
 
   it("projects only CA candidates from a multi-jurisdiction M2M response", async () => {
@@ -503,7 +511,7 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect((response.data as { candidates: Array<{ hs_code: string }> }).candidates).toEqual([
       expect.objectContaining({ hs_code: "345678", classification_status: "confirmed" }),
     ]);
-    expect(response.sourceRefs).toHaveLength(2);
+    expect(response.sourceRefs).toHaveLength(3);
     expect(fake.calls).toHaveLength(2);
   });
 
@@ -735,7 +743,7 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect(response.status).toBe("success");
     const data = response.data as { candidates: Array<{ source_ref_ids: string[] }> };
     expect(data.candidates[0]?.source_ref_ids).toHaveLength(1);
-    expect(response.sourceRefs).toHaveLength(2);
+    expect(response.sourceRefs).toHaveLength(3);
   });
 
   it.each([

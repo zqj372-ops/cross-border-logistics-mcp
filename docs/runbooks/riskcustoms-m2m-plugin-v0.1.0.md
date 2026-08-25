@@ -29,11 +29,11 @@
 | tenant 注入 | 从已验证的 `ExecutionContext.tenantId` 发送 `X-Tenant-Id`；客户端不能覆盖；token 与 tenant 的授权映射由 RiskCustoms 上游负责 |
 | endpoint 边界 | `MCP_RISK_CUSTOMS_BASE_URL` 必须是 HTTPS；主机必须同时出现在 RiskCustoms 专用白名单和 `MCP_ALLOWED_OUTBOUND_HOSTS` |
 | 会话要求 | 沿用 MCP 当前认证 claims、session owner 和 durable session binding；上游不使用浏览器 Cookie、Turnstile 或匿名浏览器状态 |
-| 工具范围 | 复用既有 `customs.ca.search`；`system.get_data_status` 继续暴露状态；不新增工具名、不新增写工具 |
+| 工具范围 | 复用既有 `customs.ca.search`；本候选不把 `system.get_data_status` 绑定到 RiskCustoms M2M；不新增工具名、不新增写工具 |
 | 权限/审批 | `customs.ca.search` 仍是受 `tariff:read` 保护的读操作；本版本不新增写入、审批或发送能力 |
 | 资源发现 | 不新增 MCP resource；沿用现有工具目录、Agent Standard Pack 和客户端资源 allowlist |
 | 未覆盖能力 | `customs.ca.estimate` 继续 `unavailable`；没有正式税额估算合同就不拼造税额 |
-| 失败状态 | 未配置、endpoint 不允许、凭证无效、上游不可达、`ready=false` 或 test data 均保持结构化不可用/阻断/人工复核 |
+| 失败状态 | 未配置、endpoint 不允许、凭证无效、上游不可达保持结构化不可用/阻断；`customs.ca.search` 对 `ready=false` 或 test data 不执行 query；HTTP 200 的 status 诊断可能是 `success` 加 warning，调用方必须继续检查 `ready`/`test_data` |
 
 ## 配置契约
 
@@ -51,6 +51,21 @@ Compose secret 挂载示例见 [`deploy/compose.riskcustoms.override.yml.example
 真实 token 文件必须位于仓库外部，并由部署系统挂载；不能把 token 写入 `.env.example`、
 Compose 文件、客户端配置或 PR。
 
+### 状态工具与上游合同边界
+
+当前生产组合中的 `system.get_data_status` 没有携带 RiskCustoms M2M 的服务端认证上下文，
+因此不能作为本候选的 M2M readiness 证明。`customs.ca.search` 会在每次请求内部先读取并
+校验 `/api/m2m/status`；该 status 响应及其 source ref 才是本适配器的 readiness evidence。
+在获得批准的 context-aware status source 之前，不能用 `system.get_data_status` 的结果
+替代 M2M status，也不能把静态 health 或浏览器会话当作 M2M 联通证明。
+
+本候选未把尚未存在的上游路由当作已实现合同。对本地只读核对的 RiskCustoms `main`，
+当前 Worker 注册的是 `/api/query`、`/api/status`、`/api/exchange-rates` 和
+`/api/sources/*`，没有 `/api/m2m/status` 或 `/api/m2m/query`。因此 M2M 路由、Bearer
+校验、client/tenant 绑定、限流、审计、release identity 和 source/hash 合同仍需上游
+正式发布并由独立 staging 验收；MCP adapter 保持默认关闭，不把浏览器 `/api/query` 暴露为
+M2M，也不做匿名或旧路由回退。
+
 ## 兼容性与回滚
 
 - 未设置 `MCP_RISK_CUSTOMS_ENABLED=true` 时，现有默认 `RiskCustomsAdapter` 行为不变，
@@ -58,11 +73,14 @@ Compose 文件、客户端配置或 PR。
 - 本版本没有 Schema、工具名、数据库 migration 或客户端配置 breaking change。
 - 回滚时移除 RiskCustoms 专用环境变量/override 并重启 MCP；服务会恢复默认 disabled，
   不删除 SQLite、审计、幂等或 session 数据。
-- 是否可以进入 staging/production，仍须通过外部服务的非测试 release、身份映射、
-  `/healthz`、`/readyz`、`system.get_data_status` 和实际脱敏工具 readback 验收。
+- 是否可以进入 staging/production，仍须通过外部服务的正式非测试 release、身份映射、
+  `/healthz`、`/readyz`、M2M status/query contract 和实际脱敏工具 readback 验收；
+  `system.get_data_status` 不能替代带认证上下文的 M2M status evidence。
 
 ## 本版本证据
 
-本仓库验证的是 MCP 侧的配置工厂、M2M 请求头、主机白名单、status→query 门控和失败闭合。
-它不证明真实 RiskCustoms endpoint 已经部署、token 已经生效、tenant mapping 已经发布，
-也不证明本地 Docker Compose 已经启动。当前工作区没有执行生产连接或部署操作。
+本仓库验证的是 MCP 侧的配置工厂、M2M 请求头、主机白名单、status→query 门控、完整
+query response hash source evidence 和失败闭合。GitHub Actions 已实际构建候选镜像，
+但本机没有 Docker daemon，因此不能把本机 image smoke 当作通过。它不证明真实 RiskCustoms
+M2M endpoint 已经部署、token 已经生效、tenant mapping 已经发布或正式 release 已就绪；
+当前没有执行 staging/production 连接、密钥配置或部署操作。

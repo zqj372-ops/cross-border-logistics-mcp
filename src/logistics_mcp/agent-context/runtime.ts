@@ -233,7 +233,12 @@ export function createAgentAccessRuntime(options: {
   readonly packPath?: string;
 } = {}): AgentAccessRuntime {
   if (options.pack !== undefined) return new DefaultAgentAccessRuntime(options.pack);
-  const packPath = options.packPath ?? resolve(fileURLToPath(new URL("../../../", import.meta.url)), "dist/standards/agent-standard-pack.json");
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  const defaultPackPaths: readonly [string, string] = [
+    resolve(root, "dist/standards/agent-standard-pack.json"),
+    resolve(root, "standards/agent-standard-pack.json"),
+  ];
+  const packPath = options.packPath ?? defaultPackPaths.find((candidate) => existsSync(candidate)) ?? defaultPackPaths[0];
   if (!existsSync(packPath)) {
     return new DefaultAgentAccessRuntime(null, "The immutable Standard Pack has not been built.");
   }

@@ -91,4 +91,42 @@ describe("RiskCustoms runtime configuration", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("fails closed when the server-side secret file returns an invalid token", async () => {
+    const { calls, fetchImpl } = makeFetchSpy();
+    const readSecretFile = vi.fn(() => "invalid token");
+    const adapter = createRiskCustomsApiAdapterFromEnvironment(
+      {
+        MCP_RISK_CUSTOMS_ENABLED: "true",
+        MCP_RISK_CUSTOMS_BASE_URL: "https://riskcustoms.example.invalid",
+        MCP_RISK_CUSTOMS_ALLOWED_HOSTS: "riskcustoms.example.invalid",
+        MCP_ALLOWED_OUTBOUND_HOSTS: "riskcustoms.example.invalid",
+        MCP_RISK_CUSTOMS_AUTH_SECRET_FILE: "/run/secrets/riskcustoms-m2m-token",
+      },
+      { fetchImpl, readSecretFile },
+    );
+
+    const result = await adapter!.getStatus({ rule_date: "2026-08-21" }, context);
+
+    expect(result.status).toBe("unavailable");
+    expect(result.blockers?.map(({ code }) => code)).toContain("customs.status_unavailable");
+    expect(readSecretFile).toHaveBeenCalledWith("/run/secrets/riskcustoms-m2m-token");
+    expect(calls).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain("invalid token");
+  });
+
+  it.each([
+    ["http://riskcustoms.example.invalid", "plain HTTP"],
+    ["https://user:pass@riskcustoms.example.invalid", "URL credentials"],
+  ])("does not create an adapter for %s (%s)", (baseUrl) => {
+    expect(
+      createRiskCustomsApiAdapterFromEnvironment({
+        MCP_RISK_CUSTOMS_ENABLED: "true",
+        MCP_RISK_CUSTOMS_BASE_URL: baseUrl,
+        MCP_RISK_CUSTOMS_ALLOWED_HOSTS: "riskcustoms.example.invalid",
+        MCP_ALLOWED_OUTBOUND_HOSTS: "riskcustoms.example.invalid",
+        MCP_RISK_CUSTOMS_AUTH_SECRET_FILE: "/run/secrets/riskcustoms-m2m-token",
+      }),
+    ).toBeUndefined();
+  });
 });

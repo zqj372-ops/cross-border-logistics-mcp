@@ -353,6 +353,16 @@ describe("built runtime smoke", () => {
       expect(transport.sessionId).toBeTruthy();
       expect(client.getInstructions()).toContain("写操作必须按预览→审批→提交→读回执行");
 
+      const agentContext = structured(await client.callTool({
+        name: "system.agent_context.get",
+        arguments: { profile_id: "runtime-caller", module_id: "cargo" },
+      }));
+      expect(agentContext.status).toBe("success");
+      expect(agentContext.data).toMatchObject({
+        profile_id: "runtime-caller",
+        selected_module_id: "cargo",
+      });
+
       const toolList = await client.listTools();
       expect(toolList.tools.map((tool) => tool.name).sort()).toEqual([
         "cargo.calculate",

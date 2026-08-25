@@ -889,6 +889,17 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
       ruleDate,
     );
     if (sourceResult === null) return failure("unavailable", "customs.source_mapping_invalid", "RiskCustoms sources could not be mapped to the verified source contract.");
+    const queryRef: SourceRef = {
+      source_id: sourceRefId(`m2m-query:${hashPayload(response)}`),
+      source_type: "internal_system",
+      system: "RiskCustoms",
+      locator: "opaque://riskcustoms/m2m/query",
+      version: response.contractVersion,
+      retrieved_at: statusRef.retrieved_at,
+      authority: "authoritative",
+      content_hash: hashPayload(response),
+    };
+    if (!sourceRefSchema.safeParse(queryRef).success) return failure("unavailable", "customs.query_evidence_invalid", "RiskCustoms query evidence could not be mapped to the verified source contract.");
     const values = responseValues
       .map((value) => mappedClassification(value, classificationSourceIds, sourceResult.refIds));
     if (values.some((value) => value === null)) return failure("manual_review", "customs.source_reference_missing", "A RiskCustoms classification references an unavailable source.");
@@ -915,7 +926,7 @@ export class RiskCustomsApiAdapter implements CustomsAdapter {
     return {
       status: "success",
       data,
-      sourceRefs: [statusRef, ...sourceResult.refs],
+      sourceRefs: [statusRef, queryRef, ...sourceResult.refs],
       assumptions: hasUnconfirmed ? [notice("customs.candidate_only", "HS candidates are not formal classification conclusions.", "info")] : [],
       warnings: hasUnconfirmed ? [notice("customs.numeric_confidence_not_provided", "RiskCustoms does not provide numeric confidence; non-confirmed classifications remain at confidence 0.", "warning")] : [],
       reviewStatus: hasUnconfirmed ? "pending" : "not_required",

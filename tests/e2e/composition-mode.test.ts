@@ -308,7 +308,7 @@ describe("gateway composition modes", () => {
       jurisdiction: "CA",
       candidates: [{ hs_code: "345678", classification_status: "confirmed" }],
     });
-    expect(result.sourceRefs).toHaveLength(2);
+    expect(result.sourceRefs).toHaveLength(3);
     expect(authorizationProvider).toHaveBeenCalledTimes(2);
     expect(authorizationProvider).toHaveBeenNthCalledWith(1, context, expect.any(AbortSignal));
     expect(authorizationProvider).toHaveBeenNthCalledWith(2, context, expect.any(AbortSignal));
