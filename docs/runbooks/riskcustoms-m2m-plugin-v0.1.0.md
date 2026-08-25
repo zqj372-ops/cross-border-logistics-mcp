@@ -60,14 +60,16 @@ Compose 文件、客户端配置或 PR。
 在获得批准的 context-aware status source 之前，不能用 `system.get_data_status` 的结果
 替代 M2M status，也不能把静态 health 或浏览器会话当作 M2M 联通证明。
 
-RiskCustoms `main@de2229190873cca523c9aef379a2bf2b07401df2` 已通过独立
+RiskCustoms `main@1cd712b4dfac755998f72d852171530b58d9e827` 已通过独立
 [PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2) 合入
 `/api/m2m/status` 与 `/api/m2m/query`；服务端实现提交为
-`5e61c5b4904ef0317c78e5a87ceacb85cb271fa2`。该实现包含 Bearer hash、client/tenant
-绑定、认证前/后限流、D1 审计、release/snapshot identity 和严格来源合同，但其 OpenAPI
-仍明确标记 `x-deployment-status: disabled`，生产配置门禁也保持 blocked。因此这里确认的是
-精确代码合同，不是 endpoint 已部署、token 已生效或正式 release 已就绪。MCP adapter 继续
-默认关闭，不把浏览器 `/api/query` 暴露为 M2M，也不做匿名、在线搜索或旧路由回退。
+`5e61c5b4904ef0317c78e5a87ceacb85cb271fa2`。后续
+[PR #4](https://github.com/zqj372-ops/riskcustoms-hs/pull/4) 关闭了 Nginx→Node 路径中不同外部客户端
+共享认证前限流 actor 的问题。当前实现包含 Bearer hash、client/tenant 绑定、认证前/后限流、
+D1 审计、release/snapshot identity 和严格来源合同，但其 OpenAPI 仍明确标记
+`x-deployment-status: disabled`，生产配置门禁也保持 blocked。因此这里确认的是精确代码合同，
+不是 endpoint 已部署、token 已生效或正式 release 已就绪。MCP adapter 继续默认关闭，不把
+浏览器 `/api/query` 暴露为 M2M，也不做匿名、在线搜索或旧路由回退。
 
 ### rc.2 合同对齐
 
