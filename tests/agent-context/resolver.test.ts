@@ -22,6 +22,22 @@ function mutableClone<T>(value: T): DeepMutable<T> {
 }
 
 const rootDir = resolve(import.meta.dirname, "../..");
+const adminControlStateStandardId = "admin-control-state-dto-v1";
+const adminControlStateVersion = "2026-08-22.v1";
+const adminControlStatePriority = 86;
+const adminControlStateRuleIds = [
+  "CONTROL-STATE-001",
+  "CONTROL-STATE-002",
+  "CONTROL-STATE-003",
+] as const;
+const adminControlStateSourceRef =
+  "standard:admin-control-state-dto-v1:2026-08-22.v1";
+const adminControlStateProfiles = [
+  "module-developer",
+  "platform-developer",
+  "module-reviewer",
+  "release-operator",
+] as const;
 
 describe("Agent context resolver", () => {
   it("projects a profile and its standards with deterministic rule ordering", () => {
@@ -69,12 +85,54 @@ describe("Agent context resolver", () => {
     }
   });
 
+  it.each(adminControlStateProfiles)(
+    "resolves the Admin control-state DTO exactly for %s",
+    (profileId) => {
+      const result = resolveAgentContextFromRepository({ rootDir, profileId });
+      const standard = result.standards.find(
+        (candidate) => candidate.standard_id === adminControlStateStandardId,
+      );
+
+      expect(result.standards.filter(
+        (candidate) => candidate.standard_id === adminControlStateStandardId,
+      )).toHaveLength(1);
+      expect(standard).toBeDefined();
+      if (standard === undefined) throw new Error("Expected Admin control-state standard.");
+      expect(standard.version).toBe(adminControlStateVersion);
+      expect(standard.priority).toBe(adminControlStatePriority);
+      expect(standard.rule_ids).toEqual([...adminControlStateRuleIds]);
+
+      expect(result.rules.filter(
+        (rule) => rule.standard_id === adminControlStateStandardId,
+      )).toEqual(adminControlStateRuleIds.map((ruleId) => ({
+        rule_id: ruleId,
+        standard_id: adminControlStateStandardId,
+        priority: adminControlStatePriority,
+        source_sha256: standard.sha256,
+      })));
+
+      expect(result.source_refs.filter(
+        (source) => source.source_id === adminControlStateSourceRef,
+      )).toEqual([{
+        source_id: adminControlStateSourceRef,
+        version: adminControlStateVersion,
+        content_hash: standard.sha256,
+        locator: adminControlStateSourceRef,
+      }]);
+    },
+  );
+
   it("keeps runtime-caller outside Admin control-plane standards and permissions", () => {
     const result = resolveAgentContextFromRepository({ rootDir, profileId: "runtime-caller" });
 
     expect(result.standards.some((standard) => standard.standard_id === "writable-module-control-plane-v1")).toBe(false);
+    expect(result.standards.some((standard) => standard.standard_id === adminControlStateStandardId)).toBe(false);
     expect(result.rules.some((rule) => rule.rule_id.startsWith("CONTROL-") || rule.standard_id === "writable-module-control-plane-v1")).toBe(false);
+    for (const ruleId of adminControlStateRuleIds) {
+      expect(result.rules.some((rule) => rule.rule_id === ruleId)).toBe(false);
+    }
     expect(result.source_refs.some((source) => source.source_id === "standard:writable-module-control-plane-v1:2026-08-22.v1")).toBe(false);
+    expect(result.source_refs.some((source) => source.source_id === adminControlStateSourceRef)).toBe(false);
     expect(result.modules.map((module) => module.module_id).sort()).toEqual(["cargo", "container"]);
   });
 
@@ -84,7 +142,7 @@ describe("Agent context resolver", () => {
       (profile) => profile.profile_id === "runtime-caller",
     );
     const controlStandard = broadened.standards.find(
-      (standard) => standard.standard_id === "writable-module-control-plane-v1",
+      (standard) => standard.standard_id === adminControlStateStandardId,
     );
     if (runtimeCaller === undefined || controlStandard === undefined) {
       throw new Error("Expected runtime-caller and control standard fixtures.");
@@ -92,9 +150,14 @@ describe("Agent context resolver", () => {
     runtimeCaller.standard_ids.push(controlStandard.standard_id);
     runtimeCaller.allowed_rule_ids.push(...controlStandard.rule_ids);
 
-    expect(() => resolveAgentContextFromPack(broadened, {
-      profileId: "runtime-caller",
-    })).toThrow(AgentContextResolutionError);
+    let error: unknown;
+    try {
+      resolveAgentContextFromPack(broadened, { profileId: "runtime-caller" });
+    } catch (candidate: unknown) {
+      error = candidate;
+    }
+    expect(error).toBeInstanceOf(AgentContextResolutionError);
+    expect((error as AgentContextResolutionError).code).toBe("pack_invalid");
   });
 
   it("rejects a same-priority conflicting rule instead of guessing", () => {

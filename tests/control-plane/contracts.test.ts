@@ -119,6 +119,14 @@ const secondModuleRef = {
   descriptor_digest: `sha256:${"b".repeat(64)}`,
 } as const;
 
+function createLegalModuleRef(index: number) {
+  return {
+    module_id: `module_${index}`,
+    version: "2026-08-21.v0",
+    descriptor_digest: `sha256:${index.toString(16).padStart(2, "0")}${"a".repeat(62)}`,
+  } as const;
+}
+
 const validControlState = {
   kind: "control_state",
   activation: {
@@ -439,6 +447,69 @@ describe("admin control contracts", () => {
       readFileSync(resolve(schemaDir, "register-package-request.schema.json"), "utf8"),
     ) as Record<string, unknown>;
     expect(createAjv().compile(registerSchema)(malformedRegister)).toBe(false);
+  });
+
+  it("keeps deployment change desired modules bounded and structurally aligned", () => {
+    const deploymentSchema = JSON.parse(
+      readFileSync(resolve(schemaDir, "deployment-preview-request.schema.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const validateDeployment = createAjv().compile(deploymentSchema);
+    const changeRequest = (desiredModules: readonly unknown[]) => ({
+      schema_version: "2026-08-22.v1",
+      intent: "change",
+      desired_modules: desiredModules,
+    });
+    const assertBothStacks = (
+      candidate: unknown,
+      expected: boolean,
+      label: string,
+    ): void => {
+      expect(
+        deploymentPreviewRequestSchema.safeParse(candidate).success,
+        `${label}: Zod`,
+      ).toBe(expected);
+      expect(validateDeployment(candidate), `${label}: Ajv`).toBe(expected);
+    };
+
+    const sixtyFourDistinctRefs = Array.from(
+      { length: 64 },
+      (_, index) => createLegalModuleRef(index),
+    );
+    const sixtyFiveDistinctRefs = Array.from(
+      { length: 65 },
+      (_, index) => createLegalModuleRef(index),
+    );
+
+    assertBothStacks(
+      changeRequest(sixtyFourDistinctRefs),
+      true,
+      "64 distinct legal refs",
+    );
+    assertBothStacks(
+      changeRequest(sixtyFiveDistinctRefs),
+      false,
+      "65 distinct legal refs",
+    );
+    assertBothStacks(
+      changeRequest([validModuleRef, validModuleRef]),
+      false,
+      "two exact duplicate refs",
+    );
+
+    const sameLogicalKeyDifferentDigest = [
+      validModuleRef,
+      { ...validModuleRef, descriptor_digest: `sha256:${"e".repeat(64)}` },
+    ];
+    const crossDigestCandidate = changeRequest(sameLogicalKeyDifferentDigest);
+    expect(
+      deploymentPreviewRequestSchema.safeParse(crossDigestCandidate).success,
+      "same module_id/version with different digest: Zod logical-key guard",
+    ).toBe(false);
+    // Draft 2020-12 uniqueItems compares complete JSON values, not module_id + version.
+    expect(
+      validateDeployment(crossDigestCandidate),
+      "same module_id/version with different digest: Ajv structural-only acceptance",
+    ).toBe(true);
   });
 
   it("keeps the response envelope closed and limited to the five platform statuses", () => {

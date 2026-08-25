@@ -156,14 +156,14 @@ describe("Agent standard pack", () => {
     expect(isRuntimeTrustedAgentStandardPack(buildAgentStandardPack(rootDir))).toBe(false);
   });
 
-  it("pins the current ten-standard build to the reviewed serialized-byte digest", () => {
+  it("pins the current eleven-standard build to the reviewed serialized-byte digest", () => {
     const pack = buildAgentStandardPack(rootDir);
     const serialized = serializeAgentStandardPack(pack);
 
-    expect(pack.standards).toHaveLength(10);
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(84_319);
+    expect(pack.standards).toHaveLength(11);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(116_598);
     expect(sha256(serialized)).toBe(
-      "sha256:9aa0b0d2213872326853e4077990ac31cbdf2ea77041e06ddbd5a24abfd803d7",
+      "sha256:b3d186e9c36ff62798eb156eb536cf4e42d9853f5e4c44229e0c676cf9be0478",
     );
   });
 
@@ -220,6 +220,19 @@ describe("Agent standard pack", () => {
     expect(first.pack_schema_version).toBe("2026-08-21.v1");
     expect(first.standards.every((standard) => standard.sha256.startsWith("sha256:"))).toBe(true);
     expect(findAgentArtifactSafetyIssues(first)).toEqual([]);
+    expect(first.standards.map((standard) => standard.standard_id)).toEqual([
+      "active-workstreams",
+      "admin-control-state-dto-v1",
+      "agent-access.v0",
+      "agent.bootstrap",
+      "effective-rfc",
+      "implementation-plan",
+      "module-runtime.v0",
+      "platform.contracts",
+      "readback-attempt-finalization-v1",
+      "release-agent-adapters",
+      "writable-module-control-plane-v1",
+    ]);
 
     const controlPlane = first.standards.find((standard) => standard.standard_id === "writable-module-control-plane-v1");
     expect(controlPlane).toBeDefined();
@@ -228,7 +241,25 @@ describe("Agent standard pack", () => {
     expect(controlPlane?.sha256).toBe(
       `sha256:${createHash("sha256").update(controlPlane?.content ?? "", "utf8").digest("hex")}`,
     );
-    expect(JSON.stringify(first)).not.toContain("admin-control-state-dto-v1");
+    const adminControlState = first.standards.find(
+      (standard) => standard.standard_id === "admin-control-state-dto-v1",
+    );
+    expect(adminControlState).toEqual({
+      standard_id: "admin-control-state-dto-v1",
+      version: "2026-08-22.v1",
+      priority: 86,
+      audiences: ["developer", "operator", "reviewer"],
+      rule_ids: ["CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003"],
+      summary:
+        "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness.",
+      sha256:
+        "sha256:42b97c0c87ac4ab2afe4b8c39d910645daa01cc7b50be240806aaa724216c051",
+      source_ref: "standard:admin-control-state-dto-v1:2026-08-22.v1",
+      content: readFileSync(
+        resolve(rootDir, "docs/rfcs/2026-08-22-admin-control-state-dto-v1.md"),
+        "utf8",
+      ),
+    });
     expect(first.modules.map((module) => module.module_id).sort()).toEqual(["agent-access", "cargo", "container"]);
 
     const outputDir = mkdtempSync(resolve(physicalTmpDir, "agent-pack-"));
@@ -290,14 +321,14 @@ describe("Agent standard pack", () => {
     const runtimeCaller = broadenedRuntimeCaller.profiles.find(
       (profile) => profile.profile_id === "runtime-caller",
     );
-    const controlStandard = broadenedRuntimeCaller.standards.find(
-      (standard) => standard.standard_id === "writable-module-control-plane-v1",
+    const controlStateStandard = broadenedRuntimeCaller.standards.find(
+      (standard) => standard.standard_id === "admin-control-state-dto-v1",
     );
-    if (runtimeCaller === undefined || controlStandard === undefined) {
-      throw new Error("Expected runtime-caller and control standard fixtures.");
+    if (runtimeCaller === undefined || controlStateStandard === undefined) {
+      throw new Error("Expected runtime-caller and Admin control-state standard fixtures.");
     }
-    runtimeCaller.standard_ids.push(controlStandard.standard_id);
-    runtimeCaller.allowed_rule_ids.push(...controlStandard.rule_ids);
+    runtimeCaller.standard_ids.push(controlStateStandard.standard_id);
+    runtimeCaller.allowed_rule_ids.push(...controlStateStandard.rule_ids);
     variants.push(broadenedRuntimeCaller);
 
     const broadenedRuntimeModule = mutableClone(valid);

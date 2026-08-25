@@ -287,9 +287,10 @@ describe("Agent standard registry", () => {
     expect(escaped).toBe(false);
   }, 15_000);
 
-  it("registers the accepted writable control-plane RFC without expanding MCP modules or resources", () => {
+  it("registers the accepted control-plane RFCs without expanding MCP modules or resources", () => {
     const registry = loadAgentRegistry(rootDir);
     const standard = readRegisteredStandard(rootDir, registry, "writable-module-control-plane-v1");
+    const adminStateStandard = readRegisteredStandard(rootDir, registry, "admin-control-state-dto-v1");
     expect(registry.standards.find((candidate) => candidate.standard_id === standard.standard_id)).toEqual({
       standard_id: "writable-module-control-plane-v1",
       version: "2026-08-22.v1",
@@ -307,7 +308,22 @@ describe("Agent standard registry", () => {
       audiences: ["developer", "reviewer", "operator"],
       rule_ids: ["CONTROL-WRITE-001", "CONTROL-AUTH-001", "CONTROL-RELEASE-001"],
     });
-    expect(registry.standards.some((candidate) => candidate.standard_id === "admin-control-state-dto-v1")).toBe(false);
+    expect(registry.standards.find((candidate) => candidate.standard_id === adminStateStandard.standard_id)).toEqual({
+      standard_id: "admin-control-state-dto-v1",
+      version: "2026-08-22.v1",
+      path: "docs/rfcs/2026-08-22-admin-control-state-dto-v1.md",
+      priority: 86,
+      audiences: ["developer", "reviewer", "operator"],
+      rule_ids: ["CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003"],
+      summary: "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness.",
+    });
+    expect(adminStateStandard.front_matter).toEqual({
+      standard_id: "admin-control-state-dto-v1",
+      version: "2026-08-22.v1",
+      priority: 86,
+      audiences: ["developer", "reviewer", "operator"],
+      rule_ids: ["CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003"],
+    });
     expect(registry.standards.some((candidate) => candidate.path === "docs/superpowers/plans/2026-08-22-writable-mcp-control-plane-plan.md")).toBe(false);
     expect(registry.modules.map((module) => module.module_id).sort()).toEqual([
       "agent-access",

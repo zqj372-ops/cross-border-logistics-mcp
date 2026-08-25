@@ -67,6 +67,15 @@
       "summary": "Accepted local/fixture module-control rules for static mounted modules; profiles provide standard content only, not HTTP permissions; production Admin POST remains blocked."
     },
     {
+      "standard_id": "admin-control-state-dto-v1",
+      "version": "2026-08-22.v1",
+      "path": "docs/rfcs/2026-08-22-admin-control-state-dto-v1.md",
+      "priority": 86,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003"],
+      "summary": "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness."
+    },
+    {
       "standard_id": "release-agent-adapters",
       "version": "2026-08-21.v1",
       "path": "docs/standards/release-agent-adapters.md",

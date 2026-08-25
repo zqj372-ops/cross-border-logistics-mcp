@@ -3,7 +3,8 @@ standard_id: admin-control-state-dto-v1
 version: 2026-08-22.v1
 priority: 86
 audience: developer,reviewer,operator
-status: draft
+rule_ids: CONTROL-STATE-001,CONTROL-STATE-002,CONTROL-STATE-003
+status: accepted
 ---
 
 # RFC：Admin control-state DTO 合同闭合 v1
@@ -11,7 +12,7 @@ status: draft
 - 日期：2026-08-22
 - 范围：Admin control envelope 的 `control_state` 响应 DTO、Zod 合同、checked-in Draft 2020-12 Schema 和合同测试。
 - 前置关系：本 RFC 是可写模块控制面 Task 3 服务映射的合同前置门槛；不改变请求合同、公共 MCP 工具合同或控制面数据库。
-- 当前事实：该 DTO v1 尚未作为服务、Admin UI 或生产接口发布。本 RFC 不是实现或生产资格证明。
+- 当前事实：仅该 DTO 合同已 accepted；Service、UI、runtime 和 production 均未实现。本 RFC 不是实现或生产资格证明。
 
 ## 1. 缺口与问题边界
 
@@ -198,10 +199,12 @@ DTO 不允许 evidence refs、source refs、URL、路径、源码位置、email�
    字段。
 2. 从最新 preview/approval/readback/release 记录按对应闭合 union 投影；状态不一致时在服务层
    返回适当失败状态或 `manual_review`，不能借 DTO 结构掩盖冲突。
-3. repository 必须在 Task 3 开始前提供 bounded release history（最多 128、revision 严格降序、
-   newest-first）和权威 `events_truncated` 布尔字段。当前 repository state 合同没有这两个权威
-   projection；这是已确认的前置缺口，不是已实现能力。service 禁止只看返回的 event 数组长度猜
-   truncation，也禁止从 events 反推 release history。
+3. `ModuleControlState` 已包含 `releaseHistory` 和权威 `eventsTruncated` 字段；现有 Fake
+   repository 与 SQLite repository 已提供这两个 projection：release history 最多 128 项并按
+   revision/release ID 保持 newest-first，events 窗口有界且由 `eventsTruncated` 明确是否发生截断。
+   因此“当前 repository state 合同没有这两个 projection”的旧前置事实已过时。Task 3 的 service
+   mapping 必须直接消费这两个字段，禁止只看返回的 event 数组长度猜 truncation，也禁止从 events
+   反推 release history。
 4. repository 提供的 events 必须按 sequence 严格升序；service 只投影最多 256 条允许的 summary，
    不得把数据库 JSON detail/raw payload 透传。
 5. 保留 activation release/revision/module refs 的精确 readback 关系；不得从 inventory 推导 active
@@ -295,7 +298,8 @@ Zod parse 后返回的 detached snapshot 仍是普通 `Object.prototype` object/
 输入边界失败统一转换成稳定脱敏 contract error；错误不得包含原始值、Proxy/getter
 message、secret 或 raw payload。
 
-本任务不实现上述 service/repository/UI 映射；在映射完成并有运行时读回证据前，服务能力仍是
+本任务不实现上述 `ModuleControlService` DTO mapping 或 producer assertion wiring；在这些接线
+完成并有运行时读回证据前，UI、runtime 和 production 能力仍未实现或未被证明，服务能力仍是
 “待适配验证”，Admin UI 不能以本 RFC 作为真实 API 已上线的证明。
 
 ## 6. 测试与验证要求
@@ -362,9 +366,11 @@ git diff --check
 ## 7. 迁移与回滚
 
 本前置任务没有 persistence schema、repository state projection、SQLite 或 service 迁移，也不改请求
-或 hash golden vectors；repository assertion 与 Fake 仅改为复用共享精确时间 helper。Task 3 接线
-前仍必须扩展 repository state projection，使其权威提供 bounded release history 与
-`events_truncated`；随后 service 填充所有 required DTO 字段并依次执行 state/action producer 断言。
+或 hash golden vectors。`ModuleControlState`、现有 Fake repository 与 SQLite repository 已权威提供
+bounded、newest-first 的 `releaseHistory` 和 `eventsTruncated`，因此不再存在“Task 3 接线前必须扩展
+repository state projection”这一前置缺口。仍未实现或未被证明的是 `ModuleControlService` DTO
+mapping、state/action producer assertion wiring，以及 UI、runtime、production；Task 3 必须直接
+消费现有 repository projection，填充所有 required DTO 字段并依次执行断言。
 历史记录缺少所需摘要时只能进入既有 `manual_review`/`unavailable` 门禁，不能用 events 猜 history、
 用数组长度猜 truncation 或用 inventory 猜 activation。repository 必须保留 superseded 历史；service
 不能因旧 module 已退出 current inventory 而删除 release row。current inventory 缺失只阻止该 ref
@@ -383,11 +389,13 @@ action-specific 完整矩阵。Task 3
 若本合同在服务接线前被否决，回滚方式是恢复旧 `control_state` response schema 和对应合同测试，
 移除本 RFC 新增的 producer 硬门，并把尚未发布 fixture 恢复到同一旧合同基线；请求
 schema_version/golden hashes、数据库数据、release/event 历史和权限/状态机保持不变。若 Task 3
-已经依赖新 DTO，必须先回滚 service producer 映射，再回滚 repository projection，并重新运行合同
+已经依赖新 DTO，必须先回滚 service producer 映射和 assertion wiring；只有另有独立 repository
+projection 变更时才回滚该变更，并重新运行合同
 与 service 测试；不得直接编辑数据库补字段，也不得通过 generic map 绕过 closed contract。任何
 面向已发布客户端的破坏性回滚都需要另行 RFC，本 RFC 不授权该操作。
 
 ## 8. 当前状态声明
 
-本 RFC 和本前置任务只描述并验证 DTO 合同。它不宣称可写控制面服务、Admin UI、运行时恢复、
-生产 Admin POST、模块 hot-plug 或生产资格已经实现、发布或验收。
+本 RFC 仅表示 control-state DTO 合同已 accepted；Service、UI、runtime 和 production 均未实现、
+未发布或未验收。它不宣称可写控制面服务、Admin UI、运行时恢复、生产 Admin POST、模块 hot-plug
+或生产资格已经实现、发布或验收。
