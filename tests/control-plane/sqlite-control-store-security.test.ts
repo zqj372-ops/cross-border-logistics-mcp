@@ -808,6 +808,7 @@ describe("SQLite control store security invariants", () => {
       module_approvals: ["management_tenant_id", "approval_id"],
       module_releases: ["management_tenant_id", "release_id"],
       module_readbacks: ["management_tenant_id", "release_id"],
+      module_readback_attempts: ["management_tenant_id", "attempt_id"],
       module_control_idempotency: [
         "management_tenant_id",
         "action",
@@ -846,6 +847,28 @@ describe("SQLite control store security invariants", () => {
       ],
       module_control_idempotency: [
         ["management_tenant_id", "action", "idempotency_key"],
+        [
+          "management_tenant_id",
+          "action",
+          "idempotency_key",
+          "request_hash",
+          "domain_record_ref",
+        ],
+      ],
+      module_readback_attempts: [
+        ["management_tenant_id", "attempt_id"],
+        ["management_tenant_id", "action", "idempotency_key"],
+        ["management_tenant_id", "readback_ref"],
+        ["management_tenant_id", "release_id", "revision"],
+        ["reconciliation_event_sequence"],
+        ["completion_event_sequence"],
+        [
+          "management_tenant_id",
+          "attempt_id",
+          "release_id",
+          "revision",
+          "readback_ref",
+        ],
       ],
       module_control_events: [["event_id"]],
     };
@@ -873,6 +896,23 @@ describe("SQLite control store security invariants", () => {
         "module_releases:management_tenant_id->management_tenant_id",
         "module_releases:release_id->release_id",
         "module_releases:revision->revision",
+        "module_readback_attempts:management_tenant_id->management_tenant_id",
+        "module_readback_attempts:attempt_id->attempt_id",
+        "module_readback_attempts:release_id->release_id",
+        "module_readback_attempts:revision->revision",
+        "module_readback_attempts:readback_ref->readback_ref",
+      ],
+      module_readback_attempts: [
+        "module_control_idempotency:management_tenant_id->management_tenant_id",
+        "module_control_idempotency:action->action",
+        "module_control_idempotency:idempotency_key->idempotency_key",
+        "module_control_idempotency:request_hash->request_hash",
+        "module_control_idempotency:release_id->domain_record_ref",
+        "module_releases:management_tenant_id->management_tenant_id",
+        "module_releases:release_id->release_id",
+        "module_releases:revision->revision",
+        "module_control_events:reconciliation_event_sequence->sequence",
+        "module_control_events:completion_event_sequence->sequence",
       ],
       module_control_idempotency: [],
       module_control_events: [],
@@ -903,7 +943,10 @@ describe("SQLite control store security invariants", () => {
         "status in ('published_pending_readback', 'manual_review', 'active_verified', 'superseded')",
       );
       expect(tableSql(database, "module_readbacks")).toContain(
-        "status in ('pending', 'verified', 'mismatch', 'unknown')",
+        "status in ('verified', 'mismatch', 'unknown')",
+      );
+      expect(tableSql(database, "module_readback_attempts")).toContain(
+        "phase in ('claimed', 'finalized')",
       );
       expect(tableSql(database, "module_control_idempotency")).toContain(
         "status in ('reserved', 'domain_committed', 'completed')",
@@ -926,6 +969,11 @@ describe("SQLite control store security invariants", () => {
           sql: "create index idx_module_control_events_tenant_sequence on module_control_events (management_tenant_id, sequence)",
         },
         {
+          name: "idx_module_control_idempotency_tenant_action_key_hash",
+          table: "module_control_idempotency",
+          sql: "create index idx_module_control_idempotency_tenant_action_key_hash on module_control_idempotency ( management_tenant_id, action, idempotency_key, request_hash )",
+        },
+        {
           name: "idx_module_control_idempotency_tenant_expires_at",
           table: "module_control_idempotency",
           sql: "create index idx_module_control_idempotency_tenant_expires_at on module_control_idempotency (management_tenant_id, expires_at)",
@@ -936,9 +984,29 @@ describe("SQLite control store security invariants", () => {
           sql: "create index idx_module_previews_tenant_expires_at on module_previews (management_tenant_id, expires_at)",
         },
         {
+          name: "idx_module_readback_attempts_release_history",
+          table: "module_readback_attempts",
+          sql: "create index idx_module_readback_attempts_release_history on module_readback_attempts ( management_tenant_id, release_id, revision, reconciliation_event_sequence desc, attempt_id desc )",
+        },
+        {
+          name: "idx_module_readback_attempts_unfinished",
+          table: "module_readback_attempts",
+          sql: "create index idx_module_readback_attempts_unfinished on module_readback_attempts ( management_tenant_id, claimed_at, release_id, revision ) where phase = 'claimed'",
+        },
+        {
+          name: "idx_module_readbacks_tenant_readback_ref",
+          table: "module_readbacks",
+          sql: "create index idx_module_readbacks_tenant_readback_ref on module_readbacks (management_tenant_id, readback_ref)",
+        },
+        {
           name: "idx_module_releases_tenant_status_revision",
           table: "module_releases",
           sql: "create index idx_module_releases_tenant_status_revision on module_releases (management_tenant_id, status, revision desc)",
+        },
+        {
+          name: "uq_module_readback_attempts_claimed_release",
+          table: "module_readback_attempts",
+          sql: "create unique index uq_module_readback_attempts_claimed_release on module_readback_attempts ( management_tenant_id, release_id, revision ) where phase = 'claimed'",
         },
       ]);
     } finally {

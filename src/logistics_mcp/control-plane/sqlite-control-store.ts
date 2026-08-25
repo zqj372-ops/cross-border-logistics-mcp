@@ -22,6 +22,7 @@ import {
   writeSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { types as nodeUtilTypes } from "node:util";
 import { isAbsolute, join, normalize, parse, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Stats } from "node:fs";
@@ -31,8 +32,11 @@ import {
   assertControlEventLifecycleCardinality,
   assertControlRequestBinding,
   assertModulePreviewAuthoritySemantics,
+  assertReadbackAttemptObservation,
+  assertReadbackAttemptRecord,
   createControlEventLifecycleCounts,
   deepFreezeControlRecord,
+  deepFreezeReadbackAttempt,
   MODULE_CONTROL_ACTIONS,
   ModuleControlRepositoryError,
   resolveMonotonicControlEventOccurredAt,
@@ -42,15 +46,22 @@ import {
   formatRfc3339InstantUtc,
   parseRfc3339Instant,
 } from "./rfc3339-instant";
+import {
+  assertExactControlSchema,
+  CONTROL_SCHEMA_FINGERPRINT,
+  CONTROL_SCHEMA_STATEMENTS,
+  fingerprintControlSchema,
+  normalizeControlSchema,
+} from "./readback-attempt-schema";
 import type {
   ApprovalWriteResult,
-  CompleteControlIdempotencyRequest,
   ControlEventLifecycleCounts,
   ControlEventRecord,
   ControlFinalResult,
   ControlIdempotencyRecord,
   ControlRecord,
   ControlRequestMetadata,
+  DeepReadonly,
   CreatePreviewRecordRequest,
   DecideApprovalRecordRequest,
   GetControlIdempotencyQuery,
@@ -59,7 +70,9 @@ import type {
   GetModuleReadbackQuery,
   GetModuleReleaseQuery,
   ModuleControlAction,
+  ModuleControlReadbackAttemptRepository,
   ModuleControlRef,
+  CompletedModuleControlIdempotencyRecord,
   ModuleApprovalRecord,
   ModuleChangePreviewRecord,
   ModuleControlRepository,
@@ -68,15 +81,24 @@ import type {
   ModuleRollbackPreviewRecord,
   ModulePreviewRecord,
   ModuleReadbackRecord,
+  ModuleTerminalReadbackRecord,
   ModuleRegistrationRecord,
   ModuleReleaseRecord,
   PublishReleaseRecordRequest,
-  ReadbackWriteResult,
-  RecordReadbackRequest,
   RegistrationWriteResult,
   RegisterModuleRecordRequest,
   PreviewWriteResult,
   ReleaseWriteResult,
+  ClaimReadbackAttemptRequest,
+  FinalizeReadbackAndCompleteRequest,
+  GetReadbackAttemptHistoryQuery,
+  GetUnfinishedReadbackAttemptQuery,
+  ReadbackAttemptClaimResult,
+  ReadbackAttemptObservation,
+  ReadbackAttemptRequestMetadata,
+  ReadbackAttemptOwnerCapability,
+  ReadbackAttemptRecord,
+  ReadbackFinalizationResult,
 } from "./repository";
 import { IDENTIFIER_PATTERN } from "./lexical-contracts";
 
@@ -86,427 +108,13 @@ const MARKER_MODE = 0o400;
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const DIRECTORY_FLAG = fsConstants.O_DIRECTORY ?? 0;
 
-const TABLE_NAMES = [
-  "control_identity",
-  "module_approvals",
-  "module_control_events",
-  "module_control_idempotency",
-  "module_previews",
-  "module_readbacks",
-  "module_registrations",
-  "module_releases",
-] as const;
-
-type TableName = (typeof TABLE_NAMES)[number];
-
-const TABLE_COLUMNS: Readonly<Record<TableName, readonly { name: string; type: string }[]>> = {
-  control_identity: [
-    { name: "singleton_id", type: "INTEGER" },
-    { name: "marker_format", type: "TEXT" },
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "control_db_id", type: "TEXT" },
-    { name: "control_db_path", type: "TEXT" },
-    { name: "instance_id", type: "TEXT" },
-    { name: "schema_version", type: "INTEGER" },
-  ],
-  module_registrations: [
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "module_id", type: "TEXT" },
-    { name: "version", type: "TEXT" },
-    { name: "descriptor_digest", type: "TEXT" },
-    { name: "evidence_level", type: "TEXT" },
-    { name: "production_eligible", type: "INTEGER" },
-    { name: "evidence_refs_json", type: "TEXT" },
-    { name: "registered_by_actor_ref", type: "TEXT" },
-    { name: "registered_at", type: "TEXT" },
-  ],
-  module_previews: [
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "preview_ref", type: "TEXT" },
-    { name: "canonical_hash", type: "TEXT" },
-    { name: "intent", type: "TEXT" },
-    { name: "base_release_id", type: "TEXT" },
-    { name: "base_revision", type: "INTEGER" },
-    { name: "inventory_refs_json", type: "TEXT" },
-    { name: "desired_modules_json", type: "TEXT" },
-    { name: "diff_json", type: "TEXT" },
-    { name: "validation_json", type: "TEXT" },
-    { name: "creator_actor_ref", type: "TEXT" },
-    { name: "created_at", type: "TEXT" },
-    { name: "expires_at", type: "TEXT" },
-    { name: "consumed", type: "INTEGER" },
-    { name: "target_release_id", type: "TEXT" },
-  ],
-  module_approvals: [
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "approval_id", type: "TEXT" },
-    { name: "preview_ref", type: "TEXT" },
-    { name: "decision", type: "TEXT" },
-    { name: "preview_canonical_hash", type: "TEXT" },
-    { name: "base_release_id", type: "TEXT" },
-    { name: "base_revision", type: "INTEGER" },
-    { name: "inventory_digest_set_json", type: "TEXT" },
-    { name: "expires_at", type: "TEXT" },
-    { name: "reason_code", type: "TEXT" },
-    { name: "approver_actor_ref", type: "TEXT" },
-    { name: "decided_at", type: "TEXT" },
-    { name: "consumed", type: "INTEGER" },
-  ],
-  module_releases: [
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "release_id", type: "TEXT" },
-    { name: "revision", type: "INTEGER" },
-    { name: "desired_modules_json", type: "TEXT" },
-    { name: "previous_release_id", type: "TEXT" },
-    { name: "preview_ref", type: "TEXT" },
-    { name: "approval_id", type: "TEXT" },
-    { name: "publisher_actor_ref", type: "TEXT" },
-    { name: "status", type: "TEXT" },
-    { name: "created_at", type: "TEXT" },
-    { name: "published_at", type: "TEXT" },
-    { name: "readback_ref", type: "TEXT" },
-    { name: "reason_codes_json", type: "TEXT" },
-    { name: "superseded_by_release_id", type: "TEXT" },
-  ],
-  module_readbacks: [
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "release_id", type: "TEXT" },
-    { name: "readback_ref", type: "TEXT" },
-    { name: "revision", type: "INTEGER" },
-    { name: "applied_release_id", type: "TEXT" },
-    { name: "applied_revision", type: "INTEGER" },
-    { name: "applied_modules_json", type: "TEXT" },
-    { name: "status", type: "TEXT" },
-    { name: "reason_codes_json", type: "TEXT" },
-    { name: "checked_at", type: "TEXT" },
-  ],
-  module_control_idempotency: [
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "action", type: "TEXT" },
-    { name: "idempotency_key", type: "TEXT" },
-    { name: "request_hash", type: "TEXT" },
-    { name: "actor_ref", type: "TEXT" },
-    { name: "status", type: "TEXT" },
-    { name: "domain_record_ref", type: "TEXT" },
-    { name: "final_result_json", type: "TEXT" },
-    { name: "created_at", type: "TEXT" },
-    { name: "expires_at", type: "TEXT" },
-  ],
-  module_control_events: [
-    { name: "sequence", type: "INTEGER" },
-    { name: "management_tenant_id", type: "TEXT" },
-    { name: "event_id", type: "TEXT" },
-    { name: "actor_ref", type: "TEXT" },
-    { name: "action", type: "TEXT" },
-    { name: "idempotency_key", type: "TEXT" },
-    { name: "request_hash", type: "TEXT" },
-    { name: "object_ref", type: "TEXT" },
-    { name: "status", type: "TEXT" },
-    { name: "reason_codes_json", type: "TEXT" },
-    { name: "payload_json", type: "TEXT" },
-    { name: "occurred_at", type: "TEXT" },
-  ],
-};
-
-const JSON_COLUMNS: Readonly<Record<TableName, readonly string[]>> = {
-  control_identity: [],
-  module_registrations: ["evidence_refs_json"],
-  module_previews: [
-    "inventory_refs_json",
-    "desired_modules_json",
-    "diff_json",
-    "validation_json",
-  ],
-  module_approvals: ["inventory_digest_set_json"],
-  module_releases: ["desired_modules_json", "reason_codes_json"],
-  module_readbacks: ["applied_modules_json", "reason_codes_json"],
-  module_control_idempotency: ["final_result_json"],
-  module_control_events: ["reason_codes_json", "payload_json"],
-};
-
-const CONTROL_SCHEMA = [
-  `CREATE TABLE control_identity (
-    singleton_id INTEGER PRIMARY KEY NOT NULL CHECK (singleton_id = 1),
-    marker_format TEXT NOT NULL CHECK (marker_format = 'mcp-control-identity/v1'),
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    control_db_id TEXT NOT NULL CHECK (
-      length(control_db_id) = 35 AND
-      substr(control_db_id, 1, 3) = 'db_' AND
-      substr(control_db_id, 4) NOT GLOB '*[^0-9a-f]*'
-    ),
-    control_db_path TEXT NOT NULL CHECK (length(control_db_path) > 0),
-    instance_id TEXT NOT NULL CHECK (length(instance_id) > 0),
-    schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-    UNIQUE (management_tenant_id, control_db_id)
-  ) STRICT`,
-  `CREATE TABLE module_registrations (
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    module_id TEXT NOT NULL CHECK (length(module_id) > 0),
-    version TEXT NOT NULL CHECK (length(version) > 0),
-    descriptor_digest TEXT NOT NULL CHECK (
-      length(descriptor_digest) = 71 AND
-      substr(descriptor_digest, 1, 7) = 'sha256:' AND
-      substr(descriptor_digest, 8) NOT GLOB '*[^0-9a-f]*'
-    ),
-    evidence_level TEXT NOT NULL CHECK (evidence_level = 'local_build'),
-    production_eligible INTEGER NOT NULL CHECK (production_eligible = 0),
-    evidence_refs_json TEXT NOT NULL CHECK (
-      json_valid(evidence_refs_json) AND json_type(evidence_refs_json) = 'object'
-    ),
-    registered_by_actor_ref TEXT NOT NULL CHECK (length(registered_by_actor_ref) > 0),
-    registered_at TEXT NOT NULL CHECK (length(registered_at) > 0),
-    PRIMARY KEY (management_tenant_id, module_id, version, descriptor_digest)
-  ) STRICT`,
-  `CREATE TABLE module_previews (
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    preview_ref TEXT NOT NULL CHECK (length(preview_ref) > 0),
-    canonical_hash TEXT NOT NULL CHECK (
-      length(canonical_hash) = length('mcp-control-hash/v1/preview/sha256:') + 64 AND
-      substr(canonical_hash, 1, length('mcp-control-hash/v1/preview/sha256:')) =
-        'mcp-control-hash/v1/preview/sha256:' AND
-      substr(canonical_hash, length('mcp-control-hash/v1/preview/sha256:') + 1)
-        NOT GLOB '*[^0-9a-f]*'
-    ),
-    intent TEXT NOT NULL CHECK (intent IN ('change', 'rollback')),
-    base_release_id TEXT,
-    base_revision INTEGER NOT NULL CHECK (base_revision >= 0),
-    inventory_refs_json TEXT NOT NULL CHECK (
-      json_valid(inventory_refs_json) AND json_type(inventory_refs_json) = 'array'
-    ),
-    desired_modules_json TEXT NOT NULL CHECK (
-      json_valid(desired_modules_json) AND json_type(desired_modules_json) = 'array'
-    ),
-    diff_json TEXT NOT NULL CHECK (json_valid(diff_json) AND json_type(diff_json) = 'object'),
-    validation_json TEXT NOT NULL CHECK (
-      json_valid(validation_json) AND json_type(validation_json) = 'object'
-    ),
-    creator_actor_ref TEXT NOT NULL CHECK (length(creator_actor_ref) > 0),
-    created_at TEXT NOT NULL CHECK (length(created_at) > 0),
-    expires_at TEXT NOT NULL CHECK (length(expires_at) > 0),
-    consumed INTEGER NOT NULL CHECK (consumed IN (0, 1)),
-    target_release_id TEXT,
-    PRIMARY KEY (management_tenant_id, preview_ref),
-    UNIQUE (management_tenant_id, preview_ref, canonical_hash, base_revision, expires_at),
-    CHECK (
-      (intent = 'change' AND target_release_id IS NULL) OR
-      (intent = 'rollback' AND target_release_id IS NOT NULL AND length(target_release_id) > 0)
-    )
-  ) STRICT`,
-  `CREATE TABLE module_approvals (
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    approval_id TEXT NOT NULL CHECK (length(approval_id) > 0),
-    preview_ref TEXT NOT NULL CHECK (length(preview_ref) > 0),
-    decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject')),
-    preview_canonical_hash TEXT NOT NULL CHECK (length(preview_canonical_hash) > 0),
-    base_release_id TEXT,
-    base_revision INTEGER NOT NULL CHECK (base_revision >= 0),
-    inventory_digest_set_json TEXT NOT NULL CHECK (
-      json_valid(inventory_digest_set_json) AND json_type(inventory_digest_set_json) = 'array'
-    ),
-    expires_at TEXT NOT NULL CHECK (length(expires_at) > 0),
-    reason_code TEXT NOT NULL CHECK (length(reason_code) > 0),
-    approver_actor_ref TEXT NOT NULL CHECK (length(approver_actor_ref) > 0),
-    decided_at TEXT NOT NULL CHECK (length(decided_at) > 0),
-    consumed INTEGER NOT NULL CHECK (consumed IN (0, 1)),
-    PRIMARY KEY (management_tenant_id, approval_id),
-    UNIQUE (management_tenant_id, preview_ref),
-    UNIQUE (management_tenant_id, preview_ref, approval_id),
-    CHECK (decision = 'approve' OR consumed = 0),
-    FOREIGN KEY (
-      management_tenant_id,
-      preview_ref,
-      preview_canonical_hash,
-      base_revision,
-      expires_at
-    ) REFERENCES module_previews (
-      management_tenant_id,
-      preview_ref,
-      canonical_hash,
-      base_revision,
-      expires_at
-    )
-  ) STRICT`,
-  `CREATE TABLE module_releases (
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    release_id TEXT NOT NULL CHECK (length(release_id) > 0),
-    revision INTEGER NOT NULL CHECK (revision >= 1),
-    desired_modules_json TEXT NOT NULL CHECK (
-      json_valid(desired_modules_json) AND json_type(desired_modules_json) = 'array'
-    ),
-    previous_release_id TEXT,
-    preview_ref TEXT NOT NULL CHECK (length(preview_ref) > 0),
-    approval_id TEXT NOT NULL CHECK (length(approval_id) > 0),
-    publisher_actor_ref TEXT NOT NULL CHECK (length(publisher_actor_ref) > 0),
-    status TEXT NOT NULL CHECK (status IN ('published_pending_readback', 'manual_review', 'active_verified', 'superseded')),
-    created_at TEXT NOT NULL CHECK (length(created_at) > 0),
-    published_at TEXT CHECK (published_at IS NULL OR length(published_at) > 0),
-    readback_ref TEXT,
-    reason_codes_json TEXT NOT NULL CHECK (
-      json_valid(reason_codes_json) AND json_type(reason_codes_json) = 'array'
-    ),
-    superseded_by_release_id TEXT,
-    PRIMARY KEY (management_tenant_id, release_id),
-    UNIQUE (management_tenant_id, revision),
-    UNIQUE (management_tenant_id, release_id, revision),
-    CHECK (
-      (status = 'published_pending_readback' AND readback_ref IS NULL AND reason_codes_json = '[]' AND superseded_by_release_id IS NULL) OR
-      (status = 'manual_review' AND readback_ref IS NOT NULL AND reason_codes_json <> '[]' AND superseded_by_release_id IS NULL) OR
-      (status = 'active_verified' AND readback_ref IS NOT NULL AND reason_codes_json = '[]' AND superseded_by_release_id IS NULL) OR
-      (status = 'superseded' AND readback_ref IS NOT NULL AND reason_codes_json = '[]' AND superseded_by_release_id IS NOT NULL)
-    ),
-    CHECK (
-      status = 'published_pending_readback' OR published_at IS NOT NULL
-    ),
-    FOREIGN KEY (management_tenant_id, preview_ref, approval_id)
-      REFERENCES module_approvals (management_tenant_id, preview_ref, approval_id),
-    FOREIGN KEY (management_tenant_id, previous_release_id)
-      REFERENCES module_releases (management_tenant_id, release_id)
-      DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (management_tenant_id, superseded_by_release_id)
-      REFERENCES module_releases (management_tenant_id, release_id)
-      DEFERRABLE INITIALLY DEFERRED
-  ) STRICT`,
-  `CREATE TABLE module_readbacks (
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    release_id TEXT NOT NULL CHECK (length(release_id) > 0),
-    readback_ref TEXT NOT NULL CHECK (length(readback_ref) > 0),
-    revision INTEGER NOT NULL CHECK (revision >= 1),
-    applied_release_id TEXT,
-    applied_revision INTEGER,
-    applied_modules_json TEXT NOT NULL CHECK (
-      json_valid(applied_modules_json) AND json_type(applied_modules_json) = 'array'
-    ),
-    status TEXT NOT NULL CHECK (status IN ('pending', 'verified', 'mismatch', 'unknown')),
-    reason_codes_json TEXT NOT NULL CHECK (
-      json_valid(reason_codes_json) AND json_type(reason_codes_json) = 'array'
-    ),
-    checked_at TEXT NOT NULL CHECK (length(checked_at) > 0),
-    PRIMARY KEY (management_tenant_id, release_id),
-    UNIQUE (management_tenant_id, readback_ref),
-    CHECK (
-      (status = 'pending' AND applied_release_id IS NULL AND applied_revision IS NULL AND reason_codes_json = '[]') OR
-      (status = 'verified' AND applied_release_id = release_id AND applied_revision = revision AND reason_codes_json = '[]') OR
-      (status IN ('mismatch', 'unknown') AND reason_codes_json <> '[]' AND
-        ((applied_release_id IS NULL AND applied_revision IS NULL) OR
-         (applied_release_id IS NOT NULL AND applied_revision IS NOT NULL)))
-    ),
-    FOREIGN KEY (management_tenant_id, release_id, revision)
-      REFERENCES module_releases (management_tenant_id, release_id, revision)
-  ) STRICT`,
-  `CREATE TABLE module_control_idempotency (
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    action TEXT NOT NULL CHECK (action IN ('packages.register', 'deployments.preview', 'approvals.decide', 'deployments.publish', 'deployments.reconcile')),
-    idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) > 0),
-    request_hash TEXT NOT NULL CHECK (
-      length(request_hash) = length('mcp-control-hash/v1/request/sha256:') + 64 AND
-      substr(request_hash, 1, length('mcp-control-hash/v1/request/sha256:')) =
-        'mcp-control-hash/v1/request/sha256:' AND
-      substr(request_hash, length('mcp-control-hash/v1/request/sha256:') + 1)
-        NOT GLOB '*[^0-9a-f]*'
-    ),
-    actor_ref TEXT NOT NULL CHECK (length(actor_ref) > 0),
-    status TEXT NOT NULL CHECK (status IN ('reserved', 'domain_committed', 'completed')),
-    domain_record_ref TEXT,
-    final_result_json TEXT CHECK (
-      final_result_json IS NULL OR
-      (json_valid(final_result_json) AND json_type(final_result_json) = 'object')
-    ),
-    created_at TEXT NOT NULL CHECK (length(created_at) > 0),
-    expires_at TEXT NOT NULL CHECK (length(expires_at) > 0),
-    PRIMARY KEY (management_tenant_id, action, idempotency_key),
-    CHECK (
-      (status = 'reserved' AND domain_record_ref IS NULL AND final_result_json IS NULL) OR
-      (status = 'domain_committed' AND domain_record_ref IS NOT NULL AND final_result_json IS NULL) OR
-      (status = 'completed' AND domain_record_ref IS NOT NULL AND final_result_json IS NOT NULL)
-    )
-  ) STRICT`,
-  `CREATE TABLE module_control_events (
-    sequence INTEGER PRIMARY KEY NOT NULL,
-    management_tenant_id TEXT NOT NULL CHECK (length(management_tenant_id) > 0),
-    event_id TEXT NOT NULL UNIQUE CHECK (length(event_id) > 0),
-    actor_ref TEXT NOT NULL CHECK (length(actor_ref) > 0),
-    action TEXT NOT NULL CHECK (action IN ('packages.register', 'deployments.preview', 'approvals.decide', 'deployments.publish', 'deployments.reconcile')),
-    idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) > 0),
-    request_hash TEXT NOT NULL CHECK (
-      length(request_hash) = length('mcp-control-hash/v1/request/sha256:') + 64 AND
-      substr(request_hash, 1, length('mcp-control-hash/v1/request/sha256:')) =
-        'mcp-control-hash/v1/request/sha256:' AND
-      substr(request_hash, length('mcp-control-hash/v1/request/sha256:') + 1)
-        NOT GLOB '*[^0-9a-f]*'
-    ),
-    object_ref TEXT NOT NULL CHECK (length(object_ref) > 0),
-    status TEXT NOT NULL,
-    reason_codes_json TEXT NOT NULL CHECK (
-      json_valid(reason_codes_json) AND json_type(reason_codes_json) = 'array'
-    ),
-    payload_json TEXT NOT NULL CHECK (
-      json_valid(payload_json) AND json_type(payload_json) = 'object'
-    ),
-    occurred_at TEXT NOT NULL CHECK (length(occurred_at) > 0),
-    CHECK (
-      (action = 'packages.register' AND status = 'registered') OR
-      (action = 'deployments.preview' AND status = 'previewed') OR
-      (action = 'approvals.decide' AND status IN ('approved', 'rejected')) OR
-      (action = 'deployments.publish' AND status IN ('published_pending_readback', 'manual_review', 'active_verified', 'superseded')) OR
-      (action = 'deployments.reconcile' AND status IN ('pending', 'verified', 'mismatch', 'unknown')) OR
-      (
-        action = 'deployments.publish' AND
-        status IN ('pending', 'verified', 'mismatch', 'unknown') AND
-        json_type(payload_json, '$.detail') = 'object' AND
-        json_extract(payload_json, '$.detail.kind') = 'reconciliation' AND
-        json_extract(payload_json, '$.detail.status') = status
-      ) OR
-      (
-        status IN ('reserved', 'domain_committed', 'completed') AND
-        json_type(payload_json, '$.detail') = 'object' AND
-        json_extract(payload_json, '$.detail.kind') = 'idempotency' AND
-        json_extract(payload_json, '$.detail.status') = status
-      )
-    )
-  ) STRICT`,
-] as const;
-
-const CONTROL_INDEXES = [
-  `CREATE INDEX idx_module_control_events_tenant_sequence
-    ON module_control_events (management_tenant_id, sequence)`,
-  `CREATE INDEX idx_module_control_idempotency_tenant_expires_at
-    ON module_control_idempotency (management_tenant_id, expires_at)`,
-  `CREATE INDEX idx_module_previews_tenant_expires_at
-    ON module_previews (management_tenant_id, expires_at)`,
-  `CREATE INDEX idx_module_releases_tenant_status_revision
-    ON module_releases (management_tenant_id, status, revision DESC)`,
-] as const;
-
-const INDEX_NAMES = [
-  "idx_module_control_events_tenant_sequence",
-  "idx_module_control_idempotency_tenant_expires_at",
-  "idx_module_previews_tenant_expires_at",
-  "idx_module_releases_tenant_status_revision",
-] as const;
-
-const SCHEMA_BY_TABLE: Readonly<Record<TableName, string>> = {
-  control_identity: CONTROL_SCHEMA[0],
-  module_registrations: CONTROL_SCHEMA[1],
-  module_previews: CONTROL_SCHEMA[2],
-  module_approvals: CONTROL_SCHEMA[3],
-  module_releases: CONTROL_SCHEMA[4],
-  module_readbacks: CONTROL_SCHEMA[5],
-  module_control_idempotency: CONTROL_SCHEMA[6],
-  module_control_events: CONTROL_SCHEMA[7],
-};
-
-const SCHEMA_BY_INDEX: Readonly<Record<(typeof INDEX_NAMES)[number], string>> = {
-  idx_module_control_events_tenant_sequence: CONTROL_INDEXES[0],
-  idx_module_control_idempotency_tenant_expires_at: CONTROL_INDEXES[1],
-  idx_module_previews_tenant_expires_at: CONTROL_INDEXES[2],
-  idx_module_releases_tenant_status_revision: CONTROL_INDEXES[3],
-};
-
 const MARKER_FORMAT = "mcp-control-identity/v1" as const;
 const SCHEMA_VERSION = 1 as const;
 const CONTROL_STATE_RELEASE_HISTORY_WINDOW = 128 as const;
 const CONTROL_STATE_EVENT_WINDOW = 256 as const;
 const CONTROL_STATE_EVENT_QUERY_LIMIT = CONTROL_STATE_EVENT_WINDOW + 1;
+
+assertExactControlSchema(CONTROL_SCHEMA_STATEMENTS);
 
 export interface InitializeSqliteControlStateOptions {
   readonly applicationRoot: string;
@@ -514,14 +122,77 @@ export interface InitializeSqliteControlStateOptions {
   readonly managementTenantId: string;
 }
 
+const SQLITE_READBACK_FINALIZE_FAILPOINTS = Object.freeze([
+  "after_reconciliation_event",
+  "after_completion_event",
+  "after_current_readback",
+  "after_release",
+  "after_attempt_finalized",
+  "after_idempotency_completed",
+  "before_health_check",
+  "after_health_check",
+] as const);
+
+type SqliteReadbackFinalizeFailpoint =
+  (typeof SQLITE_READBACK_FINALIZE_FAILPOINTS)[number];
+
+const SQLITE_READBACK_RECOVERY_FINALIZE = Symbol(
+  "sqlite-readback-recovery-finalize",
+);
+const SQLITE_READBACK_RECOVERY_SECRET = Symbol(
+  "sqlite-readback-recovery-secret",
+);
+const SQLITE_RECOVERY_ACTOR_REF = "system_startup_recovery";
+
+type SqliteReadbackRecoverySecret = {
+  readonly [SQLITE_READBACK_RECOVERY_SECRET]: true;
+};
+
+type SqliteRecoveryFinalizeRequest = Omit<
+  FinalizeReadbackAndCompleteRequest,
+  "ownerCapability"
+>;
+
+export interface SqliteReadbackRecoveryDriver {
+  finalizePriorBootAttempt(
+    request: SqliteRecoveryFinalizeRequest,
+  ): Promise<ReadbackFinalizationResult>;
+}
+
+export interface SqliteControlStoreWithRecovery {
+  readonly repository: SqliteControlStore;
+  readonly recoveryDriver: SqliteReadbackRecoveryDriver;
+}
+
+const SQLITE_READBACK_RECOVERY_SECRETS = new WeakSet<object>();
+
+function isSqliteFinalizeClock(value: unknown): value is () => string {
+  return typeof value === "function";
+}
+
+function isSqliteReadbackFinalizeFailpoint(
+  value: unknown,
+): value is SqliteReadbackFinalizeFailpoint {
+  return SQLITE_READBACK_FINALIZE_FAILPOINTS.some((failpoint) => failpoint === value);
+}
+
+interface SqliteControlStoreTestOnlyOptions {
+  readonly finalizeClock: () => string;
+  readonly finalizeFailpoint: SqliteReadbackFinalizeFailpoint | null;
+}
+
 export interface OpenSqliteControlStoreOptions {
   readonly applicationRoot: string;
   readonly instanceId: string;
   readonly managementTenantId: string;
   readonly adminControlEnabled: boolean;
+  /** Test-only fault/clock injection. It can fail a transaction, never bypass validation. */
+  readonly testOnly?: SqliteControlStoreTestOnlyOptions;
 }
 
-export interface SqliteControlStore extends ModuleControlRepository {
+export interface SqliteControlStore
+  extends ModuleControlRepository,
+    ModuleControlReadbackAttemptRepository {
   health(): Promise<{ readonly ready: boolean }>;
   close(): Promise<void>;
 }
@@ -623,7 +294,12 @@ function throwStoreError(code: SqliteControlStoreErrorCode): never {
 }
 
 function isPlainDataObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    nodeUtilTypes.isProxy(value)
+  ) {
     return false;
   }
 
@@ -1935,10 +1611,7 @@ function initializeDatabase(
     configureDatabase(database);
     database.exec("BEGIN IMMEDIATE");
     try {
-      for (const statement of CONTROL_SCHEMA) {
-        database.exec(statement);
-      }
-      for (const statement of CONTROL_INDEXES) {
+      for (const statement of CONTROL_SCHEMA_STATEMENTS) {
         database.exec(statement);
       }
       database
@@ -2030,18 +1703,51 @@ function initializeDatabase(
   assertVerifiedHandleEntry(stagingHandle, "initialization_failed");
 }
 
-function normalizeSchemaSql(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+function compiledSchemaObjectName(statement: string): string {
+  const match = /^CREATE (?:TABLE|(?:UNIQUE )?INDEX) ([A-Za-z_][A-Za-z0-9_]*) /iu.exec(
+    statement,
+  );
+  if (match === null) throwStoreError("schema_mismatch");
+  return match[1]!;
 }
 
 function verifyTables(database: DatabaseSync): void {
-  const tables = database
+  const rows = database
     .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
     )
-    .all()
-    .map((row) => String((row as { name: unknown }).name));
-  if (tables.length !== TABLE_NAMES.length || tables.some((name, index) => name !== TABLE_NAMES[index])) {
+    .all() as Array<Record<string, unknown>>;
+  if (
+    rows.length !== CONTROL_SCHEMA_STATEMENTS.length ||
+    rows.some((row) => row.type !== "table" && row.type !== "index")
+  ) {
+    throwStoreError("schema_mismatch");
+  }
+
+  const actualByName = new Map<string, string>();
+  for (const row of rows) {
+    if (typeof row.name !== "string" || typeof row.sql !== "string") {
+      throwStoreError("schema_mismatch");
+    }
+    const normalized = normalizeControlSchema(row.sql);
+    if (normalized.length !== 1 || actualByName.has(row.name)) {
+      throwStoreError("schema_mismatch");
+    }
+    actualByName.set(row.name, normalized[0]!);
+  }
+
+  const actualStatements = CONTROL_SCHEMA_STATEMENTS.map((expectedStatement) => {
+    const name = compiledSchemaObjectName(expectedStatement);
+    const actualStatement = actualByName.get(name);
+    if (actualStatement === undefined || actualStatement !== expectedStatement) {
+      throwStoreError("schema_mismatch");
+    }
+    return actualStatement;
+  });
+  if (
+    actualByName.size !== CONTROL_SCHEMA_STATEMENTS.length ||
+    fingerprintControlSchema(actualStatements) !== CONTROL_SCHEMA_FINGERPRINT
+  ) {
     throwStoreError("schema_mismatch");
   }
 
@@ -2049,81 +1755,14 @@ function verifyTables(database: DatabaseSync): void {
     .prepare("PRAGMA table_list")
     .all()
     .filter((row) => !String((row as { name: unknown }).name).startsWith("sqlite_"));
+  const expectedTableCount = CONTROL_SCHEMA_STATEMENTS.filter((statement) =>
+    statement.startsWith("CREATE TABLE "),
+  ).length;
   if (
-    tableList.length !== TABLE_NAMES.length ||
+    tableList.length !== expectedTableCount ||
     tableList.some((row) => Number((row as { strict: unknown }).strict) !== 1)
   ) {
     throwStoreError("schema_mismatch");
-  }
-
-  const indexes = database
-    .prepare(
-      "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-    )
-    .all() as Array<Record<string, unknown>>;
-  if (
-    indexes.length !== INDEX_NAMES.length ||
-    indexes.some((row, index) => row.name !== INDEX_NAMES[index])
-  ) {
-    throwStoreError("schema_mismatch");
-  }
-
-  for (const row of indexes) {
-    const name = row.name;
-    if (typeof name !== "string" || !INDEX_NAMES.includes(name as (typeof INDEX_NAMES)[number])) {
-      throwStoreError("schema_mismatch");
-    }
-    if (
-      typeof row.sql !== "string" ||
-      normalizeSchemaSql(row.sql) !==
-        normalizeSchemaSql(SCHEMA_BY_INDEX[name as (typeof INDEX_NAMES)[number]])
-    ) {
-      throwStoreError("schema_mismatch");
-    }
-  }
-
-  const unexpectedObjects = database
-    .prepare(
-      "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type NOT IN ('table', 'index')",
-    )
-    .all();
-  if (unexpectedObjects.length !== 0) throwStoreError("schema_mismatch");
-
-  for (const tableName of TABLE_NAMES) {
-    const columns = database
-      .prepare(`PRAGMA table_info("${tableName}")`)
-      .all()
-      .map((row) => ({
-        name: String((row as { name: unknown }).name),
-        type: String((row as { type: unknown }).type),
-        notnull: Number((row as { notnull: unknown }).notnull),
-      }));
-    const expectedColumns = TABLE_COLUMNS[tableName];
-    if (
-      columns.length !== expectedColumns.length ||
-      columns.some(
-        (column, index) =>
-          column.name !== expectedColumns[index]?.name ||
-          column.type !== expectedColumns[index]?.type ||
-          (column.name === "management_tenant_id" && column.notnull !== 1),
-      )
-    ) {
-      throwStoreError("schema_mismatch");
-    }
-
-    const tableSqlRow = database
-      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(tableName) as { sql?: unknown } | undefined;
-    const tableSql = typeof tableSqlRow?.sql === "string" ? tableSqlRow.sql : "";
-    if (normalizeSchemaSql(tableSql) !== normalizeSchemaSql(SCHEMA_BY_TABLE[tableName])) {
-      throwStoreError("schema_mismatch");
-    }
-    for (const jsonColumn of JSON_COLUMNS[tableName]) {
-      const jsonCheck = new RegExp(`json_valid\\s*\\(\\s*${jsonColumn}\\s*\\)`, "i");
-      if (!jsonCheck.test(tableSql)) {
-        throwStoreError("schema_mismatch");
-      }
-    }
   }
 
   const foreignKeyViolations = database.prepare("PRAGMA foreign_key_check").all();
@@ -2571,6 +2210,212 @@ function validateFinalResult(
   return result;
 }
 
+function assertAttemptTimestamp(value: unknown): asserts value is string {
+  if (typeof value !== "string" || parseRfc3339Instant(value) === null) {
+    repositoryError("invalid_state");
+  }
+}
+
+function assertAttemptRequestHash(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    !/^mcp-control-hash\/v1\/request\/sha256:[a-f0-9]{64}$/u.test(value)
+  ) {
+    repositoryError("invalid_state");
+  }
+}
+
+function assertAttemptObjectKeys(
+  value: unknown,
+  expectedKeys: readonly string[],
+): Record<string, unknown> {
+  if (!isPlainDataObject(value)) repositoryError("invalid_state");
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key) => typeof key !== "string" || !expectedKeys.includes(key)) ||
+    expectedKeys.some((key) => !Object.prototype.hasOwnProperty.call(value, key))
+  ) {
+    repositoryError("invalid_state");
+  }
+  return value;
+}
+
+function assertAttemptMetadata(
+  value: unknown,
+): asserts value is ReadbackAttemptRequestMetadata {
+  const metadata = assertAttemptObjectKeys(value, [
+    "managementTenantId",
+    "actorRef",
+    "action",
+    "idempotencyKey",
+    "requestHash",
+    "requestId",
+    "traceId",
+    "auditId",
+  ]);
+  assertRepositoryIdentifier(metadata.managementTenantId);
+  assertRepositoryIdentifier(metadata.actorRef);
+  if (
+    metadata.action !== "deployments.publish" &&
+    metadata.action !== "deployments.reconcile"
+  ) {
+    repositoryError("invalid_state");
+  }
+  assertRepositoryIdentifier(metadata.idempotencyKey);
+  assertAttemptRequestHash(metadata.requestHash);
+  assertRepositoryIdentifier(metadata.requestId);
+  assertRepositoryIdentifier(metadata.traceId);
+  assertRepositoryIdentifier(metadata.auditId);
+}
+
+function assertClaimAttemptRequest(
+  value: unknown,
+): asserts value is ClaimReadbackAttemptRequest {
+  const hasClaimedAt =
+    isPlainDataObject(value) && Object.prototype.hasOwnProperty.call(value, "claimedAt");
+  const request = assertAttemptObjectKeys(
+    value,
+    hasClaimedAt
+      ? [
+          "metadata",
+          "attemptId",
+          "readbackRef",
+          "releaseId",
+          "revision",
+          "desiredModules",
+          "ownerBootId",
+          "claimedAt",
+        ]
+      : [
+          "metadata",
+          "attemptId",
+          "readbackRef",
+          "releaseId",
+          "revision",
+          "desiredModules",
+          "ownerBootId",
+        ],
+  );
+  assertAttemptMetadata(request.metadata);
+  const attemptId = request.attemptId;
+  const readbackRef = request.readbackRef;
+  const releaseId = request.releaseId;
+  const ownerBootId = request.ownerBootId;
+  for (const identifier of [attemptId, readbackRef, releaseId, ownerBootId]) {
+    assertRepositoryIdentifier(identifier);
+  }
+  const revision = request.revision;
+  if (!Number.isSafeInteger(revision) || (revision as number) < 1) {
+    repositoryError("invalid_state");
+  }
+  const desiredModules = request.desiredModules;
+  const claimedAt = hasClaimedAt ? request.claimedAt : undefined;
+  const candidate = {
+    managementTenantId: request.metadata.managementTenantId,
+    attemptId,
+    action: request.metadata.action,
+    idempotencyKey: request.metadata.idempotencyKey,
+    requestHash: request.metadata.requestHash,
+    actorRef: request.metadata.actorRef,
+    requestId: request.metadata.requestId,
+    traceId: request.metadata.traceId,
+    auditId: request.metadata.auditId,
+    releaseId,
+    revision,
+    desiredModules,
+    readbackRef,
+    ownerBootId,
+    phase: "claimed" as const,
+    claimedAt: claimedAt ?? "1970-01-01T00:00:00.000Z",
+    finalizedAt: null,
+    terminalStatus: null,
+    appliedReleaseId: null,
+    appliedRevision: null,
+    appliedModules: [],
+    reasonCodes: [],
+    checkedAt: null,
+    finalizedByActorRef: null,
+    reconciliationEventSequence: null,
+    completionEventSequence: null,
+  };
+  try {
+    deepFreezeReadbackAttempt(candidate as unknown as ReadbackAttemptRecord);
+  } catch (error) {
+    if (error instanceof ModuleControlRepositoryError) throw error;
+    repositoryError("invalid_state");
+  }
+  if (hasClaimedAt) assertAttemptTimestamp(claimedAt);
+}
+
+function assertFinalizeAttemptRequest(value: unknown): asserts value is FinalizeReadbackAndCompleteRequest {
+  const hasFinalizedAt =
+    isPlainDataObject(value) && Object.prototype.hasOwnProperty.call(value, "finalizedAt");
+  const request = assertAttemptObjectKeys(
+    value,
+    hasFinalizedAt
+      ? ["attemptId", "ownerCapability", "observation", "finalResult", "finalizedAt"]
+      : ["attemptId", "ownerCapability", "observation", "finalResult"],
+  );
+  assertRepositoryIdentifier(request.attemptId);
+  if (
+    typeof request.ownerCapability !== "object" ||
+    request.ownerCapability === null ||
+    Array.isArray(request.ownerCapability) ||
+    nodeUtilTypes.isProxy(request.ownerCapability)
+  ) {
+    repositoryError("invalid_state");
+  }
+  try {
+    assertReadbackAttemptObservation(request.observation);
+  } catch (error) {
+    if (error instanceof ModuleControlRepositoryError) throw error;
+    repositoryError("invalid_state");
+  }
+  if (hasFinalizedAt) assertAttemptTimestamp(request.finalizedAt);
+}
+
+function assertRecoveryFinalizeAttemptRequest(
+  value: unknown,
+): asserts value is SqliteRecoveryFinalizeRequest {
+  const hasFinalizedAt =
+    isPlainDataObject(value) && Object.prototype.hasOwnProperty.call(value, "finalizedAt");
+  const request = assertAttemptObjectKeys(
+    value,
+    hasFinalizedAt
+      ? ["attemptId", "observation", "finalResult", "finalizedAt"]
+      : ["attemptId", "observation", "finalResult"],
+  );
+  assertRepositoryIdentifier(request.attemptId);
+  try {
+    assertReadbackAttemptObservation(request.observation);
+  } catch (error) {
+    if (error instanceof ModuleControlRepositoryError) throw error;
+    repositoryError("invalid_state");
+  }
+  if (hasFinalizedAt) assertAttemptTimestamp(request.finalizedAt);
+}
+
+function createSqliteReadbackRecoverySecret(): SqliteReadbackRecoverySecret {
+  const secret = Object.freeze({
+    [SQLITE_READBACK_RECOVERY_SECRET]: true,
+  } as const);
+  SQLITE_READBACK_RECOVERY_SECRETS.add(secret);
+  return secret;
+}
+
+function assertSqliteReadbackRecoverySecret(
+  value: unknown,
+): asserts value is SqliteReadbackRecoverySecret {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !SQLITE_READBACK_RECOVERY_SECRETS.has(value)
+  ) {
+    repositoryError("invalid_state");
+  }
+}
+
 function equalCanonical(left: unknown, right: unknown): boolean {
   try {
     return repositoryJson(left) === repositoryJson(right);
@@ -2619,92 +2464,6 @@ function envelopeModuleRefs(value: unknown): readonly ModuleControlRef[] {
       descriptorDigest: item.descriptor_digest as `sha256:${string}`,
     };
   });
-}
-
-function persistedCompletionError(
-  code: "conflict" | "invalid_state",
-): never {
-  repositoryError(code);
-}
-
-function validatePersistedReleaseCompletion(
-  database: DatabaseSync,
-  managementTenantId: string,
-  action: "deployments.publish" | "deployments.reconcile",
-  finalResult: ControlFinalResult,
-  failureCode: "conflict" | "invalid_state",
-): void {
-  const parsed = controlEnvelopeSchema.safeParse(finalResult.envelope);
-  if (!parsed.success) persistedCompletionError(failureCode);
-  const release = findRelease(
-    database,
-    managementTenantId,
-    finalResult.domainRecordRef,
-  );
-  const readback = findReadback(
-    database,
-    managementTenantId,
-    finalResult.domainRecordRef,
-  );
-  if (release === null || readback === null) {
-    persistedCompletionError(failureCode);
-  }
-  const envelope = parsed.data;
-  const data = envelope.data;
-  if (
-    release.releaseId !== readback.releaseId ||
-    release.revision !== readback.revision ||
-    release.readbackRef !== readback.readbackRef ||
-    envelope.readback.release_id !== release.releaseId ||
-    envelope.readback.revision !== release.revision
-  ) {
-    persistedCompletionError(failureCode);
-  }
-  if (action === "deployments.publish") {
-    if (
-      data?.kind !== "release" ||
-      data.release_id !== release.releaseId ||
-      data.revision !== release.revision ||
-      !sameModuleRefs(envelopeModuleRefs(data.active_modules), release.desiredModules)
-    ) {
-      persistedCompletionError(failureCode);
-    }
-  } else if (
-    data?.kind !== "reconciliation" ||
-    data.release_id !== release.releaseId ||
-    data.revision !== release.revision ||
-    data.status !== readback.status
-  ) {
-    persistedCompletionError(failureCode);
-  }
-
-  if (envelope.status === "success") {
-    if (
-      release.status !== "active_verified" ||
-      readback.status !== "verified" ||
-      envelope.readback.status !== "verified" ||
-      readback.appliedReleaseId !== release.releaseId ||
-      readback.appliedRevision !== release.revision ||
-      !sameModuleRefs(readback.appliedModules, release.desiredModules) ||
-      envelope.reason_codes.length !== 0 ||
-      readback.reasonCodes.length !== 0 ||
-      release.reasonCodes.length !== 0
-    ) {
-      persistedCompletionError(failureCode);
-    }
-    return;
-  }
-
-  if (
-    envelope.status !== "manual_review" ||
-    release.status !== "manual_review" ||
-    (readback.status !== "mismatch" && readback.status !== "unknown") ||
-    envelope.readback.status !== readback.status ||
-    !equalCanonical(envelope.reason_codes, readback.reasonCodes) ||
-    !equalCanonical(release.reasonCodes, readback.reasonCodes)
-  ) {
-    persistedCompletionError(failureCode);
-  }
 }
 
 function sameDigestSet(left: readonly string[], right: readonly string[]): boolean {
@@ -2942,6 +2701,7 @@ function decodeReadbackRow(row: unknown): ModuleReadbackRecord {
   const value = exactSqlRow(row, [
     "management_tenant_id",
     "release_id",
+    "attempt_id",
     "readback_ref",
     "revision",
     "applied_release_id",
@@ -2951,18 +2711,90 @@ function decodeReadbackRow(row: unknown): ModuleReadbackRecord {
     "reason_codes_json",
     "checked_at",
   ]);
+  const status = requiredSqlString(value, "status") as ModuleReadbackRecord["status"];
+  if (status === "pending") repositoryError("invalid_state");
   return freezeDecoded({
     managementTenantId: requiredSqlString(value, "management_tenant_id"),
     readbackRef: requiredSqlString(value, "readback_ref"),
     releaseId: requiredSqlString(value, "release_id"),
+    attemptId: requiredSqlString(value, "attempt_id"),
     revision: requiredSqlInteger(value, "revision"),
     appliedReleaseId: nullableSqlString(value, "applied_release_id"),
     appliedRevision: nullableSqlInteger(value, "applied_revision"),
     appliedModules: requiredJson(value, "applied_modules_json") as ModuleReadbackRecord["appliedModules"],
-    status: requiredSqlString(value, "status") as ModuleReadbackRecord["status"],
+    status,
     reasonCodes: requiredJson(value, "reason_codes_json") as ModuleReadbackRecord["reasonCodes"],
     checkedAt: requiredSqlString(value, "checked_at"),
   } as ModuleReadbackRecord);
+}
+
+function decodeReadbackAttemptRow(row: unknown): ReadbackAttemptRecord {
+  const value = exactSqlRow(row, [
+    "management_tenant_id",
+    "attempt_id",
+    "action",
+    "idempotency_key",
+    "request_hash",
+    "actor_ref",
+    "request_id",
+    "trace_id",
+    "audit_id",
+    "release_id",
+    "revision",
+    "desired_modules_json",
+    "readback_ref",
+    "owner_boot_id",
+    "phase",
+    "claimed_at",
+    "finalized_at",
+    "terminal_status",
+    "applied_release_id",
+    "applied_revision",
+    "applied_modules_json",
+    "reason_codes_json",
+    "checked_at",
+    "finalized_by_actor_ref",
+    "reconciliation_event_sequence",
+    "completion_event_sequence",
+  ]);
+  const record = {
+    managementTenantId: requiredSqlString(value, "management_tenant_id"),
+    attemptId: requiredSqlString(value, "attempt_id"),
+    action: requiredSqlString(value, "action"),
+    idempotencyKey: requiredSqlString(value, "idempotency_key"),
+    requestHash: requiredSqlString(value, "request_hash"),
+    actorRef: requiredSqlString(value, "actor_ref"),
+    requestId: requiredSqlString(value, "request_id"),
+    traceId: requiredSqlString(value, "trace_id"),
+    auditId: requiredSqlString(value, "audit_id"),
+    releaseId: requiredSqlString(value, "release_id"),
+    revision: requiredSqlInteger(value, "revision"),
+    desiredModules: requiredJson(value, "desired_modules_json"),
+    readbackRef: requiredSqlString(value, "readback_ref"),
+    ownerBootId: requiredSqlString(value, "owner_boot_id"),
+    phase: requiredSqlString(value, "phase"),
+    claimedAt: requiredSqlString(value, "claimed_at"),
+    finalizedAt: nullableSqlString(value, "finalized_at"),
+    terminalStatus: nullableSqlString(value, "terminal_status"),
+    appliedReleaseId: nullableSqlString(value, "applied_release_id"),
+    appliedRevision: nullableSqlInteger(value, "applied_revision"),
+    appliedModules: requiredJson(value, "applied_modules_json"),
+    reasonCodes: requiredJson(value, "reason_codes_json"),
+    checkedAt: nullableSqlString(value, "checked_at"),
+    finalizedByActorRef: nullableSqlString(value, "finalized_by_actor_ref"),
+    reconciliationEventSequence: nullableSqlInteger(
+      value,
+      "reconciliation_event_sequence",
+    ),
+    completionEventSequence: nullableSqlInteger(value, "completion_event_sequence"),
+  } as unknown as ReadbackAttemptRecord;
+  try {
+    assertReadbackAttemptRecord(record);
+  } catch (error) {
+    if (error instanceof ModuleControlRepositoryError) throw error;
+    repositoryError("invalid_state");
+  }
+  return deepFreezeReadbackAttempt(record) as ReadbackAttemptRecord;
 }
 
 function decodeIdempotencyRow(row: unknown): ControlIdempotencyRecord {
@@ -3093,11 +2925,20 @@ const RELEASE_HISTORY_SELECT = `
    AND preview.preview_ref = release_window.preview_ref
   ORDER BY release_window.revision DESC, release_window.release_id DESC`;
 const READBACK_SELECT = `
-  SELECT management_tenant_id, release_id, readback_ref, revision,
+  SELECT management_tenant_id, release_id, attempt_id, readback_ref, revision,
          applied_release_id, applied_revision, applied_modules_json, status,
          reason_codes_json, checked_at
   FROM module_readbacks
   WHERE management_tenant_id = ? AND release_id = ?`;
+const READBACK_ATTEMPT_SELECT = `
+  SELECT management_tenant_id, attempt_id, action, idempotency_key, request_hash,
+         actor_ref, request_id, trace_id, audit_id, release_id, revision,
+         desired_modules_json, readback_ref, owner_boot_id, phase, claimed_at,
+         finalized_at, terminal_status, applied_release_id, applied_revision,
+         applied_modules_json, reason_codes_json, checked_at,
+         finalized_by_actor_ref, reconciliation_event_sequence,
+         completion_event_sequence
+  FROM module_readback_attempts`;
 const IDEMPOTENCY_SELECT = `
   SELECT management_tenant_id, action, idempotency_key, request_hash, actor_ref, status,
          domain_record_ref, final_result_json, created_at, expires_at
@@ -3242,6 +3083,75 @@ function findReadback(
 ): ModuleReadbackRecord | null {
   const row = selectOne(database, READBACK_SELECT, [managementTenantId, releaseId]);
   return row === null ? null : decodeReadbackRow(row);
+}
+
+function findEventBySequence(
+  database: DatabaseSync,
+  managementTenantId: string,
+  sequence: number,
+): ControlEventRecord | null {
+  const row = selectOne(
+    database,
+    `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
+            object_ref, status, reason_codes_json, payload_json, occurred_at
+     FROM module_control_events
+     WHERE management_tenant_id = ? AND sequence = ?`,
+    [managementTenantId, sequence],
+  );
+  return row === null ? null : decodeEventRow(row);
+}
+
+function findReadbackAttempt(
+  database: DatabaseSync,
+  managementTenantId: string,
+  attemptId: string,
+): ReadbackAttemptRecord | null {
+  const row = database
+    .prepare(`${READBACK_ATTEMPT_SELECT} WHERE management_tenant_id = ? AND attempt_id = ?`)
+    .get(managementTenantId, attemptId);
+  return row === undefined ? null : decodeReadbackAttemptRow(row);
+}
+
+function findReadbackAttemptByIdempotency(
+  database: DatabaseSync,
+  managementTenantId: string,
+  action: ReadbackAttemptRecord["action"],
+  idempotencyKey: string,
+): ReadbackAttemptRecord | null {
+  const rows = database
+    .prepare(
+      `${READBACK_ATTEMPT_SELECT}
+       WHERE management_tenant_id = ? AND action = ? AND idempotency_key = ?`,
+    )
+    .all(managementTenantId, action, idempotencyKey) as unknown[];
+  if (rows.length > 1) repositoryError("invalid_state");
+  return rows.length === 0 ? null : decodeReadbackAttemptRow(rows[0]);
+}
+
+function findReadbackAttempts(
+  database: DatabaseSync,
+  managementTenantId: string,
+  releaseId?: string,
+  revision?: number,
+): readonly ReadbackAttemptRecord[] {
+  const clauses = ["management_tenant_id = ?"];
+  const parameters: (string | number)[] = [managementTenantId];
+  if (releaseId !== undefined) {
+    clauses.push("release_id = ?");
+    parameters.push(releaseId);
+  }
+  if (revision !== undefined) {
+    clauses.push("revision = ?");
+    parameters.push(revision);
+  }
+  const rows = database
+    .prepare(
+      `${READBACK_ATTEMPT_SELECT} WHERE ${clauses.join(" AND ")}
+       ORDER BY CASE WHEN reconciliation_event_sequence IS NULL THEN 1 ELSE 0 END,
+                reconciliation_event_sequence DESC, attempt_id DESC`,
+    )
+    .all(...parameters) as unknown[];
+  return rows.map((row) => decodeReadbackAttemptRow(row));
 }
 
 function findIdempotency(
@@ -3473,6 +3383,76 @@ function insertEvent(
       occurredAt,
     );
   return freezeDecoded(event);
+}
+
+function attemptIdempotencyRecordRef(
+  action: ReadbackAttemptRecord["action"],
+  idempotencyKey: string,
+): string {
+  return `idempotency:${action}:${idempotencyKey}`;
+}
+
+function insertReadbackAttemptEvent(
+  database: DatabaseSync,
+  attempt: ReadbackAttemptRecord,
+  kind: "reconciliation" | "completion",
+  status: "completed" | "verified" | "mismatch" | "unknown",
+  reasonCodes: readonly string[],
+  occurredAt: string,
+  actorRef: string,
+): ControlEventRecord {
+  const sequence = nextEventSequence(database);
+  const eventId = `event_${randomUUID()}`;
+  const objectRef =
+    kind === "reconciliation"
+      ? attempt.releaseId
+      : attemptIdempotencyRecordRef(attempt.action, attempt.idempotencyKey);
+  const detail =
+    kind === "reconciliation"
+      ? {
+          kind: "reconciliation" as const,
+          releaseId: attempt.releaseId,
+          revision: attempt.revision,
+          readbackRef: attempt.readbackRef,
+          status: status as "verified" | "mismatch" | "unknown",
+        }
+      : {
+          kind: "idempotency" as const,
+          recordRef: objectRef,
+          domainRecordRef: attempt.releaseId,
+          status: "completed" as const,
+        };
+  database
+    .prepare(
+      `INSERT INTO module_control_events
+        (sequence, management_tenant_id, event_id, actor_ref, action,
+         idempotency_key, request_hash, object_ref, status, reason_codes_json,
+         payload_json, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      sequence,
+      attempt.managementTenantId,
+      eventId,
+      actorRef,
+      attempt.action,
+      attempt.idempotencyKey,
+      attempt.requestHash,
+      objectRef,
+      status,
+      repositoryJson(reasonCodes),
+      repositoryJson({ detail }),
+      occurredAt,
+    );
+  const event = database
+    .prepare(
+      `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
+              object_ref, status, reason_codes_json, payload_json, occurred_at
+       FROM module_control_events WHERE sequence = ?`,
+    )
+    .get(sequence);
+  if (event === undefined) repositoryError("invalid_state");
+  return decodeEventRow(event);
 }
 
 function findActiveRelease(
@@ -3851,17 +3831,21 @@ function insertReadback(
   database: DatabaseSync,
   record: ModuleReadbackRecord,
 ): void {
+  if (record.status === "pending" || typeof record.attemptId !== "string") {
+    repositoryError("invalid_state");
+  }
   database
     .prepare(
       `INSERT INTO module_readbacks
-        (management_tenant_id, release_id, readback_ref, revision,
+        (management_tenant_id, release_id, attempt_id, readback_ref, revision,
          applied_release_id, applied_revision, applied_modules_json, status,
          reason_codes_json, checked_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       record.managementTenantId,
       record.releaseId,
+      record.attemptId,
       record.readbackRef,
       record.revision,
       record.appliedReleaseId,
@@ -3877,15 +3861,19 @@ function updateReadback(
   database: DatabaseSync,
   record: ModuleReadbackRecord,
 ): void {
+  if (record.status === "pending" || typeof record.attemptId !== "string") {
+    repositoryError("invalid_state");
+  }
   database
     .prepare(
       `UPDATE module_readbacks
-       SET readback_ref = ?, revision = ?, applied_release_id = ?,
+       SET attempt_id = ?, readback_ref = ?, revision = ?, applied_release_id = ?,
            applied_revision = ?, applied_modules_json = ?, status = ?,
            reason_codes_json = ?, checked_at = ?
        WHERE management_tenant_id = ? AND release_id = ? AND revision = ?`,
     )
     .run(
+      record.attemptId,
       record.readbackRef,
       record.revision,
       record.appliedReleaseId,
@@ -3898,6 +3886,349 @@ function updateReadback(
       record.releaseId,
       record.revision,
     );
+}
+
+function insertClaimedReadbackAttempt(
+  database: DatabaseSync,
+  attempt: ReadbackAttemptRecord,
+): void {
+  if (attempt.phase !== "claimed") repositoryError("invalid_state");
+  database
+    .prepare(
+      `INSERT INTO module_readback_attempts
+        (management_tenant_id, attempt_id, action, idempotency_key,
+         request_hash, actor_ref, request_id, trace_id, audit_id, release_id,
+         revision, desired_modules_json, readback_ref, owner_boot_id, phase,
+         claimed_at, finalized_at, terminal_status, applied_release_id,
+         applied_revision, applied_modules_json, reason_codes_json, checked_at,
+         finalized_by_actor_ref, reconciliation_event_sequence,
+         completion_event_sequence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL,
+               NULL, NULL, '[]', '[]', NULL, NULL, NULL, NULL)`,
+    )
+    .run(
+      attempt.managementTenantId,
+      attempt.attemptId,
+      attempt.action,
+      attempt.idempotencyKey,
+      attempt.requestHash,
+      attempt.actorRef,
+      attempt.requestId,
+      attempt.traceId,
+      attempt.auditId,
+      attempt.releaseId,
+      attempt.revision,
+      repositoryJson(attempt.desiredModules),
+      attempt.readbackRef,
+      attempt.ownerBootId,
+      attempt.phase,
+      attempt.claimedAt,
+    );
+}
+
+function updateFinalizedReadbackAttempt(
+  database: DatabaseSync,
+  attempt: ReadbackAttemptRecord,
+): void {
+  if (
+    attempt.phase !== "finalized" ||
+    attempt.finalizedAt === null ||
+    attempt.terminalStatus === null ||
+    attempt.checkedAt === null ||
+    attempt.finalizedByActorRef === null ||
+    attempt.reconciliationEventSequence === null ||
+    attempt.completionEventSequence === null
+  ) {
+    repositoryError("invalid_state");
+  }
+  database
+    .prepare(
+      `UPDATE module_readback_attempts
+       SET phase = 'finalized', finalized_at = ?, terminal_status = ?,
+           applied_release_id = ?, applied_revision = ?, applied_modules_json = ?,
+           reason_codes_json = ?, checked_at = ?, finalized_by_actor_ref = ?,
+           reconciliation_event_sequence = ?, completion_event_sequence = ?
+       WHERE management_tenant_id = ? AND attempt_id = ? AND phase = 'claimed'`,
+    )
+    .run(
+      attempt.finalizedAt,
+      attempt.terminalStatus,
+      attempt.appliedReleaseId,
+      attempt.appliedRevision,
+      repositoryJson(attempt.appliedModules),
+      repositoryJson(attempt.reasonCodes),
+      attempt.checkedAt,
+      attempt.finalizedByActorRef,
+      attempt.reconciliationEventSequence,
+      attempt.completionEventSequence,
+      attempt.managementTenantId,
+      attempt.attemptId,
+    );
+}
+
+function insertReadbackAttemptIdempotency(
+  database: DatabaseSync,
+  metadata: ReadbackAttemptRequestMetadata,
+  releaseId: string,
+  createdAt: string,
+): void {
+  database
+    .prepare(
+      `INSERT INTO module_control_idempotency
+        (management_tenant_id, action, idempotency_key, request_hash, actor_ref,
+         status, domain_record_ref, final_result_json, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, 'domain_committed', ?, NULL, ?, ?)`,
+    )
+    .run(
+      metadata.managementTenantId,
+      metadata.action,
+      metadata.idempotencyKey,
+      metadata.requestHash,
+      metadata.actorRef,
+      releaseId,
+      createdAt,
+      idempotencyExpiry(createdAt),
+    );
+}
+
+function completeReadbackAttemptIdempotency(
+  database: DatabaseSync,
+  attempt: ReadbackAttemptRecord,
+  finalResult: ControlFinalResult,
+): CompletedModuleControlIdempotencyRecord {
+  database
+    .prepare(
+      `UPDATE module_control_idempotency
+       SET status = 'completed', final_result_json = ?
+       WHERE management_tenant_id = ? AND action = ? AND idempotency_key = ?
+         AND request_hash = ? AND actor_ref = ? AND domain_record_ref = ?
+         AND status = 'domain_committed'`,
+    )
+    .run(
+      repositoryJson(finalResult),
+      attempt.managementTenantId,
+      attempt.action,
+      attempt.idempotencyKey,
+      attempt.requestHash,
+      attempt.actorRef,
+      attempt.releaseId,
+    );
+  const idempotency = findIdempotency(
+    database,
+    attempt.managementTenantId,
+    attempt.action,
+    attempt.idempotencyKey,
+  );
+  if (idempotency === null || idempotency.status !== "completed") {
+    repositoryError("invalid_state");
+  }
+  return idempotency;
+}
+
+function terminalReadbackFromAttempt(
+  attempt: ReadbackAttemptRecord,
+): ModuleTerminalReadbackRecord {
+  if (
+    attempt.phase !== "finalized" ||
+    attempt.terminalStatus === null ||
+    attempt.checkedAt === null
+  ) {
+    repositoryError("invalid_state");
+  }
+  if (attempt.terminalStatus === "verified") {
+    if (attempt.appliedReleaseId === null || attempt.appliedRevision === null) {
+      repositoryError("invalid_state");
+    }
+    const readback = {
+      managementTenantId: attempt.managementTenantId,
+      readbackRef: attempt.readbackRef,
+      releaseId: attempt.releaseId,
+      attemptId: attempt.attemptId,
+      revision: attempt.revision,
+      appliedReleaseId: attempt.appliedReleaseId,
+      appliedRevision: attempt.appliedRevision,
+      appliedModules: attempt.appliedModules,
+      status: "verified" as const,
+      reasonCodes: [] as readonly [],
+      checkedAt: attempt.checkedAt,
+    } as ModuleTerminalReadbackRecord;
+    return deepFreezeControlRecord(readback) as ModuleTerminalReadbackRecord;
+  }
+  const firstReasonCode = attempt.reasonCodes[0];
+  if (firstReasonCode === undefined) repositoryError("invalid_state");
+  if (attempt.terminalStatus === "mismatch") {
+    const readback = {
+      managementTenantId: attempt.managementTenantId,
+      readbackRef: attempt.readbackRef,
+      releaseId: attempt.releaseId,
+      attemptId: attempt.attemptId,
+      revision: attempt.revision,
+      appliedReleaseId: attempt.appliedReleaseId,
+      appliedRevision: attempt.appliedRevision,
+      appliedModules: attempt.appliedModules,
+      status: "mismatch" as const,
+      reasonCodes: [firstReasonCode, ...attempt.reasonCodes.slice(1)] as readonly [
+        string,
+        ...string[],
+      ],
+      checkedAt: attempt.checkedAt,
+    } as ModuleTerminalReadbackRecord;
+    return deepFreezeControlRecord(readback) as ModuleTerminalReadbackRecord;
+  }
+  const readback = {
+    managementTenantId: attempt.managementTenantId,
+    readbackRef: attempt.readbackRef,
+    releaseId: attempt.releaseId,
+    attemptId: attempt.attemptId,
+    revision: attempt.revision,
+    appliedReleaseId: attempt.appliedReleaseId,
+    appliedRevision: attempt.appliedRevision,
+    appliedModules: attempt.appliedModules,
+    status: "unknown" as const,
+    reasonCodes: [firstReasonCode, ...attempt.reasonCodes.slice(1)] as readonly [
+      string,
+      ...string[],
+    ],
+    checkedAt: attempt.checkedAt,
+  } as ModuleTerminalReadbackRecord;
+  return deepFreezeControlRecord(readback) as ModuleTerminalReadbackRecord;
+}
+
+function readbackFinalizationResultFromExisting(
+  database: DatabaseSync,
+  managementTenantId: string,
+  attempt: ReadbackAttemptRecord,
+  idempotency: ControlIdempotencyRecord,
+): ReadbackFinalizationResult {
+  if (
+    attempt.phase !== "finalized" ||
+    idempotency.status !== "completed" ||
+    idempotency.finalResult === null ||
+    attempt.reconciliationEventSequence === null ||
+    attempt.completionEventSequence === null
+  ) {
+    repositoryError("invalid_state");
+  }
+  const release = findRelease(database, managementTenantId, attempt.releaseId);
+  const readback = findReadback(database, managementTenantId, attempt.releaseId);
+  const reconciliationEvent = findEventBySequence(
+    database,
+    managementTenantId,
+    attempt.reconciliationEventSequence,
+  );
+  const completionEvent = findEventBySequence(
+    database,
+    managementTenantId,
+    attempt.completionEventSequence,
+  );
+  if (
+    release === null ||
+    readback === null ||
+    readback.status === "pending" ||
+    readback.attemptId !== attempt.attemptId ||
+    reconciliationEvent === null ||
+    completionEvent === null
+  ) {
+    repositoryError("invalid_state");
+  }
+  const observation = {
+    status: attempt.terminalStatus,
+    appliedReleaseId: attempt.appliedReleaseId,
+    appliedRevision: attempt.appliedRevision,
+    appliedModules: attempt.appliedModules,
+    reasonCodes: attempt.reasonCodes,
+    checkedAt: attempt.checkedAt,
+  } as ReadbackAttemptObservation;
+  const finalResult = validateFinalResult(
+    idempotency.finalResult,
+    attempt.action,
+    attempt.releaseId,
+    attempt.revision,
+  );
+  assertAttemptFinalResultSemantics(finalResult, attempt, observation, release);
+  return Object.freeze({
+    disposition: "replayed" as const,
+    replayed: true,
+    attempt: deepFreezeReadbackAttempt(attempt),
+    readback: readback as ModuleTerminalReadbackRecord,
+    release,
+    idempotency,
+    reconciliationEvent,
+    completionEvent,
+    finalResult,
+  });
+}
+
+function assertAttemptFinalResultSemantics(
+  finalResult: ControlFinalResult,
+  attempt: ReadbackAttemptRecord,
+  observation: ReadbackAttemptObservation,
+  release: ModuleReleaseRecord,
+): void {
+  const parsed = controlEnvelopeSchema.safeParse(finalResult.envelope);
+  if (!parsed.success) repositoryError("invalid_state");
+  const data = parsed.data.data;
+  if (
+    finalResult.domainRecordRef !== attempt.releaseId ||
+    parsed.data.request_id !== attempt.requestId ||
+    parsed.data.trace_id !== attempt.traceId ||
+    parsed.data.audit_id !== attempt.auditId ||
+    parsed.data.readback.release_id !== attempt.releaseId ||
+    parsed.data.readback.revision !== attempt.revision ||
+    parsed.data.readback.status !== observation.status ||
+    !equalCanonical(parsed.data.reason_codes, observation.reasonCodes)
+  ) {
+    repositoryError("conflict");
+  }
+  if (observation.status === "verified") {
+    const correctData =
+      attempt.action === "deployments.reconcile"
+        ? data?.kind === "reconciliation" &&
+          data.release_id === release.releaseId &&
+          data.revision === release.revision &&
+          data.status === "verified"
+        : data?.kind === "release" &&
+          data.release_id === release.releaseId &&
+          data.revision === release.revision &&
+          sameModuleRefs(envelopeModuleRefs(data.active_modules), release.desiredModules);
+    if (
+      parsed.data.status !== "success" ||
+      observation.appliedReleaseId !== release.releaseId ||
+      observation.appliedRevision !== release.revision ||
+      !sameModuleRefs(observation.appliedModules, release.desiredModules) ||
+      parsed.data.reason_codes.length !== 0 ||
+      !correctData
+    ) {
+      repositoryError("conflict");
+    }
+    return;
+  }
+  if (
+    parsed.data.status !== "manual_review" ||
+    parsed.data.reason_codes.length === 0 ||
+    parsed.data.reason_codes.join("\0") !== observation.reasonCodes.join("\0") ||
+    (attempt.action === "deployments.reconcile"
+      ? data?.kind !== "reconciliation" || data.status !== observation.status
+      : data?.kind !== "release")
+  ) {
+    repositoryError("conflict");
+  }
+  if (attempt.action === "deployments.reconcile") {
+    if (
+      data?.kind !== "reconciliation" ||
+      data.release_id !== release.releaseId ||
+      data.revision !== release.revision ||
+      data.status !== observation.status
+    ) {
+      repositoryError("conflict");
+    }
+  } else if (
+    data?.kind !== "release" ||
+    data.release_id !== release.releaseId ||
+    data.revision !== release.revision
+  ) {
+    repositoryError("conflict");
+  }
 }
 
 function updatePreviewConsumed(
@@ -4005,6 +4336,39 @@ interface RepositoryTransactionGuard {
 }
 
 class LiveControlStoreMismatch extends Error {}
+
+class SqliteReadbackOwnerCapabilityRegistry {
+  #ownerCapabilities = new WeakMap<object, string>();
+  #consumedOwnerCapabilities = new WeakSet<object>();
+
+  create(attemptId: string): ReadbackAttemptOwnerCapability {
+    const capability = Object.create(null) as object;
+    Object.freeze(capability);
+    this.#ownerCapabilities.set(capability, attemptId);
+    return capability as ReadbackAttemptOwnerCapability;
+  }
+
+  assertOwner(
+    capability: ReadbackAttemptOwnerCapability,
+    attemptId: string,
+  ): void {
+    if (
+      typeof capability !== "object" ||
+      capability === null ||
+      Array.isArray(capability) ||
+      nodeUtilTypes.isProxy(capability) ||
+      this.#consumedOwnerCapabilities.has(capability) ||
+      this.#ownerCapabilities.get(capability) !== attemptId
+    ) {
+      repositoryError("conflict");
+    }
+  }
+
+  consume(capability: ReadbackAttemptOwnerCapability, attemptId: string): void {
+    this.assertOwner(capability, attemptId);
+    this.#consumedOwnerCapabilities.add(capability);
+  }
+}
 
 function domainRecordRefForRecord(record: ControlRecord): string {
   if ("moduleId" in record && "registeredAt" in record) {
@@ -4377,149 +4741,386 @@ function publishReleaseInDatabase(
   }, guard);
 }
 
-function readbackReplay(
+function claimReadbackAttemptInDatabase(
   database: DatabaseSync,
   managementTenantId: string,
-  metadata: ControlRequestMetadata,
-  record: ModuleReadbackRecord,
-): ReadbackWriteResult {
-  const event = findEventsForObject(database, managementTenantId, record.releaseId).find(
-    (candidate) =>
-      candidate.kind === "reconciliation" &&
-      candidate.action === metadata.action &&
-      candidate.status === record.status &&
-      candidate.detail.releaseId === record.releaseId &&
-      candidate.detail.revision === record.revision &&
-      candidate.detail.readbackRef === record.readbackRef,
-  ) ?? null;
-  if (event === null) repositoryError("invalid_state");
-  const persisted = findReadback(database, managementTenantId, record.releaseId);
-  if (persisted === null) repositoryError("invalid_state");
-  return { record: persisted, event, replayed: true };
-}
-
-function recordReadbackInDatabase(
-  database: DatabaseSync,
-  managementTenantId: string,
-  request: RecordReadbackRequest,
+  ownerBootId: string,
+  request: ClaimReadbackAttemptRequest,
   guard: RepositoryTransactionGuard,
-): ReadbackWriteResult {
-  const bound = bindRepositoryRequest(
-    request.metadata,
-    request.record,
-    managementTenantId,
-  );
-  const metadata = bound.metadata;
-  const record = bound.record as ModuleReadbackRecord;
-  const existingIdempotency = findIdempotency(
-    database,
-    managementTenantId,
-    metadata.action,
-    metadata.idempotencyKey,
-  );
-  if (existingIdempotency !== null) {
-    existingIdempotencyConflict(existingIdempotency, metadata);
-    if (existingIdempotency.status === "reserved") {
-      repositoryError("invalid_state");
+): { readonly disposition: "created" | "existing"; readonly attempt: ReadbackAttemptRecord } {
+  assertClaimAttemptRequest(request);
+  const metadata = request.metadata;
+  if (metadata.actorRef === "system_startup_recovery") repositoryError("conflict");
+  if (metadata.managementTenantId !== managementTenantId) {
+    repositoryError("tenant_mismatch");
+  }
+
+  const result = withRepositoryTransaction(database, () => {
+    const existingIdempotency = findIdempotency(
+      database,
+      managementTenantId,
+      metadata.action,
+      metadata.idempotencyKey,
+    );
+    const existingAttempt = findReadbackAttemptByIdempotency(
+      database,
+      managementTenantId,
+      metadata.action,
+      metadata.idempotencyKey,
+    );
+    if (existingIdempotency !== null) {
+      if (
+        existingIdempotency.requestHash !== metadata.requestHash ||
+        existingIdempotency.actorRef !== metadata.actorRef
+      ) {
+        repositoryError("conflict");
+      }
+      if (existingIdempotency.domainRecordRef === null) repositoryError("invalid_state");
+      if (existingAttempt !== null) {
+        if (
+          existingAttempt.attemptId !== request.attemptId ||
+          existingAttempt.readbackRef !== request.readbackRef ||
+          existingAttempt.releaseId !== request.releaseId ||
+          existingAttempt.revision !== request.revision ||
+          !sameModuleRefs(existingAttempt.desiredModules, request.desiredModules) ||
+          existingAttempt.action !== metadata.action ||
+          existingAttempt.idempotencyKey !== metadata.idempotencyKey ||
+          existingAttempt.requestHash !== metadata.requestHash ||
+          existingAttempt.actorRef !== metadata.actorRef ||
+          existingAttempt.requestId !== metadata.requestId ||
+          existingAttempt.traceId !== metadata.traceId ||
+          existingAttempt.auditId !== metadata.auditId
+        ) {
+          repositoryError("conflict");
+        }
+        return { disposition: "existing" as const, attempt: existingAttempt };
+      }
+      if (
+        metadata.action !== "deployments.publish" ||
+        existingIdempotency.status !== "domain_committed"
+      ) {
+        repositoryError("invalid_state");
+      }
     }
+
+    const release = findRelease(database, managementTenantId, request.releaseId);
+    if (release === null) repositoryError("not_found");
     if (
-      existingIdempotency.domainRecordRef !== null &&
-      existingIdempotency.domainRecordRef !== record.releaseId
+      release.revision !== request.revision ||
+      !sameModuleRefs(release.desiredModules, request.desiredModules)
     ) {
       repositoryError("conflict");
     }
-  }
-  if (metadata.action === "deployments.publish") {
-    if (existingIdempotency === null) repositoryError("not_found");
-    if (
-      existingIdempotency.status !== "domain_committed" &&
-      existingIdempotency.status !== "completed"
-    ) {
-      repositoryError("invalid_state");
+    if (metadata.action === "deployments.publish") {
+      if (
+        existingIdempotency === null ||
+        existingIdempotency.domainRecordRef !== release.releaseId ||
+        release.status !== "published_pending_readback"
+      ) {
+        repositoryError("conflict");
+      }
+    } else {
+      const newest = findNewestUnresolvedRelease(database, managementTenantId);
+      if (
+        newest === null ||
+        newest.releaseId !== release.releaseId ||
+        newest.revision !== release.revision ||
+        (release.status !== "published_pending_readback" && release.status !== "manual_review")
+      ) {
+        repositoryError("conflict");
+      }
     }
+    const claimedRelease = database
+      .prepare(
+        `SELECT 1 AS found FROM module_readback_attempts
+         WHERE management_tenant_id = ? AND release_id = ? AND revision = ?
+           AND phase = 'claimed' LIMIT 1`,
+      )
+      .get(managementTenantId, release.releaseId, release.revision);
+    if (claimedRelease !== undefined) repositoryError("conflict");
+    const duplicateAttempt = database
+      .prepare(
+        `SELECT 1 AS found FROM module_readback_attempts
+         WHERE management_tenant_id = ? AND (attempt_id = ? OR readback_ref = ?)
+         LIMIT 1`,
+      )
+      .get(managementTenantId, request.attemptId, request.readbackRef);
+    if (duplicateAttempt !== undefined) repositoryError("conflict");
+    const duplicateReadback = database
+      .prepare(
+        `SELECT 1 AS found FROM module_readbacks
+         WHERE management_tenant_id = ? AND readback_ref = ? LIMIT 1`,
+      )
+      .get(managementTenantId, request.readbackRef);
+    if (duplicateReadback !== undefined) repositoryError("conflict");
+
+    const claimedAt = request.claimedAt ?? new Date().toISOString();
+    assertAttemptTimestamp(claimedAt);
     if (
-      existingIdempotency.domainRecordRef === null ||
-      existingIdempotency.domainRecordRef !== record.releaseId
+      existingIdempotency !== null &&
+      compareRfc3339Instants(existingIdempotency.createdAt, claimedAt) > 0
     ) {
       repositoryError("conflict");
     }
-  }
-
-  const release = findRelease(database, managementTenantId, record.releaseId);
-  if (release === null) repositoryError("not_found");
-  if (release.revision !== record.revision) repositoryError("conflict");
-
-  if (metadata.action === "deployments.reconcile") {
-    const newest = findNewestUnresolvedRelease(database, managementTenantId);
-    if (newest === null || newest.releaseId !== release.releaseId || newest.revision !== release.revision) {
-      repositoryError("conflict");
-    }
-  }
-
-  const existing = findReadback(database, managementTenantId, record.releaseId);
-  const exactExistingReadback = existing !== null && equalCanonical(existing, record);
-  if (
-    existing !== null &&
-    existingIdempotency !== null &&
-    !exactExistingReadback
-  ) {
-    repositoryError("conflict");
-  }
-  if (exactExistingReadback && existingIdempotency !== null) {
-    return readbackReplay(database, managementTenantId, metadata, record);
-  }
-  if (
-    metadata.action === "deployments.publish" &&
-    release.status !== "published_pending_readback"
-  ) {
-    repositoryError("conflict");
-  }
-  if (existingIdempotency?.status === "completed") {
-    repositoryError("conflict");
-  }
-  if (
-    existing !== null &&
-    (existing.status === "verified" || release.status === "active_verified" || release.status === "superseded")
-  ) {
-    repositoryError("conflict");
-  }
-  if (
-    record.status === "verified" &&
-    (!sameModuleRefs(record.appliedModules, release.desiredModules) ||
-      record.appliedReleaseId !== release.releaseId ||
-      record.appliedRevision !== release.revision)
-  ) {
-    repositoryError("conflict");
-  }
-  if (
-    record.status === "pending" &&
-    release.status !== "published_pending_readback"
-  ) {
-    repositoryError("conflict");
-  }
-
-  return withRepositoryTransaction(database, () => {
-    if (
-      metadata.action === "deployments.reconcile" &&
-      existingIdempotency === null
-    ) {
-      insertIdempotencyReservation(
+    if (existingIdempotency === null) {
+      insertReadbackAttemptIdempotency(
         database,
         metadata,
-        record,
-        "domain_committed",
-        record.releaseId,
+        release.releaseId,
+        claimedAt,
       );
     }
-    if (existing === null) insertReadback(database, record);
-    else if (!exactExistingReadback) updateReadback(database, record);
+    const attempt = {
+      managementTenantId,
+      attemptId: request.attemptId,
+      action: metadata.action,
+      idempotencyKey: metadata.idempotencyKey,
+      requestHash: metadata.requestHash,
+      actorRef: metadata.actorRef,
+      requestId: metadata.requestId,
+      traceId: metadata.traceId,
+      auditId: metadata.auditId,
+      releaseId: request.releaseId,
+      revision: request.revision,
+      desiredModules: request.desiredModules,
+      readbackRef: request.readbackRef,
+      ownerBootId,
+      phase: "claimed" as const,
+      claimedAt,
+      finalizedAt: null,
+      terminalStatus: null,
+      appliedReleaseId: null,
+      appliedRevision: null,
+      appliedModules: [],
+      reasonCodes: [],
+      checkedAt: null,
+      finalizedByActorRef: null,
+      reconciliationEventSequence: null,
+      completionEventSequence: null,
+    } as unknown as ReadbackAttemptRecord;
+    const validatedAttempt = deepFreezeReadbackAttempt(attempt) as ReadbackAttemptRecord;
+    insertClaimedReadbackAttempt(database, validatedAttempt);
+    const persisted = findReadbackAttempt(database, managementTenantId, request.attemptId);
+    if (persisted === null) repositoryError("invalid_state");
+    return { disposition: "created" as const, attempt: persisted };
+  }, guard);
+  return result;
+}
 
-    if (!exactExistingReadback && record.status === "verified") {
-      const previousActive = findActiveRelease(database, managementTenantId);
+interface ReadbackFinalizeRuntime {
+  readonly clock: () => string;
+  readonly failpoint: SqliteReadbackFinalizeFailpoint | null;
+}
+
+function triggerReadbackFinalizeFailpoint(
+  runtime: ReadbackFinalizeRuntime,
+  phase: SqliteReadbackFinalizeFailpoint,
+): void {
+  if (runtime.failpoint === phase) repositoryError("conflict");
+}
+
+function finalizeReadbackAndCompleteInDatabase(
+  database: DatabaseSync,
+  managementTenantId: string,
+  request: FinalizeReadbackAndCompleteRequest | SqliteRecoveryFinalizeRequest,
+  guard: RepositoryTransactionGuard,
+  capabilities: SqliteReadbackOwnerCapabilityRegistry,
+  runtime: ReadbackFinalizeRuntime,
+  ownerBootId: string,
+  mode: "owner" | "recovery",
+  recoverySecret: SqliteReadbackRecoverySecret | null,
+): ReadbackFinalizationResult {
+  if (mode === "owner") {
+    assertFinalizeAttemptRequest(request);
+  } else {
+    assertSqliteReadbackRecoverySecret(recoverySecret);
+    assertRecoveryFinalizeAttemptRequest(request);
+  }
+  const result = withRepositoryTransaction(database, () => {
+    const attempt = findReadbackAttempt(database, managementTenantId, request.attemptId);
+    if (attempt === null) repositoryError("not_found");
+    if (mode === "owner") {
+      capabilities.assertOwner(
+        (request as FinalizeReadbackAndCompleteRequest).ownerCapability,
+        attempt.attemptId,
+      );
+      if (attempt.ownerBootId !== ownerBootId) repositoryError("conflict");
+    } else if (attempt.ownerBootId === ownerBootId) {
+      repositoryError("conflict");
+    }
+    const idempotency = findIdempotency(
+      database,
+      managementTenantId,
+      attempt.action,
+      attempt.idempotencyKey,
+    );
+    if (
+      idempotency === null ||
+      idempotency.requestHash !== attempt.requestHash ||
+      idempotency.actorRef !== attempt.actorRef ||
+      idempotency.domainRecordRef !== attempt.releaseId
+    ) {
+      repositoryError("conflict");
+    }
+    if (mode === "recovery" && attempt.phase === "finalized") {
       if (
-        previousActive !== null &&
-        previousActive.releaseId !== release.releaseId
+        attempt.finalizedByActorRef !== SQLITE_RECOVERY_ACTOR_REF ||
+        idempotency.status !== "completed" ||
+        idempotency.finalResult === null
       ) {
+        repositoryError("conflict");
+      }
+      const release = findRelease(database, managementTenantId, attempt.releaseId);
+      if (release === null) repositoryError("not_found");
+      const finalResult = validateFinalResult(
+        request.finalResult,
+        attempt.action,
+        attempt.releaseId,
+        attempt.revision,
+      );
+      const persistedObservation = {
+        status: attempt.terminalStatus,
+        appliedReleaseId: attempt.appliedReleaseId,
+        appliedRevision: attempt.appliedRevision,
+        appliedModules: attempt.appliedModules,
+        reasonCodes: attempt.reasonCodes,
+        checkedAt: attempt.checkedAt,
+      } as ReadbackAttemptObservation;
+      assertAttemptFinalResultSemantics(
+        finalResult,
+        attempt,
+        persistedObservation,
+        release,
+      );
+      if (
+        !equalCanonical(finalResult, idempotency.finalResult) ||
+        !equalCanonical(request.observation, persistedObservation)
+      ) {
+        repositoryError("conflict");
+      }
+      return readbackFinalizationResultFromExisting(
+        database,
+        managementTenantId,
+        attempt,
+        idempotency,
+      );
+    }
+    if (attempt.phase !== "claimed") repositoryError("conflict");
+    if (idempotency.status !== "domain_committed") {
+      repositoryError("conflict");
+    }
+    const release = findRelease(database, managementTenantId, attempt.releaseId);
+    if (release === null) repositoryError("not_found");
+    if (
+      release.revision !== attempt.revision ||
+      !sameModuleRefs(release.desiredModules, attempt.desiredModules) ||
+      (release.status !== "published_pending_readback" && release.status !== "manual_review")
+    ) {
+      repositoryError("conflict");
+    }
+    const existingReadback = findReadback(database, managementTenantId, attempt.releaseId);
+    if (existingReadback !== null && attempt.action !== "deployments.reconcile") {
+      repositoryError("conflict");
+    }
+    let observation: ReadbackAttemptObservation;
+    try {
+      assertReadbackAttemptObservation(request.observation);
+      observation = request.observation;
+    } catch (error) {
+      if (error instanceof ModuleControlRepositoryError) throw error;
+      repositoryError("invalid_state");
+    }
+    const finalResult = validateFinalResult(
+      request.finalResult,
+      attempt.action,
+      attempt.releaseId,
+      attempt.revision,
+    );
+    assertAttemptFinalResultSemantics(finalResult, attempt, observation, release);
+    if (
+      mode === "recovery" &&
+      (observation.status !== "unknown" ||
+        observation.appliedReleaseId !== null ||
+        observation.appliedRevision !== null ||
+        observation.appliedModules.length !== 0 ||
+        !equalCanonical(observation.reasonCodes, ["readback.interrupted"]) ||
+        finalResult.envelope.status !== "manual_review" ||
+        finalResult.envelope.readback.status !== "unknown" ||
+        !equalCanonical(finalResult.envelope.reason_codes, ["readback.interrupted"]))
+    ) {
+      repositoryError("conflict");
+    }
+    const finalizedAt = request.finalizedAt ?? runtime.clock();
+    assertAttemptTimestamp(finalizedAt);
+    if (
+      compareRfc3339Instants(attempt.claimedAt, finalizedAt) > 0 ||
+      compareRfc3339Instants(attempt.claimedAt, observation.checkedAt) > 0 ||
+      compareRfc3339Instants(observation.checkedAt, finalizedAt) > 0
+    ) {
+      repositoryError("conflict");
+    }
+    const previousEvent = previousPersistedEvent(database);
+    if (
+      previousEvent !== null &&
+      compareRfc3339Instants(previousEvent.occurredAt, finalizedAt) > 0
+    ) {
+      repositoryError("conflict");
+    }
+    const finalizerActorRef =
+      mode === "recovery" ? SQLITE_RECOVERY_ACTOR_REF : attempt.actorRef;
+
+    // The two terminal events are deliberately inserted before any projection
+    // or attempt finalization writes. Their immediate FKs are then checked again
+    // by the finalized attempt update below, all inside this transaction.
+    const reconciliationEvent = insertReadbackAttemptEvent(
+      database,
+      attempt,
+      "reconciliation",
+      observation.status,
+      observation.reasonCodes,
+      finalizedAt,
+      finalizerActorRef,
+    );
+    triggerReadbackFinalizeFailpoint(runtime, "after_reconciliation_event");
+    const completionEvent = insertReadbackAttemptEvent(
+      database,
+      attempt,
+      "completion",
+      "completed",
+      [],
+      finalizedAt,
+      finalizerActorRef,
+    );
+    triggerReadbackFinalizeFailpoint(runtime, "after_completion_event");
+    if (completionEvent.sequence !== reconciliationEvent.sequence + 1) {
+      repositoryError("invalid_state");
+    }
+    const finalizedAttemptCandidate = {
+      ...attempt,
+      phase: "finalized" as const,
+      finalizedAt,
+      terminalStatus: observation.status,
+      appliedReleaseId: observation.appliedReleaseId,
+      appliedRevision: observation.appliedRevision,
+      appliedModules: observation.appliedModules,
+      reasonCodes: observation.reasonCodes,
+      checkedAt: observation.checkedAt,
+      finalizedByActorRef: finalizerActorRef,
+      reconciliationEventSequence: reconciliationEvent.sequence,
+      completionEventSequence: completionEvent.sequence,
+    };
+    assertReadbackAttemptRecord(finalizedAttemptCandidate);
+    const finalizedAttempt = deepFreezeReadbackAttempt(
+      finalizedAttemptCandidate,
+    ) as ReadbackAttemptRecord;
+    const readback = terminalReadbackFromAttempt(finalizedAttempt);
+    if (existingReadback === null) insertReadback(database, readback);
+    else updateReadback(database, readback);
+    triggerReadbackFinalizeFailpoint(runtime, "after_current_readback");
+
+    if (observation.status === "verified") {
+      const previousActive = findActiveRelease(database, managementTenantId);
+      if (previousActive !== null && previousActive.releaseId !== release.releaseId) {
         updateReleaseStatus(
           database,
           previousActive,
@@ -4533,115 +5134,53 @@ function recordReadbackInDatabase(
         database,
         release,
         "active_verified",
-        record.readbackRef,
+        readback.readbackRef,
         [],
         null,
       );
-    } else if (
-      !exactExistingReadback &&
-      (record.status === "mismatch" || record.status === "unknown")
-    ) {
+    } else {
       updateReleaseStatus(
         database,
         release,
         "manual_review",
-        record.readbackRef,
-        record.reasonCodes,
+        readback.readbackRef,
+        observation.reasonCodes,
         null,
       );
     }
-
-    const event = insertEvent(database, metadata, record);
-    const persisted = findReadback(database, managementTenantId, record.releaseId);
-    if (persisted === null) repositoryError("invalid_state");
-    return { record: persisted, event, replayed: false };
-  }, guard);
-}
-
-function completeIdempotencyInDatabase(
-  database: DatabaseSync,
-  managementTenantId: string,
-  request: CompleteControlIdempotencyRequest,
-  guard: RepositoryTransactionGuard,
-): ControlIdempotencyRecord {
-  const bound = bindRepositoryRequest(
-    request.metadata,
-    request.record,
-    managementTenantId,
-  );
-  const metadata = bound.metadata;
-  const record = bound.record as ControlIdempotencyRecord;
-  if (record.status !== "completed" || record.finalResult === null) {
-    repositoryError("invalid_state");
-  }
-  const existing = findIdempotency(
-    database,
-    managementTenantId,
-    metadata.action,
-    metadata.idempotencyKey,
-  );
-  if (existing === null) repositoryError("not_found");
-  existingIdempotencyConflict(existing, metadata);
-  if (
-    existing.createdAt !== record.createdAt ||
-    existing.expiresAt !== record.expiresAt
-  ) {
-    repositoryError("conflict");
-  }
-  if (existing.status === "completed") {
-    if (!equalCanonical(existing, record)) repositoryError("conflict");
-    return existing;
-  }
-  if (
-    existing.status !== "reserved" &&
-    existing.status !== "domain_committed"
-  ) {
-    repositoryError("invalid_state");
-  }
-  if (existing.domainRecordRef !== record.domainRecordRef) {
-    repositoryError("conflict");
-  }
-  let expectedRevision: number | undefined;
-  if (
-    metadata.action === "deployments.publish" ||
-    metadata.action === "deployments.reconcile"
-  ) {
-    const release = findRelease(
+    triggerReadbackFinalizeFailpoint(runtime, "after_release");
+    updateFinalizedReadbackAttempt(database, finalizedAttempt);
+    triggerReadbackFinalizeFailpoint(runtime, "after_attempt_finalized");
+    const completedIdempotency = completeReadbackAttemptIdempotency(
       database,
-      managementTenantId,
-      record.domainRecordRef,
-    );
-    if (release === null) repositoryError("not_found");
-    expectedRevision = release.revision;
-  }
-  const finalResult = validateFinalResult(
-    record.finalResult,
-    metadata.action,
-    record.domainRecordRef,
-    expectedRevision,
-  );
-  if (
-    metadata.action === "deployments.publish" ||
-    metadata.action === "deployments.reconcile"
-  ) {
-    validatePersistedReleaseCompletion(
-      database,
-      managementTenantId,
-      metadata.action,
-      finalResult,
-      "conflict",
-    );
-  }
-  return withRepositoryTransaction(database, () => {
-    const completed = completeIdempotencyRow(
-      database,
-      metadata,
-      record.domainRecordRef,
+      attempt,
       finalResult,
     );
-    insertEvent(database, metadata, record);
-    return completed;
+    triggerReadbackFinalizeFailpoint(runtime, "after_idempotency_completed");
+    triggerReadbackFinalizeFailpoint(runtime, "before_health_check");
+    verifyReadbackAttemptGraph(database, managementTenantId);
+    triggerReadbackFinalizeFailpoint(runtime, "after_health_check");
+    const updatedRelease = findRelease(database, managementTenantId, release.releaseId);
+    if (updatedRelease === null) repositoryError("invalid_state");
+    return {
+      disposition: "finalized" as const,
+      replayed: false,
+      attempt: finalizedAttempt,
+      readback,
+      release: updatedRelease,
+      idempotency: completedIdempotency,
+      reconciliationEvent,
+      completionEvent,
+      finalResult,
+    };
   }, guard);
+  if (mode === "owner") {
+    capabilities.consume(
+      (request as FinalizeReadbackAndCompleteRequest).ownerCapability,
+      request.attemptId,
+    );
+  }
+  return result;
 }
 
 function controlStateInDatabase(
@@ -4897,12 +5436,25 @@ function verifyReadbackSemantics(
     repositoryError("invalid_state");
   }
   if (
-    (readback.status === "pending" && release.status !== "published_pending_readback") ||
     (readback.status === "verified" &&
       release.status !== "active_verified" &&
       release.status !== "superseded") ||
     ((readback.status === "mismatch" || readback.status === "unknown") &&
       release.status !== "manual_review")
+  ) {
+    repositoryError("invalid_state");
+  }
+  if (readback.status === "pending" || readback.attemptId === undefined) {
+    repositoryError("invalid_state");
+  }
+  const attempt = findReadbackAttempt(database, managementTenantId, readback.attemptId);
+  if (
+    attempt === null ||
+    attempt.phase !== "finalized" ||
+    attempt.releaseId !== readback.releaseId ||
+    attempt.revision !== readback.revision ||
+    attempt.readbackRef !== readback.readbackRef ||
+    attempt.terminalStatus !== readback.status
   ) {
     repositoryError("invalid_state");
   }
@@ -4938,6 +5490,13 @@ function idempotencyDomainTimestamp(
     case "deployments.publish":
       return findRelease(database, managementTenantId, record.domainRecordRef)?.createdAt ?? null;
     case "deployments.reconcile": {
+      const attempt = findReadbackAttemptByIdempotency(
+        database,
+        managementTenantId,
+        "deployments.reconcile",
+        record.idempotencyKey,
+      );
+      if (attempt !== null) return attempt.claimedAt;
       const rows = database
         .prepare(EVENT_SELECT)
         .iterate(managementTenantId, record.domainRecordRef) as Iterable<unknown>;
@@ -5080,6 +5639,20 @@ function verifyHistoricalReleaseCompletion(
   }
   const envelope = parsed.data;
   const data = envelope.data;
+  const historicalAttempt = findReadbackAttemptByIdempotency(
+    database,
+    managementTenantId,
+    record.action,
+    record.idempotencyKey,
+  );
+  if (
+    historicalAttempt !== null &&
+    (historicalAttempt.phase !== "finalized" ||
+      historicalAttempt.terminalStatus !== envelope.readback.status ||
+      !equalCanonical(historicalAttempt.reasonCodes, envelope.reason_codes))
+  ) {
+    repositoryError("invalid_state");
+  }
   if (
     envelope.readback.release_id !== release.releaseId ||
     envelope.readback.revision !== release.revision ||
@@ -5137,6 +5710,7 @@ function verifyHistoricalReleaseCompletion(
   ) {
     repositoryError("invalid_state");
   }
+  if (historicalAttempt !== null) return;
   if (release.status === "manual_review") {
     if (
       readback.status !== historicalStatus ||
@@ -5275,16 +5849,23 @@ function completedEnvelope(
 }
 
 function verifyCompletionEvent(
+  database: DatabaseSync,
   authority: PersistedIdempotencyAuthority,
   event: ControlEventRecord,
   previousEvent: ControlEventRecord | null,
 ): void {
   const record = authority.record;
   const expectedRef = `idempotency:${record.action}:${record.idempotencyKey}`;
-  const expectedOccurredAt = resolveMonotonicControlEventOccurredAt(
-    record.createdAt,
-    previousEvent,
-  );
+  const attempt = database
+    .prepare(
+      `SELECT attempt_id FROM module_readback_attempts
+       WHERE completion_event_sequence = ?`,
+    )
+    .get(event.sequence);
+  const expectedOccurredAt =
+    attempt === undefined
+      ? resolveMonotonicControlEventOccurredAt(record.createdAt, previousEvent)
+      : event.occurredAt;
   if (
     record.status !== "completed" ||
     event.kind !== "idempotency" ||
@@ -5455,6 +6036,12 @@ function verifyReconciliationEvent(
   }
   const release = findRelease(database, managementTenantId, record.domainRecordRef);
   const currentReadback = findReadback(database, managementTenantId, record.domainRecordRef);
+  const attempt = database
+    .prepare(
+      `SELECT attempt_id FROM module_readback_attempts
+       WHERE reconciliation_event_sequence = ?`,
+    )
+    .get(event.sequence);
   if (
     release === null ||
     event.objectRef !== release.releaseId ||
@@ -5468,10 +6055,15 @@ function verifyReconciliationEvent(
   ) {
     repositoryError("invalid_state");
   }
-  if (record.action === "deployments.reconcile" && event.occurredAt !== record.createdAt) {
+  if (
+    attempt === undefined &&
+    record.action === "deployments.reconcile" &&
+    event.occurredAt !== record.createdAt
+  ) {
     repositoryError("invalid_state");
   }
   if (
+    attempt === undefined &&
     currentReadback !== null &&
     currentReadback.readbackRef === event.detail.readbackRef &&
     reconciliationEventKey(event) !== currentReadbackEventKey(currentReadback)
@@ -5485,6 +6077,229 @@ function verifyReconciliationEvent(
       !equalCanonical(envelope.reason_codes, event.reasonCodes))
   ) {
     repositoryError("invalid_state");
+  }
+}
+
+function verifyReadbackAttemptGraph(
+  database: DatabaseSync,
+  managementTenantId: string,
+): void {
+  const eventRows = database
+    .prepare(
+      `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
+              idempotency_key, request_hash, object_ref, status,
+              reason_codes_json, payload_json, occurred_at
+       FROM module_control_events ORDER BY sequence`,
+    )
+    .all() as unknown[];
+  const events = new Map<number, PersistedEventAuthority>();
+  let expectedSequence = 1;
+  for (const row of eventRows) {
+    const persisted = decodeEventAuthorityRow(row);
+    if (persisted.event.sequence !== expectedSequence) repositoryError("invalid_state");
+    expectedSequence += 1;
+    if (persisted.event.managementTenantId !== managementTenantId) {
+      repositoryError("invalid_state");
+    }
+    events.set(persisted.event.sequence, persisted);
+  }
+
+  const attempts = findReadbackAttempts(database, managementTenantId);
+  const reconciliationSequences = new Set<number>();
+  const completionSequences = new Set<number>();
+  const finalizedAttemptsByRelease = new Map<string, ReadbackAttemptRecord[]>();
+  for (const attempt of attempts) {
+    if (attempt.managementTenantId !== managementTenantId) repositoryError("invalid_state");
+    const idempotency = findIdempotency(
+      database,
+      managementTenantId,
+      attempt.action,
+      attempt.idempotencyKey,
+    );
+    const release = findRelease(database, managementTenantId, attempt.releaseId);
+    if (
+      idempotency === null ||
+      release === null ||
+      idempotency.requestHash !== attempt.requestHash ||
+      idempotency.actorRef !== attempt.actorRef ||
+      idempotency.domainRecordRef !== attempt.releaseId ||
+      release.revision !== attempt.revision ||
+      !sameModuleRefs(release.desiredModules, attempt.desiredModules)
+    ) {
+      repositoryError("invalid_state");
+    }
+    if (attempt.actorRef === SQLITE_RECOVERY_ACTOR_REF) {
+      repositoryError("invalid_state");
+    }
+    if (attempt.phase === "claimed") {
+      if (
+        idempotency.status !== "domain_committed" ||
+        (attempt.action === "deployments.publish" &&
+          findReadback(database, managementTenantId, attempt.releaseId) !== null) ||
+        (release.status !== "published_pending_readback" && release.status !== "manual_review")
+      ) {
+        repositoryError("invalid_state");
+      }
+      continue;
+    }
+    if (
+      idempotency.status !== "completed" ||
+      idempotency.finalResult === null ||
+      attempt.reconciliationEventSequence === null ||
+      attempt.completionEventSequence === null ||
+      reconciliationSequences.has(attempt.reconciliationEventSequence) ||
+      completionSequences.has(attempt.completionEventSequence) ||
+      attempt.reconciliationEventSequence === attempt.completionEventSequence
+    ) {
+      repositoryError("invalid_state");
+    }
+    if (
+      attempt.finalizedByActorRef !== attempt.actorRef &&
+      attempt.finalizedByActorRef !== SQLITE_RECOVERY_ACTOR_REF
+    ) {
+      repositoryError("invalid_state");
+    }
+    if (
+      attempt.finalizedByActorRef === SQLITE_RECOVERY_ACTOR_REF &&
+      (attempt.terminalStatus !== "unknown" ||
+        attempt.appliedReleaseId !== null ||
+        attempt.appliedRevision !== null ||
+        attempt.appliedModules.length !== 0 ||
+        !equalCanonical(attempt.reasonCodes, ["readback.interrupted"]) ||
+        idempotency.finalResult?.envelope.status !== "manual_review")
+    ) {
+      repositoryError("invalid_state");
+    }
+    const reconciliation = events.get(attempt.reconciliationEventSequence);
+    const completion = events.get(attempt.completionEventSequence);
+    if (reconciliation === undefined || completion === undefined) {
+      repositoryError("invalid_state");
+    }
+    const reconciliationEvent = reconciliation.event;
+    const completionEvent = completion.event;
+    if (
+      reconciliationEvent.kind !== "reconciliation" ||
+      reconciliationEvent.action !== attempt.action ||
+      reconciliation.idempotencyKey !== attempt.idempotencyKey ||
+      reconciliation.requestHash !== attempt.requestHash ||
+      reconciliationEvent.objectRef !== attempt.releaseId ||
+      reconciliationEvent.status !== attempt.terminalStatus ||
+      reconciliationEvent.detail.releaseId !== attempt.releaseId ||
+      reconciliationEvent.detail.revision !== attempt.revision ||
+      reconciliationEvent.detail.readbackRef !== attempt.readbackRef ||
+      reconciliationEvent.detail.status !== attempt.terminalStatus ||
+      !equalCanonical(reconciliationEvent.reasonCodes, attempt.reasonCodes) ||
+      reconciliationEvent.actorRef !== attempt.finalizedByActorRef ||
+      reconciliationEvent.occurredAt !== attempt.finalizedAt
+    ) {
+      repositoryError("invalid_state");
+    }
+    const completionRef = attemptIdempotencyRecordRef(attempt.action, attempt.idempotencyKey);
+    if (
+      completionEvent.kind !== "idempotency" ||
+      completionEvent.action !== attempt.action ||
+      completion.idempotencyKey !== attempt.idempotencyKey ||
+      completion.requestHash !== attempt.requestHash ||
+      completionEvent.objectRef !== completionRef ||
+      completionEvent.status !== "completed" ||
+      completionEvent.detail.recordRef !== completionRef ||
+      completionEvent.detail.domainRecordRef !== attempt.releaseId ||
+      completionEvent.detail.status !== "completed" ||
+      completionEvent.reasonCodes.length !== 0 ||
+      completionEvent.actorRef !== attempt.finalizedByActorRef ||
+      completionEvent.occurredAt !== attempt.finalizedAt
+    ) {
+      repositoryError("invalid_state");
+    }
+    const finalResult = validateFinalResult(
+      idempotency.finalResult,
+      attempt.action,
+      attempt.releaseId,
+      attempt.revision,
+    );
+    const observation = {
+      status: attempt.terminalStatus,
+      appliedReleaseId: attempt.appliedReleaseId,
+      appliedRevision: attempt.appliedRevision,
+      appliedModules: attempt.appliedModules,
+      reasonCodes: attempt.reasonCodes,
+      checkedAt: attempt.checkedAt,
+    } as ReadbackAttemptObservation;
+    assertAttemptFinalResultSemantics(finalResult, attempt, observation, release);
+    reconciliationSequences.add(attempt.reconciliationEventSequence);
+    completionSequences.add(attempt.completionEventSequence);
+    const releaseAttempts = finalizedAttemptsByRelease.get(attempt.releaseId) ?? [];
+    releaseAttempts.push(attempt);
+    finalizedAttemptsByRelease.set(attempt.releaseId, releaseAttempts);
+  }
+
+  for (const readbackRow of database
+    .prepare(
+      `SELECT management_tenant_id, release_id, attempt_id, readback_ref, revision,
+              applied_release_id, applied_revision, applied_modules_json, status,
+              reason_codes_json, checked_at
+       FROM module_readbacks ORDER BY management_tenant_id, release_id`,
+    )
+    .all() as unknown[]) {
+    const readback = decodeReadbackRow(readbackRow);
+    const attempt = findReadbackAttempt(database, managementTenantId, readback.attemptId!);
+    if (attempt === null || attempt.phase !== "finalized") repositoryError("invalid_state");
+  }
+  for (const [releaseId, releaseAttempts] of finalizedAttemptsByRelease) {
+    const ordered = [...releaseAttempts].sort(
+      (left, right) =>
+        right.reconciliationEventSequence! - left.reconciliationEventSequence! ||
+        (right.attemptId > left.attemptId ? 1 : right.attemptId < left.attemptId ? -1 : 0),
+    );
+    const current = findReadback(database, managementTenantId, releaseId);
+    const currentRelease = findRelease(database, managementTenantId, releaseId);
+    if (currentRelease === null) repositoryError("invalid_state");
+    const latestAttempt = ordered[0]!;
+    if (
+      current === null ||
+      current.attemptId !== latestAttempt.attemptId ||
+      current.readbackRef !== latestAttempt.readbackRef ||
+      current.revision !== latestAttempt.revision ||
+      current.status !== latestAttempt.terminalStatus ||
+      current.appliedReleaseId !== latestAttempt.appliedReleaseId ||
+      current.appliedRevision !== latestAttempt.appliedRevision ||
+      !sameModuleRefs(current.appliedModules, latestAttempt.appliedModules) ||
+      !equalCanonical(current.reasonCodes, latestAttempt.reasonCodes) ||
+      current.checkedAt !== latestAttempt.checkedAt ||
+      (latestAttempt.terminalStatus === "verified" &&
+        (currentRelease.status !== "active_verified" && currentRelease.status !== "superseded")) ||
+      ((latestAttempt.terminalStatus === "mismatch" || latestAttempt.terminalStatus === "unknown") &&
+        (currentRelease.status !== "manual_review" ||
+          !equalCanonical(
+            currentRelease.reasonCodes,
+            latestAttempt.reasonCodes,
+          )))
+    ) {
+      repositoryError("invalid_state");
+    }
+  }
+  for (const event of events.values()) {
+    const sequence = event.event.sequence;
+    if (
+      event.event.kind === "reconciliation" &&
+      (event.event.action === "deployments.publish" ||
+        event.event.action === "deployments.reconcile") &&
+      !reconciliationSequences.has(sequence)
+    ) {
+      repositoryError("invalid_state");
+    }
+    if (
+      event.event.kind === "idempotency" &&
+      (event.event.action === "deployments.publish" ||
+        event.event.action === "deployments.reconcile") &&
+      event.event.status === "completed" &&
+      !completionSequences.has(sequence)
+    ) {
+      repositoryError("invalid_state");
+    }
+  }
+  for (const sequence of reconciliationSequences) {
+    if (completionSequences.has(sequence)) repositoryError("invalid_state");
   }
 }
 
@@ -5519,7 +6334,7 @@ function verifyEventAgainstAuthority(
       counts.reconciliation += 1;
       return;
     case "idempotency":
-      verifyCompletionEvent(authority, event, previousEvent);
+      verifyCompletionEvent(database, authority, event, previousEvent);
       counts.completion += 1;
       return;
     default:
@@ -5556,6 +6371,25 @@ function verifyEventGraph(
 
   const authoritativeDomainEvents = new Map<string, number>();
   const readbackEvents = new Map<string, number>();
+  const attemptTerminalActors = new Map<number, string>();
+  for (const attempt of findReadbackAttempts(database, managementTenantId)) {
+    if (attempt.phase !== "finalized") continue;
+    if (
+      attempt.finalizedByActorRef !== attempt.actorRef &&
+      attempt.finalizedByActorRef !== SQLITE_RECOVERY_ACTOR_REF
+    ) {
+      repositoryError("invalid_state");
+    }
+    for (const sequence of [
+      attempt.reconciliationEventSequence,
+      attempt.completionEventSequence,
+    ]) {
+      if (sequence === null || attemptTerminalActors.has(sequence)) {
+        repositoryError("invalid_state");
+      }
+      attemptTerminalActors.set(sequence, attempt.finalizedByActorRef);
+    }
+  }
   const eventRows = database
     .prepare(
       `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
@@ -5577,11 +6411,18 @@ function verifyEventGraph(
     const key = idempotencyAuthorityKey(event.action, persisted.idempotencyKey);
     const authority = authorities.get(key);
     const counts = lifecycleCounts.get(key);
+    const attemptFinalizerActor = attemptTerminalActors.get(event.sequence);
+    const actorMatchesAuthority =
+      authority !== undefined && event.actorRef === authority.record.actorRef;
+    const actorMatchesAttemptFinalizer =
+      attemptFinalizerActor !== undefined &&
+      (event.kind === "reconciliation" || event.kind === "idempotency") &&
+      event.actorRef === attemptFinalizerActor;
     if (
       authority === undefined ||
       counts === undefined ||
       persisted.requestHash !== authority.record.requestHash ||
-      event.actorRef !== authority.record.actorRef
+      (!actorMatchesAuthority && !actorMatchesAttemptFinalizer)
     ) {
       repositoryError("invalid_state");
     }
@@ -5607,6 +6448,27 @@ function verifyEventGraph(
   for (const [key, authority] of authorities) {
     const counts = lifecycleCounts.get(key);
     if (counts === undefined) repositoryError("invalid_state");
+    const claimedReadbackAttempt =
+      authority.record.action === "deployments.reconcile" &&
+      authority.record.status === "domain_committed"
+        ? findReadbackAttemptByIdempotency(
+            database,
+            managementTenantId,
+            authority.record.action,
+            authority.record.idempotencyKey,
+          )
+        : null;
+    if (
+      claimedReadbackAttempt?.phase === "claimed" &&
+      counts.approval === 0 &&
+      counts.completion === 0 &&
+      counts.preview === 0 &&
+      counts.reconciliation === 0 &&
+      counts.registration === 0 &&
+      counts.release === 0
+    ) {
+      continue;
+    }
     assertControlEventLifecycleCardinality(authority.record, counts);
   }
 
@@ -5668,7 +6530,14 @@ function verifyEventGraph(
     .iterate() as Iterable<unknown>;
   for (const row of readbackRows) {
     const readback = decodeReadbackRow(row);
-    if ((readbackEvents.get(currentReadbackEventKey(readback)) ?? 0) < 1) {
+    const attempt =
+      readback.attemptId === undefined
+        ? null
+        : findReadbackAttempt(database, managementTenantId, readback.attemptId);
+    if (
+      (attempt === null && (readbackEvents.get(currentReadbackEventKey(readback)) ?? 0) < 1) ||
+      (attempt !== null && attempt.phase !== "finalized")
+    ) {
       repositoryError("invalid_state");
     }
   }
@@ -5781,7 +6650,7 @@ function verifyRepositorySemantics(
 
   const readbackRows = database
     .prepare(
-      `SELECT management_tenant_id, release_id, readback_ref, revision,
+      `SELECT management_tenant_id, release_id, attempt_id, readback_ref, revision,
               applied_release_id, applied_revision, applied_modules_json, status,
               reason_codes_json, checked_at
        FROM module_readbacks
@@ -5805,6 +6674,7 @@ function verifyRepositorySemantics(
   }
 
   verifyEventGraph(database, managementTenantId);
+  verifyReadbackAttemptGraph(database, managementTenantId);
 
   controlStateInDatabase(database, managementTenantId);
 }
@@ -5827,12 +6697,26 @@ function validateInitializeOptions(options: unknown): InitializeSqliteControlSta
 
 function validateOpenOptions(options: unknown): OpenSqliteControlStoreOptions {
   try {
-    assertClosedOptions(options, [
-      "applicationRoot",
-      "instanceId",
-      "managementTenantId",
-      "adminControlEnabled",
-    ]);
+    const hasTestOnly =
+      isPlainDataObject(options) &&
+      Object.prototype.hasOwnProperty.call(options, "testOnly");
+    assertClosedOptions(
+      options,
+      hasTestOnly
+        ? [
+            "applicationRoot",
+            "instanceId",
+            "managementTenantId",
+            "adminControlEnabled",
+            "testOnly",
+          ]
+        : [
+            "applicationRoot",
+            "instanceId",
+            "managementTenantId",
+            "adminControlEnabled",
+          ],
+    );
     const applicationRoot = options.applicationRoot;
     const instanceId = options.instanceId;
     const managementTenantId = options.managementTenantId;
@@ -5842,7 +6726,34 @@ function validateOpenOptions(options: unknown): OpenSqliteControlStoreOptions {
     if (typeof applicationRoot !== "string" || typeof adminControlEnabled !== "boolean") {
       throwStoreError("invalid_options");
     }
-    return { applicationRoot, instanceId, managementTenantId, adminControlEnabled };
+    if (!hasTestOnly) {
+      return { applicationRoot, instanceId, managementTenantId, adminControlEnabled };
+    }
+    const rawTestOnly: unknown = options.testOnly;
+    assertClosedOptions(rawTestOnly, ["finalizeClock", "finalizeFailpoint"]);
+    const finalizeClock = rawTestOnly.finalizeClock;
+    const finalizeFailpoint = rawTestOnly.finalizeFailpoint;
+    if (!isSqliteFinalizeClock(finalizeClock)) {
+      throwStoreError("invalid_options");
+    }
+    let typedFinalizeFailpoint: SqliteReadbackFinalizeFailpoint | null;
+    if (finalizeFailpoint === null) {
+      typedFinalizeFailpoint = null;
+    } else if (!isSqliteReadbackFinalizeFailpoint(finalizeFailpoint)) {
+      throwStoreError("invalid_options");
+    } else {
+      typedFinalizeFailpoint = finalizeFailpoint;
+    }
+    return {
+      applicationRoot,
+      instanceId,
+      managementTenantId,
+      adminControlEnabled,
+      testOnly: Object.freeze({
+        finalizeClock,
+        finalizeFailpoint: typedFinalizeFailpoint,
+      }),
+    };
   } catch (error) {
     if (error instanceof SqliteControlStoreError) throw error;
     throwStoreError("invalid_options");
@@ -6252,7 +7163,15 @@ function verifyLiveControlStore(
   verifyRepositorySemantics(database, managementTenantId);
 }
 
-export function openSqliteControlStore(options: OpenSqliteControlStoreOptions): SqliteControlStore {
+interface OpenedSqliteControlStore {
+  readonly repository: SqliteControlStore;
+  readonly recoveryDriver: SqliteReadbackRecoveryDriver | null;
+}
+
+function openSqliteControlStoreInternal(
+  options: OpenSqliteControlStoreOptions,
+  withRecoveryDriver: boolean,
+): OpenedSqliteControlStore {
   const validated = validateOpenOptions(options);
   if (validated.adminControlEnabled !== true) {
     throwStoreError("admin_control_disabled");
@@ -6336,6 +7255,15 @@ export function openSqliteControlStore(options: OpenSqliteControlStoreOptions): 
       verifyLiveIdentity(database);
     },
   };
+  const readbackOwnerBootId = `boot_${randomUUID()}`;
+  const readbackOwnerCapabilities = new SqliteReadbackOwnerCapabilityRegistry();
+  const recoverySecret = withRecoveryDriver
+    ? createSqliteReadbackRecoverySecret()
+    : null;
+  const readbackFinalizeRuntime: ReadbackFinalizeRuntime = Object.freeze({
+    clock: validated.testOnly?.finalizeClock ?? (() => new Date().toISOString()),
+    failpoint: validated.testOnly?.finalizeFailpoint ?? null,
+  });
   const liveRepositoryDatabase = (): DatabaseSync => {
     if (quarantined) repositoryError("invalid_state");
     const activeDatabase = requireRepositoryDatabase(openDatabase);
@@ -6359,7 +7287,7 @@ export function openSqliteControlStore(options: OpenSqliteControlStoreOptions): 
       throw error;
     }
   };
-  return {
+  const repository: SqliteControlStore = {
     health(): Promise<{ readonly ready: boolean }> {
       if (openDatabase === null || quarantined) return Promise.resolve({ ready: false });
       try {
@@ -6421,28 +7349,114 @@ export function openSqliteControlStore(options: OpenSqliteControlStoreOptions): 
           ));
       });
     },
-    recordReadback(request: RecordReadbackRequest): Promise<ReadbackWriteResult> {
+    claimReadbackAttempt(request: ClaimReadbackAttemptRequest): Promise<ReadbackAttemptClaimResult> {
+      return repositoryPromise(() => {
+        const outcome = runMutation((activeDatabase) =>
+          claimReadbackAttemptInDatabase(
+            activeDatabase,
+            validated.managementTenantId,
+            readbackOwnerBootId,
+            request,
+            transactionGuard,
+          ));
+        if (outcome.disposition === "existing") {
+          return Object.freeze({
+            disposition: "existing" as const,
+            attempt: deepFreezeReadbackAttempt(outcome.attempt),
+          });
+        }
+        return Object.freeze({
+          disposition: "created" as const,
+          attempt: deepFreezeReadbackAttempt(outcome.attempt),
+          ownerCapability: readbackOwnerCapabilities.create(outcome.attempt.attemptId),
+        });
+      });
+    },
+    finalizeReadbackAndComplete(
+      request: FinalizeReadbackAndCompleteRequest,
+    ): Promise<ReadbackFinalizationResult> {
       return repositoryPromise(() => {
         return runMutation((activeDatabase) =>
-          recordReadbackInDatabase(
+          finalizeReadbackAndCompleteInDatabase(
             activeDatabase,
             validated.managementTenantId,
             request,
             transactionGuard,
+            readbackOwnerCapabilities,
+            readbackFinalizeRuntime,
+            readbackOwnerBootId,
+            "owner",
+            null,
           ));
       });
     },
-    completeIdempotency(
-      request: CompleteControlIdempotencyRequest,
-    ): Promise<ControlIdempotencyRecord> {
+    getUnfinishedReadbackAttempt(
+      query: GetUnfinishedReadbackAttemptQuery,
+    ): Promise<DeepReadonly<ReadbackAttemptRecord> | null> {
       return repositoryPromise(() => {
-        return runMutation((activeDatabase) =>
-          completeIdempotencyInDatabase(
+        const values = assertAttemptObjectKeys(query, ["managementTenantId", "attemptId"]);
+        if (values.managementTenantId !== validated.managementTenantId) {
+          repositoryError("tenant_mismatch");
+        }
+        assertRepositoryIdentifier(values.attemptId);
+        const activeDatabase = liveRepositoryDatabase();
+        const attempt = findReadbackAttempt(
+          activeDatabase,
+          validated.managementTenantId,
+          values.attemptId,
+        );
+        return attempt?.phase === "claimed"
+          ? deepFreezeReadbackAttempt(attempt)
+          : null;
+      });
+    },
+    listUnfinishedReadbackAttempts(): Promise<readonly DeepReadonly<ReadbackAttemptRecord>[]> {
+      return repositoryPromise(() => {
+        const activeDatabase = liveRepositoryDatabase();
+        const rows = activeDatabase
+          .prepare(
+            `${READBACK_ATTEMPT_SELECT}
+             WHERE management_tenant_id = ? AND phase = 'claimed'
+             ORDER BY claimed_at, release_id, revision, attempt_id`,
+          )
+          .all(validated.managementTenantId) as unknown[];
+        return Object.freeze(
+          rows.map((row) => deepFreezeReadbackAttempt(decodeReadbackAttemptRow(row))),
+        );
+      });
+    },
+    getReadbackAttemptHistory(
+      query: GetReadbackAttemptHistoryQuery,
+    ): Promise<readonly DeepReadonly<ReadbackAttemptRecord>[]> {
+      return repositoryPromise(() => {
+        const hasRevision =
+          isPlainDataObject(query) && Object.prototype.hasOwnProperty.call(query, "revision");
+        const values = assertAttemptObjectKeys(
+          query,
+          hasRevision
+            ? ["managementTenantId", "releaseId", "revision"]
+            : ["managementTenantId", "releaseId"],
+        );
+        if (values.managementTenantId !== validated.managementTenantId) {
+          repositoryError("tenant_mismatch");
+        }
+        assertRepositoryIdentifier(values.releaseId);
+        let revision: number | undefined;
+        if (hasRevision) {
+          if (!Number.isSafeInteger(values.revision) || Number(values.revision) < 1) {
+            repositoryError("invalid_state");
+          }
+          revision = Number(values.revision);
+        }
+        const activeDatabase = liveRepositoryDatabase();
+        return Object.freeze(
+          findReadbackAttempts(
             activeDatabase,
             validated.managementTenantId,
-            request,
-            transactionGuard,
-          ));
+            values.releaseId,
+            revision,
+          ).map((attempt) => deepFreezeReadbackAttempt(attempt)),
+        );
       });
     },
     getControlState(): Promise<ModuleControlState> {
@@ -6546,4 +7560,64 @@ export function openSqliteControlStore(options: OpenSqliteControlStoreOptions): 
       return Promise.resolve();
     },
   };
+
+  const recoveryInvoker = withRecoveryDriver
+    ? Object.freeze({
+        [SQLITE_READBACK_RECOVERY_FINALIZE]: (
+          request: SqliteRecoveryFinalizeRequest,
+          secret: SqliteReadbackRecoverySecret,
+        ): Promise<ReadbackFinalizationResult> =>
+          repositoryPromise(() => {
+            assertSqliteReadbackRecoverySecret(secret);
+            assertRecoveryFinalizeAttemptRequest(request);
+            return runMutation((activeDatabase) =>
+              finalizeReadbackAndCompleteInDatabase(
+                activeDatabase,
+                validated.managementTenantId,
+                request,
+                transactionGuard,
+                readbackOwnerCapabilities,
+                readbackFinalizeRuntime,
+                readbackOwnerBootId,
+                "recovery",
+                secret,
+              ));
+          }),
+      })
+    : null;
+  const recoveryDriver = withRecoveryDriver
+    ? Object.freeze({
+        finalizePriorBootAttempt(
+          request: SqliteRecoveryFinalizeRequest,
+        ): Promise<ReadbackFinalizationResult> {
+          if (recoveryInvoker === null || recoverySecret === null) {
+            repositoryError("invalid_state");
+          }
+          return recoveryInvoker[SQLITE_READBACK_RECOVERY_FINALIZE](
+            request,
+            recoverySecret,
+          );
+        },
+      })
+    : null;
+  return { repository, recoveryDriver };
+}
+
+export function openSqliteControlStore(
+  options: OpenSqliteControlStoreOptions,
+): SqliteControlStore {
+  return openSqliteControlStoreInternal(options, false).repository;
+}
+
+export function createSqliteControlStoreWithRecovery(
+  options: OpenSqliteControlStoreOptions,
+): SqliteControlStoreWithRecovery {
+  const opened = openSqliteControlStoreInternal(options, true);
+  if (opened.recoveryDriver === null) {
+    throw new SqliteControlStoreError("initialization_failed");
+  }
+  return Object.freeze({
+    repository: opened.repository,
+    recoveryDriver: opened.recoveryDriver,
+  });
 }

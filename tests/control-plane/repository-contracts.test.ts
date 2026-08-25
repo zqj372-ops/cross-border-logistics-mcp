@@ -17,7 +17,7 @@ import {
 } from "../../src/logistics_mcp/control-plane/repository";
 import type {
   CompletedModuleControlIdempotencyRecord,
-  CompleteIdempotencyRequestMetadata,
+  ControlIdempotencyEventMetadata,
   ControlEnvelope,
   ControlEventLifecycleCounts,
   ControlEventRecord,
@@ -44,14 +44,19 @@ import type {
   ReservedModuleControlIdempotencyRecord,
 } from "../../src/logistics_mcp/control-plane/repository";
 
+// @ts-expect-error repository must not export the removed readback operation type
+import type { RecordReadbackRequest as LegacyReadbackRequestType } from "../../src/logistics_mcp/control-plane/repository";
+// @ts-expect-error repository must not export the removed idempotency operation type
+import type { CompleteControlIdempotencyRequest as LegacyIdempotencyRequestType } from "../../src/logistics_mcp/control-plane/repository";
+// @ts-expect-error repository must not export the removed readback result type
+import type { ReadbackWriteResult as LegacyReadbackResultType } from "../../src/logistics_mcp/control-plane/repository";
+
 const useCaseMethodNames = [
   "health",
   "registerModule",
   "createPreview",
   "decideApproval",
   "publishRelease",
-  "recordReadback",
-  "completeIdempotency",
   "getControlState",
   "getActiveRelease",
   "getPendingRelease",
@@ -87,6 +92,12 @@ const moduleRef = {
   version: "1.0.0",
   descriptorDigest,
 } as const;
+
+type LegacyOperationTypeChecks = [
+  LegacyReadbackRequestType,
+  LegacyIdempotencyRequestType,
+  LegacyReadbackResultType,
+];
 
 const envelope = {
   schema_version: "2026-08-22.v1",
@@ -270,8 +281,6 @@ describe("module control repository contract", () => {
       createPreview: unimplemented,
       decideApproval: unimplemented,
       publishRelease: unimplemented,
-      recordReadback: unimplemented,
-      completeIdempotency: unimplemented,
       getControlState: unimplemented,
       getActiveRelease: unimplemented,
       getPendingRelease: unimplemented,
@@ -283,7 +292,7 @@ describe("module control repository contract", () => {
       getIdempotency: unimplemented,
     };
 
-    expect(useCaseMethodNames).toHaveLength(16);
+    expect(useCaseMethodNames).toHaveLength(14);
     expect(lifecycleMethodNames).toEqual(["close"]);
     expect(Object.keys(repositoryContract)).toEqual([
       "health",
@@ -292,8 +301,6 @@ describe("module control repository contract", () => {
       "createPreview",
       "decideApproval",
       "publishRelease",
-      "recordReadback",
-      "completeIdempotency",
       "getControlState",
       "getActiveRelease",
       "getPendingRelease",
@@ -1394,7 +1401,7 @@ describe("module control repository contract", () => {
       createdAt: "2026-08-22T00:00:00Z",
       expiresAt: "2026-08-23T00:00:00Z",
     };
-    const completionMetadata: CompleteIdempotencyRequestMetadata = {
+    const completionMetadata: ControlIdempotencyEventMetadata = {
       managementTenantId: "tenant_demo",
       actorRef: "actor_operator",
       action: "packages.register",
@@ -1608,25 +1615,19 @@ const compileContractChecks = (): void => {
   // @ts-expect-error arbitrary maps are not control records
   deepFreezeControlRecord({ arbitrary: true });
 
-  const assertCompletedResultReadonly = (
-    result: Awaited<
-      ReturnType<ModuleControlRepository["completeIdempotency"]>
-    >,
-  ): void => {
-    if (result.status === "completed") {
-      // @ts-expect-error completed replay envelopes are deeply readonly
-      result.finalResult.envelope.status = "blocked";
-      // @ts-expect-error nested readback evidence is deeply readonly
-      result.finalResult.envelope.readback.status = "pending";
-    }
-  };
+  const repositoryContract = {} as ModuleControlRepository;
+  // @ts-expect-error legacy readback writes are not part of the repository contract
+  void repositoryContract.recordReadback;
+  // @ts-expect-error generic idempotency completion is not part of the repository contract
+  void repositoryContract.completeIdempotency;
+
+  void (undefined as unknown as LegacyOperationTypeChecks);
 
   void [
     attemptMethodNames,
     _invalidAction,
     _invalidChange,
     _invalidVerified,
-    assertCompletedResultReadonly,
     compileContractChecks,
   ];
 };

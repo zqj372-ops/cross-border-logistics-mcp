@@ -20,6 +20,12 @@ import {
   initializeSqliteControlState,
   openSqliteControlStore,
 } from "../../src/logistics_mcp/control-plane/sqlite-control-store";
+import {
+  CONTROL_SCHEMA_FINGERPRINT,
+  CONTROL_SCHEMA_STATEMENTS,
+  fingerprintControlSchema,
+  normalizeControlSchema,
+} from "../../src/logistics_mcp/control-plane/readback-attempt-schema";
 
 type ControlStore = {
   health(): Promise<{ readonly ready: boolean }>;
@@ -210,7 +216,7 @@ describe("SQLite control store", () => {
     );
   });
 
-  it("initializes user_version 1 and exactly the strict eight-table identity schema", async () => {
+  it("initializes user_version 1 and exactly the compiled strict nine-table identity schema", async () => {
     const applicationRoot = makeApplicationRoot();
     const options = initializeOptions(applicationRoot);
     const paths = fixedPaths(applicationRoot);
@@ -235,6 +241,7 @@ describe("SQLite control store", () => {
         "module_control_events",
         "module_control_idempotency",
         "module_previews",
+        "module_readback_attempts",
         "module_readbacks",
         "module_registrations",
         "module_releases",
@@ -251,10 +258,61 @@ describe("SQLite control store", () => {
         .prepare("PRAGMA table_list")
         .all()
         .filter((row) => !String(row.name).startsWith("sqlite_"));
-      expect(tableList).toHaveLength(8);
+      expect(tableList).toHaveLength(9);
       expect(tableList.map((row) => Number(row.strict))).toEqual(
-        Array.from({ length: 8 }, () => 1),
+        Array.from({ length: 9 }, () => 1),
       );
+
+      const schemaStatements = database
+        .prepare(
+          "SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name",
+        )
+        .all()
+        .map((row) => ({ name: String(row.name), sql: String(row.sql) }))
+        .filter((row) => row.sql.length > 0);
+      const actualByName = new Map(
+        schemaStatements.map((row) => [row.name, normalizeControlSchema(row.sql)[0]]),
+      );
+      const orderedActualStatements = CONTROL_SCHEMA_STATEMENTS.map((statement) => {
+        const name = /^CREATE (?:TABLE|(?:UNIQUE )?INDEX) ([A-Za-z_][A-Za-z0-9_]*) /iu.exec(
+          statement,
+        )?.[1];
+        expect(name).toBeDefined();
+        const actual = actualByName.get(name!);
+        expect(actual).toBeDefined();
+        return actual!;
+      });
+      expect(fingerprintControlSchema(orderedActualStatements)).toBe(
+        CONTROL_SCHEMA_FINGERPRINT,
+      );
+      expect(new Set(actualByName.keys())).toEqual(
+        new Set(
+          CONTROL_SCHEMA_STATEMENTS.map(
+            (statement) =>
+              /^CREATE (?:TABLE|(?:UNIQUE )?INDEX) ([A-Za-z_][A-Za-z0-9_]*) /iu.exec(
+                statement,
+              )?.[1],
+          ),
+        ),
+      );
+
+      const indexes = database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map((row) => String(row.name));
+      expect(indexes).toEqual([
+        "idx_module_control_events_tenant_sequence",
+        "idx_module_control_idempotency_tenant_action_key_hash",
+        "idx_module_control_idempotency_tenant_expires_at",
+        "idx_module_previews_tenant_expires_at",
+        "idx_module_readback_attempts_release_history",
+        "idx_module_readback_attempts_unfinished",
+        "idx_module_readbacks_tenant_readback_ref",
+        "idx_module_releases_tenant_status_revision",
+        "uq_module_readback_attempts_claimed_release",
+      ]);
 
       const identityRows = database
         .prepare(
@@ -331,5 +389,49 @@ describe("SQLite control store", () => {
     expect(lstatSync(symlinkRoot).isSymbolicLink()).toBe(true);
     expect(() => openSqliteControlStore(openOptions(symlinkRoot))).toThrow();
     expect(stateSnapshot(symlinkTargetRoot)).toEqual(symlinkTargetBefore);
+  });
+
+  it("rejects an old eight-table database without silently migrating it", async () => {
+    const applicationRoot = makeApplicationRoot();
+    await initializeSqliteControlState(initializeOptions(applicationRoot));
+    const paths = fixedPaths(applicationRoot);
+    const database = new DatabaseSync(paths.controlDbPath);
+    try {
+      database.exec("DROP TABLE module_readback_attempts");
+    } finally {
+      database.close();
+    }
+
+    expect(() => openSqliteControlStore(openOptions(applicationRoot))).toThrow(
+      /schema/i,
+    );
+
+    const reopenedDatabase = new DatabaseSync(paths.controlDbPath);
+    try {
+      expect(
+        reopenedDatabase
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'module_readback_attempts'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      reopenedDatabase.close();
+    }
+  });
+
+  it("exposes the readback-attempt companion without exposing a recovery finalizer", async () => {
+    const applicationRoot = makeApplicationRoot();
+    await initializeSqliteControlState(initializeOptions(applicationRoot));
+
+    const store = trackStore(openSqliteControlStore(openOptions(applicationRoot)));
+    const exposed = store as unknown as Record<string, unknown>;
+
+    expect(typeof exposed.claimReadbackAttempt).toBe("function");
+    expect(typeof exposed.finalizeReadbackAndComplete).toBe("function");
+    expect(typeof exposed.getUnfinishedReadbackAttempt).toBe("function");
+    expect(typeof exposed.listUnfinishedReadbackAttempts).toBe("function");
+    expect(typeof exposed.getReadbackAttemptHistory).toBe("function");
+    expect("recoveryDriver" in exposed).toBe(false);
   });
 });

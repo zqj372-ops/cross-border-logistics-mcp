@@ -14,11 +14,11 @@ import {
 import { addRfc3339Milliseconds } from "../../src/logistics_mcp/control-plane/rfc3339-instant";
 import type { ApprovalControlEventInput } from "../../src/logistics_mcp/control-plane/repository";
 import type {
-  CompleteControlIdempotencyRequest,
   ClaimReadbackAttemptRequest,
   ControlEnvelope,
   ControlEventRecord,
   ControlFinalResult,
+  ControlIdempotencyEventMetadata,
   CreatePreviewRecordRequest,
   DecideApprovalRecordRequest,
   DomainCommittedModuleControlIdempotencyRecord,
@@ -34,6 +34,7 @@ import type {
   ModuleControlRepository,
   FinalizeReadbackAndCompleteRequest,
   ModuleControlRef,
+  ModuleControlReadbackAttemptRepository,
   ModuleManualReviewReleaseRecord,
   ModulePendingReadbackRecord,
   ModulePendingReleaseRecord,
@@ -48,9 +49,7 @@ import type {
   ReadbackAttemptOwnerCapability,
   PublishReadbackRequestMetadata,
   PublishReleaseRecordRequest,
-  ReadbackWriteResult,
   ReconcileRequestMetadata,
-  RecordReadbackRequest,
   RegisterModuleRecordRequest,
   RegisterModuleRequestMetadata,
 } from "../../src/logistics_mcp/control-plane/repository";
@@ -62,6 +61,16 @@ import {
   FakeModuleControlRepository,
 } from "./fake-control-repository";
 import type { FakeModuleControlRepositoryRecords } from "./fake-control-repository";
+
+type ReadbackFixtureRequest = {
+  readonly metadata: ReconcileRequestMetadata | PublishReadbackRequestMetadata;
+  readonly record: ModuleReadbackRecord;
+};
+
+type IdempotencyEventFixture = {
+  readonly metadata: ControlIdempotencyEventMetadata;
+  readonly record: ModuleControlIdempotencyRecord;
+};
 
 const MANAGEMENT_TENANT_ID = "tenant_demo";
 const OTHER_TENANT_ID = "tenant_other";
@@ -445,7 +454,7 @@ const readbackRequest = {
     event: readbackEventInput,
   },
   record: readbackForPublishedRelease,
-} as const satisfies RecordReadbackRequest;
+} as const satisfies ReadbackFixtureRequest;
 
 const sameKeyReadbackRequest = {
   ...readbackRequest,
@@ -453,7 +462,7 @@ const sameKeyReadbackRequest = {
     ...readbackRequest.metadata,
     idempotencyKey: publishRequest.metadata.idempotencyKey,
   },
-} as const satisfies RecordReadbackRequest;
+} as const satisfies ReadbackFixtureRequest;
 
 const reconcileReadbackEventInput = {
   action: "deployments.reconcile",
@@ -480,7 +489,7 @@ const reconcileReadbackRequest = {
     event: reconcileReadbackEventInput,
   },
   record: readbackForPublishedRelease,
-} as const satisfies RecordReadbackRequest;
+} as const satisfies ReadbackFixtureRequest;
 
 const publishFinalResult = {
   domainRecordRef: pendingRelease.releaseId,
@@ -550,7 +559,7 @@ const publishCompletionRequest = {
     status: "completed",
     finalResult: publishFinalResult,
   },
-} as const satisfies CompleteControlIdempotencyRequest;
+} as const satisfies IdempotencyEventFixture;
 
 const completedIdempotencyRecord = {
   managementTenantId: MANAGEMENT_TENANT_ID,
@@ -577,32 +586,6 @@ const reservedIdempotencyRecord = {
   createdAt: registrationRecord.registeredAt,
   expiresAt: "2026-08-23T00:00:00Z",
 } as const satisfies ReservedModuleControlIdempotencyRecord;
-
-const idempotencyEventInput = {
-  action: "packages.register",
-  objectRef: `idempotency:packages.register:${completedIdempotencyRecord.idempotencyKey}`,
-  kind: "idempotency",
-  status: "completed",
-  reasonCodes: [],
-  detail: {
-    kind: "idempotency",
-    recordRef: `idempotency:packages.register:${completedIdempotencyRecord.idempotencyKey}`,
-    domainRecordRef: registrationRef,
-    status: "completed",
-  },
-} as const;
-
-const completedIdempotencyRequest = {
-  metadata: {
-    managementTenantId: MANAGEMENT_TENANT_ID,
-    actorRef: "actor_operator",
-    action: "packages.register",
-    idempotencyKey: completedIdempotencyRecord.idempotencyKey,
-    requestHash: completedIdempotencyRecord.requestHash,
-    event: idempotencyEventInput,
-  },
-  record: completedIdempotencyRecord,
-} as const satisfies CompleteControlIdempotencyRequest;
 
 const registrationEvent = {
   managementTenantId: MANAGEMENT_TENANT_ID,
@@ -1366,6 +1349,30 @@ const verifiedAttemptObservation: ReadbackAttemptObservation = {
 };
 
 describe("FakeModuleControlRepository", () => {
+  it("does not expose legacy readback or idempotency write entries after claim", async () => {
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+      records: validPendingAuthorityGraph(),
+    });
+    const claim = await repository.claimReadbackAttempt(attemptClaimRequest());
+    expect(claim.disposition).toBe("created");
+
+    const legacyNames = ["recordReadback", "completeIdempotency"] as const;
+    const reflectedKeys = new Set<PropertyKey>();
+    let cursor: object | null = repository;
+    while (cursor !== null) {
+      for (const key of Reflect.ownKeys(cursor)) reflectedKeys.add(key);
+      cursor = Reflect.getPrototypeOf(cursor);
+    }
+    const escaped = repository as unknown as Record<string, unknown>;
+    for (const legacyName of legacyNames) {
+      expect(legacyName in repository).toBe(false);
+      expect(reflectedKeys.has(legacyName)).toBe(false);
+      expect(escaped[legacyName]).toBeUndefined();
+    }
+  });
+
   it("claims and atomically finalizes a terminal attempt without a pending projection", async () => {
     const repository = new FakeModuleControlRepository({
       managementTenantId: MANAGEMENT_TENANT_ID,
@@ -2150,8 +2157,6 @@ describe("FakeModuleControlRepository", () => {
       "createPreview",
       "decideApproval",
       "publishRelease",
-      "recordReadback",
-      "completeIdempotency",
       "getControlState",
       "getActiveRelease",
       "getPendingRelease",
@@ -2171,15 +2176,27 @@ describe("FakeModuleControlRepository", () => {
   });
 
   it("records every method in order with frozen request snapshots and closed-record persistence", async () => {
-    const repository = newRepository();
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+    });
 
     await repository.health();
     await repository.registerModule(registerRequest);
     await repository.createPreview(previewRequest);
     await repository.decideApproval(approvalRequest);
     await repository.publishRelease(publishRequest);
-    await repository.recordReadback(sameKeyReadbackRequest);
-    await repository.completeIdempotency(completedIdempotencyRequest);
+    const claim = await repository.claimReadbackAttempt(
+      attemptClaimRequest({ readbackRef: readbackForPublishedRelease.readbackRef }),
+    );
+    if (claim.disposition !== "created") throw new Error("claim was not created");
+    await repository.finalizeReadbackAndComplete({
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: claim.ownerCapability,
+      observation: verifiedAttemptObservation,
+      finalResult: publishFinalResult,
+      finalizedAt: verifiedAttemptObservation.checkedAt,
+    });
     await repository.getControlState();
     await repository.getActiveRelease();
     await repository.getPendingRelease();
@@ -2192,7 +2209,11 @@ describe("FakeModuleControlRepository", () => {
     const readbackResult = await repository.getReadback(
       exactReadbackQuery("tenant_demo", pendingRelease.releaseId),
     );
-    const idempotencyResult = await repository.getIdempotency(exactIdempotencyQuery());
+    const idempotencyResult = await repository.getIdempotency({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      action: publishRequest.metadata.action,
+      idempotencyKey: publishRequest.metadata.idempotencyKey,
+    });
 
     expect(previewResult).toEqual({ ...changePreview, consumed: true });
     expect(approvalResult).toEqual({ ...approvalRecord, consumed: true });
@@ -2201,8 +2222,14 @@ describe("FakeModuleControlRepository", () => {
       status: "active_verified",
       readbackRef: readbackForPublishedRelease.readbackRef,
     });
-    expect(readbackResult).toEqual(readbackForPublishedRelease);
-    expect(idempotencyResult).toEqual(completedIdempotencyRecord);
+    expect(readbackResult).toMatchObject({
+      ...readbackForPublishedRelease,
+      checkedAt: verifiedAttemptObservation.checkedAt,
+    });
+    expect(idempotencyResult).toMatchObject({
+      status: "completed",
+      finalResult: publishFinalResult,
+    });
 
     await repository.close();
 
@@ -2212,8 +2239,6 @@ describe("FakeModuleControlRepository", () => {
       "createPreview",
       "decideApproval",
       "publishRelease",
-      "recordReadback",
-      "completeIdempotency",
       "getControlState",
       "getActiveRelease",
       "getPendingRelease",
@@ -2466,8 +2491,6 @@ describe("FakeModuleControlRepository", () => {
       ["createPreview", ["method_entry", "after_domain_write", "after_event", "after_idempotency"]],
       ["decideApproval", ["method_entry", "after_domain_write", "after_event", "after_idempotency"]],
       ["publishRelease", ["method_entry", "after_idempotency", "after_release_status_change", "after_domain_write", "after_event"]],
-      ["recordReadback", ["method_entry", "after_idempotency", "after_release_status_change", "after_domain_write", "after_event"]],
-      ["completeIdempotency", ["method_entry", "after_domain_write", "after_idempotency", "after_event"]],
       ["getControlState", ["method_entry"]],
       ["getActiveRelease", ["method_entry"]],
       ["getPendingRelease", ["method_entry"]],
@@ -2514,26 +2537,9 @@ describe("FakeModuleControlRepository", () => {
     expect(replayedWrite.record).toEqual(firstWrite.record);
     expect(replayedWrite.event).toEqual(firstWrite.event);
     const eventCountAfterRegisterReplay = (await repository.getControlState()).events.length;
-
-    const firstCompletion = await repository.completeIdempotency(completedIdempotencyRequest);
-    const eventCountAfterFirstCompletion = (await repository.getControlState()).events.length;
-    const replayedCompletion = await repository.completeIdempotency(completedIdempotencyRequest);
-    expect(replayedCompletion).toEqual(firstCompletion);
-    expect(eventCountAfterFirstCompletion).toBeGreaterThanOrEqual(eventCountAfterRegisterReplay);
-    expect((await repository.getControlState()).events).toHaveLength(eventCountAfterFirstCompletion);
-  });
-
-  it("does not synthesize a completed idempotency row when the row is missing", async () => {
-    const repository = newRepository();
-    const eventsBefore = (await repository.getControlState()).events.length;
-
-    await expect(repository.completeIdempotency(completedIdempotencyRequest)).rejects.toMatchObject({
-      name: "ModuleControlRepositoryError",
-      code: "not_found",
-    });
-
-    expect(await repository.getIdempotency(exactIdempotencyQuery())).toBeNull();
-    expect((await repository.getControlState()).events).toHaveLength(eventsBefore);
+    expect((await repository.getControlState()).events).toHaveLength(
+      eventCountAfterRegisterReplay,
+    );
   });
 
   it("matches simple-write transaction parity with one domain event and a completed idempotency row", async () => {
@@ -2555,71 +2561,11 @@ describe("FakeModuleControlRepository", () => {
     ).resolves.toMatchObject({ status: "completed" });
   });
 
-  it("keeps publish and same-key readback replays method-scoped with one fixed release", async () => {
-    const repository = newRepository();
-    await repository.createPreview(previewRequest);
-    await repository.decideApproval(approvalRequest);
-
-    const firstPublish = await repository.publishRelease(publishRequest);
-    const committed = await repository.getIdempotency({
-      managementTenantId: MANAGEMENT_TENANT_ID,
-      action: publishRequest.metadata.action,
-      idempotencyKey: publishRequest.metadata.idempotencyKey,
-    });
-    expect(committed).toEqual(publishDomainCommittedIdempotencyRecord);
-
-    await repository.recordReadback(sameKeyReadbackRequest);
-    const stateAfterReadback = await repository.getControlState();
-    const secondPublish = await repository.publishRelease(publishRequest);
-    const stateAfterReplay = await repository.getControlState();
-
-    expect(firstPublish.replayed).toBe(false);
-    expect(secondPublish.replayed).toBe(true);
-    expect(secondPublish.record.releaseId).toBe(firstPublish.record.releaseId);
-    expect(secondPublish.event).toEqual(firstPublish.event);
-    expect(stateAfterReplay.events).toEqual(stateAfterReadback.events);
-    expect(stateAfterReplay.events).toHaveLength(stateAfterReadback.events.length);
-    expect(await repository.getRelease(exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toEqual({
-      ...pendingRelease,
-      status: "active_verified",
-      readbackRef: readbackForPublishedRelease.readbackRef,
-    });
-  });
-
-  it("rejects a second observation for a persisted domain-committed readback and replays only the exact observation", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-
-    const pendingObservation = readbackVariant(sameKeyReadbackRequest, {
-      readbackRef: pendingReadback.readbackRef,
-      status: "pending",
-      appliedReleaseId: null,
-      appliedRevision: null,
-      appliedModules: [],
-      reasonCodes: [],
-    });
-    await repository.recordReadback(pendingObservation);
-    const stateAfterPendingObservation = await repository.getControlState();
-
-    await expect(repository.recordReadback(sameKeyReadbackRequest)).rejects.toMatchObject({
-      code: "conflict",
-    });
-    expect(await repository.getControlState()).toEqual(stateAfterPendingObservation);
-    await expect(repository.getReadback(exactReadbackQuery(
-      MANAGEMENT_TENANT_ID,
-      pendingRelease.releaseId,
-    ))).resolves.toEqual(pendingObservation.record);
-
-    const replay = await repository.recordReadback(pendingObservation);
-    expect(replay.replayed).toBe(true);
-    expect(await repository.getControlState()).toEqual(stateAfterPendingObservation);
-  });
-
   it("matches SQLite pending-readback replay and new reconcile-key retry semantics", async () => {
     const applicationRoot = realpathSync(
       mkdtempSync(join(tmpdir(), "fake-control-pending-parity-")),
     );
-    let sqlite: ModuleControlRepository | null = null;
+    let sqlite: (ModuleControlRepository & ModuleControlReadbackAttemptRepository) | null = null;
     try {
       await initializeSqliteControlState({
         applicationRoot,
@@ -2632,7 +2578,13 @@ describe("FakeModuleControlRepository", () => {
         managementTenantId: MANAGEMENT_TENANT_ID,
         adminControlEnabled: true,
       });
-      const repositories = [newRepository(), sqlite] as const;
+      const repositories = [
+        new FakeModuleControlRepository({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          ownerBootId: "boot_current",
+        }),
+        sqlite,
+      ] as const;
       const pendingObservation = readbackVariant(sameKeyReadbackRequest, {
         readbackRef: pendingReadback.readbackRef,
         status: "pending",
@@ -2657,30 +2609,159 @@ describe("FakeModuleControlRepository", () => {
         appliedModules: [],
         reasonCodes: ["runtime.unavailable"],
       });
+      const manualPublishFinalResult = {
+        domainRecordRef: pendingRelease.releaseId,
+        envelope: {
+          ...publishFinalResult.envelope,
+          status: "manual_review",
+          reason_codes: ["runtime.unavailable"],
+          readback: {
+            status: "unknown",
+            release_id: pendingRelease.releaseId,
+            revision: pendingRelease.revision,
+          },
+        },
+      } as const satisfies ControlFinalResult;
 
       for (const repository of repositories) await preparePendingRelease(repository);
-      const firstResults = [] as ReadbackWriteResult[];
-      const replayResults = [] as ReadbackWriteResult[];
+      const firstClaims = [] as Awaited<ReturnType<ModuleControlReadbackAttemptRepository["claimReadbackAttempt"]>>[];
+      const replayClaims = [] as Awaited<ReturnType<ModuleControlReadbackAttemptRepository["claimReadbackAttempt"]>>[];
       const differentCodes: Array<ModuleControlRepositoryError["code"] | "resolved"> = [];
-      const retryResults = [] as ReadbackWriteResult[];
+      const firstFinalizations = [] as Awaited<ReturnType<ModuleControlReadbackAttemptRepository["finalizeReadbackAndComplete"]>>[];
+      const retryClaims = [] as Awaited<ReturnType<ModuleControlReadbackAttemptRepository["claimReadbackAttempt"]>>[];
+      const retryFinalizations = [] as Awaited<ReturnType<ModuleControlReadbackAttemptRepository["finalizeReadbackAndComplete"]>>[];
       for (const repository of repositories) {
-        firstResults.push(await repository.recordReadback(pendingObservation));
-        replayResults.push(await repository.recordReadback(pendingObservation));
+        const pendingClaimRequest = attemptClaimRequest({
+          attemptId: "attempt_publish_pending_001",
+          readbackRef: pendingObservation.record.readbackRef,
+        });
+        const firstClaim = await repository.claimReadbackAttempt(pendingClaimRequest);
+        firstClaims.push(firstClaim);
+        expect(firstClaim.disposition).toBe("created");
+        if (firstClaim.disposition !== "created") throw new Error("claim was not created");
+        await expect(repository.getReadback(
+          exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId),
+        )).resolves.toBeNull();
+        await expect(repository.getUnfinishedReadbackAttempt({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          attemptId: firstClaim.attempt.attemptId,
+        })).resolves.toMatchObject({
+          attemptId: firstClaim.attempt.attemptId,
+          phase: "claimed",
+          readbackRef: pendingObservation.record.readbackRef,
+        });
+
+        const replayClaim = await repository.claimReadbackAttempt(pendingClaimRequest);
+        replayClaims.push(replayClaim);
+        expect(replayClaim.disposition).toBe("existing");
+        if (replayClaim.disposition !== "existing") throw new Error("claim did not replay");
+        expect(replayClaim.attempt).toEqual(firstClaim.attempt);
         differentCodes.push(
-          await repositoryResultCode(() =>
-            repository.recordReadback(differentPublishObservation),
-          ),
+          await repositoryResultCode(() => repository.claimReadbackAttempt({
+            ...pendingClaimRequest,
+            attemptId: "attempt_publish_different_002",
+            readbackRef: differentPublishObservation.record.readbackRef,
+          })),
         );
-        retryResults.push(await repository.recordReadback(operatorRetry));
+
+        firstFinalizations.push(await repository.finalizeReadbackAndComplete({
+          attemptId: firstClaim.attempt.attemptId,
+          ownerCapability: firstClaim.ownerCapability,
+          observation: {
+            status: "unknown",
+            appliedReleaseId: null,
+            appliedRevision: null,
+            appliedModules: [],
+            reasonCodes: ["runtime.unavailable"],
+            checkedAt: operatorRetry.record.checkedAt,
+          },
+          finalResult: manualPublishFinalResult,
+          finalizedAt: operatorRetry.record.checkedAt,
+        }));
+
+        const retryClaimRequest: ClaimReadbackAttemptRequest = {
+          ...attemptClaimRequest({
+            attemptId: "attempt_reconcile_retry_003",
+            readbackRef: operatorRetry.record.readbackRef,
+            claimedAt: "2026-08-22T00:11:59.000000000Z",
+          }),
+          metadata: {
+            ...attemptClaimRequest().metadata,
+            action: operatorRetry.metadata.action,
+            idempotencyKey: operatorRetry.metadata.idempotencyKey,
+            actorRef: operatorRetry.metadata.actorRef,
+            requestId: "request_reconcile_retry_003",
+            traceId: "trace_reconcile_retry_003",
+            auditId: "audit_reconcile_retry_003",
+          },
+        };
+        const retryClaim = await repository.claimReadbackAttempt(retryClaimRequest);
+        retryClaims.push(retryClaim);
+        expect(retryClaim.disposition).toBe("created");
+        if (retryClaim.disposition !== "created") {
+          throw new Error("reconcile retry claim was not created");
+        }
+        retryFinalizations.push(await repository.finalizeReadbackAndComplete({
+          attemptId: retryClaim.attempt.attemptId,
+          ownerCapability: retryClaim.ownerCapability,
+          observation: {
+            status: "unknown",
+            appliedReleaseId: null,
+            appliedRevision: null,
+            appliedModules: [],
+            reasonCodes: ["runtime.unavailable"],
+            checkedAt: operatorRetry.record.checkedAt,
+          },
+          finalResult: {
+            domainRecordRef: pendingRelease.releaseId,
+            envelope: {
+              ...publishFinalResult.envelope,
+              request_id: "request_reconcile_retry_003",
+              trace_id: "trace_reconcile_retry_003",
+              audit_id: "audit_reconcile_retry_003",
+              status: "manual_review",
+              data: {
+                kind: "reconciliation",
+                release_id: pendingRelease.releaseId,
+                revision: pendingRelease.revision,
+                status: "unknown",
+              },
+              reason_codes: ["runtime.unavailable"],
+              readback: {
+                status: "unknown",
+                release_id: pendingRelease.releaseId,
+                revision: pendingRelease.revision,
+              },
+            },
+          },
+          finalizedAt: operatorRetry.record.checkedAt,
+        }));
       }
 
-      expect(firstResults.map((result) => result.replayed)).toEqual([false, false]);
-      expect(replayResults.map((result) => result.replayed)).toEqual([true, true]);
+      expect(firstClaims.map((result) => result.disposition)).toEqual(["created", "created"]);
+      expect(replayClaims.map((result) => result.disposition)).toEqual(["existing", "existing"]);
       expect(differentCodes).toEqual(["conflict", "conflict"]);
-      expect(retryResults.map((result) => result.replayed)).toEqual([false, false]);
-      expect(firstResults[0]?.record).toEqual(firstResults[1]?.record);
-      expect(replayResults[0]?.record).toEqual(replayResults[1]?.record);
-      expect(retryResults[0]?.record).toEqual(retryResults[1]?.record);
+      expect(retryClaims.map((result) => result.disposition)).toEqual(["created", "created"]);
+      expect(retryFinalizations.map((result) => result.disposition)).toEqual([
+        "finalized",
+        "finalized",
+      ]);
+      const comparableAttempt = (attempt: typeof firstClaims[number]["attempt"]) => ({
+        ...attempt,
+        ownerBootId: "<store-owned>",
+      });
+      expect(comparableAttempt(firstClaims[0]!.attempt)).toEqual(
+        comparableAttempt(firstClaims[1]!.attempt),
+      );
+      expect(comparableAttempt(replayClaims[0]!.attempt)).toEqual(
+        comparableAttempt(replayClaims[1]!.attempt),
+      );
+      expect(firstFinalizations.map((result) => result.disposition)).toEqual([
+        "finalized",
+        "finalized",
+      ]);
+      expect(firstFinalizations[0]?.readback).toEqual(firstFinalizations[1]?.readback);
+      expect(retryFinalizations[0]?.readback).toEqual(retryFinalizations[1]?.readback);
       for (const repository of repositories) {
         await expect(repository.getReadback(
           exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId),
@@ -2691,6 +2772,14 @@ describe("FakeModuleControlRepository", () => {
         await expect(repository.getRelease(
           exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId),
         )).resolves.toMatchObject({ status: "manual_review" });
+        await expect(repository.getUnfinishedReadbackAttempt({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          attemptId: "attempt_publish_pending_001",
+        })).resolves.toBeNull();
+        await expect(repository.getUnfinishedReadbackAttempt({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          attemptId: "attempt_reconcile_retry_003",
+        })).resolves.toBeNull();
       }
       const projectedStates = await Promise.all(
         repositories.map((repository) => repository.getControlState()),
@@ -2711,63 +2800,6 @@ describe("FakeModuleControlRepository", () => {
       await sqlite?.close();
       rmSync(applicationRoot, { force: true, recursive: true });
     }
-  });
-
-  it("does not resume a manual-review publish without a completed final result and replays the completed result without readback", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-
-    const unknownObservation = readbackVariant(sameKeyReadbackRequest, {
-      readbackRef: "readback_publish_unknown_001",
-      status: "unknown",
-      appliedReleaseId: null,
-      appliedRevision: null,
-      appliedModules: [],
-      reasonCodes: ["runtime.unavailable"],
-    });
-    await repository.recordReadback(unknownObservation);
-    const stateAfterManualReview = await repository.getControlState();
-
-    await expect(repository.publishRelease(publishRequest)).rejects.toMatchObject({
-      code: "invalid_state",
-    });
-    expect(await repository.getControlState()).toEqual(stateAfterManualReview);
-
-    const manualFinalResult = {
-      domainRecordRef: pendingRelease.releaseId,
-      envelope: {
-        ...publishFinalResult.envelope,
-        request_id: "request_publish_manual_001",
-        status: "manual_review",
-        reason_codes: ["runtime.unavailable"],
-        readback: {
-          status: "unknown",
-          release_id: pendingRelease.releaseId,
-          revision: pendingRelease.revision,
-        },
-      },
-    } as const satisfies ControlFinalResult;
-    const manualCompletion = {
-      metadata: publishCompletionRequest.metadata,
-      record: {
-        ...publishDomainCommittedIdempotencyRecord,
-        status: "completed",
-        finalResult: manualFinalResult,
-      },
-    } as const satisfies CompleteControlIdempotencyRequest;
-    await repository.completeIdempotency(manualCompletion);
-
-    const eventsBeforeReplay = (await repository.getControlState()).events;
-    const readbackCallsBeforeReplay = repository.calls.filter(
-      (call) => call.method === "recordReadback",
-    ).length;
-    const replay = await repository.publishRelease(publishRequest);
-
-    expect(replay.replayed).toBe(true);
-    expect(repository.calls.filter((call) => call.method === "recordReadback")).toHaveLength(
-      readbackCallsBeforeReplay,
-    );
-    expect((await repository.getControlState()).events).toEqual(eventsBeforeReplay);
   });
 
   it("materializes completed idempotency for register, preview, and approval writes", async () => {
@@ -2833,170 +2865,6 @@ describe("FakeModuleControlRepository", () => {
     });
   });
 
-  it("materializes reconcile readback as domain-committed for crash recovery", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-
-    await repository.recordReadback(reconcileReadbackRequest);
-
-    await expect(
-      repository.getIdempotency({
-        managementTenantId: MANAGEMENT_TENANT_ID,
-        action: reconcileReadbackRequest.metadata.action,
-        idempotencyKey: reconcileReadbackRequest.metadata.idempotencyKey,
-      }),
-    ).resolves.toEqual({
-      managementTenantId: MANAGEMENT_TENANT_ID,
-      action: reconcileReadbackRequest.metadata.action,
-      idempotencyKey: reconcileReadbackRequest.metadata.idempotencyKey,
-      requestHash: reconcileReadbackRequest.metadata.requestHash,
-      actorRef: reconcileReadbackRequest.metadata.actorRef,
-      status: "domain_committed",
-      domainRecordRef: readbackForPublishedRelease.releaseId,
-      finalResult: null,
-      createdAt: readbackForPublishedRelease.checkedAt,
-      expiresAt: "2026-08-23T00:12:00Z",
-    });
-  });
-
-  it("requires an existing publish idempotency binding before recording readback", async () => {
-    const repository = newRepository();
-    const eventsBefore = (await repository.getControlState()).events.length;
-
-    await expect(repository.recordReadback(readbackRequest)).rejects.toMatchObject({
-      name: "ModuleControlRepositoryError",
-      code: "not_found",
-    });
-
-    expect(await repository.getRelease(exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toBeNull();
-    expect(
-      await repository.getReadback(
-        exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId),
-      ),
-    ).toBeNull();
-    expect(
-      await repository.getIdempotency({
-        managementTenantId: MANAGEMENT_TENANT_ID,
-        action: readbackRequest.metadata.action,
-        idempotencyKey: readbackRequest.metadata.idempotencyKey,
-      }),
-    ).toBeNull();
-    expect((await repository.getControlState()).events).toHaveLength(eventsBefore);
-  });
-
-  it("atomically completes domain-committed idempotency and replays completed without events", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-    await repository.recordReadback(sameKeyReadbackRequest);
-
-    const eventsBeforeCompletion = (await repository.getControlState()).events.length;
-    const completed = await repository.completeIdempotency(publishCompletionRequest);
-    const eventsAfterCompletion = (await repository.getControlState()).events.length;
-    const replayed = await repository.completeIdempotency(publishCompletionRequest);
-
-    expect(completed).toEqual(publishCompletionRequest.record);
-    expect(replayed).toEqual(completed);
-    expect(eventsAfterCompletion).toBe(eventsBeforeCompletion + 1);
-    expect((await repository.getControlState()).events).toHaveLength(eventsAfterCompletion);
-
-    const differentFinal = structuredClone(publishCompletionRequest) as CompleteControlIdempotencyRequest;
-    const differentFinalResult = differentFinal.record.finalResult;
-    if (differentFinalResult === null) throw new Error("test fixture must be completed");
-    Reflect.set(differentFinalResult.envelope, "request_id", "request_publish_other");
-    await expect(repository.completeIdempotency(differentFinal)).rejects.toMatchObject({
-      code: "conflict",
-    });
-
-    const differentTimestamp = structuredClone(publishCompletionRequest) as CompleteControlIdempotencyRequest;
-    Reflect.set(differentTimestamp.record, "expiresAt", "2026-08-24T00:08:00Z");
-    await expect(repository.completeIdempotency(differentTimestamp)).rejects.toMatchObject({
-      code: "conflict",
-    });
-    expect((await repository.getControlState()).events).toHaveLength(eventsAfterCompletion);
-  });
-
-  it("completes only a manual-review final result that matches the persisted release/readback tri-state", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-    const unknownRequest = structuredClone(sameKeyReadbackRequest);
-    Reflect.set(unknownRequest.record, "readbackRef", "readback_publish_unknown_001");
-    Reflect.set(unknownRequest.record, "appliedReleaseId", null);
-    Reflect.set(unknownRequest.record, "appliedRevision", null);
-    Reflect.set(unknownRequest.record, "appliedModules", []);
-    Reflect.set(unknownRequest.record, "status", "unknown");
-    Reflect.set(unknownRequest.record, "reasonCodes", ["runtime.unavailable"]);
-    Reflect.set(unknownRequest.metadata.event, "status", "unknown");
-    Reflect.set(unknownRequest.metadata.event, "reasonCodes", ["runtime.unavailable"]);
-    Reflect.set(unknownRequest.metadata.event.detail, "readbackRef", "readback_publish_unknown_001");
-    Reflect.set(unknownRequest.metadata.event.detail, "status", "unknown");
-    await repository.recordReadback(unknownRequest);
-
-    const manualFinalResult = {
-      domainRecordRef: pendingRelease.releaseId,
-      envelope: {
-        ...publishFinalResult.envelope,
-        request_id: "request_publish_manual_001",
-        status: "manual_review",
-        reason_codes: ["runtime.unavailable"],
-        readback: {
-          status: "unknown",
-          release_id: pendingRelease.releaseId,
-          revision: pendingRelease.revision,
-        },
-      },
-    } as const satisfies ControlFinalResult;
-    const manualCompletion = {
-      metadata: publishCompletionRequest.metadata,
-      record: {
-        ...publishDomainCommittedIdempotencyRecord,
-        status: "completed",
-        finalResult: manualFinalResult,
-      },
-    } as const satisfies CompleteControlIdempotencyRequest;
-    const mismatch = structuredClone(manualCompletion);
-    Reflect.set(mismatch.record.finalResult.envelope, "reason_codes", ["different.reason"]);
-    const eventsBefore = (await repository.getControlState()).events;
-
-    await expect(repository.completeIdempotency(mismatch)).rejects.toMatchObject({ code: "conflict" });
-    expect((await repository.getControlState()).events).toEqual(eventsBefore);
-    const completed = await repository.completeIdempotency(manualCompletion);
-    expect(completed).toEqual(manualCompletion.record);
-    await expect(repository.getIdempotency({
-      managementTenantId: MANAGEMENT_TENANT_ID,
-      action: "deployments.publish",
-      idempotencyKey: publishRequest.metadata.idempotencyKey,
-    })).resolves.toMatchObject({
-      status: "completed",
-      finalResult: manualFinalResult,
-    });
-    expect(
-      (await repository.getRelease(
-        exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId),
-      ))?.status,
-    ).toBe("manual_review");
-
-    const replay = await repository.publishRelease(publishRequest);
-    expect(replay.replayed).toBe(true);
-    expect(replay).not.toHaveProperty("finalResult");
-  });
-
-  it("rejects reserved idempotency completion without changing state or events", async () => {
-    const repository = newRepository({
-      idempotency: [reservedIdempotencyRecord],
-    });
-    const stateBefore = await repository.getControlState();
-
-    await expect(repository.completeIdempotency(completedIdempotencyRequest)).rejects.toMatchObject({
-      name: "ModuleControlRepositoryError",
-      code: "conflict",
-    });
-
-    expect(await repository.getIdempotency(exactIdempotencyQuery())).toEqual(
-      reservedIdempotencyRecord,
-    );
-    expect(await repository.getControlState()).toEqual(stateBefore);
-  });
-
   it("orders state records by repository keys and timestamps instead of seed insertion order", async () => {
     const repository = newRepository(orderingRecords);
 
@@ -3039,8 +2907,6 @@ describe("FakeModuleControlRepository", () => {
       repository.createPreview(previewRequest),
       repository.decideApproval(approvalRequest),
       repository.publishRelease(publishRequest),
-      repository.recordReadback(readbackRequest),
-      repository.completeIdempotency(completedIdempotencyRequest),
       repository.getControlState(),
       repository.getActiveRelease(),
       repository.getPendingRelease(),
@@ -3229,7 +3095,7 @@ describe("FakeModuleControlRepository", () => {
   }
 
   function readbackVariant(
-    source: RecordReadbackRequest,
+    source: ReadbackFixtureRequest,
     values: {
       readonly readbackRef: string;
       readonly status: "pending" | "verified" | "mismatch" | "unknown";
@@ -3238,7 +3104,7 @@ describe("FakeModuleControlRepository", () => {
       readonly appliedModules: readonly ModuleControlRef[];
       readonly reasonCodes: readonly string[];
     },
-  ): RecordReadbackRequest {
+  ): ReadbackFixtureRequest {
     const request = structuredClone(source);
     Reflect.set(request.record, "readbackRef", values.readbackRef);
     Reflect.set(request.record, "status", values.status);
@@ -3299,7 +3165,7 @@ describe("FakeModuleControlRepository", () => {
     expect((await conflictRepository.getControlState()).events).toEqual([registrationEvent]);
   });
 
-  it("rebuilds publish and readback replay solely from seeded persisted records and events", async () => {
+  it("rebuilds publish replay solely from seeded persisted records and events", async () => {
     const activePublishedRelease = {
       ...pendingRelease,
       status: "active_verified",
@@ -3331,10 +3197,8 @@ describe("FakeModuleControlRepository", () => {
     });
 
     const publishReplay = await repository.publishRelease(publishRequest);
-    const readbackReplay = await repository.recordReadback(sameKeyReadbackRequest);
 
     expect(publishReplay).toMatchObject({ replayed: true, event: publishDomainEvent });
-    expect(readbackReplay).toMatchObject({ replayed: true, event: publishReadbackEvent });
     expect((await repository.getControlState()).events).toEqual([
       publishDomainEvent,
       publishReadbackEvent,
@@ -3489,140 +3353,6 @@ describe("FakeModuleControlRepository", () => {
     }
   });
 
-  it("requires exact verified readback identity and module-ref set before activating a release", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-    const invalidReadback = structuredClone(sameKeyReadbackRequest) as RecordReadbackRequest;
-    Reflect.set(invalidReadback.record, "appliedModules", [secondModuleRef]);
-
-    await expect(repository.recordReadback(invalidReadback)).rejects.toMatchObject({
-      code: "conflict",
-    });
-    expect(await repository.getRelease(exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toEqual(
-      pendingRelease,
-    );
-    expect(await repository.getReadback(exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toBeNull();
-  });
-
-  it("rolls readback, active/superseded release changes, event, and reconciliation idempotency back", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-    const eventsBefore = (await repository.getControlState()).events;
-    queueFailureAt(repository, "recordReadback", "after_release_status_change");
-
-    const invalidReadback = structuredClone(sameKeyReadbackRequest) as RecordReadbackRequest;
-    Reflect.set(invalidReadback.record, "appliedModules", [secondModuleRef]);
-    await expect(repository.recordReadback(invalidReadback)).rejects.toMatchObject({ code: "conflict" });
-    await expect(repository.recordReadback(sameKeyReadbackRequest)).rejects.toMatchObject({
-      code: "not_found",
-    });
-
-    expect(await repository.getRelease(exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toEqual(
-      pendingRelease,
-    );
-    expect(await repository.getReadback(exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toBeNull();
-    expect((await repository.getControlState()).events).toEqual(eventsBefore);
-
-    const success = await repository.recordReadback(sameKeyReadbackRequest);
-    expect(success.event.sequence).toBe(eventsBefore.length + 1);
-  });
-
-  it("rolls every reconcile persistence phase back as one transaction", async () => {
-    const phases = [
-      "method_entry",
-      "after_idempotency",
-      "after_domain_write",
-      "after_release_status_change",
-      "after_event",
-    ] as const;
-
-    for (const phase of phases) {
-      const repository = newRepository();
-      await preparePendingRelease(repository);
-      const request = structuredClone(reconcileReadbackRequest);
-      Reflect.set(request.record, "readbackRef", "readback_atomic_unknown");
-      Reflect.set(request.record, "appliedReleaseId", null);
-      Reflect.set(request.record, "appliedRevision", null);
-      Reflect.set(request.record, "appliedModules", []);
-      Reflect.set(request.record, "status", "unknown");
-      Reflect.set(request.record, "reasonCodes", ["runtime.unavailable"]);
-      Reflect.set(request.metadata.event, "status", "unknown");
-      Reflect.set(request.metadata.event, "reasonCodes", ["runtime.unavailable"]);
-      Reflect.set(request.metadata.event.detail, "readbackRef", "readback_atomic_unknown");
-      Reflect.set(request.metadata.event.detail, "status", "unknown");
-      const eventsBefore = (await repository.getControlState()).events;
-      queueFailureAt(repository, "recordReadback", phase);
-
-      await expect(repository.recordReadback(request)).rejects.toMatchObject({ code: "not_found" });
-      expect(await repository.getRelease(exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toEqual(
-        pendingRelease,
-      );
-      expect(await repository.getReadback(exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toBeNull();
-      expect(await repository.getIdempotency({
-        managementTenantId: MANAGEMENT_TENANT_ID,
-        action: "deployments.reconcile",
-        idempotencyKey: reconcileReadbackRequest.metadata.idempotencyKey,
-      })).toBeNull();
-      expect((await repository.getControlState()).events).toEqual(eventsBefore);
-
-      const success = await repository.recordReadback(request);
-      expect(success.event.sequence).toBe(eventsBefore.length + 1);
-    }
-  });
-
-  it("pins reconcile to an existing newest unresolved release and leaves missing-release calls effect-free", async () => {
-    const repository = newRepository();
-
-    await expect(repository.recordReadback(reconcileReadbackRequest)).rejects.toMatchObject({
-      code: "not_found",
-    });
-    expect(await repository.getRelease(exactReleaseQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toBeNull();
-    expect(await repository.getReadback(exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId))).toBeNull();
-    expect(await repository.getIdempotency({
-      managementTenantId: MANAGEMENT_TENANT_ID,
-      action: reconcileReadbackRequest.metadata.action,
-      idempotencyKey: reconcileReadbackRequest.metadata.idempotencyKey,
-    })).toBeNull();
-    expect((await repository.getControlState()).events).toEqual([]);
-  });
-
-  it("persists a new reconcile idempotency and event for each new key but replays the same key with zero writes", async () => {
-    const repository = newRepository();
-    await preparePendingRelease(repository);
-    const firstRequest = structuredClone(reconcileReadbackRequest) as RecordReadbackRequest;
-    Reflect.set(firstRequest.record, "readbackRef", "readback_reconcile_001");
-    Reflect.set(firstRequest.record, "appliedReleaseId", null);
-    Reflect.set(firstRequest.record, "appliedRevision", null);
-    Reflect.set(firstRequest.record, "appliedModules", []);
-    Reflect.set(firstRequest.record, "status", "unknown");
-    Reflect.set(firstRequest.record, "reasonCodes", ["runtime.unavailable"]);
-    Reflect.set(firstRequest.metadata.event, "status", "unknown");
-    Reflect.set(firstRequest.metadata.event, "reasonCodes", ["runtime.unavailable"]);
-    Reflect.set(firstRequest.metadata.event.detail, "readbackRef", "readback_reconcile_001");
-    Reflect.set(firstRequest.metadata.event.detail, "status", "unknown");
-    const first = await repository.recordReadback(firstRequest);
-    const afterFirst = await repository.getControlState();
-
-    const secondRequest = structuredClone(firstRequest);
-    Reflect.set(secondRequest.metadata, "idempotencyKey", "idem_reconcile_002");
-    Reflect.set(secondRequest.record, "readbackRef", "readback_reconcile_002");
-    Reflect.set(secondRequest.metadata.event.detail, "readbackRef", "readback_reconcile_002");
-    const second = await repository.recordReadback(secondRequest);
-    const afterSecond = await repository.getControlState();
-    const replay = await repository.recordReadback(secondRequest);
-
-    expect(first.replayed).toBe(false);
-    expect(second.replayed).toBe(false);
-    expect(replay.replayed).toBe(true);
-    expect(afterSecond.events).toHaveLength(afterFirst.events.length + 1);
-    expect((await repository.getControlState()).events).toHaveLength(afterSecond.events.length);
-    await expect(repository.getIdempotency({
-      managementTenantId: MANAGEMENT_TENANT_ID,
-      action: "deployments.reconcile",
-      idempotencyKey: "idem_reconcile_002",
-    })).resolves.toMatchObject({ status: "domain_committed" });
-  });
-
   it("enforces one terminal approval per tenant and preview with zero effects on the loser", async () => {
     const repository = newRepository();
     await repository.createPreview(previewRequest);
@@ -3673,74 +3403,6 @@ describe("FakeModuleControlRepository", () => {
     const replay = await repository.publishRelease(publishRequest);
     expect(replay.replayed).toBe(true);
     expect(replay.record.releaseId).toBe(pendingRelease.releaseId);
-  });
-
-  it.each(["after_idempotency", "after_event"] as const)(
-    "rolls completion back at %s and validates persisted final state before consuming the phase",
-    async (phase) => {
-      const repository = newRepository();
-      await preparePendingRelease(repository);
-      await repository.recordReadback(sameKeyReadbackRequest);
-      const eventsBefore = (await repository.getControlState()).events;
-      queueFailureAt(repository, "completeIdempotency", phase);
-
-      const mismatched = structuredClone(publishCompletionRequest) as CompleteControlIdempotencyRequest;
-      const finalResult = mismatched.record.finalResult;
-      if (finalResult === null || finalResult.envelope.data === null) {
-        throw new Error("test fixture must have a final result");
-      }
-      Reflect.set(finalResult.envelope.data, "active_modules", [{
-        module_id: secondModuleRef.moduleId,
-        version: secondModuleRef.version,
-        descriptor_digest: secondModuleRef.descriptorDigest,
-      }]);
-      await expect(repository.completeIdempotency(mismatched)).rejects.toMatchObject({ code: "conflict" });
-      await expect(repository.completeIdempotency(publishCompletionRequest)).rejects.toMatchObject({
-        code: "not_found",
-      });
-
-      await expect(repository.getIdempotency({
-        managementTenantId: MANAGEMENT_TENANT_ID,
-        action: publishRequest.metadata.action,
-        idempotencyKey: publishRequest.metadata.idempotencyKey,
-      })).resolves.toMatchObject({ status: "domain_committed" });
-      expect((await repository.getControlState()).events).toEqual(eventsBefore);
-
-      const completed = await repository.completeIdempotency(publishCompletionRequest);
-      expect(completed.status).toBe("completed");
-      expect((await repository.getControlState()).events.at(-1)?.sequence).toBe(eventsBefore.length + 1);
-    },
-  );
-
-  it("rolls every completion persistence phase back before a clean retry", async () => {
-    const phases = [
-      "method_entry",
-      "after_domain_write",
-      "after_idempotency",
-      "after_event",
-    ] as const;
-
-    for (const phase of phases) {
-      const repository = newRepository();
-      await preparePendingRelease(repository);
-      await repository.recordReadback(sameKeyReadbackRequest);
-      const eventsBefore = (await repository.getControlState()).events;
-      queueFailureAt(repository, "completeIdempotency", phase);
-
-      await expect(repository.completeIdempotency(publishCompletionRequest)).rejects.toMatchObject({
-        code: "not_found",
-      });
-      expect(await repository.getIdempotency({
-        managementTenantId: MANAGEMENT_TENANT_ID,
-        action: "deployments.publish",
-        idempotencyKey: publishRequest.metadata.idempotencyKey,
-      })).toMatchObject({ status: "domain_committed" });
-      expect((await repository.getControlState()).events).toEqual(eventsBefore);
-
-      const completed = await repository.completeIdempotency(publishCompletionRequest);
-      expect(completed.status).toBe("completed");
-      expect((await repository.getControlState()).events.at(-1)?.sequence).toBe(eventsBefore.length + 1);
-    }
   });
 
   it("returns closed before snapshotting hostile parameters and never pollutes calls", async () => {
@@ -3846,23 +3508,6 @@ describe("FakeModuleControlRepository", () => {
         await preparePendingRelease(repository);
       },
     },
-    {
-      label: "readback",
-      kind: "reconciliation",
-      prepare: async (repository: FakeModuleControlRepository): Promise<void> => {
-        await preparePendingRelease(repository);
-        await repository.recordReadback(sameKeyReadbackRequest);
-      },
-    },
-    {
-      label: "idempotency completion",
-      kind: "idempotency",
-      prepare: async (repository: FakeModuleControlRepository): Promise<void> => {
-        await preparePendingRelease(repository);
-        await repository.recordReadback(sameKeyReadbackRequest);
-        await repository.completeIdempotency(publishCompletionRequest);
-      },
-    },
   ] as const)(
     "rejects a duplicated authoritative $label lifecycle event on full-graph read",
     async ({ kind, prepare }) => {
@@ -3904,9 +3549,22 @@ describe("FakeModuleControlRepository", () => {
   );
 
   it("rejects a persisted readback event whose action drifts from its mapped authority", async () => {
-    const repository = newRepository();
+    const repository = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+    });
     await preparePendingRelease(repository);
-    await repository.recordReadback(sameKeyReadbackRequest);
+    const claim = await repository.claimReadbackAttempt(
+      attemptClaimRequest({ readbackRef: readbackForPublishedRelease.readbackRef }),
+    );
+    if (claim.disposition !== "created") throw new Error("claim was not created");
+    await repository.finalizeReadbackAndComplete({
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: claim.ownerCapability,
+      observation: verifiedAttemptObservation,
+      finalResult: publishFinalResult,
+      finalizedAt: verifiedAttemptObservation.checkedAt,
+    });
     await expect(repository.getControlState()).resolves.toBeDefined();
 
     const internals = repository as unknown as {
@@ -4773,8 +4431,7 @@ describe("FakeModuleControlRepository", () => {
       ...baseRecords,
       events: [publishDomainEvent, publishReadbackEvent, publishCompletionEvent],
     });
-    const replay = await repository.completeIdempotency(publishCompletionRequest);
-    expect(replay).toEqual(publishCompletionRequest.record);
+    await expect(repository.health()).resolves.toEqual({ ready: true });
     expect((await repository.getControlState()).events).toEqual([
       publishDomainEvent,
       publishReadbackEvent,
@@ -4883,10 +4540,17 @@ describe("FakeModuleControlRepository", () => {
     };
     const acceptedSqlite = await makeSqlite("accepted");
     const expiredSqlite = await makeSqlite("expired");
-    const acceptedFake = newRepository();
-    const expiredFake = newRepository();
+    const acceptedFake = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+    });
+    const expiredFake = new FakeModuleControlRepository({
+      managementTenantId: MANAGEMENT_TENANT_ID,
+      ownerBootId: "boot_current",
+    });
     try {
-      for (const repository of [acceptedFake, acceptedSqlite.repository]) {
+      const acceptedRepositories = [acceptedFake, acceptedSqlite.repository] as const;
+      for (const repository of acceptedRepositories) {
         await repository.createPreview(previewRequest);
         await repository.decideApproval(approvalRequest);
         await expect(repository.publishRelease({
@@ -4897,17 +4561,47 @@ describe("FakeModuleControlRepository", () => {
           record: { publishedAt: null, status: "published_pending_readback" },
         });
       }
-      for (const repository of [acceptedFake, acceptedSqlite.repository]) {
-        await expect(repository.recordReadback(sameKeyReadbackRequest)).resolves.toMatchObject({
-          replayed: false,
-          record: { status: "verified" },
-        });
+      const acceptedFinalizations = [] as Awaited<ReturnType<ModuleControlReadbackAttemptRepository["finalizeReadbackAndComplete"]>>[];
+      for (const repository of acceptedRepositories) {
+        const claim = await repository.claimReadbackAttempt(attemptClaimRequest({
+          attemptId: "attempt_publish_null_published_001",
+          readbackRef: sameKeyReadbackRequest.record.readbackRef,
+        }));
+        expect(claim.disposition).toBe("created");
+        if (claim.disposition !== "created") throw new Error("claim was not created");
+        await expect(repository.getReadback(
+          exactReadbackQuery(MANAGEMENT_TENANT_ID, pendingRelease.releaseId),
+        )).resolves.toBeNull();
+        await expect(repository.getUnfinishedReadbackAttempt({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          attemptId: claim.attempt.attemptId,
+        })).resolves.toMatchObject({ phase: "claimed" });
+        acceptedFinalizations.push(await repository.finalizeReadbackAndComplete({
+          attemptId: claim.attempt.attemptId,
+          ownerCapability: claim.ownerCapability,
+          observation: {
+            status: "verified",
+            appliedReleaseId: sameKeyReadbackRequest.record.appliedReleaseId,
+            appliedRevision: sameKeyReadbackRequest.record.appliedRevision,
+            appliedModules: sameKeyReadbackRequest.record.appliedModules,
+            reasonCodes: sameKeyReadbackRequest.record.reasonCodes,
+            checkedAt: sameKeyReadbackRequest.record.checkedAt,
+          },
+          finalResult: publishFinalResult,
+          finalizedAt: sameKeyReadbackRequest.record.checkedAt,
+        }));
+        expect(acceptedFinalizations.at(-1)?.disposition).toBe("finalized");
         await expect(repository.getActiveRelease()).resolves.toMatchObject({
           releaseId: pendingRelease.releaseId,
           status: "active_verified",
           publishedAt: pendingRelease.createdAt,
         });
       }
+      expect(acceptedFinalizations.map((result) => result.disposition)).toEqual([
+        "finalized",
+        "finalized",
+      ]);
+      expect(acceptedFinalizations[0]?.readback).toEqual(acceptedFinalizations[1]?.readback);
 
       for (const repository of [expiredFake, expiredSqlite.repository]) {
         await repository.createPreview(previewRequest);
@@ -5223,21 +4917,6 @@ describe("FakeModuleControlRepository", () => {
     {
       name: "publish missing preview",
       run: (repository: ModuleControlRepository) => repository.publishRelease(publishRequest),
-      code: "not_found",
-    },
-    {
-      name: "publish readback missing idempotency binding",
-      run: (repository: ModuleControlRepository) => repository.recordReadback(readbackRequest),
-      code: "not_found",
-    },
-    {
-      name: "reconcile missing release",
-      run: (repository: ModuleControlRepository) => repository.recordReadback(reconcileReadbackRequest),
-      code: "not_found",
-    },
-    {
-      name: "completion missing idempotency",
-      run: (repository: ModuleControlRepository) => repository.completeIdempotency(completedIdempotencyRequest),
       code: "not_found",
     },
   ] as const)("matches SQLite parity matrix: $name", async ({ run, code }) => {

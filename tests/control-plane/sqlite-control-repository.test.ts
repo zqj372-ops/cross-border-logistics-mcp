@@ -15,9 +15,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type {
-  CompleteControlIdempotencyRequest,
   CompletedModuleControlIdempotencyRecord,
-  CompleteIdempotencyRequestMetadata,
   ControlEnvelope,
   CreatePreviewRecordRequest,
   CreatePreviewRequestMetadata,
@@ -35,7 +33,6 @@ import type {
   PublishReleaseRecordRequest,
   PublishReleaseRequestMetadata,
   ReconcileRequestMetadata,
-  RecordReadbackRequest,
   ModuleRegistrationRecord,
   ModuleControlRepository,
   RegisterModuleRecordRequest,
@@ -45,6 +42,11 @@ import {
   initializeSqliteControlState,
   openSqliteControlStore,
 } from "../../src/logistics_mcp/control-plane/sqlite-control-store";
+
+type ReadbackFixtureRequest = {
+  readonly metadata: ReconcileRequestMetadata | PublishReadbackRequestMetadata;
+  readonly record: ModuleReadbackRecord;
+};
 
 const descriptorDigest = `sha256:${"1".repeat(64)}` as const;
 const secondDescriptorDigest = `sha256:${"2".repeat(64)}` as const;
@@ -580,19 +582,6 @@ const pendingReadback = {
   checkedAt: "2099-08-22T00:03:30Z",
 } as const satisfies ModulePendingReadbackRecord;
 
-const pendingReadbackMetadata = {
-  ...publishReadbackMetadata,
-  event: {
-    ...publishReadbackMetadata.event,
-    status: "pending",
-    detail: {
-      ...publishReadbackMetadata.event.detail,
-      readbackRef: pendingReadback.readbackRef,
-      status: "pending",
-    },
-  },
-} as const satisfies PublishReadbackRequestMetadata;
-
 const reconcileVerifiedMetadata = {
   managementTenantId: tenant,
   actorRef: publisher,
@@ -661,27 +650,6 @@ const publishEnvelope = {
   },
 } as const satisfies ControlEnvelope;
 
-const completeMetadata = {
-  managementTenantId: tenant,
-  actorRef: publisher,
-  action: "deployments.publish",
-  idempotencyKey: publishMetadata.idempotencyKey,
-  requestHash: publishRequestHash,
-  event: {
-    action: "deployments.publish",
-    objectRef: `idempotency:deployments.publish:${publishMetadata.idempotencyKey}`,
-    kind: "idempotency",
-    status: "completed",
-    reasonCodes: [],
-    detail: {
-      kind: "idempotency",
-      recordRef: `idempotency:deployments.publish:${publishMetadata.idempotencyKey}`,
-      domainRecordRef: pendingRelease.releaseId,
-      status: "completed",
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
-
 const completedPublish = {
   managementTenantId: tenant,
   action: "deployments.publish",
@@ -697,27 +665,6 @@ const completedPublish = {
   createdAt: pendingRelease.createdAt,
   expiresAt: "2099-08-23T00:03:00Z",
 } as const satisfies CompletedModuleControlIdempotencyRecord;
-
-const reconcileCompleteMetadata = {
-  managementTenantId: tenant,
-  actorRef: publisher,
-  action: "deployments.reconcile",
-  idempotencyKey: reconcileVerifiedMetadata.idempotencyKey,
-  requestHash: reconcileRequestHash,
-  event: {
-    action: "deployments.reconcile",
-    objectRef: `idempotency:deployments.reconcile:${reconcileVerifiedMetadata.idempotencyKey}`,
-    kind: "idempotency",
-    status: "completed",
-    reasonCodes: [],
-    detail: {
-      kind: "idempotency",
-      recordRef: `idempotency:deployments.reconcile:${reconcileVerifiedMetadata.idempotencyKey}`,
-      domainRecordRef: pendingRelease.releaseId,
-      status: "completed",
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
 
 const reconcileSuccessEnvelope = {
   schema_version: "2026-08-22.v1",
@@ -768,108 +715,6 @@ const manualPublishFinalResult = {
     },
   },
 } as const satisfies ControlFinalResult;
-
-const registrationCompleteMetadata = {
-  managementTenantId: tenant,
-  actorRef: actor,
-  action: "packages.register",
-  idempotencyKey: registrationMetadata.idempotencyKey,
-  requestHash: registrationMetadata.requestHash,
-  event: {
-    action: "packages.register",
-    objectRef: `idempotency:packages.register:${registrationMetadata.idempotencyKey}`,
-    kind: "idempotency",
-    status: "completed",
-    reasonCodes: [],
-    detail: {
-      kind: "idempotency",
-      recordRef: `idempotency:packages.register:${registrationMetadata.idempotencyKey}`,
-      domainRecordRef: registrationFinalResult.domainRecordRef,
-      status: "completed",
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
-
-const previewCompleteMetadata = {
-  managementTenantId: tenant,
-  actorRef: actor,
-  action: "deployments.preview",
-  idempotencyKey: previewMetadata.idempotencyKey,
-  requestHash: previewMetadata.requestHash,
-  event: {
-    action: "deployments.preview",
-    objectRef: `idempotency:deployments.preview:${previewMetadata.idempotencyKey}`,
-    kind: "idempotency",
-    status: "completed",
-    reasonCodes: [],
-    detail: {
-      kind: "idempotency",
-      recordRef: `idempotency:deployments.preview:${previewMetadata.idempotencyKey}`,
-      domainRecordRef: previewFinalResult.domainRecordRef,
-      status: "completed",
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
-
-const approvalCompleteMetadata = {
-  managementTenantId: tenant,
-  actorRef: approver,
-  action: "approvals.decide",
-  idempotencyKey: approvalMetadata.idempotencyKey,
-  requestHash: approvalMetadata.requestHash,
-  event: {
-    action: "approvals.decide",
-    objectRef: `idempotency:approvals.decide:${approvalMetadata.idempotencyKey}`,
-    kind: "idempotency",
-    status: "completed",
-    reasonCodes: [],
-    detail: {
-      kind: "idempotency",
-      recordRef: `idempotency:approvals.decide:${approvalMetadata.idempotencyKey}`,
-      domainRecordRef: approvalFinalResult.domainRecordRef,
-      status: "completed",
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
-
-const completedRegistration = {
-  managementTenantId: tenant,
-  action: "packages.register",
-  idempotencyKey: registrationMetadata.idempotencyKey,
-  requestHash: registrationMetadata.requestHash,
-  actorRef: actor,
-  status: "completed",
-  domainRecordRef: registrationFinalResult.domainRecordRef,
-  finalResult: registrationFinalResult,
-  createdAt: registrationRecord.registeredAt,
-  expiresAt: "2099-08-23T00:00:00Z",
-} as const satisfies CompletedModuleControlIdempotencyRecord;
-
-const completedPreview = {
-  managementTenantId: tenant,
-  action: "deployments.preview",
-  idempotencyKey: previewMetadata.idempotencyKey,
-  requestHash: previewMetadata.requestHash,
-  actorRef: actor,
-  status: "completed",
-  domainRecordRef: previewFinalResult.domainRecordRef,
-  finalResult: previewFinalResult,
-  createdAt: changePreview.createdAt,
-  expiresAt: "2099-08-23T00:01:00Z",
-} as const satisfies CompletedModuleControlIdempotencyRecord;
-
-const completedApproval = {
-  managementTenantId: tenant,
-  action: "approvals.decide",
-  idempotencyKey: approvalMetadata.idempotencyKey,
-  requestHash: approvalMetadata.requestHash,
-  actorRef: approver,
-  status: "completed",
-  domainRecordRef: approvalFinalResult.domainRecordRef,
-  finalResult: approvalFinalResult,
-  createdAt: approval.decidedAt,
-  expiresAt: "2099-08-23T00:02:00Z",
-} as const satisfies CompletedModuleControlIdempotencyRecord;
 
 const setPreview = {
   ...changePreview,
@@ -996,18 +841,7 @@ const setVerifiedReadback = {
   readbackRef: "readback_release_set_001",
   releaseId: setPendingRelease.releaseId,
   appliedReleaseId: setPendingRelease.releaseId,
-  appliedModules: [
-    {
-      descriptorDigest: moduleRef.descriptorDigest,
-      version: moduleRef.version,
-      moduleId: moduleRef.moduleId,
-    },
-    {
-      descriptorDigest: secondModuleRef.descriptorDigest,
-      version: secondModuleRef.version,
-      moduleId: secondModuleRef.moduleId,
-    },
-  ],
+  appliedModules: setPendingRelease.desiredModules,
 } as const satisfies ModuleVerifiedReadbackRecord;
 
 const setPublishReadbackMetadata = {
@@ -1144,6 +978,7 @@ const secondVerifiedReadback = {
   revision: secondPendingRelease.revision,
   appliedReleaseId: secondPendingRelease.releaseId,
   appliedRevision: secondPendingRelease.revision,
+  appliedModules: secondPendingRelease.desiredModules,
   checkedAt: "2099-08-22T00:08:00Z",
 } as const satisfies ModuleVerifiedReadbackRecord;
 
@@ -1191,21 +1026,6 @@ const secondPublishEnvelope = {
     revision: secondPendingRelease.revision,
   },
 } as const satisfies ControlEnvelope;
-
-const secondCompleteMetadata = {
-  ...completeMetadata,
-  idempotencyKey: secondPublishMetadata.idempotencyKey,
-  requestHash: secondPublishMetadata.requestHash,
-  event: {
-    ...completeMetadata.event,
-    objectRef: `idempotency:deployments.publish:${secondPublishMetadata.idempotencyKey}`,
-    detail: {
-      ...completeMetadata.event.detail,
-      recordRef: `idempotency:deployments.publish:${secondPublishMetadata.idempotencyKey}`,
-      domainRecordRef: secondPendingRelease.releaseId,
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
 
 const completedSecondPublish = {
   managementTenantId: tenant,
@@ -1400,21 +1220,6 @@ const rollbackPublishEnvelope = {
   },
 } as const satisfies ControlEnvelope;
 
-const rollbackCompleteMetadata = {
-  ...completeMetadata,
-  idempotencyKey: rollbackPublishMetadata.idempotencyKey,
-  requestHash: rollbackPublishMetadata.requestHash,
-  event: {
-    ...completeMetadata.event,
-    objectRef: `idempotency:deployments.publish:${rollbackPublishMetadata.idempotencyKey}`,
-    detail: {
-      ...completeMetadata.event.detail,
-      recordRef: `idempotency:deployments.publish:${rollbackPublishMetadata.idempotencyKey}`,
-      domainRecordRef: rollbackPendingRelease.releaseId,
-    },
-  },
-} as const satisfies CompleteIdempotencyRequestMetadata;
-
 const completedRollbackPublish = {
   managementTenantId: tenant,
   action: "deployments.publish",
@@ -1459,15 +1264,11 @@ function publishRequest() {
   return { metadata: publishMetadata, record: pendingRelease } as const;
 }
 
-function verifiedReadbackRequest(): RecordReadbackRequest {
+function verifiedReadbackRequest(): ReadbackFixtureRequest {
   return {
     metadata: publishReadbackMetadata,
     record: verifiedReadback,
   };
-}
-
-function completeRequest(): CompleteControlIdempotencyRequest {
-  return { metadata: completeMetadata, record: completedPublish };
 }
 
 function setPreviewRequest() {
@@ -1490,7 +1291,7 @@ function setPublishRequest(): PublishReleaseRecordRequest {
   return { metadata: setPublishMetadata, record: setPendingRelease };
 }
 
-function setVerifiedReadbackRequest(): RecordReadbackRequest {
+function setVerifiedReadbackRequest(): ReadbackFixtureRequest {
   return {
     metadata: setPublishReadbackMetadata,
     record: setVerifiedReadback,
@@ -1510,10 +1311,93 @@ async function seedPendingStore(applicationRoot: string) {
   return { store, published };
 }
 
+async function finalizeReadbackAttempt(
+  store: ReturnType<typeof openStore>,
+  request: ReadbackFixtureRequest,
+  finalResult: ControlFinalResult,
+  options: {
+    readonly attemptId?: string;
+    readonly claimedAt?: string;
+    readonly finalizedAt?: string;
+  } = {},
+) {
+  if (request.record.status === "pending") {
+    throw new Error("pending readbacks must use an unfinished attempt claim");
+  }
+  const claim = await claimReadbackAttemptFixture(
+    store,
+    request,
+    finalResult,
+    options,
+  );
+  return store.finalizeReadbackAndComplete({
+    attemptId: claim.attempt.attemptId,
+    ownerCapability: claim.ownerCapability,
+    observation: {
+      status: request.record.status,
+      appliedReleaseId: request.record.appliedReleaseId,
+      appliedRevision: request.record.appliedRevision,
+      appliedModules: request.record.appliedModules,
+      reasonCodes: request.record.reasonCodes,
+      checkedAt: request.record.checkedAt,
+    },
+    finalResult,
+    finalizedAt: options.finalizedAt ?? request.record.checkedAt,
+  });
+}
+
+async function claimReadbackAttemptFixture(
+  store: ReturnType<typeof openStore>,
+  request: ReadbackFixtureRequest,
+  finalResult: ControlFinalResult,
+  options: {
+    readonly attemptId?: string;
+    readonly claimedAt?: string;
+    readonly finalizedAt?: string;
+  } = {},
+) {
+  const release = await store.getRelease({
+    managementTenantId: tenant,
+    releaseId: request.record.releaseId,
+  });
+  if (release === null) throw new Error(`missing release ${request.record.releaseId}`);
+  if (request.record.status === "pending") {
+    throw new Error("pending readbacks must use an unfinished attempt claim");
+  }
+  const envelope = finalResult.envelope;
+  const claim = await store.claimReadbackAttempt({
+    metadata: {
+      managementTenantId: request.metadata.managementTenantId,
+      actorRef: request.metadata.actorRef,
+      action: request.metadata.action,
+      idempotencyKey: request.metadata.idempotencyKey,
+      requestHash: request.metadata.requestHash,
+      requestId: envelope.request_id,
+      traceId: envelope.trace_id,
+      auditId: envelope.audit_id,
+    },
+    attemptId:
+      options.attemptId ?? `attempt_${request.metadata.idempotencyKey}`,
+    readbackRef: request.record.readbackRef,
+    releaseId: request.record.releaseId,
+    revision: request.record.revision,
+    desiredModules: release.desiredModules,
+    ownerBootId: "boot_test_fixture",
+    claimedAt: options.claimedAt ?? release.createdAt,
+  });
+  if (claim.disposition !== "created") {
+    throw new Error(`expected a new attempt for ${request.metadata.idempotencyKey}`);
+  }
+  return claim;
+}
+
 async function seedTwoVerifiedReleases(applicationRoot: string) {
   const { store } = await seedPendingStore(applicationRoot);
-  await store.recordReadback(verifiedReadbackRequest());
-  await store.completeIdempotency(completeRequest());
+  await finalizeReadbackAttempt(
+    store,
+    verifiedReadbackRequest(),
+    completedPublish.finalResult,
+  );
   await store.createPreview({
     metadata: secondPreviewMetadata,
     record: secondChangePreview,
@@ -1528,14 +1412,14 @@ async function seedTwoVerifiedReleases(applicationRoot: string) {
     metadata: secondPublishMetadata,
     record: secondPendingRelease,
   });
-  await store.recordReadback({
-    metadata: secondPublishReadbackMetadata,
-    record: secondVerifiedReadback,
-  });
-  await store.completeIdempotency({
-    metadata: secondCompleteMetadata,
-    record: completedSecondPublish,
-  });
+  await finalizeReadbackAttempt(
+    store,
+    {
+      metadata: secondPublishReadbackMetadata,
+      record: secondVerifiedReadback,
+    },
+    completedSecondPublish.finalResult,
+  );
   return store;
 }
 
@@ -1609,8 +1493,6 @@ async function expectSemanticCorruptionFailsClosed(
     () => store.createPreview(previewRequest()),
     () => store.decideApproval(approvalRequest()),
     () => store.publishRelease(publishRequest()),
-    () => store.recordReadback(verifiedReadbackRequest()),
-    () => store.completeIdempotency(completeRequest()),
     () => store.getControlState(),
     () => store.getActiveRelease(),
     () => store.getPendingRelease(),
@@ -2014,7 +1896,7 @@ describe("SQLite control repository", () => {
     await publishAtEqualOffsetGate.store.close();
   });
 
-  it("round-trips completed idempotency event status in-process and after reopen for every action", async () => {
+  it("round-trips completed idempotency records in-process and after reopen for every action", async () => {
     const applicationRoot = makeApplicationRoot();
     await initializeSqliteControlState({
       applicationRoot,
@@ -2028,125 +1910,65 @@ describe("SQLite control repository", () => {
     await store.decideApproval(approvalRequest());
     await store.close();
 
-    const database = new DatabaseSync(controlDatabasePath(applicationRoot));
-    try {
-      database
-        .prepare(
-          `UPDATE module_control_idempotency
-           SET status = 'domain_committed',
-               domain_record_ref = CASE action
-                 WHEN 'packages.register' THEN ?
-                 WHEN 'deployments.preview' THEN ?
-                 WHEN 'approvals.decide' THEN ?
-               END,
-               final_result_json = NULL
-           WHERE management_tenant_id = ? AND action IN (?, ?, ?)`,
-        )
-        .run(
-          registrationFinalResult.domainRecordRef,
-          previewFinalResult.domainRecordRef,
-          approvalFinalResult.domainRecordRef,
-          tenant,
-          "packages.register",
-          "deployments.preview",
-          "approvals.decide",
-        );
-    } finally {
-      database.close();
-    }
-
-    const reopenedForCompletion = openStore(applicationRoot);
-    await reopenedForCompletion.completeIdempotency({
-      metadata: registrationCompleteMetadata,
-      record: completedRegistration,
-    });
-    const sameProcessState = await reopenedForCompletion.getControlState();
-    const sameProcessRegistrationEvent = sameProcessState.events.find(
-      (event) =>
-        event.kind === "idempotency" && event.action === "packages.register",
-    );
-    expect(sameProcessRegistrationEvent).toMatchObject({
-      status: "completed",
-      detail: { kind: "idempotency", status: "completed" },
-    });
-    await reopenedForCompletion.completeIdempotency({
-      metadata: previewCompleteMetadata,
-      record: completedPreview,
-    });
-    await reopenedForCompletion.completeIdempotency({
-      metadata: approvalCompleteMetadata,
-      record: completedApproval,
-    });
-    const storeAfterSimpleCompletion = reopenedForCompletion;
+    const storeAfterSimpleCompletion = openStore(applicationRoot);
 
     await storeAfterSimpleCompletion.publishRelease(publishRequest());
-    await storeAfterSimpleCompletion.recordReadback({
-      metadata: mismatchReadbackMetadata,
-      record: mismatchReadback,
-    });
-    await storeAfterSimpleCompletion.completeIdempotency({
-      metadata: completeMetadata,
-      record: { ...completedPublish, finalResult: manualPublishFinalResult },
-    });
-    await storeAfterSimpleCompletion.recordReadback({
-      metadata: reconcileVerifiedMetadata,
-      record: verifiedReadback,
-    });
-    await storeAfterSimpleCompletion.completeIdempotency({
-      metadata: reconcileCompleteMetadata,
-      record: completedReconcile,
-    });
+    await finalizeReadbackAttempt(
+      storeAfterSimpleCompletion,
+      { metadata: mismatchReadbackMetadata, record: mismatchReadback },
+      manualPublishFinalResult,
+    );
+    await finalizeReadbackAttempt(
+      storeAfterSimpleCompletion,
+      { metadata: reconcileVerifiedMetadata, record: verifiedReadback },
+      completedReconcile.finalResult,
+    );
 
-    const expectedIdempotencyEvents = [
+    const expectedIdempotencies = [
       { action: "packages.register", idempotencyKey: registrationMetadata.idempotencyKey },
       { action: "deployments.preview", idempotencyKey: previewMetadata.idempotencyKey },
       { action: "approvals.decide", idempotencyKey: approvalMetadata.idempotencyKey },
       { action: "deployments.publish", idempotencyKey: publishMetadata.idempotencyKey },
       { action: "deployments.reconcile", idempotencyKey: reconcileVerifiedMetadata.idempotencyKey },
     ] as const;
-    const assertIdempotencyEvents = async (repository: ModuleControlRepository) => {
-      const state = await repository.getControlState();
-      for (const expected of expectedIdempotencyEvents) {
-        const events = state.events.filter(
-          (event) =>
-            event.kind === "idempotency" && event.action === expected.action,
-        );
-        expect(events).toHaveLength(1);
-        expect(events[0]).toMatchObject({
+    const assertCompletedIdempotency = async (repository: ModuleControlRepository) => {
+      for (const expected of expectedIdempotencies) {
+        await expect(repository.getIdempotency({
+          managementTenantId: tenant,
+          action: expected.action,
+          idempotencyKey: expected.idempotencyKey,
+        })).resolves.toMatchObject({
+          action: expected.action,
+          idempotencyKey: expected.idempotencyKey,
           status: "completed",
-          detail: {
-            kind: "idempotency",
-            status: "completed",
-          },
         });
       }
     };
-    await assertIdempotencyEvents(storeAfterSimpleCompletion);
+    await assertCompletedIdempotency(storeAfterSimpleCompletion);
 
     await storeAfterSimpleCompletion.close();
-    const persistedEvents = new DatabaseSync(controlDatabasePath(applicationRoot));
+    const persistedIdempotency = new DatabaseSync(controlDatabasePath(applicationRoot));
     try {
       expect(
-        persistedEvents
+        persistedIdempotency
           .prepare(
             `SELECT action, status
-             FROM module_control_events
-             WHERE json_extract(payload_json, '$.detail.kind') = 'idempotency'
-             ORDER BY sequence`,
+             FROM module_control_idempotency
+             ORDER BY action`,
           )
           .all(),
       ).toEqual([
-        { action: "packages.register", status: "completed" },
-        { action: "deployments.preview", status: "completed" },
         { action: "approvals.decide", status: "completed" },
+        { action: "deployments.preview", status: "completed" },
         { action: "deployments.publish", status: "completed" },
         { action: "deployments.reconcile", status: "completed" },
+        { action: "packages.register", status: "completed" },
       ]);
     } finally {
-      persistedEvents.close();
+      persistedIdempotency.close();
     }
     const reopened = openStore(applicationRoot);
-    await assertIdempotencyEvents(reopened);
+    await assertCompletedIdempotency(reopened);
     await reopened.close();
   });
 
@@ -2264,14 +2086,17 @@ describe("SQLite control repository", () => {
       [4, "release"],
     ]);
 
-    const readback = await store.recordReadback(verifiedReadbackRequest());
-    expect(readback.replayed).toBe(false);
-    expect(readback.record).toEqual(verifiedReadback);
-    const completed = await store.completeIdempotency(completeRequest());
-    expect(completed).toEqual(completedPublish);
-    await expect(store.completeIdempotency(completeRequest())).resolves.toEqual(
-      completedPublish,
+    const readback = await finalizeReadbackAttempt(
+      store,
+      verifiedReadbackRequest(),
+      completedPublish.finalResult,
     );
+    expect(readback.replayed).toBe(false);
+    expect(readback.readback).toMatchObject(verifiedReadback);
+    expect(readback.readback.attemptId).toBe(
+      `attempt_${publishMetadata.idempotencyKey}`,
+    );
+    expect(readback.idempotency).toEqual(completedPublish);
 
     const afterReadback = await store.getControlState();
     expect(afterReadback.activeRevision).toBe(1);
@@ -2281,7 +2106,10 @@ describe("SQLite control repository", () => {
       status: "active_verified",
       readbackRef: verifiedReadback.readbackRef,
     });
-    expect(afterReadback.latestReadback).toEqual(verifiedReadback);
+    expect(afterReadback.latestReadback).toMatchObject(verifiedReadback);
+    expect(afterReadback.latestReadback?.attemptId).toBe(
+      `attempt_${publishMetadata.idempotencyKey}`,
+    );
     expect(afterReadback.latestPreview?.consumed).toBe(true);
     expect(afterReadback.latestApproval?.consumed).toBe(true);
     expect(afterReadback.releaseHistory).toEqual([{
@@ -2334,9 +2162,11 @@ describe("SQLite control repository", () => {
     await expect(reopened.getPendingRelease()).resolves.toBeNull();
     await expect(reopened.getNewestUnresolvedRelease()).resolves.toBeNull();
     await expect(reopened.getControlState()).resolves.toEqual(afterReadback);
-    await expect(reopened.completeIdempotency(completeRequest())).resolves.toEqual(
-      completedPublish,
-    );
+    await expect(reopened.getIdempotency({
+      managementTenantId: tenant,
+      action: "deployments.publish",
+      idempotencyKey: publishMetadata.idempotencyKey,
+    })).resolves.toEqual(completedPublish);
     await reopened.close();
   });
 
@@ -2383,14 +2213,11 @@ describe("SQLite control repository", () => {
       metadata: rollbackPublishMetadata,
       record: rollbackPendingRelease,
     });
-    await store.recordReadback({
-      metadata: rollbackReadbackMetadata,
-      record: rollbackVerifiedReadback,
-    });
-    await store.completeIdempotency({
-      metadata: rollbackCompleteMetadata,
-      record: completedRollbackPublish,
-    });
+    await finalizeReadbackAttempt(
+      store,
+      { metadata: rollbackReadbackMetadata, record: rollbackVerifiedReadback },
+      completedRollbackPublish.finalResult,
+    );
 
     await expect(store.getRelease({
       managementTenantId: tenant,
@@ -2425,7 +2252,7 @@ describe("SQLite control repository", () => {
     await expect(store.getReadback({
       managementTenantId: tenant,
       releaseId: rollbackPendingRelease.releaseId,
-    })).resolves.toEqual(rollbackVerifiedReadback);
+    })).resolves.toMatchObject(rollbackVerifiedReadback);
 
     for (const [idempotencyKey, releaseId, finalResult] of [
       [publishMetadata.idempotencyKey, pendingRelease.releaseId, completedPublish.finalResult],
@@ -2658,7 +2485,7 @@ describe("SQLite control repository", () => {
         managementTenantId: tenant,
         releaseId: pendingRelease.releaseId,
       }),
-    ).resolves.toEqual(verifiedReadback);
+    ).resolves.toMatchObject(verifiedReadback);
 
     const queriedIdempotency = await store.getIdempotency({
       managementTenantId: tenant,
@@ -2765,9 +2592,31 @@ describe("SQLite control repository", () => {
 
     const reopened = openStore(applicationRoot);
     await expect(reopened.health()).resolves.toEqual({ ready: false });
-    await expect(reopened.recordReadback(verifiedReadbackRequest())).rejects.toMatchObject({
+    await expect(reopened.getReadback({
+      managementTenantId: tenant,
+      releaseId: pendingRelease.releaseId,
+    })).rejects.toMatchObject({
       code: "invalid_state",
     });
+    await expect(reopened.claimReadbackAttempt({
+      metadata: {
+        managementTenantId: tenant,
+        actorRef: publisher,
+        action: "deployments.publish",
+        idempotencyKey: publishMetadata.idempotencyKey,
+        requestHash: publishRequestHash,
+        requestId: publishEnvelope.request_id,
+        traceId: publishEnvelope.trace_id,
+        auditId: publishEnvelope.audit_id,
+      },
+      attemptId: "attempt_missing_publish_idempotency_001",
+      readbackRef: verifiedReadback.readbackRef,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+      desiredModules: pendingRelease.desiredModules,
+      ownerBootId: "boot_test_fixture",
+      claimedAt: pendingRelease.createdAt,
+    })).rejects.toMatchObject({ code: "invalid_state" });
     await reopened.close();
 
     const persisted = new DatabaseSync(controlDatabasePath(applicationRoot));
@@ -2780,12 +2629,15 @@ describe("SQLite control repository", () => {
       expect(persisted.prepare("SELECT COUNT(*) AS count FROM module_readbacks").get()).toEqual({
         count: 0,
       });
+      expect(persisted.prepare("SELECT COUNT(*) AS count FROM module_readback_attempts").get()).toEqual({
+        count: 0,
+      });
     } finally {
       persisted.close();
     }
   });
 
-  it("persists and reopens a pending readback but requires a new reconcile key for a new observation", async () => {
+  it("persists and reopens an unfinished readback attempt without a pending current row", async () => {
     const applicationRoot = makeApplicationRoot();
     await initializeSqliteControlState({
       applicationRoot,
@@ -2793,10 +2645,36 @@ describe("SQLite control repository", () => {
       managementTenantId: tenant,
     });
     let store = (await seedPendingStore(applicationRoot)).store;
-    await expect(store.recordReadback({
-      metadata: pendingReadbackMetadata,
-      record: pendingReadback,
-    })).resolves.toMatchObject({ record: pendingReadback, replayed: false });
+    const claim = await store.claimReadbackAttempt({
+      metadata: {
+        managementTenantId: tenant,
+        actorRef: publisher,
+        action: "deployments.publish",
+        idempotencyKey: publishMetadata.idempotencyKey,
+        requestHash: publishRequestHash,
+        requestId: publishEnvelope.request_id,
+        traceId: publishEnvelope.trace_id,
+        auditId: publishEnvelope.audit_id,
+      },
+      attemptId: "attempt_idem_publish_001",
+      readbackRef: pendingReadback.readbackRef,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+      desiredModules: pendingRelease.desiredModules,
+      ownerBootId: "boot_test_fixture",
+      claimedAt: pendingRelease.createdAt,
+    });
+    expect(claim.disposition).toBe("created");
+    if (claim.disposition !== "created") throw new Error("claim did not create an attempt");
+    await expect(store.getUnfinishedReadbackAttempt({
+      managementTenantId: tenant,
+      attemptId: claim.attempt.attemptId,
+    })).resolves.toEqual(claim.attempt);
+    await expect(store.getReadback({
+      managementTenantId: tenant,
+      releaseId: pendingRelease.releaseId,
+    })).resolves.toBeNull();
+    await expect(store.listUnfinishedReadbackAttempts()).resolves.toEqual([claim.attempt]);
     await expect(store.health()).resolves.toEqual({ ready: true });
     await store.close();
 
@@ -2812,44 +2690,12 @@ describe("SQLite control repository", () => {
     await expect(store.getReadback({
       managementTenantId: tenant,
       releaseId: pendingRelease.releaseId,
-    })).resolves.toEqual(pendingReadback);
-    const beforeReplay = await store.getControlState();
-    await expect(store.recordReadback({
-      metadata: pendingReadbackMetadata,
-      record: pendingReadback,
-    })).resolves.toMatchObject({ record: pendingReadback, replayed: true });
-    await expect(store.getControlState()).resolves.toEqual(beforeReplay);
-
-    await expect(store.recordReadback(verifiedReadbackRequest())).rejects.toMatchObject({
-      code: "conflict",
-    });
-    await expect(store.getControlState()).resolves.toEqual(beforeReplay);
-
-    await expect(store.recordReadback({
-      metadata: reconcileVerifiedMetadata,
-      record: verifiedReadback,
-    })).resolves.toMatchObject({ record: verifiedReadback, replayed: false });
-    await expect(store.getActiveRelease()).resolves.toMatchObject({
-      releaseId: pendingRelease.releaseId,
-      status: "active_verified",
-    });
+    })).resolves.toBeNull();
+    await expect(store.getUnfinishedReadbackAttempt({
+      managementTenantId: tenant,
+      attemptId: claim.attempt.attemptId,
+    })).resolves.toEqual(claim.attempt);
     await store.close();
-
-    const database = new DatabaseSync(controlDatabasePath(applicationRoot));
-    try {
-      expect(database.prepare("SELECT COUNT(*) AS count FROM module_readbacks").get()).toEqual({ count: 1 });
-      expect(
-        database
-          .prepare("SELECT COUNT(*) AS count FROM module_control_events WHERE object_ref = ? AND payload_json ->> '$.detail.kind' = 'reconciliation'")
-          .get(pendingRelease.releaseId),
-      ).toEqual({ count: 2 });
-    } finally {
-      database.close();
-    }
-
-    const recovered = openStore(applicationRoot);
-    await expect(recovered.health()).resolves.toEqual({ ready: true });
-    await recovered.close();
   });
 
   it("never promotes manual review with a different observation under the same reconcile key", async () => {
@@ -2860,26 +2706,57 @@ describe("SQLite control repository", () => {
       managementTenantId: tenant,
     });
     const { store } = await seedPendingStore(applicationRoot);
-    await store.recordReadback({
-      metadata: reconcileMismatchMetadata,
-      record: mismatchReadback,
-    });
+    const reconcileMismatchFinalResult = {
+      domainRecordRef: pendingRelease.releaseId,
+      envelope: {
+        ...reconcileSuccessEnvelope,
+        status: "manual_review",
+        data: { ...reconcileSuccessEnvelope.data, status: "mismatch" },
+        reason_codes: [...mismatchReadback.reasonCodes],
+        readback: {
+          status: "mismatch",
+          release_id: pendingRelease.releaseId,
+          revision: pendingRelease.revision,
+        },
+      },
+    } as const satisfies ControlFinalResult;
+    await finalizeReadbackAttempt(
+      store,
+      { metadata: reconcileMismatchMetadata, record: mismatchReadback },
+      reconcileMismatchFinalResult,
+    );
     const manualState = await store.getControlState();
 
-    await expect(store.recordReadback({
-      metadata: reconcileVerifiedMetadata,
-      record: verifiedReadback,
+    await expect(store.claimReadbackAttempt({
+      metadata: {
+        managementTenantId: tenant,
+        actorRef: publisher,
+        action: "deployments.reconcile",
+        idempotencyKey: reconcileVerifiedMetadata.idempotencyKey,
+        requestHash: reconcileRequestHash,
+        requestId: reconcileSuccessEnvelope.request_id,
+        traceId: reconcileSuccessEnvelope.trace_id,
+        auditId: reconcileSuccessEnvelope.audit_id,
+      },
+      attemptId: "attempt_idem_reconcile_001",
+      readbackRef: verifiedReadback.readbackRef,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+      desiredModules: pendingRelease.desiredModules,
+      ownerBootId: "boot_test_fixture",
+      claimedAt: pendingRelease.createdAt,
     })).rejects.toMatchObject({ code: "conflict" });
     await expect(store.getControlState()).resolves.toEqual(manualState);
     await expect(store.getReadback({
       managementTenantId: tenant,
       releaseId: pendingRelease.releaseId,
-    })).resolves.toEqual(mismatchReadback);
+    })).resolves.toMatchObject(mismatchReadback);
 
-    await expect(store.recordReadback({
-      metadata: reconcileVerifiedRetryMetadata,
-      record: verifiedReadback,
-    })).resolves.toMatchObject({ record: verifiedReadback, replayed: false });
+    await finalizeReadbackAttempt(
+      store,
+      { metadata: reconcileVerifiedRetryMetadata, record: verifiedReadback },
+      completedReconcile.finalResult,
+    );
     await expect(store.getActiveRelease()).resolves.toMatchObject({
       releaseId: pendingRelease.releaseId,
       status: "active_verified",
@@ -2899,130 +2776,94 @@ describe("SQLite control repository", () => {
     }
   });
 
-  it("recovers a domain-committed publish result after readback before completion without duplicate side effects", async () => {
-    const recoveryCases = [
-      {
-        name: "verified",
-        readbackRequest: verifiedReadbackRequest(),
-        finalResult: completedPublish.finalResult,
-        releaseStatus: "active_verified",
-      },
-      {
-        name: "manual_review",
-        readbackRequest: {
-          metadata: mismatchReadbackMetadata,
-          record: mismatchReadback,
-        } satisfies RecordReadbackRequest,
-        finalResult: manualPublishFinalResult,
-        releaseStatus: "manual_review",
-      },
-    ] as const;
+  it("keeps a claimed publish attempt durable across reopen without exposing recovery authority", async () => {
+    const applicationRoot = makeApplicationRoot();
+    await initializeSqliteControlState({
+      applicationRoot,
+      instanceId: "instance_fixture_001",
+      managementTenantId: tenant,
+    });
+    let store = openStore(applicationRoot);
+    await store.registerModule(registerRequest());
+    await store.createPreview(previewRequest());
+    await store.decideApproval(approvalRequest());
+    await store.publishRelease(publishRequest());
+    const claim = await claimReadbackAttemptFixture(
+      store,
+      verifiedReadbackRequest(),
+      completedPublish.finalResult,
+    );
+    await store.close();
+    const beforeReopenRows = persistedRowCounts(applicationRoot);
 
-    for (const recoveryCase of recoveryCases) {
-      const applicationRoot = makeApplicationRoot();
-      await initializeSqliteControlState({
-        applicationRoot,
-        instanceId: "instance_fixture_001",
+    store = openStore(applicationRoot);
+    expect("recoveryDriver" in store).toBe(false);
+    await expect(store.getUnfinishedReadbackAttempt({
+      managementTenantId: tenant,
+      attemptId: claim.attempt.attemptId,
+    })).resolves.toEqual(claim.attempt);
+    await expect(store.getReadback({
+      managementTenantId: tenant,
+      releaseId: pendingRelease.releaseId,
+    })).resolves.toBeNull();
+    await expect(store.getRelease({
+      managementTenantId: tenant,
+      releaseId: pendingRelease.releaseId,
+    })).resolves.toMatchObject({
+      status: "published_pending_readback",
+      readbackRef: null,
+    });
+    await expect(store.getIdempotency({
+      managementTenantId: tenant,
+      action: "deployments.publish",
+      idempotencyKey: publishMetadata.idempotencyKey,
+    })).resolves.toMatchObject({
+      status: "domain_committed",
+      domainRecordRef: pendingRelease.releaseId,
+      finalResult: null,
+    });
+    await expect(store.publishRelease(publishRequest())).resolves.toMatchObject({
+      replayed: true,
+      record: { status: "published_pending_readback" },
+    });
+    await expect(store.claimReadbackAttempt({
+      metadata: {
         managementTenantId: tenant,
-      });
-      let store = openStore(applicationRoot);
-      try {
-        await store.registerModule(registerRequest());
-        await store.createPreview(previewRequest());
-        await store.decideApproval(approvalRequest());
-        await store.publishRelease(publishRequest());
-        await store.recordReadback(recoveryCase.readbackRequest);
-
-        await expect(
-          store.getIdempotency({
-            managementTenantId: tenant,
-            action: "deployments.publish",
-            idempotencyKey: publishMetadata.idempotencyKey,
-          }),
-        ).resolves.toMatchObject({
-          status: "domain_committed",
-          domainRecordRef: pendingRelease.releaseId,
-          finalResult: null,
-        });
-
-        await store.close();
-        const beforeRecoveryRows = persistedRowCounts(applicationRoot);
-        store = openStore(applicationRoot);
-        await expect(
-          store.getIdempotency({
-            managementTenantId: tenant,
-            action: "deployments.publish",
-            idempotencyKey: publishMetadata.idempotencyKey,
-          }),
-        ).resolves.toMatchObject({ status: "domain_committed" });
-
-        const beforeRecoveryReplay = await store.getControlState();
-        await expect(store.publishRelease(publishRequest())).resolves.toMatchObject({
-          replayed: true,
-          record: { releaseId: pendingRelease.releaseId, status: recoveryCase.releaseStatus },
-        });
-        await expect(store.recordReadback(recoveryCase.readbackRequest)).resolves.toMatchObject({
-          replayed: true,
-          record: recoveryCase.readbackRequest.record,
-        });
-        await expect(store.getControlState()).resolves.toEqual(beforeRecoveryReplay);
-        await expect(
-          store.getIdempotency({
-            managementTenantId: tenant,
-            action: "deployments.publish",
-            idempotencyKey: publishMetadata.idempotencyKey,
-          }),
-        ).resolves.toMatchObject({ status: "domain_committed", finalResult: null });
-        await store.close();
-        expect(persistedRowCounts(applicationRoot)).toEqual(beforeRecoveryRows);
-        store = openStore(applicationRoot);
-
-        const recovered = await store.completeIdempotency({
-          metadata: completeMetadata,
-          record: { ...completedPublish, finalResult: recoveryCase.finalResult },
-        });
-        expect(recovered.status).toBe("completed");
-        expect(recovered.finalResult).toEqual(recoveryCase.finalResult);
-        await expect(
-          store.getIdempotency({
-            managementTenantId: tenant,
-            action: "deployments.publish",
-            idempotencyKey: publishMetadata.idempotencyKey,
-          }),
-        ).resolves.toEqual(recovered);
-        await expect(store.getRelease({
-          managementTenantId: tenant,
-          releaseId: pendingRelease.releaseId,
-        })).resolves.toMatchObject({ status: recoveryCase.releaseStatus });
-
-        await expect(store.publishRelease(publishRequest())).resolves.toMatchObject({
-          replayed: true,
-          record: { releaseId: pendingRelease.releaseId, status: recoveryCase.releaseStatus },
-        });
-        await expect(store.recordReadback(recoveryCase.readbackRequest)).resolves.toMatchObject({
-          replayed: true,
-          record: recoveryCase.readbackRequest.record,
-        });
-        await store.close();
-
-        const database = new DatabaseSync(controlDatabasePath(applicationRoot));
-        try {
-          expect(database.prepare("SELECT COUNT(*) AS count FROM module_releases").get()).toEqual({
-            count: 1,
-          });
-          expect(database.prepare("SELECT COUNT(*) AS count FROM module_readbacks").get()).toEqual({
-            count: 1,
-          });
-        } finally {
-          database.close();
-        }
-      } finally {
-        await store.close();
-      }
-    }
+        actorRef: publisher,
+        action: "deployments.publish",
+        idempotencyKey: publishMetadata.idempotencyKey,
+        requestHash: publishMetadata.requestHash,
+        requestId: publishEnvelope.request_id,
+        traceId: publishEnvelope.trace_id,
+        auditId: publishEnvelope.audit_id,
+      },
+      attemptId: claim.attempt.attemptId,
+      readbackRef: claim.attempt.readbackRef,
+      releaseId: pendingRelease.releaseId,
+      revision: pendingRelease.revision,
+      desiredModules: pendingRelease.desiredModules,
+      ownerBootId: "caller_supplied_boot_id",
+      claimedAt: claim.attempt.claimedAt,
+    })).resolves.toEqual({ disposition: "existing", attempt: claim.attempt });
+    await expect(store.finalizeReadbackAndComplete({
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: Object.freeze({}) as never,
+      observation: {
+        status: verifiedReadback.status,
+        appliedReleaseId: verifiedReadback.appliedReleaseId,
+        appliedRevision: verifiedReadback.appliedRevision,
+        appliedModules: verifiedReadback.appliedModules,
+        reasonCodes: verifiedReadback.reasonCodes,
+        checkedAt: verifiedReadback.checkedAt,
+      },
+      finalResult: completedPublish.finalResult,
+      finalizedAt: verifiedReadback.checkedAt,
+    })).rejects.toMatchObject({ code: "conflict" });
+    await store.close();
+    expect(persistedRowCounts(applicationRoot)).toEqual(beforeReopenRows);
   });
 
-  it("blocks a later revision until the active publish idempotency is completed", async () => {
+  it("blocks a later revision while the active publish attempt is unfinished", async () => {
     const applicationRoot = makeApplicationRoot();
     await initializeSqliteControlState({
       applicationRoot,
@@ -3031,18 +2872,11 @@ describe("SQLite control repository", () => {
     });
     const { store } = await seedPendingStore(applicationRoot);
     try {
-      await store.recordReadback(verifiedReadbackRequest());
-      await store.createPreview({
-        metadata: secondPreviewMetadata,
-        record: secondChangePreview,
-        finalResult: secondPreviewFinalResult,
-      });
-      await store.decideApproval({
-        metadata: secondApprovalMetadata,
-        record: secondApproval,
-        finalResult: secondApprovalFinalResult,
-      });
-
+      const claim = await claimReadbackAttemptFixture(
+        store,
+        verifiedReadbackRequest(),
+        completedPublish.finalResult,
+      );
       const beforeBlockedPublish = await store.getControlState();
       await expect(store.publishRelease({
         metadata: secondPublishMetadata,
@@ -3061,23 +2895,46 @@ describe("SQLite control repository", () => {
       await expect(store.getPreview({
         managementTenantId: tenant,
         previewRef: secondChangePreview.previewRef,
-      })).resolves.toMatchObject({ consumed: false });
+      })).resolves.toBeNull();
       await expect(store.getApproval({
         managementTenantId: tenant,
         approvalId: secondApproval.approvalId,
-      })).resolves.toMatchObject({ consumed: false });
+      })).resolves.toBeNull();
 
       await expect(store.publishRelease(publishRequest())).resolves.toMatchObject({
         replayed: true,
-        record: { releaseId: pendingRelease.releaseId, status: "active_verified" },
+        record: { releaseId: pendingRelease.releaseId, status: "published_pending_readback" },
       });
-      await expect(store.recordReadback(verifiedReadbackRequest())).resolves.toMatchObject({
-        replayed: true,
-        record: verifiedReadback,
-      });
+      await expect(store.getUnfinishedReadbackAttempt({
+        managementTenantId: tenant,
+        attemptId: claim.attempt.attemptId,
+      })).resolves.toEqual(claim.attempt);
       await expect(store.getControlState()).resolves.toEqual(beforeBlockedPublish);
 
-      await store.completeIdempotency(completeRequest());
+      await store.finalizeReadbackAndComplete({
+        attemptId: claim.attempt.attemptId,
+        ownerCapability: claim.ownerCapability,
+        observation: {
+          status: verifiedReadback.status,
+          appliedReleaseId: verifiedReadback.appliedReleaseId,
+          appliedRevision: verifiedReadback.appliedRevision,
+          appliedModules: verifiedReadback.appliedModules,
+          reasonCodes: verifiedReadback.reasonCodes,
+          checkedAt: verifiedReadback.checkedAt,
+        },
+        finalResult: completedPublish.finalResult,
+        finalizedAt: verifiedReadback.checkedAt,
+      });
+      await store.createPreview({
+        metadata: secondPreviewMetadata,
+        record: secondChangePreview,
+        finalResult: secondPreviewFinalResult,
+      });
+      await store.decideApproval({
+        metadata: secondApprovalMetadata,
+        record: secondApproval,
+        finalResult: secondApprovalFinalResult,
+      });
       await expect(store.publishRelease({
         metadata: secondPublishMetadata,
         record: secondPendingRelease,
@@ -3099,11 +2956,6 @@ describe("SQLite control repository", () => {
     });
     const { store } = await seedPendingStore(applicationRoot);
 
-    const beforePendingCompletion = await store.getControlState();
-    await expect(store.completeIdempotency(completeRequest())).rejects.toMatchObject({
-      code: "conflict",
-    });
-    await expect(store.getControlState()).resolves.toEqual(beforePendingCompletion);
     await expect(
       store.getIdempotency({
         managementTenantId: tenant,
@@ -3124,10 +2976,15 @@ describe("SQLite control repository", () => {
       }),
     ).resolves.toBeNull();
 
-    await store.recordReadback({
+    const mismatchRequest = {
       metadata: mismatchReadbackMetadata,
       record: mismatchReadback,
-    });
+    } satisfies ReadbackFixtureRequest;
+    const claim = await claimReadbackAttemptFixture(
+      store,
+      mismatchRequest,
+      manualPublishFinalResult,
+    );
     const beforeInconsistentManualResult = await store.getControlState();
     const inconsistentManualResult = {
       ...manualPublishFinalResult,
@@ -3137,9 +2994,19 @@ describe("SQLite control repository", () => {
       },
     } as const satisfies ControlFinalResult;
     await expect(
-      store.completeIdempotency({
-        metadata: completeMetadata,
-        record: { ...completedPublish, finalResult: inconsistentManualResult },
+      store.finalizeReadbackAndComplete({
+        attemptId: claim.attempt.attemptId,
+        ownerCapability: claim.ownerCapability,
+        observation: {
+          status: mismatchReadback.status,
+          appliedReleaseId: mismatchReadback.appliedReleaseId,
+          appliedRevision: mismatchReadback.appliedRevision,
+          appliedModules: mismatchReadback.appliedModules,
+          reasonCodes: mismatchReadback.reasonCodes,
+          checkedAt: mismatchReadback.checkedAt,
+        },
+        finalResult: inconsistentManualResult,
+        finalizedAt: mismatchReadback.checkedAt,
       }),
     ).rejects.toMatchObject({ code: "conflict" });
     await expect(store.getControlState()).resolves.toEqual(beforeInconsistentManualResult);
@@ -3150,6 +3017,24 @@ describe("SQLite control repository", () => {
         idempotencyKey: publishMetadata.idempotencyKey,
       }),
     ).resolves.toMatchObject({ status: "domain_committed", finalResult: null });
+    await expect(store.finalizeReadbackAndComplete({
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: claim.ownerCapability,
+      observation: {
+        status: mismatchReadback.status,
+        appliedReleaseId: mismatchReadback.appliedReleaseId,
+        appliedRevision: mismatchReadback.appliedRevision,
+        appliedModules: mismatchReadback.appliedModules,
+        reasonCodes: mismatchReadback.reasonCodes,
+        checkedAt: mismatchReadback.checkedAt,
+      },
+      finalResult: manualPublishFinalResult,
+      finalizedAt: mismatchReadback.checkedAt,
+    })).resolves.toMatchObject({
+      disposition: "finalized",
+      readback: mismatchReadback,
+      idempotency: { status: "completed", finalResult: manualPublishFinalResult },
+    });
     await store.close();
   });
 
@@ -3161,8 +3046,6 @@ describe("SQLite control repository", () => {
       managementTenantId: tenant,
     });
     const { store } = await seedPendingStore(applicationRoot);
-    await store.recordReadback(verifiedReadbackRequest());
-    const before = await store.getControlState();
     const inconsistentModules = {
       ...completedPublish,
       finalResult: {
@@ -3182,9 +3065,28 @@ describe("SQLite control repository", () => {
         },
       },
     } as const satisfies CompletedModuleControlIdempotencyRecord;
+    const claim = await claimReadbackAttemptFixture(
+      store,
+      verifiedReadbackRequest(),
+      completedPublish.finalResult,
+    );
+    const before = await store.getControlState();
 
     await expect(
-      store.completeIdempotency({ metadata: completeMetadata, record: inconsistentModules }),
+      store.finalizeReadbackAndComplete({
+        attemptId: claim.attempt.attemptId,
+        ownerCapability: claim.ownerCapability,
+        observation: {
+          status: verifiedReadback.status,
+          appliedReleaseId: verifiedReadback.appliedReleaseId,
+          appliedRevision: verifiedReadback.appliedRevision,
+          appliedModules: verifiedReadback.appliedModules,
+          reasonCodes: verifiedReadback.reasonCodes,
+          checkedAt: verifiedReadback.checkedAt,
+        },
+        finalResult: inconsistentModules.finalResult,
+        finalizedAt: verifiedReadback.checkedAt,
+      }),
     ).rejects.toMatchObject({ code: "conflict" });
     await expect(store.getControlState()).resolves.toEqual(before);
     await expect(
@@ -3194,10 +3096,24 @@ describe("SQLite control repository", () => {
         idempotencyKey: publishMetadata.idempotencyKey,
       }),
     ).resolves.toMatchObject({ status: "domain_committed", finalResult: null });
+    await expect(store.finalizeReadbackAndComplete({
+      attemptId: claim.attempt.attemptId,
+      ownerCapability: claim.ownerCapability,
+      observation: {
+        status: verifiedReadback.status,
+        appliedReleaseId: verifiedReadback.appliedReleaseId,
+        appliedRevision: verifiedReadback.appliedRevision,
+        appliedModules: verifiedReadback.appliedModules,
+        reasonCodes: verifiedReadback.reasonCodes,
+        checkedAt: verifiedReadback.checkedAt,
+      },
+      finalResult: completedPublish.finalResult,
+      finalizedAt: verifiedReadback.checkedAt,
+    })).resolves.toMatchObject({ disposition: "finalized" });
     await store.close();
   });
 
-  it("binds complete idempotency lifecycle timestamps to the persisted reservation", async () => {
+  it("preserves persisted idempotency timestamps through attempt finalization", async () => {
     const applicationRoot = makeApplicationRoot();
     await initializeSqliteControlState({
       applicationRoot,
@@ -3205,16 +3121,6 @@ describe("SQLite control repository", () => {
       managementTenantId: tenant,
     });
     const { store } = await seedPendingStore(applicationRoot);
-
-    for (const field of ["createdAt", "expiresAt"] as const) {
-      const changedRecord = {
-        ...completedPublish,
-        [field]: field === "createdAt" ? "2099-08-22T00:03:01Z" : "2099-08-23T00:03:01Z",
-      } as const;
-      await expect(
-        store.completeIdempotency({ metadata: completeMetadata, record: changedRecord }),
-      ).rejects.toMatchObject({ code: "conflict" });
-    }
 
     await expect(store.getIdempotency({
       managementTenantId: tenant,
@@ -3226,8 +3132,17 @@ describe("SQLite control repository", () => {
       expiresAt: "2099-08-23T00:03:00Z",
       finalResult: null,
     });
-    await store.recordReadback(verifiedReadbackRequest());
-    await expect(store.completeIdempotency(completeRequest())).resolves.toEqual(completedPublish);
+    const finalized = await finalizeReadbackAttempt(
+      store,
+      verifiedReadbackRequest(),
+      completedPublish.finalResult,
+    );
+    expect(finalized.idempotency).toMatchObject({
+      status: "completed",
+      createdAt: pendingRelease.createdAt,
+      expiresAt: "2099-08-23T00:03:00Z",
+      finalResult: completedPublish.finalResult,
+    });
     await store.close();
   });
 
@@ -3269,9 +3184,43 @@ describe("SQLite control repository", () => {
       record: setPendingRelease,
       replayed: false,
     });
-    await expect(store.recordReadback(setVerifiedReadbackRequest())).resolves.toMatchObject({
-      record: setVerifiedReadback,
-      replayed: false,
+    const setPublishFinalResult = {
+      domainRecordRef: setPendingRelease.releaseId,
+      envelope: {
+        ...publishEnvelope,
+        request_id: "request_publish_set_001",
+        trace_id: "trace_publish_set_001",
+        audit_id: "audit_publish_set_001",
+        data: {
+          ...publishEnvelope.data,
+          release_id: setPendingRelease.releaseId,
+          active_modules: [
+            {
+              module_id: secondModuleRef.moduleId,
+              version: secondModuleRef.version,
+              descriptor_digest: secondModuleRef.descriptorDigest,
+            },
+            {
+              module_id: moduleRef.moduleId,
+              version: moduleRef.version,
+              descriptor_digest: moduleRef.descriptorDigest,
+            },
+          ],
+        },
+        readback: {
+          status: "verified",
+          release_id: setPendingRelease.releaseId,
+          revision: setPendingRelease.revision,
+        },
+      },
+    } as const satisfies ControlFinalResult;
+    await expect(finalizeReadbackAttempt(
+      store,
+      setVerifiedReadbackRequest(),
+      setPublishFinalResult,
+    )).resolves.toMatchObject({
+      disposition: "finalized",
+      readback: setVerifiedReadback,
     });
     await expect(store.getActiveRelease()).resolves.toMatchObject({
       releaseId: setPendingRelease.releaseId,
@@ -3611,50 +3560,30 @@ describe("SQLite control repository", () => {
     });
     const { store } = await seedPendingStore(applicationRoot);
 
-    const mismatch = await store.recordReadback({
-      metadata: mismatchReadbackMetadata,
-      record: mismatchReadback,
-    });
+    const mismatch = await finalizeReadbackAttempt(
+      store,
+      { metadata: mismatchReadbackMetadata, record: mismatchReadback },
+      manualPublishFinalResult,
+    );
     expect(mismatch.replayed).toBe(false);
-    expect(mismatch.record).toEqual(mismatchReadback);
+    expect(mismatch.readback).toMatchObject(mismatchReadback);
     await expect(store.getNewestUnresolvedRelease()).resolves.toMatchObject({
       releaseId: pendingRelease.releaseId,
       revision: pendingRelease.revision,
       status: "manual_review",
     });
 
-    const manualFinalResult = {
-      domainRecordRef: pendingRelease.releaseId,
-      envelope: {
-        ...publishEnvelope,
-        status: "manual_review",
-        reason_codes: ["readback.release_mismatch"],
-        readback: {
-          status: "mismatch",
-          release_id: pendingRelease.releaseId,
-          revision: pendingRelease.revision,
-        },
-      },
-    } as const satisfies ControlFinalResult;
-    await expect(
-      store.completeIdempotency({
-        metadata: completeMetadata,
-        record: { ...completedPublish, finalResult: manualFinalResult },
-      }),
-    ).resolves.toMatchObject({
-      status: "completed",
-      finalResult: manualFinalResult,
-    });
     await expect(store.publishRelease(publishRequest())).resolves.toMatchObject({
       replayed: true,
       record: { releaseId: pendingRelease.releaseId, status: "manual_review" },
     });
 
-    const reconciled = await store.recordReadback({
-      metadata: reconcileVerifiedMetadata,
-      record: verifiedReadback,
-    });
-    expect(reconciled.record).toEqual(verifiedReadback);
+    const reconciled = await finalizeReadbackAttempt(
+      store,
+      { metadata: reconcileVerifiedMetadata, record: verifiedReadback },
+      completedReconcile.finalResult,
+    );
+    expect(reconciled.readback).toMatchObject(verifiedReadback);
     await expect(store.getActiveRelease()).resolves.toMatchObject({
       releaseId: pendingRelease.releaseId,
       revision: pendingRelease.revision,
@@ -3662,18 +3591,15 @@ describe("SQLite control repository", () => {
       readbackRef: verifiedReadback.readbackRef,
     });
     await expect(
-      store.completeIdempotency({
-        metadata: reconcileCompleteMetadata,
-        record: completedReconcile,
-      }),
-    ).resolves.toEqual(completedReconcile);
-    await expect(
       store.getIdempotency({
         managementTenantId: tenant,
         action: "deployments.reconcile",
         idempotencyKey: reconcileVerifiedMetadata.idempotencyKey,
       }),
-    ).resolves.toEqual(completedReconcile);
+    ).resolves.toMatchObject({
+      status: "completed",
+      finalResult: completedReconcile.finalResult,
+    });
     await expect(store.getNewestUnresolvedRelease()).resolves.toBeNull();
 
     await store.close();
@@ -3699,22 +3625,16 @@ describe("SQLite control repository", () => {
       managementTenantId: tenant,
     });
     const { store } = await seedPendingStore(applicationRoot);
-    await store.recordReadback({
-      metadata: mismatchReadbackMetadata,
-      record: mismatchReadback,
-    });
-    await store.completeIdempotency({
-      metadata: completeMetadata,
-      record: { ...completedPublish, finalResult: manualPublishFinalResult },
-    });
-    await store.recordReadback({
-      metadata: reconcileVerifiedMetadata,
-      record: verifiedReadback,
-    });
-    await store.completeIdempotency({
-      metadata: reconcileCompleteMetadata,
-      record: completedReconcile,
-    });
+    await finalizeReadbackAttempt(
+      store,
+      { metadata: mismatchReadbackMetadata, record: mismatchReadback },
+      manualPublishFinalResult,
+    );
+    await finalizeReadbackAttempt(
+      store,
+      { metadata: reconcileVerifiedMetadata, record: verifiedReadback },
+      completedReconcile.finalResult,
+    );
     await expect(
       store.getIdempotency({
         managementTenantId: tenant,
@@ -3747,7 +3667,7 @@ describe("SQLite control repository", () => {
     await expectSemanticCorruptionFailsClosed(openStore(applicationRoot));
   });
 
-  it("persists a new reconcile key and event when the readback record is an exact replay", async () => {
+  it("persists a new reconcile attempt when the terminal observation repeats", async () => {
     const applicationRoot = makeApplicationRoot();
     await initializeSqliteControlState({
       applicationRoot,
@@ -3755,10 +3675,17 @@ describe("SQLite control repository", () => {
       managementTenantId: tenant,
     });
     const { store } = await seedPendingStore(applicationRoot);
-    await store.recordReadback({
-      metadata: mismatchReadbackMetadata,
-      record: mismatchReadback,
-    });
+    await finalizeReadbackAttempt(
+      store,
+      { metadata: mismatchReadbackMetadata, record: mismatchReadback },
+      manualPublishFinalResult,
+    );
+
+    const repeatedMismatchReadback = {
+      ...mismatchReadback,
+      readbackRef: "readback_release_001_mismatch_reconcile",
+      checkedAt: "2099-08-22T00:04:45Z",
+    } as const satisfies ModuleReadbackRecord;
 
     const replayReconcileMetadata = {
       managementTenantId: tenant,
@@ -3776,27 +3703,11 @@ describe("SQLite control repository", () => {
           kind: "reconciliation",
           releaseId: pendingRelease.releaseId,
           revision: pendingRelease.revision,
-          readbackRef: mismatchReadback.readbackRef,
+          readbackRef: repeatedMismatchReadback.readbackRef,
           status: "mismatch",
         },
       },
     } as const satisfies ReconcileRequestMetadata;
-    const reconciled = await store.recordReadback({
-      metadata: replayReconcileMetadata,
-      record: mismatchReadback,
-    });
-    expect(reconciled).toMatchObject({ record: mismatchReadback, replayed: false });
-    await expect(
-      store.getIdempotency({
-        managementTenantId: tenant,
-        action: "deployments.reconcile",
-        idempotencyKey: replayReconcileMetadata.idempotencyKey,
-      }),
-    ).resolves.toMatchObject({
-      status: "domain_committed",
-      domainRecordRef: pendingRelease.releaseId,
-      finalResult: null,
-    });
 
     const reconcileManualResult = {
       domainRecordRef: pendingRelease.releaseId,
@@ -3815,44 +3726,26 @@ describe("SQLite control repository", () => {
         },
       },
     } as const satisfies ControlFinalResult;
-    const reconcileReplayCompletionMetadata = {
-      managementTenantId: tenant,
-      actorRef: publisher,
-      action: "deployments.reconcile",
-      idempotencyKey: replayReconcileMetadata.idempotencyKey,
-      requestHash: reconcileRequestHash,
-      event: {
-        action: "deployments.reconcile",
-        objectRef: `idempotency:deployments.reconcile:${replayReconcileMetadata.idempotencyKey}`,
-        kind: "idempotency",
+    const reconciled = await finalizeReadbackAttempt(
+      store,
+      { metadata: replayReconcileMetadata, record: repeatedMismatchReadback },
+      reconcileManualResult,
+    );
+    expect(reconciled).toMatchObject({
+      replayed: false,
+      readback: repeatedMismatchReadback,
+      idempotency: {
         status: "completed",
-        reasonCodes: [],
-        detail: {
-          kind: "idempotency",
-          recordRef: `idempotency:deployments.reconcile:${replayReconcileMetadata.idempotencyKey}`,
-          domainRecordRef: pendingRelease.releaseId,
-          status: "completed",
-        },
+        finalResult: reconcileManualResult,
       },
-    } as const satisfies CompleteIdempotencyRequestMetadata;
-    const completedReplayReconcile = {
+    });
+    await expect(store.getReadbackAttemptHistory({
       managementTenantId: tenant,
-      action: "deployments.reconcile",
-      idempotencyKey: replayReconcileMetadata.idempotencyKey,
-      requestHash: reconcileRequestHash,
-      actorRef: publisher,
-      status: "completed",
-      domainRecordRef: pendingRelease.releaseId,
-      finalResult: reconcileManualResult,
-      createdAt: mismatchReadback.checkedAt,
-      expiresAt: "2099-08-23T00:04:30Z",
-    } as const satisfies CompletedModuleControlIdempotencyRecord;
-    await expect(
-      store.completeIdempotency({
-        metadata: reconcileReplayCompletionMetadata,
-        record: completedReplayReconcile,
-      }),
-    ).resolves.toEqual(completedReplayReconcile);
+      releaseId: pendingRelease.releaseId,
+    })).resolves.toMatchObject([
+      { action: "deployments.reconcile", terminalStatus: "mismatch" },
+      { action: "deployments.publish", terminalStatus: "mismatch" },
+    ]);
 
     await store.close();
     const database = new DatabaseSync(controlDatabasePath(applicationRoot));
@@ -3862,6 +3755,9 @@ describe("SQLite control repository", () => {
       });
       expect(database.prepare("SELECT COUNT(*) AS count FROM module_readbacks").get()).toEqual({
         count: 1,
+      });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM module_readback_attempts").get()).toEqual({
+        count: 2,
       });
       expect(
         database
@@ -3901,13 +3797,26 @@ describe("SQLite control repository", () => {
       reasonCodes: ["readback.unknown"],
       checkedAt: "2099-08-22T00:04:45Z",
     } as const satisfies ModuleReadbackRecord;
+    const unknownFinalResult = {
+      ...manualPublishFinalResult,
+      envelope: {
+        ...manualPublishFinalResult.envelope,
+        reason_codes: ["readback.unknown"],
+        readback: {
+          status: "unknown",
+          release_id: pendingRelease.releaseId,
+          revision: pendingRelease.revision,
+        },
+      },
+    } as const satisfies ControlFinalResult;
 
     await expect(
-      store.recordReadback({
-        metadata: unknownReadbackMetadata,
-        record: unknownReadback,
-      }),
-    ).resolves.toMatchObject({ record: unknownReadback, replayed: false });
+      finalizeReadbackAttempt(
+        store,
+        { metadata: unknownReadbackMetadata, record: unknownReadback },
+        unknownFinalResult,
+      ),
+    ).resolves.toMatchObject({ readback: unknownReadback, replayed: false });
     await expect(store.getRelease({
       managementTenantId: tenant,
       releaseId: pendingRelease.releaseId,
@@ -4612,8 +4521,6 @@ describe("SQLite control repository", () => {
     await expect(store.createPreview(previewRequest())).rejects.toMatchObject({ code: "closed" });
     await expect(store.decideApproval(approvalRequest())).rejects.toMatchObject({ code: "closed" });
     await expect(store.publishRelease(publishRequest())).rejects.toMatchObject({ code: "closed" });
-    await expect(store.recordReadback(verifiedReadbackRequest())).rejects.toMatchObject({ code: "closed" });
-    await expect(store.completeIdempotency(completeRequest())).rejects.toMatchObject({ code: "closed" });
     await expect(store.getControlState()).rejects.toMatchObject({ code: "closed" });
     await expect(store.getActiveRelease()).rejects.toMatchObject({ code: "closed" });
     await expect(store.getPendingRelease()).rejects.toMatchObject({ code: "closed" });

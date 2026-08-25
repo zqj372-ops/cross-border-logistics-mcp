@@ -742,7 +742,7 @@ export type PublishReadbackRequestMetadata = ControlRequestMetadataBase<
   "deployments.publish",
   PublishReadbackControlEventInput
 >;
-export type CompleteIdempotencyRequestMetadata = {
+export type ControlIdempotencyEventMetadata = {
   [Action in ModuleControlAction]: ControlRequestMetadataBase<
     Action,
     IdempotencyControlEventInput & { action: Action }
@@ -756,7 +756,7 @@ export type ControlRequestMetadata =
   | PublishReleaseRequestMetadata
   | PublishReadbackRequestMetadata
   | ReconcileRequestMetadata
-  | CompleteIdempotencyRequestMetadata;
+  | ControlIdempotencyEventMetadata;
 
 export interface ModuleControlState {
   readonly managementTenantId: string;
@@ -800,14 +800,6 @@ export interface DecideApprovalRecordRequest {
 export interface PublishReleaseRecordRequest {
   readonly metadata: PublishReleaseRequestMetadata;
   readonly record: ModuleReleaseRecord;
-}
-export interface RecordReadbackRequest {
-  readonly metadata: ReconcileRequestMetadata | PublishReadbackRequestMetadata;
-  readonly record: ModuleReadbackRecord;
-}
-export interface CompleteControlIdempotencyRequest {
-  readonly metadata: CompleteIdempotencyRequestMetadata;
-  readonly record: ModuleControlIdempotencyRecord;
 }
 
 interface ManagementTenantQuery {
@@ -855,11 +847,6 @@ export interface ReleaseWriteResult {
   readonly event: DeepReadonly<ControlEventRecord>;
   readonly replayed: boolean;
 }
-export interface ReadbackWriteResult {
-  readonly record: DeepReadonly<ModuleReadbackRecord>;
-  readonly event: DeepReadonly<ControlEventRecord>;
-  readonly replayed: boolean;
-}
 
 export interface ModuleControlRepository {
   health(): Promise<{ ready: boolean }>;
@@ -874,12 +861,6 @@ export interface ModuleControlRepository {
   publishRelease(
     request: PublishReleaseRecordRequest,
   ): Promise<ReleaseWriteResult>;
-  /** TODO(SQLite promotion): remove this legacy compatibility write entry. */
-  recordReadback(request: RecordReadbackRequest): Promise<ReadbackWriteResult>;
-  /** TODO(SQLite promotion): remove this legacy compatibility write entry. */
-  completeIdempotency(
-    request: CompleteControlIdempotencyRequest,
-  ): Promise<DeepReadonly<ControlIdempotencyRecord>>;
   getControlState(): Promise<DeepReadonly<ModuleControlState>>;
   getActiveRelease(): Promise<DeepReadonly<ModuleReleaseRecord> | null>;
   getPendingRelease(): Promise<DeepReadonly<ModuleReleaseRecord> | null>;

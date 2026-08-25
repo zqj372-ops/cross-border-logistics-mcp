@@ -29,7 +29,6 @@ import {
 import type {
   ApprovalWriteResult,
   CanonicalRequestHash,
-  CompleteControlIdempotencyRequest,
   ClaimReadbackAttemptRequest,
   ControlEventLifecycleCounts,
   ControlEventRecord,
@@ -60,7 +59,6 @@ import type {
   ModuleReleaseRecord,
   PreviewWriteResult,
   PublishReleaseRecordRequest,
-  ReadbackWriteResult,
   ReadbackAttemptClaimResult,
   ReadbackAttemptObservation,
   ReadbackAttemptOwnerCapability,
@@ -70,7 +68,6 @@ import type {
   FinalizeReadbackAndCompleteRequest,
   GetReadbackAttemptHistoryQuery,
   GetUnfinishedReadbackAttemptQuery,
-  RecordReadbackRequest,
   RegisterModuleRecordRequest,
   RegistrationWriteResult,
   ReleaseWriteResult,
@@ -83,8 +80,6 @@ export const FAKE_CONTROL_REPOSITORY_METHOD_NAMES = Object.freeze([
   "createPreview",
   "decideApproval",
   "publishRelease",
-  "recordReadback",
-  "completeIdempotency",
   "getControlState",
   "getActiveRelease",
   "getPendingRelease",
@@ -179,19 +174,6 @@ const FAILURE_PHASE_ALLOWLIST: Readonly<
     "after_domain_write",
     "after_event",
   ],
-  recordReadback: [
-    "method_entry",
-    "after_idempotency",
-    "after_release_status_change",
-    "after_domain_write",
-    "after_event",
-  ],
-  completeIdempotency: [
-    "method_entry",
-    "after_domain_write",
-    "after_idempotency",
-    "after_event",
-  ],
   getControlState: ["method_entry"],
   getActiveRelease: ["method_entry"],
   getPendingRelease: ["method_entry"],
@@ -210,8 +192,6 @@ type FakeControlRepositoryRequestByMethod = {
   readonly createPreview: CreatePreviewRecordRequest;
   readonly decideApproval: DecideApprovalRecordRequest;
   readonly publishRelease: PublishReleaseRecordRequest;
-  readonly recordReadback: RecordReadbackRequest;
-  readonly completeIdempotency: CompleteControlIdempotencyRequest;
   readonly getControlState: null;
   readonly getActiveRelease: null;
   readonly getPendingRelease: null;
@@ -1343,258 +1323,6 @@ export class FakeModuleControlRepository
     );
   }
 
-  // TODO(SQLite promotion): retain only for pre-attempt fixture compatibility; never service-facing.
-  async recordReadback(request: RecordReadbackRequest): Promise<ReadbackWriteResult> {
-    const safeRequest = this.begin("recordReadback", request);
-    await Promise.resolve();
-    const bound = this.bindRequest<ModuleReadbackRecord>(
-      safeRequest as unknown as RecordReadbackRequest,
-    );
-    const metadata = bound.metadata;
-    const record = bound.record as ModuleReadbackRecord;
-    const existingIdempotency = this.findRequestIdempotency(metadata);
-    if (existingIdempotency !== null) {
-      this.assertExistingIdempotency(existingIdempotency, metadata);
-      if (existingIdempotency.status === "reserved") repositoryError("invalid_state");
-      if (existingIdempotency.domainRecordRef !== record.releaseId) {
-        repositoryError("conflict");
-      }
-      const replay = this.tryReplayReadback(metadata, record);
-      if (replay !== null) return replay;
-    }
-    if (metadata.action === "deployments.publish") {
-      if (existingIdempotency === null) repositoryError("not_found");
-      if (
-        existingIdempotency.status !== "domain_committed" &&
-        existingIdempotency.status !== "completed"
-      ) {
-        repositoryError("invalid_state");
-      }
-    }
-
-    const release = this.releaseRecords.get(
-      recordKey(this.managementTenantId, record.releaseId),
-    );
-    if (release === undefined) repositoryError("not_found");
-    if (release.revision !== record.revision) repositoryError("conflict");
-    if (metadata.action === "deployments.reconcile") {
-      const newest = this.findReleaseByStatusRecord(
-        "published_pending_readback",
-        "manual_review",
-      );
-      if (
-        newest === null ||
-        newest.releaseId !== release.releaseId ||
-        newest.revision !== release.revision
-      ) {
-        repositoryError("conflict");
-      }
-    }
-
-    const readbackKey = recordKey(this.managementTenantId, record.releaseId);
-    const existingReadback = this.readbackRecords.get(readbackKey) ?? null;
-    const exactExisting =
-      existingReadback !== null && isDeepStrictEqual(existingReadback, record);
-    if (existingReadback !== null && existingIdempotency !== null) {
-      if (!exactExisting) repositoryError("conflict");
-      const replay = this.tryReplayReadback(metadata, record);
-      if (replay !== null) return replay;
-      invalidState();
-    }
-    if (
-      metadata.action === "deployments.publish" &&
-      release.status !== "published_pending_readback"
-    ) {
-      repositoryError("conflict");
-    }
-    if (existingIdempotency?.status === "completed") repositoryError("conflict");
-    if (
-      existingReadback !== null &&
-      (existingReadback.status === "verified" ||
-        release.status === "active_verified" ||
-        release.status === "superseded")
-    ) {
-      repositoryError("conflict");
-    }
-    if (
-      record.status === "verified" &&
-      (record.appliedReleaseId !== release.releaseId ||
-        record.appliedRevision !== release.revision ||
-        !sameModuleRefs(record.appliedModules, release.desiredModules))
-    ) {
-      repositoryError("conflict");
-    }
-    if (
-      record.status === "pending" &&
-      release.status !== "published_pending_readback"
-    ) {
-      repositoryError("conflict");
-    }
-    for (const candidate of this.readbackRecords.values()) {
-      if (
-        candidate.readbackRef === record.readbackRef &&
-        candidate.releaseId !== record.releaseId
-      ) {
-        repositoryError("conflict");
-      }
-    }
-    const committed =
-      metadata.action === "deployments.reconcile" && existingIdempotency === null
-        ? this.domainCommittedIdempotencyCandidate(
-            metadata,
-            record.releaseId,
-            record.checkedAt,
-          )
-        : null;
-
-    return this.withAtomicWrite("recordReadback", () => {
-      if (committed !== null) {
-        this.insertIdempotency(committed);
-        this.consumeFailure("recordReadback", "after_idempotency");
-      }
-      if (!exactExisting) {
-        this.readbackRecords.set(readbackKey, this.snapshotRecord(record));
-      }
-      this.consumeFailure("recordReadback", "after_domain_write");
-
-      let changedReleaseStatus = false;
-      if (!exactExisting && record.status === "verified") {
-        const previousActive = this.findReleaseByStatusRecord("active_verified");
-        if (
-          previousActive !== null &&
-          previousActive.releaseId !== release.releaseId
-        ) {
-          this.releaseRecords.set(
-            recordKey(this.managementTenantId, previousActive.releaseId),
-            this.snapshotRecord({
-              ...previousActive,
-              status: "superseded",
-              supersededByReleaseId: release.releaseId,
-            } as ModuleReleaseRecord),
-          );
-        }
-        this.releaseRecords.set(
-          recordKey(this.managementTenantId, release.releaseId),
-          this.snapshotRecord({
-            ...release,
-            publishedAt: release.publishedAt ?? release.createdAt,
-            status: "active_verified",
-            readbackRef: record.readbackRef,
-            reasonCodes: [],
-            supersededByReleaseId: null,
-          }),
-        );
-        changedReleaseStatus = true;
-      } else if (
-        !exactExisting &&
-        (record.status === "mismatch" || record.status === "unknown")
-      ) {
-        this.releaseRecords.set(
-          recordKey(this.managementTenantId, release.releaseId),
-          this.snapshotRecord({
-            ...release,
-            publishedAt: release.publishedAt ?? release.createdAt,
-            status: "manual_review",
-            readbackRef: record.readbackRef,
-            reasonCodes: [...record.reasonCodes],
-            supersededByReleaseId: null,
-          }),
-        );
-        changedReleaseStatus = true;
-      }
-      if (changedReleaseStatus) {
-        this.consumeFailure("recordReadback", "after_release_status_change");
-      }
-      const event = this.appendEvent(metadata, record);
-      this.consumeFailure("recordReadback", "after_event");
-      const persisted = this.readbackRecords.get(readbackKey);
-      if (persisted === undefined) invalidState();
-      return this.writeResult(persisted, event, false);
-    });
-  }
-
-  // TODO(SQLite promotion): retain only for pre-attempt fixture compatibility; never service-facing.
-  async completeIdempotency(
-    request: CompleteControlIdempotencyRequest,
-  ): Promise<DeepReadonly<ModuleControlIdempotencyRecord>> {
-    const safeRequest = this.begin("completeIdempotency", request);
-    await Promise.resolve();
-    const bound = this.bindRequest<ModuleControlIdempotencyRecord>(
-      safeRequest as unknown as CompleteControlIdempotencyRequest,
-    );
-    const metadata = bound.metadata;
-    const requested = bound.record as ModuleControlIdempotencyRecord;
-    if (requested.status !== "completed" || requested.finalResult === null) {
-      repositoryError("invalid_state");
-    }
-    const existing = this.findRequestIdempotency(metadata);
-    if (existing === null) repositoryError("not_found");
-    this.assertExistingIdempotency(existing, metadata);
-    if (
-      existing.createdAt !== requested.createdAt ||
-      existing.expiresAt !== requested.expiresAt
-    ) {
-      repositoryError("conflict");
-    }
-    if (existing.status === "completed") {
-      if (!isDeepStrictEqual(existing, requested)) repositoryError("conflict");
-      return this.snapshotRecord(existing);
-    }
-    if (existing.status === "reserved") repositoryError("conflict");
-    if (existing.status !== "domain_committed") repositoryError("invalid_state");
-    if (existing.domainRecordRef !== requested.domainRecordRef) {
-      repositoryError("conflict");
-    }
-
-    let revision: number | undefined;
-    if (
-      metadata.action === "deployments.publish" ||
-      metadata.action === "deployments.reconcile"
-    ) {
-      const release = this.releaseRecords.get(
-        recordKey(this.managementTenantId, requested.domainRecordRef),
-      );
-      if (release === undefined) repositoryError("not_found");
-      revision = release.revision;
-    }
-    const finalResult = validateFinalResult(
-      requested.finalResult,
-      metadata.action,
-      requested.domainRecordRef,
-      revision,
-    );
-    const completed = this.snapshotRecord({
-      ...requested,
-      finalResult,
-    });
-    if (
-      metadata.action === "deployments.publish" ||
-      metadata.action === "deployments.reconcile"
-    ) {
-      this.validatePersistedReleaseCompletion(
-        metadata.action,
-        finalResult,
-        "conflict",
-      );
-    }
-
-    return this.withAtomicWrite("completeIdempotency", () => {
-      this.idempotencyRecords.set(
-        idempotencyKey(
-          this.managementTenantId,
-          metadata.action,
-          metadata.idempotencyKey,
-        ),
-        completed,
-      );
-      this.consumeFailure("completeIdempotency", "after_domain_write");
-      this.consumeFailure("completeIdempotency", "after_idempotency");
-      this.appendEvent(metadata, completed);
-      this.consumeFailure("completeIdempotency", "after_event");
-      return this.snapshotRecord(completed);
-    });
-  }
-
   async getControlState(): Promise<DeepReadonly<ModuleControlState>> {
     this.begin("getControlState", null);
     await Promise.resolve();
@@ -2713,29 +2441,6 @@ export class FakeModuleControlRepository
     );
     if (event === null) repositoryError("invalid_state");
     return this.writeResult(release, event, true);
-  }
-
-  private tryReplayReadback(
-    metadata: DeepReadonly<ControlRequestMetadata>,
-    record: ModuleReadbackRecord,
-  ): ReadbackWriteResult | null {
-    const persisted = this.readbackRecords.get(
-      recordKey(this.managementTenantId, record.releaseId),
-    );
-    if (persisted === undefined || !isDeepStrictEqual(persisted, record)) return null;
-    const event = this.findEvent(
-      (candidate) =>
-        candidate.managementTenantId === this.managementTenantId &&
-        candidate.action === metadata.action &&
-        candidate.kind === "reconciliation" &&
-        candidate.objectRef === record.releaseId &&
-        candidate.status === record.status &&
-        candidate.detail.kind === "reconciliation" &&
-        candidate.detail.revision === record.revision &&
-        candidate.detail.readbackRef === record.readbackRef,
-    );
-    if (event === null) return null;
-    return this.writeResult(persisted, event, true);
   }
 
   private validateNewApproval(record: ModuleApprovalRecord): void {
