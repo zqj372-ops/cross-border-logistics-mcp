@@ -8,6 +8,10 @@ import type {
 } from "./types";
 
 import { isTrustedModuleInventory } from "./inventory";
+import {
+  readActivationRegistrySnapshot,
+  registerActivationRegistryState,
+} from "./activation-authority-internal";
 
 import {
   DESCRIPTOR_DIGEST_PATTERN,
@@ -47,8 +51,6 @@ export type ModuleActivationErrorCode =
 type ClosedDataErrorCode =
   | "inventory_invalid"
   | "snapshot_invalid";
-
-const registrySnapshots = new WeakMap<object, ModuleActivationSnapshot>();
 
 export class ModuleActivationError extends Error {
   readonly code: ModuleActivationErrorCode;
@@ -270,15 +272,6 @@ function freezeRef(
   return Object.freeze({ moduleId, version, descriptorDigest });
 }
 
-function initialSnapshot(): ModuleActivationSnapshot {
-  const activeModules: readonly ActiveModuleRef[] = Object.freeze([]);
-  return Object.freeze({
-    releaseId: null,
-    revision: 0,
-    activeModules,
-  });
-}
-
 function inventoryRef(value: unknown, index: number): ActiveModuleRef {
   const fields = materializeClosedRecord(
     value,
@@ -363,7 +356,7 @@ export class ModuleActivationRegistry {
       moduleIds.add(ref.moduleId);
     }
 
-    registrySnapshots.set(this, initialSnapshot());
+    registerActivationRegistryState(this, inventory);
     Object.defineProperties(this, {
       snapshot: {
         configurable: false,
@@ -382,7 +375,7 @@ export class ModuleActivationRegistry {
   }
 
   snapshot(): ModuleActivationSnapshot {
-    const snapshot = registrySnapshots.get(this);
+    const snapshot = readActivationRegistrySnapshot(this);
     if (snapshot === undefined) {
       throw new ModuleActivationError(
         "registry_invalid",
@@ -393,7 +386,7 @@ export class ModuleActivationRegistry {
   }
 
   isActive(ref: ActiveModuleRef): boolean {
-    const currentSnapshot = registrySnapshots.get(this);
+    const currentSnapshot = readActivationRegistrySnapshot(this);
     if (currentSnapshot === undefined) {
       return false;
     }

@@ -4,6 +4,7 @@ import {
   ModuleActivationError,
   ModuleActivationRegistry,
 } from "../../src/logistics_mcp/control-plane/activation-registry";
+import * as publicControlPlane from "../../src/logistics_mcp/control-plane/index";
 import type {
   ModuleActivationErrorCode,
 } from "../../src/logistics_mcp/control-plane/activation-registry";
@@ -239,6 +240,15 @@ describe("module activation registry", () => {
     expect(Reflect.ownKeys(registry).sort()).toEqual(["isActive", "snapshot"]);
     expect(Object.keys(registry)).toEqual([]);
     expect(Object.isFrozen(registry)).toBe(true);
+  });
+
+  it("does not leak the service-private authority through the public control-plane index", () => {
+    const publicExports = publicControlPlane as unknown as Record<string, unknown>;
+
+    expect(publicExports.createActivationGate).toBeUndefined();
+    expect(publicExports.ActivationAuthorityError).toBeUndefined();
+    expect(publicExports.registerActivationRegistryState).toBeUndefined();
+    expect(publicExports.readActivationRegistrySnapshot).toBeUndefined();
   });
 
   it("locks prototype methods and prototype chains against same-realm replacement", () => {
