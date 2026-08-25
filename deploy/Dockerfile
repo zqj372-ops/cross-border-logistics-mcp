@@ -6,6 +6,10 @@ RUN npm ci
 COPY src ./src
 COPY apps/admin ./apps/admin
 COPY docs/contracts ./docs/contracts
+COPY docs/agent ./docs/agent
+COPY docs/standards ./docs/standards
+COPY docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md ./docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md
+COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY tsconfig.json .
 COPY vitest.config.ts .

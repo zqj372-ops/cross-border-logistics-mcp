@@ -46,6 +46,10 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
     expect(dockerfile).toContain("COPY apps/admin ./apps/admin");
+    expect(dockerfile).toContain("COPY docs/agent ./docs/agent");
+    expect(dockerfile).toContain("COPY docs/standards ./docs/standards");
+    expect(dockerfile).toContain("COPY docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md");
+    expect(dockerfile).toContain("COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md");
     expect(dockerfile).toMatch(/COPY --from=build .*\/dist \.\/dist/);
     expect(dockerfile).toMatch(/COPY --from=build .*\/docs\/contracts .*\/docs\/contracts/);
     expect(dockerfile).toContain('CMD ["node", "dist/src/logistics_mcp/server/start.mjs"]');
