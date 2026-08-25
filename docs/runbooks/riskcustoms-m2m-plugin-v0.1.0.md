@@ -4,8 +4,10 @@
 
 这是 MCP 仓库的候选集成版本说明，不是 RiskCustoms 上游服务的发布证明；本仓库的
 `package.json` 版本仍为 `0.1.0`。本版本不修改对外 MCP 工具目录、工具 Schema 或响应
-包络；RiskCustoms 服务端合同由独立仓库
-[PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2) 提供。本候选不自动启用生产连接。
+包络；RiskCustoms 服务端合同由独立仓库的已合入基础实现和当前 Draft 修复候选共同提供：
+[PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2)、
+[PR #4](https://github.com/zqj372-ops/riskcustoms-hs/pull/4) 已在上游 `main`，
+[PR #3](https://github.com/zqj372-ops/riskcustoms-hs/pull/3) 仍是待审阅的 M2M 修复候选。本候选不自动启用生产连接。
 
 ## 版本目标
 
@@ -60,16 +62,18 @@ Compose 文件、客户端配置或 PR。
 在获得批准的 context-aware status source 之前，不能用 `system.get_data_status` 的结果
 替代 M2M status，也不能把静态 health 或浏览器会话当作 M2M 联通证明。
 
-RiskCustoms `main@1cd712b4dfac755998f72d852171530b58d9e827` 已通过独立
-[PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2) 合入
-`/api/m2m/status` 与 `/api/m2m/query`；服务端实现提交为
-`5e61c5b4904ef0317c78e5a87ceacb85cb271fa2`。后续
-[PR #4](https://github.com/zqj372-ops/riskcustoms-hs/pull/4) 关闭了 Nginx→Node 路径中不同外部客户端
-共享认证前限流 actor 的问题。当前实现包含 Bearer hash、client/tenant 绑定、认证前/后限流、
-D1 审计、release/snapshot identity 和严格来源合同，但其 OpenAPI 仍明确标记
-`x-deployment-status: disabled`，生产配置门禁也保持 blocked。因此这里确认的是精确代码合同，
-不是 endpoint 已部署、token 已生效或正式 release 已就绪。MCP adapter 继续默认关闭，不把
-浏览器 `/api/query` 暴露为 M2M，也不做匿名、在线搜索或旧路由回退。
+RiskCustoms `main@1cd712b4dfac755998f72d852171530b58d9e827` 已包含
+[PR #2](https://github.com/zqj372-ops/riskcustoms-hs/pull/2) 的
+`/api/m2m/status`、`/api/m2m/query` 基础实现，以及
+[PR #4](https://github.com/zqj372-ops/riskcustoms-hs/pull/4) 的可信反代客户端 IP
+认证前限流隔离。当前 M2M 修复候选是保持 Draft 的
+[PR #3](https://github.com/zqj372-ops/riskcustoms-hs/pull/3)，其 head 为
+`1761797b2953864a47af7a459140f0cafe2cb45e`，对应 CI run
+`32824018292` 已成功；该候选补上已发布 release 范围的数据库隔离、严格来源/发布身份闭合
+和 OpenAPI 500 错误合同。PR #3 尚未合入，因此这里确认的是精确代码合同和 CI 结果，不是
+endpoint 已部署、token 已生效或正式 release 已就绪。RiskCustoms 当前 OpenAPI 仍明确标记
+`x-deployment-status: disabled`，生产配置门禁也保持 blocked。MCP adapter 继续默认关闭，
+不把浏览器 `/api/query` 暴露为 M2M，也不做匿名、在线搜索或旧路由回退。
 
 ### rc.2 合同对齐
 
