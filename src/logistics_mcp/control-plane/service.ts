@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual, types as nodeTypes } from "node:util";
 
 import type { ExecutionContext } from "../platform/context";
@@ -5,9 +6,11 @@ import { isTrustedExecutionContext } from "../platform/context";
 import { canonicalControlHash } from "./canonical-control-hash";
 import {
   assertControlProducerEnvelope,
+  approvalRequestSchema,
   controlEnvelopeSchema,
   CONTROL_STATE_MAX_MODULES,
   deploymentPreviewRequestSchema,
+  publishRequestSchema,
   registerPackageRequestSchema,
   type ApprovalRequest,
   type ControlEnvelope,
@@ -30,16 +33,24 @@ import {
 } from "./runtime-mutation-coordinator";
 import {
   isRequestHash,
+  isPreviewHash,
   ModuleControlRepositoryError,
   type CanonicalRequestHash,
   type ControlFinalResult,
   type CreatePreviewRequestMetadata,
+  type DecideApprovalRequestMetadata,
   type DeepReadonly,
   type ModuleControlRepository,
+  type ModuleControlReadbackAttemptRepository,
   type ModuleControlRef,
+  type ModuleApprovalRecord,
   type ModulePreviewRecord,
   type ModuleReadbackRecord,
   type ModuleRegistrationRecord,
+  type ModuleReleaseRecord,
+  type PublishReleaseRequestMetadata,
+  type ReadbackAttemptRecord,
+  type ReadbackFinalizationResult,
   type RegisterModuleRequestMetadata,
 } from "./repository";
 import type { ModuleControlState } from "./repository";
@@ -106,6 +117,7 @@ export interface ModuleControlRuntimeAssemblyOptions {
   readonly previewTtlSeconds: number;
   readonly clock: () => string;
   readonly idGenerator: () => string;
+  readonly ownerBootId?: string;
 }
 
 export interface ActivationReadFacade {
@@ -130,6 +142,7 @@ interface PrivateRuntimeCapabilities {
   readonly privateDriver: ActivationAuthorityDriver;
   readonly recoveryDriver: ActivationRecoveryDriver;
   readonly activationSnapshot: () => ModuleActivationSnapshot;
+  readonly ownerBootId: string;
 }
 
 interface ActivationDispatchGate extends ActivationReadFacade {
@@ -148,6 +161,17 @@ const REGISTER_REQUEST_KEYS = [
   "module_id",
   "version",
   "descriptor_digest",
+] as const;
+const APPROVAL_REQUEST_KEYS = [
+  "schema_version",
+  "preview_ref",
+  "decision",
+  "reason_code",
+] as const;
+const PUBLISH_REQUEST_KEYS = [
+  "schema_version",
+  "preview_ref",
+  "approval_id",
 ] as const;
 
 const PREVIEW_POLICY_VERSION = "writable-module-control-plane-v1" as const;
@@ -351,6 +375,20 @@ function parseRegisterRequest(value: unknown): RegisterPackageRequest | null {
   return parsed.success ? parsed.data : null;
 }
 
+function parseApprovalRequest(value: unknown): ApprovalRequest | null {
+  const snapshot = snapshotExactRecord(value, APPROVAL_REQUEST_KEYS);
+  if (snapshot === null) return null;
+  const parsed = approvalRequestSchema.safeParse(snapshot);
+  return parsed.success ? parsed.data : null;
+}
+
+function parsePublishRequest(value: unknown): PublishRequest | null {
+  const snapshot = snapshotExactRecord(value, PUBLISH_REQUEST_KEYS);
+  if (snapshot === null) return null;
+  const parsed = publishRequestSchema.safeParse(snapshot);
+  return parsed.success ? parsed.data : null;
+}
+
 function parseDeploymentPreviewRequest(
   value: unknown,
 ): DeploymentPreviewRequest | null {
@@ -465,7 +503,7 @@ function stringArraysEqual(
   );
 }
 
-function replayedChangePreviewMatchesEnvelope(
+function replayedPreviewMatchesEnvelope(
   preview: ModulePreviewRecord,
   envelope: DeepFrozen<ControlEnvelope>,
   managementTenantId: string,
@@ -473,19 +511,21 @@ function replayedChangePreviewMatchesEnvelope(
   previewRef: string,
 ): boolean {
   const data = envelope.data;
-  const recomputed = recomputePersistedChangePreviewHash(preview);
+  if (envelope.status !== "success" || data?.kind !== "preview") return false;
+  const recomputed = recomputePersistedPreviewHash(preview);
+  const targetMatches =
+    preview.intent === "change"
+      ? data?.intent === "change" && data.target_release_id === null
+      : data?.intent === "rollback" &&
+        data.target_release_id === preview.targetReleaseId;
   return (
-    envelope.status === "success" &&
-    data?.kind === "preview" &&
     recomputed !== null &&
     preview.canonicalHash === recomputed &&
     data.canonical_hash === recomputed &&
     data.preview_ref === previewRef &&
     preview.managementTenantId === managementTenantId &&
     preview.previewRef === previewRef &&
-    preview.intent === "change" &&
-    data.intent === "change" &&
-    data.target_release_id === null &&
+    targetMatches &&
     data.canonical_hash === preview.canonicalHash &&
     data.base_release_id === preview.baseReleaseId &&
     data.base_revision === preview.baseRevision &&
@@ -540,11 +580,10 @@ function hashModuleRef(ref: ModuleControlRef) {
   };
 }
 
-function recomputePersistedChangePreviewHash(
+function recomputePersistedPreviewHash(
   preview: ModulePreviewRecord,
 ): string | null {
   try {
-    if (preview.intent !== "change") return null;
     const createdAt = parseRfc3339Instant(preview.createdAt);
     const expiresAt = parseRfc3339Instant(preview.expiresAt);
     if (createdAt === null || expiresAt === null) return null;
@@ -564,32 +603,230 @@ function recomputePersistedChangePreviewHash(
       return null;
     }
 
+    const basePayload = {
+      action: "deployments.preview" as const,
+      management_tenant_id: preview.managementTenantId,
+      creator_actor_ref: preview.creatorActorRef,
+      base_release_revision: preview.baseRevision,
+      inventory_refs: preview.inventoryRefs.map(hashModuleRef),
+      desired_modules: preview.desiredModules.map(hashModuleRef),
+      policy_version: PREVIEW_POLICY_VERSION,
+      schema_version: ADMIN_CONTROL_SCHEMA_VERSION,
+      validation: {
+        base_matches: preview.validation.baseMatches,
+        desired_modules_valid: preview.validation.desiredModulesValid,
+        inventory_matches: preview.validation.inventoryMatches,
+        minimum_active_modules: preview.validation.minimumActiveModules,
+        reason_codes: preview.validation.reasonCodes,
+      },
+      preview_ttl_seconds: previewTtlSeconds,
+    };
+    const payload =
+      preview.intent === "rollback"
+        ? {
+            ...basePayload,
+            intent: "rollback" as const,
+            target_release_id: preview.targetReleaseId,
+          }
+        : {
+            ...basePayload,
+            intent: "change" as const,
+          };
     return canonicalControlHash({
       domain: "preview",
       schemaVersion: ADMIN_CONTROL_SCHEMA_VERSION,
-      payload: {
-        action: "deployments.preview",
-        management_tenant_id: preview.managementTenantId,
-        creator_actor_ref: preview.creatorActorRef,
-        intent: preview.intent,
-        base_release_revision: preview.baseRevision,
-        inventory_refs: preview.inventoryRefs.map(hashModuleRef),
-        desired_modules: preview.desiredModules.map(hashModuleRef),
-        policy_version: PREVIEW_POLICY_VERSION,
-        schema_version: ADMIN_CONTROL_SCHEMA_VERSION,
-        validation: {
-          base_matches: preview.validation.baseMatches,
-          desired_modules_valid: preview.validation.desiredModulesValid,
-          inventory_matches: preview.validation.inventoryMatches,
-          minimum_active_modules: preview.validation.minimumActiveModules,
-          reason_codes: preview.validation.reasonCodes,
-        },
-        preview_ttl_seconds: previewTtlSeconds,
-      },
+      payload,
     }).hash;
   } catch {
     return null;
   }
+}
+
+function approvalInventoryDigestSet(
+  refs: readonly ModuleControlRef[],
+): readonly ModuleControlRef["descriptorDigest"][] {
+  return Object.freeze(
+    [...new Set(refs.map((ref) => ref.descriptorDigest))].sort(),
+  );
+}
+
+function persistedPreviewIsStructurallyValidForApproval(
+  preview: ModulePreviewRecord,
+  managementTenantId: string,
+  previewRef: string,
+): boolean {
+  const recomputed = recomputePersistedPreviewHash(preview);
+  const baseIsClosed =
+    (preview.baseReleaseId === null && preview.baseRevision === 0) ||
+    (preview.baseReleaseId !== null && preview.baseRevision > 0);
+  return (
+    preview.managementTenantId === managementTenantId &&
+    preview.previewRef === previewRef &&
+    recomputed !== null &&
+    isPreviewHash(preview.canonicalHash) &&
+    preview.canonicalHash === recomputed &&
+    baseIsClosed &&
+    preview.inventoryRefs.length > 0 &&
+    moduleRefSetsEqual(preview.inventoryRefs, preview.inventoryRefs) &&
+    preview.desiredModules.length > 0 &&
+    moduleRefSetsEqual(preview.desiredModules, preview.desiredModules) &&
+    IDENTIFIER_PATTERN.test(preview.creatorActorRef)
+  );
+}
+
+function replayedApprovalMatchesEnvelope(
+  approval: ModuleApprovalRecord,
+  envelope: DeepFrozen<ControlEnvelope>,
+  request: ApprovalRequest,
+  managementTenantId: string,
+  actorRef: string,
+  approvalId: string,
+): boolean {
+  const data = envelope.data;
+  const baseIsClosed =
+    (approval.baseReleaseId === null && approval.baseRevision === 0) ||
+    (approval.baseReleaseId !== null && approval.baseRevision > 0);
+  const normalizedInventoryDigestSet = [
+    ...new Set(approval.inventoryDigestSet),
+  ].sort();
+  return (
+    envelope.status === "success" &&
+    data?.kind === "approval" &&
+    data.approval_id === approvalId &&
+    data.preview_ref === approval.previewRef &&
+    data.decision === approval.decision &&
+    approval.managementTenantId === managementTenantId &&
+    approval.approvalId === approvalId &&
+    approval.previewRef === request.preview_ref &&
+    approval.decision === request.decision &&
+    approval.reasonCode === request.reason_code &&
+    approval.approverActorRef === actorRef &&
+    isPreviewHash(approval.previewCanonicalHash) &&
+    baseIsClosed &&
+    approval.inventoryDigestSet.length > 0 &&
+    stringArraysEqual(
+      approval.inventoryDigestSet,
+      normalizedInventoryDigestSet,
+    ) &&
+    IDENTIFIER_PATTERN.test(approval.reasonCode) &&
+    compareRfc3339Instants(approval.decidedAt, approval.expiresAt) === -1 &&
+    approval.consumed === false
+  );
+}
+
+function hasReadbackAttemptRepository(
+  repository: ModuleControlRepository,
+): repository is ModuleControlRepository & ModuleControlReadbackAttemptRepository {
+  const candidate = repository as Partial<ModuleControlReadbackAttemptRepository>;
+  return (
+    typeof candidate.claimReadbackAttempt === "function" &&
+    typeof candidate.finalizeReadbackAndComplete === "function"
+  );
+}
+
+function publishedReleaseMatchesEnvelope(
+  release: DeepReadonly<ModuleReleaseRecord>,
+  readback: DeepReadonly<ModuleReadbackRecord> | null,
+  envelope: DeepFrozen<ControlEnvelope>,
+  request: PublishRequest,
+  managementTenantId: string,
+  publisherActorRef: string,
+): boolean {
+  const data = envelope.data;
+  if (
+    release.managementTenantId !== managementTenantId ||
+    release.previewRef !== request.preview_ref ||
+    release.approvalId !== request.approval_id ||
+    release.publisherActorRef !== publisherActorRef ||
+    release.publishedAt === null ||
+    readback === null ||
+    readback.managementTenantId !== managementTenantId ||
+    readback.readbackRef !== release.readbackRef ||
+    readback.releaseId !== release.releaseId ||
+    readback.revision !== release.revision ||
+    readback.appliedReleaseId !== release.releaseId ||
+    readback.appliedRevision !== release.revision ||
+    !moduleRefSetsEqual(readback.appliedModules, release.desiredModules) ||
+    data?.kind !== "release" ||
+    data.release_id !== release.releaseId ||
+    data.revision !== release.revision ||
+    data.active_modules === undefined ||
+    !moduleRefsMatchEnvelope(release.desiredModules, data.active_modules) ||
+    envelope.readback.release_id !== release.releaseId ||
+    envelope.readback.revision !== release.revision
+  ) {
+    return false;
+  }
+
+  if (release.status === "active_verified") {
+    return (
+      release.reasonCodes.length === 0 &&
+      release.supersededByReleaseId === null &&
+      readback.status === "verified" &&
+      readback.reasonCodes.length === 0 &&
+      envelope.status === "success" &&
+      envelope.reason_codes.length === 0 &&
+      envelope.readback.status === "verified"
+    );
+  }
+  if (release.status === "manual_review") {
+    return (
+      readback.status !== "verified" &&
+      stringArraysEqual(readback.reasonCodes, release.reasonCodes) &&
+      envelope.status === "manual_review" &&
+      stringArraysEqual(envelope.reason_codes, release.reasonCodes) &&
+      envelope.readback.status === readback.status
+    );
+  }
+  return false;
+}
+
+function claimedAttemptMatchesPublish(
+  attempt: DeepReadonly<ReadbackAttemptRecord>,
+  input: {
+    readonly managementTenantId: string;
+    readonly attemptId: string;
+    readonly idempotencyKey: string;
+    readonly requestHash: CanonicalRequestHash;
+    readonly actorRef: string;
+    readonly requestId: string;
+    readonly traceId: string;
+    readonly auditId: string;
+    readonly releaseId: string;
+    readonly revision: number;
+    readonly desiredModules: readonly ModuleControlRef[];
+    readonly readbackRef: string;
+    readonly claimedAt: string;
+  },
+): boolean {
+  return (
+    attempt.managementTenantId === input.managementTenantId &&
+    attempt.attemptId === input.attemptId &&
+    attempt.action === "deployments.publish" &&
+    attempt.idempotencyKey === input.idempotencyKey &&
+    attempt.requestHash === input.requestHash &&
+    attempt.actorRef === input.actorRef &&
+    attempt.requestId === input.requestId &&
+    attempt.traceId === input.traceId &&
+    attempt.auditId === input.auditId &&
+    attempt.releaseId === input.releaseId &&
+    attempt.revision === input.revision &&
+    moduleRefSetsEqual(attempt.desiredModules, input.desiredModules) &&
+    attempt.readbackRef === input.readbackRef &&
+    IDENTIFIER_PATTERN.test(attempt.ownerBootId) &&
+    attempt.phase === "claimed" &&
+    attempt.claimedAt === input.claimedAt &&
+    attempt.finalizedAt === null &&
+    attempt.terminalStatus === null &&
+    attempt.appliedReleaseId === null &&
+    attempt.appliedRevision === null &&
+    attempt.appliedModules.length === 0 &&
+    attempt.reasonCodes.length === 0 &&
+    attempt.checkedAt === null &&
+    attempt.finalizedByActorRef === null &&
+    attempt.reconciliationEventSequence === null &&
+    attempt.completionEventSequence === null
+  );
 }
 
 function moduleRefDiff(
@@ -614,7 +851,7 @@ function moduleRefDiff(
 }
 
 function previewBaseAgreesWithRuntime(
-  state: ModuleControlState,
+  state: DeepReadonly<ModuleControlState>,
   snapshot: ModuleActivationSnapshot,
   managementTenantId: string,
   exactActiveReadback: DeepReadonly<ModuleReadbackRecord> | null,
@@ -657,6 +894,25 @@ function previewBaseAgreesWithRuntime(
     readback.reasonCodes.length === 0 &&
     moduleRefSetsEqual(readback.appliedModules, snapshot.activeModules) &&
     activeRelease.readbackRef === readback.readbackRef
+  );
+}
+
+function rollbackTargetReadbackMatchesRelease(
+  release: DeepReadonly<ModuleReleaseRecord>,
+  readback: DeepReadonly<ModuleReadbackRecord> | null,
+  managementTenantId: string,
+): boolean {
+  return (
+    readback !== null &&
+    readback.managementTenantId === managementTenantId &&
+    readback.status === "verified" &&
+    readback.readbackRef === release.readbackRef &&
+    readback.releaseId === release.releaseId &&
+    readback.revision === release.revision &&
+    readback.appliedReleaseId === release.releaseId &&
+    readback.appliedRevision === release.revision &&
+    readback.reasonCodes.length === 0 &&
+    moduleRefSetsEqual(readback.appliedModules, release.desiredModules)
   );
 }
 
@@ -891,6 +1147,100 @@ class ModuleControlServiceImplementation implements ModuleControlService {
     );
   }
 
+  #approvalPreflightReadFailure(
+    error: unknown,
+    meta: WriteMeta,
+  ): DeepFrozen<ControlEnvelope> {
+    if (error instanceof RuntimeMutationFatalError) throw error;
+    if (
+      error instanceof ModuleControlRepositoryError &&
+      error.code !== "closed"
+    ) {
+      return this.#runtime.coordinator.tripFatal(error);
+    }
+    return this.#terminalWriteEnvelope(
+      "approvals.decide",
+      meta,
+      "unavailable",
+      "repository_unavailable",
+    );
+  }
+
+  #approvalRepositoryFailure(
+    error: unknown,
+    meta: WriteMeta,
+  ): DeepFrozen<ControlEnvelope> {
+    if (error instanceof RuntimeMutationFatalError) throw error;
+    if (
+      error instanceof ModuleControlRepositoryError &&
+      error.code === "conflict"
+    ) {
+      return this.#terminalWriteEnvelope(
+        "approvals.decide",
+        meta,
+        "blocked",
+        "approval_conflict",
+      );
+    }
+    if (
+      error instanceof ModuleControlRepositoryError &&
+      error.code === "closed"
+    ) {
+      return this.#terminalWriteEnvelope(
+        "approvals.decide",
+        meta,
+        "unavailable",
+        "repository_unavailable",
+      );
+    }
+    return this.#runtime.coordinator.tripFatal(error);
+  }
+
+  #publishPreflightReadFailure(
+    error: unknown,
+    meta: WriteMeta,
+  ): DeepFrozen<ControlEnvelope> {
+    if (error instanceof RuntimeMutationFatalError) throw error;
+    if (
+      error instanceof ModuleControlRepositoryError &&
+      error.code !== "closed"
+    ) {
+      return this.#runtime.coordinator.tripFatal(error);
+    }
+    return this.#terminalWriteEnvelope(
+      "deployments.publish",
+      meta,
+      "unavailable",
+      "repository_unavailable",
+    );
+  }
+
+  #publishRepositoryFailure(
+    error: unknown,
+    meta: WriteMeta,
+  ): DeepFrozen<ControlEnvelope> {
+    if (error instanceof RuntimeMutationFatalError) throw error;
+    if (error instanceof ModuleControlRepositoryError) {
+      if (error.code === "conflict" || error.code === "not_found") {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "publish_conflict",
+        );
+      }
+      if (error.code === "invalid_state" || error.code === "tenant_mismatch") {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+    }
+    return this.#terminalWriteEnvelope(
+      "deployments.publish",
+      meta,
+      "unavailable",
+      "repository_unavailable",
+    );
+  }
+
   async registerPackage(
     context: ExecutionContext,
     requestInput: RegisterPackageRequest,
@@ -1118,17 +1468,25 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           "preview_request_invalid",
         );
       }
-      if (request.intent === "rollback") {
-        return this.#terminalWriteEnvelope(
-          "deployments.preview",
-          meta,
-          "blocked",
-          "rollback_preview_not_implemented",
-        );
-      }
-
       let expectedRequestHash: string;
       try {
+        const requestPayload =
+          request.intent === "change"
+            ? {
+                schema_version: request.schema_version,
+                intent: "change" as const,
+                desired_modules: request.desired_modules.map((ref) => ({
+                  module_id: ref.module_id,
+                  version: ref.version,
+                  descriptor_digest:
+                    ref.descriptor_digest as `sha256:${string}`,
+                })),
+              }
+            : {
+                schema_version: request.schema_version,
+                intent: "rollback" as const,
+                target_release_id: request.target_release_id,
+              };
         expectedRequestHash = canonicalControlHash({
           domain: "request",
           schemaVersion: request.schema_version,
@@ -1136,15 +1494,7 @@ class ModuleControlServiceImplementation implements ModuleControlService {
             action: "deployments.preview",
             management_tenant_id: this.#managementTenantId,
             actor_ref: context.actorId,
-            request: {
-              schema_version: request.schema_version,
-              intent: "change",
-              desired_modules: request.desired_modules.map((ref) => ({
-                module_id: ref.module_id,
-                version: ref.version,
-                descriptor_digest: ref.descriptor_digest as `sha256:${string}`,
-              })),
-            },
+            request: requestPayload,
           },
         }).hash;
       } catch (error: unknown) {
@@ -1222,7 +1572,7 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           persistedIdempotency.finalResult.envelope,
         );
         if (
-          !replayedChangePreviewMatchesEnvelope(
+          !replayedPreviewMatchesEnvelope(
             persistedPreview,
             replayEnvelope,
             this.#managementTenantId,
@@ -1305,11 +1655,120 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         return this.#runtime.coordinator.tripFatal(error);
       }
 
+      let rollbackTargetRelease: DeepReadonly<ModuleReleaseRecord> | null = null;
+      if (request.intent === "rollback") {
+        if (
+          activationSnapshot.releaseId === null ||
+          activationSnapshot.revision === 0 ||
+          state.activeRelease === null
+        ) {
+          return this.#terminalWriteEnvelope(
+            "deployments.preview",
+            meta,
+            "blocked",
+            "rollback_base_inactive",
+          );
+        }
+
+        const boundedTargets = state.releaseHistory.filter(
+          (entry) => entry.release.releaseId === request.target_release_id,
+        );
+        if (boundedTargets.length === 0) {
+          return this.#terminalWriteEnvelope(
+            "deployments.preview",
+            meta,
+            "blocked",
+            "rollback_target_not_in_bounded_history",
+          );
+        }
+        if (boundedTargets.length !== 1) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        const boundedTargetRelease = boundedTargets[0]!.release;
+        if (boundedTargetRelease.managementTenantId !== this.#managementTenantId) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("management_tenant_state_mismatch"),
+          );
+        }
+        if (boundedTargetRelease.revision >= activationSnapshot.revision) {
+          return this.#terminalWriteEnvelope(
+            "deployments.preview",
+            meta,
+            "blocked",
+            "rollback_target_not_older_than_base",
+          );
+        }
+        if (
+          boundedTargetRelease.status !== "active_verified" &&
+          boundedTargetRelease.status !== "superseded"
+        ) {
+          return this.#terminalWriteEnvelope(
+            "deployments.preview",
+            meta,
+            "blocked",
+            "rollback_target_status_not_eligible",
+          );
+        }
+        if (boundedTargetRelease.desiredModules.length === 0) {
+          return this.#terminalWriteEnvelope(
+            "deployments.preview",
+            meta,
+            "blocked",
+            "rollback_target_modules_empty",
+          );
+        }
+
+        let exactTargetRelease: DeepReadonly<ModuleReleaseRecord> | null;
+        try {
+          exactTargetRelease = await this.#repository.getRelease({
+            managementTenantId: this.#managementTenantId,
+            releaseId: request.target_release_id,
+          });
+        } catch (error: unknown) {
+          return this.#previewPreflightReadFailure(error, meta);
+        }
+        if (
+          exactTargetRelease === null ||
+          !isDeepStrictEqual(exactTargetRelease, boundedTargetRelease)
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        let exactTargetReadback: DeepReadonly<ModuleReadbackRecord> | null;
+        try {
+          exactTargetReadback = await this.#repository.getReadback({
+            managementTenantId: this.#managementTenantId,
+            releaseId: request.target_release_id,
+          });
+        } catch (error: unknown) {
+          return this.#previewPreflightReadFailure(error, meta);
+        }
+        if (
+          !rollbackTargetReadbackMatchesRelease(
+            exactTargetRelease,
+            exactTargetReadback,
+            this.#managementTenantId,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        rollbackTargetRelease = exactTargetRelease;
+      }
+
       const inventoryRefs = sortedModuleRefs(
         this.#inventory.map(inventoryModuleRef),
       );
       const desiredRefs = sortedModuleRefs(
-        request.desired_modules.map(requestModuleRef),
+        request.intent === "change"
+          ? request.desired_modules.map(requestModuleRef)
+          : rollbackTargetRelease!.desiredModules,
       );
       try {
         for (const registration of state.registrations) {
@@ -1387,22 +1846,33 @@ class ModuleControlServiceImplementation implements ModuleControlService {
       let createdAt: string;
       let expiresAt: string;
       try {
+        const basePayload = {
+          action: "deployments.preview" as const,
+          management_tenant_id: this.#managementTenantId,
+          creator_actor_ref: context.actorId,
+          base_release_revision: activationSnapshot.revision,
+          inventory_refs: inventoryRefs.map(hashModuleRef),
+          desired_modules: desiredRefs.map(hashModuleRef),
+          policy_version: PREVIEW_POLICY_VERSION,
+          schema_version: request.schema_version,
+          validation,
+          preview_ttl_seconds: this.#previewTtlSeconds,
+        };
+        const payload =
+          request.intent === "rollback"
+            ? {
+                ...basePayload,
+                intent: "rollback" as const,
+                target_release_id: request.target_release_id,
+              }
+            : {
+                ...basePayload,
+                intent: "change" as const,
+              };
         previewHash = canonicalControlHash({
           domain: "preview",
           schemaVersion: request.schema_version,
-          payload: {
-            action: "deployments.preview",
-            management_tenant_id: this.#managementTenantId,
-            creator_actor_ref: context.actorId,
-            intent: "change",
-            base_release_revision: activationSnapshot.revision,
-            inventory_refs: inventoryRefs.map(hashModuleRef),
-            desired_modules: desiredRefs.map(hashModuleRef),
-            policy_version: PREVIEW_POLICY_VERSION,
-            schema_version: request.schema_version,
-            validation,
-            preview_ttl_seconds: this.#previewTtlSeconds,
-          },
+          payload,
         }).hash;
         previewRef = this.#idGenerator();
         if (typeof previewRef !== "string" || !IDENTIFIER_PATTERN.test(previewRef)) {
@@ -1436,11 +1906,12 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         data: {
           kind: "preview",
           preview_ref: previewRef,
-          intent: "change",
+          intent: request.intent,
           base_release_id: activationSnapshot.releaseId,
           base_revision: activationSnapshot.revision,
           desired_modules: desiredModules,
-          target_release_id: null,
+          target_release_id:
+            request.intent === "rollback" ? request.target_release_id : null,
           expires_at: expiresAt,
           canonical_hash: previewHash,
           diff: diffForEnvelope,
@@ -1456,7 +1927,7 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           revision: null,
         },
       });
-      const record = {
+      const recordBase = {
         managementTenantId: this.#managementTenantId,
         previewRef,
         canonicalHash: previewHash as `mcp-control-hash/v1/preview/sha256:${string}`,
@@ -1476,8 +1947,18 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         createdAt,
         expiresAt,
         consumed: false,
-        intent: "change" as const,
       };
+      const record: ModulePreviewRecord =
+        request.intent === "rollback"
+          ? {
+              ...recordBase,
+              intent: "rollback",
+              targetReleaseId: request.target_release_id,
+            }
+          : {
+              ...recordBase,
+              intent: "change",
+            };
       const event: CreatePreviewRequestMetadata["event"] = {
         action: "deployments.preview",
         objectRef: previewRef,
@@ -1571,7 +2052,7 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         );
         if (
           !isDeepStrictEqual(persistedEnvelope, successEnvelope) ||
-          !replayedChangePreviewMatchesEnvelope(
+          !replayedPreviewMatchesEnvelope(
             record,
             persistedEnvelope,
             this.#managementTenantId,
@@ -1593,22 +2074,1255 @@ class ModuleControlServiceImplementation implements ModuleControlService {
 
   async decideApproval(
     context: ExecutionContext,
-    request: ApprovalRequest,
-    meta: WriteMeta,
+    requestInput: ApprovalRequest,
+    metaInput: WriteMeta,
   ): Promise<DeepFrozen<ControlEnvelope>> {
     this.#assertRuntimeHealthy();
-    void request;
-    return this.#unimplementedWrite("approvals.decide", context, meta);
+    const meta = parseWriteMeta(metaInput);
+    const failure = authorizationFailure(context, this.#managementTenantId);
+    if (failure !== null) {
+      return this.#terminalWriteEnvelope("approvals.decide", meta, "blocked", failure);
+    }
+
+    return this.#runtime.coordinator.withMutation(async () => {
+      const request = parseApprovalRequest(requestInput);
+      if (request === null) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "approval_request_invalid",
+        );
+      }
+
+      let expectedRequestHash: string;
+      try {
+        expectedRequestHash = canonicalControlHash({
+          domain: "request",
+          schemaVersion: request.schema_version,
+          payload: {
+            action: "approvals.decide",
+            management_tenant_id: this.#managementTenantId,
+            actor_ref: context.actorId,
+            request,
+          },
+        }).hash;
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+      if (expectedRequestHash !== meta.requestHash) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "request_hash_mismatch",
+        );
+      }
+
+      let existingIdempotency;
+      try {
+        existingIdempotency = await this.#repository.getIdempotency({
+          managementTenantId: this.#managementTenantId,
+          action: "approvals.decide",
+          idempotencyKey: meta.idempotencyKey,
+        });
+      } catch (error: unknown) {
+        return this.#approvalPreflightReadFailure(error, meta);
+      }
+      if (existingIdempotency !== null) {
+        const persistedIdempotency = existingIdempotency;
+        if (
+          persistedIdempotency.managementTenantId !== this.#managementTenantId ||
+          persistedIdempotency.action !== "approvals.decide" ||
+          persistedIdempotency.idempotencyKey !== meta.idempotencyKey
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        if (persistedIdempotency.requestHash !== meta.requestHash) {
+          return this.#terminalWriteEnvelope(
+            "approvals.decide",
+            meta,
+            "blocked",
+            "approval_conflict",
+          );
+        }
+        if (
+          persistedIdempotency.status !== "completed" ||
+          persistedIdempotency.actorRef !== context.actorId ||
+          persistedIdempotency.domainRecordRef === null ||
+          persistedIdempotency.finalResult === null ||
+          persistedIdempotency.finalResult.domainRecordRef !==
+            persistedIdempotency.domainRecordRef
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        let replayedApproval;
+        try {
+          replayedApproval = await this.#repository.getApproval({
+            managementTenantId: this.#managementTenantId,
+            approvalId: persistedIdempotency.domainRecordRef,
+          });
+        } catch (error: unknown) {
+          return this.#approvalPreflightReadFailure(error, meta);
+        }
+        if (replayedApproval === null) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        const replayEnvelope = this.#assertWriteEnvelope(
+          "approvals.decide",
+          persistedIdempotency.finalResult.envelope,
+        );
+        if (
+          !replayedApprovalMatchesEnvelope(
+            replayedApproval,
+            replayEnvelope,
+            request,
+            this.#managementTenantId,
+            context.actorId,
+            persistedIdempotency.domainRecordRef,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        return replayEnvelope;
+      }
+
+      let preview;
+      try {
+        preview = await this.#repository.getPreview({
+          managementTenantId: this.#managementTenantId,
+          previewRef: request.preview_ref,
+        });
+      } catch (error: unknown) {
+        return this.#approvalPreflightReadFailure(error, meta);
+      }
+      if (preview === null) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "preview_not_found",
+        );
+      }
+
+      try {
+        if (
+          !persistedPreviewIsStructurallyValidForApproval(
+            preview,
+            this.#managementTenantId,
+            request.preview_ref,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      if (preview.consumed) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "preview_consumed",
+        );
+      }
+      if (preview.creatorActorRef === context.actorId) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "approval_self_approval_forbidden",
+        );
+      }
+      if (
+        !preview.validation.baseMatches ||
+        !preview.validation.desiredModulesValid ||
+        !preview.validation.inventoryMatches ||
+        !preview.validation.minimumActiveModules ||
+        preview.validation.reasonCodes.length !== 0
+      ) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "preview_not_approvable",
+        );
+      }
+
+      const currentInventoryRefs = sortedModuleRefs(
+        this.#inventory.map(inventoryModuleRef),
+      );
+      if (!moduleRefSetsEqual(preview.inventoryRefs, currentInventoryRefs)) {
+        return this.#terminalWriteEnvelope(
+          "approvals.decide",
+          meta,
+          "blocked",
+          "inventory_drift",
+        );
+      }
+
+      let decidedAt: string;
+      let approvalId: string;
+      try {
+        decidedAt = this.#clock();
+        const expiryComparison = compareRfc3339Instants(
+          preview.expiresAt,
+          decidedAt,
+        );
+        if (expiryComparison === null) {
+          throw new TypeError("Approval time is not a valid RFC3339 instant.");
+        }
+        if (expiryComparison <= 0) {
+          return this.#terminalWriteEnvelope(
+            "approvals.decide",
+            meta,
+            "blocked",
+            "preview_expired",
+          );
+        }
+        approvalId = this.#idGenerator();
+        if (
+          typeof approvalId !== "string" ||
+          !IDENTIFIER_PATTERN.test(approvalId)
+        ) {
+          throw new TypeError("The approval ID generator returned an invalid identifier.");
+        }
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      const record: ModuleApprovalRecord = {
+        managementTenantId: this.#managementTenantId,
+        approvalId,
+        previewRef: preview.previewRef,
+        decision: request.decision,
+        previewCanonicalHash: preview.canonicalHash,
+        baseReleaseId: preview.baseReleaseId,
+        baseRevision: preview.baseRevision,
+        inventoryDigestSet: approvalInventoryDigestSet(preview.inventoryRefs),
+        expiresAt: preview.expiresAt,
+        reasonCode: request.reason_code,
+        approverActorRef: context.actorId,
+        decidedAt,
+        consumed: false,
+      };
+      const successEnvelope = this.#assertWriteEnvelope("approvals.decide", {
+        schema_version: request.schema_version,
+        request_id: meta.requestId,
+        trace_id: meta.traceId,
+        audit_id: meta.auditId,
+        status: "success",
+        data: {
+          kind: "approval",
+          approval_id: approvalId,
+          preview_ref: preview.previewRef,
+          decision: request.decision,
+        },
+        reason_codes: [],
+        readback: {
+          status: "not_applicable",
+          release_id: null,
+          revision: null,
+        },
+      });
+      const eventStatus = request.decision === "approve" ? "approved" : "rejected";
+      const event: DecideApprovalRequestMetadata["event"] = {
+        action: "approvals.decide",
+        objectRef: approvalId,
+        kind: "approval",
+        status: eventStatus,
+        reasonCodes: [],
+        detail: {
+          kind: "approval",
+          approvalId,
+          previewRef: preview.previewRef,
+          status: eventStatus,
+        },
+      };
+      const finalResult: ControlFinalResult = {
+        domainRecordRef: approvalId,
+        envelope: successEnvelope as unknown as ControlEnvelope,
+      };
+
+      let writeResult;
+      try {
+        writeResult = await this.#repository.decideApproval({
+          metadata: {
+            managementTenantId: this.#managementTenantId,
+            actorRef: context.actorId,
+            action: "approvals.decide",
+            idempotencyKey: meta.idempotencyKey,
+            requestHash: meta.requestHash,
+            event,
+          },
+          record,
+          finalResult,
+        });
+      } catch (error: unknown) {
+        return this.#approvalRepositoryFailure(error, meta);
+      }
+
+      let persisted;
+      try {
+        persisted = await this.#repository.getIdempotency({
+          managementTenantId: this.#managementTenantId,
+          action: "approvals.decide",
+          idempotencyKey: meta.idempotencyKey,
+        });
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      try {
+        if (
+          writeResult.replayed !== false ||
+          !isDeepStrictEqual(writeResult.record, record) ||
+          writeResult.event.managementTenantId !== this.#managementTenantId ||
+          writeResult.event.actorRef !== context.actorId ||
+          writeResult.event.action !== event.action ||
+          writeResult.event.objectRef !== event.objectRef ||
+          writeResult.event.kind !== event.kind ||
+          writeResult.event.status !== event.status ||
+          !isDeepStrictEqual(writeResult.event.reasonCodes, event.reasonCodes) ||
+          !isDeepStrictEqual(writeResult.event.detail, event.detail) ||
+          writeResult.event.occurredAt !== decidedAt ||
+          typeof writeResult.event.eventId !== "string" ||
+          !IDENTIFIER_PATTERN.test(writeResult.event.eventId) ||
+          !Number.isSafeInteger(writeResult.event.sequence) ||
+          writeResult.event.sequence <= 0
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        if (
+          persisted === null ||
+          persisted.status !== "completed" ||
+          persisted.managementTenantId !== this.#managementTenantId ||
+          persisted.action !== "approvals.decide" ||
+          persisted.idempotencyKey !== meta.idempotencyKey ||
+          persisted.requestHash !== meta.requestHash ||
+          persisted.actorRef !== context.actorId ||
+          persisted.createdAt !== decidedAt ||
+          compareRfc3339Instants(persisted.createdAt, persisted.expiresAt) !== -1 ||
+          persisted.domainRecordRef !== approvalId ||
+          persisted.finalResult === null ||
+          persisted.finalResult.domainRecordRef !== approvalId
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        const persistedEnvelope = this.#assertWriteEnvelope(
+          "approvals.decide",
+          persisted.finalResult.envelope,
+        );
+        if (
+          !isDeepStrictEqual(persistedEnvelope, successEnvelope) ||
+          !replayedApprovalMatchesEnvelope(
+            record,
+            persistedEnvelope,
+            request,
+            this.#managementTenantId,
+            context.actorId,
+            approvalId,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        return persistedEnvelope;
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+    });
   }
 
   async publish(
     context: ExecutionContext,
-    request: PublishRequest,
-    meta: WriteMeta,
+    requestInput: PublishRequest,
+    metaInput: WriteMeta,
   ): Promise<DeepFrozen<ControlEnvelope>> {
     this.#assertRuntimeHealthy();
-    void request;
-    return this.#unimplementedWrite("deployments.publish", context, meta);
+    const meta = parseWriteMeta(metaInput);
+    const failure = authorizationFailure(context, this.#managementTenantId);
+    if (failure !== null) {
+      return this.#terminalWriteEnvelope(
+        "deployments.publish",
+        meta,
+        "blocked",
+        failure,
+      );
+    }
+
+    return this.#runtime.coordinator.withMutation(async () => {
+      const request = parsePublishRequest(requestInput);
+      if (request === null) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "publish_request_invalid",
+        );
+      }
+
+      let expectedRequestHash: string;
+      try {
+        expectedRequestHash = canonicalControlHash({
+          domain: "request",
+          schemaVersion: request.schema_version,
+          payload: {
+            action: "deployments.publish",
+            management_tenant_id: this.#managementTenantId,
+            actor_ref: context.actorId,
+            request,
+          },
+        }).hash;
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+      if (expectedRequestHash !== meta.requestHash) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "request_hash_mismatch",
+        );
+      }
+
+      let existingIdempotency;
+      try {
+        existingIdempotency = await this.#repository.getIdempotency({
+          managementTenantId: this.#managementTenantId,
+          action: "deployments.publish",
+          idempotencyKey: meta.idempotencyKey,
+        });
+      } catch (error: unknown) {
+        return this.#publishPreflightReadFailure(error, meta);
+      }
+
+      if (existingIdempotency !== null) {
+        if (
+          existingIdempotency.managementTenantId !== this.#managementTenantId ||
+          existingIdempotency.action !== "deployments.publish" ||
+          existingIdempotency.idempotencyKey !== meta.idempotencyKey
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        if (existingIdempotency.requestHash !== meta.requestHash) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            "idempotency_conflict",
+          );
+        }
+        if (
+          existingIdempotency.actorRef !== context.actorId ||
+          existingIdempotency.status !== "completed" ||
+          existingIdempotency.domainRecordRef === null ||
+          existingIdempotency.finalResult === null ||
+          existingIdempotency.finalResult.domainRecordRef !==
+            existingIdempotency.domainRecordRef
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        let release;
+        let readback;
+        try {
+          [release, readback] = await Promise.all([
+            this.#repository.getRelease({
+              managementTenantId: this.#managementTenantId,
+              releaseId: existingIdempotency.domainRecordRef,
+            }),
+            this.#repository.getReadback({
+              managementTenantId: this.#managementTenantId,
+              releaseId: existingIdempotency.domainRecordRef,
+            }),
+          ]);
+        } catch (error: unknown) {
+          return this.#publishPreflightReadFailure(error, meta);
+        }
+        if (release === null) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        const replayEnvelope = this.#assertWriteEnvelope(
+          "deployments.publish",
+          existingIdempotency.finalResult.envelope,
+        );
+        if (
+          !publishedReleaseMatchesEnvelope(
+            release,
+            readback,
+            replayEnvelope,
+            request,
+            this.#managementTenantId,
+            context.actorId,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        return replayEnvelope;
+      }
+
+      if (!hasReadbackAttemptRepository(this.#repository)) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "unavailable",
+          "repository_unavailable",
+        );
+      }
+      const attemptRepository = this.#repository;
+
+      let newestUnresolved;
+      try {
+        newestUnresolved = await this.#repository.getNewestUnresolvedRelease();
+      } catch (error: unknown) {
+        return this.#publishPreflightReadFailure(error, meta);
+      }
+      if (newestUnresolved !== null) {
+        if (
+          newestUnresolved.managementTenantId !== this.#managementTenantId ||
+          (newestUnresolved.status !== "published_pending_readback" &&
+            newestUnresolved.status !== "manual_review")
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "unresolved_release_exists",
+        );
+      }
+
+      let preview;
+      let approval;
+      let state;
+      let exactActiveRelease;
+      try {
+        preview = await this.#repository.getPreview({
+          managementTenantId: this.#managementTenantId,
+          previewRef: request.preview_ref,
+        });
+        if (preview === null) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            "preview_not_found",
+          );
+        }
+        approval = await this.#repository.getApproval({
+          managementTenantId: this.#managementTenantId,
+          approvalId: request.approval_id,
+        });
+        if (approval === null) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            "approval_not_found",
+          );
+        }
+        state = await this.#repository.getControlState();
+        exactActiveRelease = await this.#repository.getActiveRelease();
+      } catch (error: unknown) {
+        return this.#publishPreflightReadFailure(error, meta);
+      }
+
+      try {
+        if (
+          !persistedPreviewIsStructurallyValidForApproval(
+            preview,
+            this.#managementTenantId,
+            request.preview_ref,
+          ) ||
+          approval.managementTenantId !== this.#managementTenantId ||
+          approval.approvalId !== request.approval_id ||
+          approval.previewRef !== preview.previewRef ||
+          approval.previewCanonicalHash !== preview.canonicalHash ||
+          approval.baseReleaseId !== preview.baseReleaseId ||
+          approval.baseRevision !== preview.baseRevision ||
+          approval.expiresAt !== preview.expiresAt ||
+          !stringArraysEqual(
+            approval.inventoryDigestSet,
+            approvalInventoryDigestSet(preview.inventoryRefs),
+          ) ||
+          approval.approverActorRef === preview.creatorActorRef ||
+          compareRfc3339Instants(approval.decidedAt, approval.expiresAt) !== -1
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      if (preview.consumed) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "preview_consumed",
+        );
+      }
+      if (approval.consumed) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "approval_consumed",
+        );
+      }
+      if (approval.decision !== "approve") {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "approval_not_approved",
+        );
+      }
+      if (
+        !preview.validation.baseMatches ||
+        !preview.validation.desiredModulesValid ||
+        !preview.validation.inventoryMatches ||
+        !preview.validation.minimumActiveModules ||
+        preview.validation.reasonCodes.length !== 0 ||
+        preview.desiredModules.length === 0
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+
+      const activationSnapshot = this.#runtime.activationSnapshot();
+      let exactActiveReadback: DeepReadonly<ModuleReadbackRecord> | null = null;
+      if (exactActiveRelease !== null) {
+        try {
+          exactActiveReadback = await this.#repository.getReadback({
+            managementTenantId: this.#managementTenantId,
+            releaseId: exactActiveRelease.releaseId,
+          });
+        } catch (error: unknown) {
+          return this.#publishPreflightReadFailure(error, meta);
+        }
+      }
+
+      try {
+        if (
+          !isDeepStrictEqual(exactActiveRelease, state.activeRelease) ||
+          !previewBaseAgreesWithRuntime(
+            state,
+            activationSnapshot,
+            this.#managementTenantId,
+            exactActiveReadback,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      if (
+        preview.baseReleaseId !== activationSnapshot.releaseId ||
+        preview.baseRevision !== activationSnapshot.revision
+      ) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "preview_base_stale",
+        );
+      }
+
+      const currentInventoryRefs = sortedModuleRefs(
+        this.#inventory.map(inventoryModuleRef),
+      );
+      if (!moduleRefSetsEqual(preview.inventoryRefs, currentInventoryRefs)) {
+        return this.#terminalWriteEnvelope(
+          "deployments.publish",
+          meta,
+          "blocked",
+          "inventory_drift",
+        );
+      }
+      try {
+        for (const registration of state.registrations) {
+          if (registration.managementTenantId !== this.#managementTenantId) {
+            return this.#runtime.coordinator.tripFatal(
+              new ModuleControlServiceError("management_tenant_state_mismatch"),
+            );
+          }
+        }
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      const inventoryByLogicalKey = new Map(
+        currentInventoryRefs.map((ref) => [moduleLogicalKey(ref), ref]),
+      );
+      for (const desired of preview.desiredModules) {
+        const inventoryRef = inventoryByLogicalKey.get(moduleLogicalKey(desired));
+        if (inventoryRef === undefined) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            "inventory_module_not_found",
+          );
+        }
+        if (inventoryRef.descriptorDigest !== desired.descriptorDigest) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            "inventory_descriptor_mismatch",
+          );
+        }
+        const registrations = state.registrations.filter(
+          (registration) =>
+            registration.moduleId === desired.moduleId &&
+            registration.version === desired.version,
+        );
+        if (
+          !registrations.some(
+            (registration) =>
+              registration.descriptorDigest === desired.descriptorDigest,
+          )
+        ) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            registrations.length === 0
+              ? "module_not_registered"
+              : "registration_descriptor_mismatch",
+          );
+        }
+      }
+
+      const expectedDiff = moduleRefDiff(
+        sortedModuleRefs(activationSnapshot.activeModules),
+        sortedModuleRefs(preview.desiredModules),
+      );
+      if (
+        !moduleRefSetsEqual(preview.diff.added, expectedDiff.added) ||
+        !moduleRefSetsEqual(preview.diff.removed, expectedDiff.removed) ||
+        !moduleRefSetsEqual(preview.diff.retained, expectedDiff.retained)
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+
+      let createdAt: string;
+      let releaseId: string;
+      let attemptId: string;
+      let readbackRef: string;
+      try {
+        createdAt = this.#clock();
+        const expiryComparison = compareRfc3339Instants(
+          preview.expiresAt,
+          createdAt,
+        );
+        if (expiryComparison === null) {
+          throw new TypeError("Publish time is not a valid RFC3339 instant.");
+        }
+        if (expiryComparison <= 0) {
+          return this.#terminalWriteEnvelope(
+            "deployments.publish",
+            meta,
+            "blocked",
+            "preview_expired",
+          );
+        }
+        releaseId = this.#idGenerator();
+        attemptId = this.#idGenerator();
+        readbackRef = this.#idGenerator();
+        if (
+          !IDENTIFIER_PATTERN.test(releaseId) ||
+          !IDENTIFIER_PATTERN.test(attemptId) ||
+          !IDENTIFIER_PATTERN.test(readbackRef)
+        ) {
+          throw new TypeError("The publish ID generator returned an invalid identifier.");
+        }
+      } catch (error: unknown) {
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      const desiredModules = sortedModuleRefs(preview.desiredModules);
+      const revision = preview.baseRevision + 1;
+      const record: ModuleReleaseRecord = {
+        managementTenantId: this.#managementTenantId,
+        releaseId,
+        revision,
+        desiredModules,
+        previousReleaseId: preview.baseReleaseId,
+        previewRef: preview.previewRef,
+        approvalId: approval.approvalId,
+        publisherActorRef: context.actorId,
+        createdAt,
+        publishedAt: null,
+        status: "published_pending_readback",
+        readbackRef: null,
+        reasonCodes: [],
+        supersededByReleaseId: null,
+      };
+      const event: PublishReleaseRequestMetadata["event"] = {
+        action: "deployments.publish",
+        objectRef: releaseId,
+        kind: "release",
+        status: "published_pending_readback",
+        reasonCodes: [],
+        detail: {
+          kind: "release",
+          releaseId,
+          revision,
+          status: "published_pending_readback",
+        },
+      };
+
+      let writeResult;
+      try {
+        writeResult = await this.#repository.publishRelease({
+          metadata: {
+            managementTenantId: this.#managementTenantId,
+            actorRef: context.actorId,
+            action: "deployments.publish",
+            idempotencyKey: meta.idempotencyKey,
+            requestHash: meta.requestHash,
+            event,
+          },
+          record,
+        });
+      } catch (error: unknown) {
+        return this.#publishRepositoryFailure(error, meta);
+      }
+
+      let domainIdempotency;
+      let persistedPendingRelease;
+      let consumedPreview;
+      let consumedApproval;
+      try {
+        [
+          domainIdempotency,
+          persistedPendingRelease,
+          consumedPreview,
+          consumedApproval,
+        ] = await Promise.all([
+          this.#repository.getIdempotency({
+            managementTenantId: this.#managementTenantId,
+            action: "deployments.publish",
+            idempotencyKey: meta.idempotencyKey,
+          }),
+          this.#repository.getRelease({
+            managementTenantId: this.#managementTenantId,
+            releaseId,
+          }),
+          this.#repository.getPreview({
+            managementTenantId: this.#managementTenantId,
+            previewRef: preview.previewRef,
+          }),
+          this.#repository.getApproval({
+            managementTenantId: this.#managementTenantId,
+            approvalId: approval.approvalId,
+          }),
+        ]);
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+      if (
+        writeResult.replayed !== false ||
+        !isDeepStrictEqual(writeResult.record, record) ||
+        writeResult.event.managementTenantId !== this.#managementTenantId ||
+        writeResult.event.actorRef !== context.actorId ||
+        writeResult.event.action !== event.action ||
+        writeResult.event.objectRef !== event.objectRef ||
+        writeResult.event.kind !== event.kind ||
+        writeResult.event.status !== event.status ||
+        !isDeepStrictEqual(writeResult.event.reasonCodes, event.reasonCodes) ||
+        !isDeepStrictEqual(writeResult.event.detail, event.detail) ||
+        writeResult.event.occurredAt !== createdAt ||
+        !IDENTIFIER_PATTERN.test(writeResult.event.eventId) ||
+        !Number.isSafeInteger(writeResult.event.sequence) ||
+        writeResult.event.sequence <= 0 ||
+        domainIdempotency === null ||
+        domainIdempotency.managementTenantId !== this.#managementTenantId ||
+        domainIdempotency.action !== "deployments.publish" ||
+        domainIdempotency.idempotencyKey !== meta.idempotencyKey ||
+        domainIdempotency.requestHash !== meta.requestHash ||
+        domainIdempotency.actorRef !== context.actorId ||
+        domainIdempotency.status !== "domain_committed" ||
+        domainIdempotency.domainRecordRef !== releaseId ||
+        domainIdempotency.finalResult !== null ||
+        domainIdempotency.createdAt !== createdAt ||
+        compareRfc3339Instants(
+          domainIdempotency.createdAt,
+          domainIdempotency.expiresAt,
+        ) !== -1 ||
+        !isDeepStrictEqual(persistedPendingRelease, record) ||
+        consumedPreview === null ||
+        !isDeepStrictEqual(consumedPreview, { ...preview, consumed: true }) ||
+        consumedApproval === null ||
+        !isDeepStrictEqual(consumedApproval, { ...approval, consumed: true })
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+
+      let stage: ReturnType<ActivationAuthorityDriver["stageCandidate"]> | null =
+        null;
+      try {
+        stage = this.#runtime.privateDriver.stageCandidate({
+          releaseId,
+          revision,
+          activeModules: desiredModules,
+        });
+        const claim = await attemptRepository.claimReadbackAttempt({
+          metadata: {
+            managementTenantId: this.#managementTenantId,
+            actorRef: context.actorId,
+            action: "deployments.publish",
+            idempotencyKey: meta.idempotencyKey,
+            requestHash: meta.requestHash,
+            requestId: meta.requestId,
+            traceId: meta.traceId,
+            auditId: meta.auditId,
+          },
+          attemptId,
+          readbackRef,
+          releaseId,
+          revision,
+          desiredModules,
+          ownerBootId: this.#runtime.ownerBootId,
+          claimedAt: createdAt,
+        });
+        if (
+          claim.disposition !== "created" ||
+          !claimedAttemptMatchesPublish(claim.attempt, {
+            managementTenantId: this.#managementTenantId,
+            attemptId,
+            idempotencyKey: meta.idempotencyKey,
+            requestHash: meta.requestHash,
+            actorRef: context.actorId,
+            requestId: meta.requestId,
+            traceId: meta.traceId,
+            auditId: meta.auditId,
+            releaseId,
+            revision,
+            desiredModules,
+            readbackRef,
+            claimedAt: createdAt,
+          })
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        const observed = this.#runtime.privateDriver.candidateSnapshot(stage);
+        const proof = this.#runtime.privateDriver.verifyCandidate(stage, {
+          status: "verified",
+          releaseId: observed.releaseId,
+          revision: observed.revision,
+          activeModules: observed.activeModules,
+        });
+        const successEnvelope = this.#assertWriteEnvelope(
+          "deployments.publish",
+          {
+            schema_version: request.schema_version,
+            request_id: meta.requestId,
+            trace_id: meta.traceId,
+            audit_id: meta.auditId,
+            status: "success",
+            data: {
+              kind: "release",
+              release_id: releaseId,
+              revision,
+              active_modules: desiredModules.map(hashModuleRef),
+            },
+            reason_codes: [],
+            readback: {
+              status: "verified",
+              release_id: releaseId,
+              revision,
+            },
+          },
+        );
+        const finalResult: ControlFinalResult = {
+          domainRecordRef: releaseId,
+          envelope: successEnvelope as unknown as ControlEnvelope,
+        };
+        const finalization: ReadbackFinalizationResult =
+          await attemptRepository.finalizeReadbackAndComplete({
+            attemptId,
+            ownerCapability: claim.ownerCapability,
+            observation: {
+              status: "verified",
+              appliedReleaseId: releaseId,
+              appliedRevision: revision,
+              appliedModules: desiredModules,
+              reasonCodes: [],
+              checkedAt: createdAt,
+            },
+            finalResult,
+            finalizedAt: createdAt,
+          });
+
+        const expectedReadback = {
+          managementTenantId: this.#managementTenantId,
+          readbackRef,
+          releaseId,
+          attemptId,
+          revision,
+          appliedReleaseId: releaseId,
+          appliedRevision: revision,
+          appliedModules: desiredModules,
+          status: "verified",
+          reasonCodes: [],
+          checkedAt: createdAt,
+        };
+        const expectedRelease = {
+          ...record,
+          publishedAt: createdAt,
+          status: "active_verified",
+          readbackRef,
+        };
+        const finalizedAttempt = finalization.attempt;
+        if (
+          finalization.disposition !== "finalized" ||
+          finalization.replayed !== false ||
+          !isDeepStrictEqual(finalization.readback, expectedReadback) ||
+          !isDeepStrictEqual(finalization.release, expectedRelease) ||
+          finalization.idempotency.managementTenantId !==
+            this.#managementTenantId ||
+          finalization.idempotency.action !== "deployments.publish" ||
+          finalization.idempotency.idempotencyKey !== meta.idempotencyKey ||
+          finalization.idempotency.requestHash !== meta.requestHash ||
+          finalization.idempotency.actorRef !== context.actorId ||
+          finalization.idempotency.status !== "completed" ||
+          finalization.idempotency.domainRecordRef !== releaseId ||
+          finalization.idempotency.createdAt !== createdAt ||
+          !isDeepStrictEqual(finalization.idempotency.finalResult, finalResult) ||
+          !isDeepStrictEqual(finalization.finalResult, finalResult) ||
+          finalizedAttempt.phase !== "finalized" ||
+          finalizedAttempt.attemptId !== attemptId ||
+          finalizedAttempt.releaseId !== releaseId ||
+          finalizedAttempt.revision !== revision ||
+          finalizedAttempt.readbackRef !== readbackRef ||
+          finalizedAttempt.terminalStatus !== "verified" ||
+          finalizedAttempt.appliedReleaseId !== releaseId ||
+          finalizedAttempt.appliedRevision !== revision ||
+          !moduleRefSetsEqual(
+            finalizedAttempt.appliedModules,
+            desiredModules,
+          ) ||
+          finalizedAttempt.reasonCodes.length !== 0 ||
+          finalizedAttempt.checkedAt !== createdAt ||
+          finalizedAttempt.finalizedAt !== createdAt ||
+          finalizedAttempt.finalizedByActorRef !== context.actorId ||
+          finalizedAttempt.reconciliationEventSequence !==
+            finalization.reconciliationEvent.sequence ||
+          finalizedAttempt.completionEventSequence !==
+            finalization.completionEvent.sequence ||
+          finalization.reconciliationEvent.managementTenantId !==
+            this.#managementTenantId ||
+          finalization.reconciliationEvent.actorRef !== context.actorId ||
+          finalization.reconciliationEvent.action !== "deployments.publish" ||
+          finalization.reconciliationEvent.objectRef !== releaseId ||
+          finalization.reconciliationEvent.kind !== "reconciliation" ||
+          finalization.reconciliationEvent.status !== "verified" ||
+          finalization.reconciliationEvent.reasonCodes.length !== 0 ||
+          !isDeepStrictEqual(finalization.reconciliationEvent.detail, {
+            kind: "reconciliation",
+            releaseId,
+            revision,
+            readbackRef,
+            status: "verified",
+          }) ||
+          finalization.reconciliationEvent.occurredAt !== createdAt ||
+          finalization.completionEvent.managementTenantId !==
+            this.#managementTenantId ||
+          finalization.completionEvent.actorRef !== context.actorId ||
+          finalization.completionEvent.action !== "deployments.publish" ||
+          finalization.completionEvent.objectRef !==
+            `idempotency:deployments.publish:${meta.idempotencyKey}` ||
+          finalization.completionEvent.kind !== "idempotency" ||
+          finalization.completionEvent.status !== "completed" ||
+          finalization.completionEvent.reasonCodes.length !== 0 ||
+          !isDeepStrictEqual(finalization.completionEvent.detail, {
+            kind: "idempotency",
+            recordRef: `idempotency:deployments.publish:${meta.idempotencyKey}`,
+            domainRecordRef: releaseId,
+            status: "completed",
+          }) ||
+          finalization.completionEvent.occurredAt !== createdAt
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        let persistedFinalIdempotency;
+        let persistedRelease;
+        let persistedReadback;
+        let persistedPreview;
+        let persistedApproval;
+        let persistedState;
+        let persistedPreviousRelease: DeepReadonly<ModuleReleaseRecord> | null =
+          null;
+        try {
+          [
+            persistedFinalIdempotency,
+            persistedRelease,
+            persistedReadback,
+            persistedPreview,
+            persistedApproval,
+            persistedState,
+          ] = await Promise.all([
+            this.#repository.getIdempotency({
+              managementTenantId: this.#managementTenantId,
+              action: "deployments.publish",
+              idempotencyKey: meta.idempotencyKey,
+            }),
+            this.#repository.getRelease({
+              managementTenantId: this.#managementTenantId,
+              releaseId,
+            }),
+            this.#repository.getReadback({
+              managementTenantId: this.#managementTenantId,
+              releaseId,
+            }),
+            this.#repository.getPreview({
+              managementTenantId: this.#managementTenantId,
+              previewRef: preview.previewRef,
+            }),
+            this.#repository.getApproval({
+              managementTenantId: this.#managementTenantId,
+              approvalId: approval.approvalId,
+            }),
+            this.#repository.getControlState(),
+          ]);
+          if (record.previousReleaseId !== null) {
+            persistedPreviousRelease = await this.#repository.getRelease({
+              managementTenantId: this.#managementTenantId,
+              releaseId: record.previousReleaseId,
+            });
+          }
+        } catch (error: unknown) {
+          return this.#runtime.coordinator.tripFatal(error);
+        }
+        const matchingHistory = persistedState.releaseHistory.filter(
+          (entry) => entry.release.releaseId === releaseId,
+        );
+        if (
+          !isDeepStrictEqual(
+            persistedFinalIdempotency,
+            finalization.idempotency,
+          ) ||
+          !isDeepStrictEqual(persistedRelease, finalization.release) ||
+          !isDeepStrictEqual(persistedReadback, finalization.readback) ||
+          persistedPreview === null ||
+          !isDeepStrictEqual(persistedPreview, { ...preview, consumed: true }) ||
+          persistedApproval === null ||
+          !isDeepStrictEqual(persistedApproval, {
+            ...approval,
+            consumed: true,
+          }) ||
+          persistedState.managementTenantId !== this.#managementTenantId ||
+          !isDeepStrictEqual(persistedState.activeRelease, finalization.release) ||
+          persistedState.activeRevision !== revision ||
+          !moduleRefSetsEqual(persistedState.activeModules, desiredModules) ||
+          !isDeepStrictEqual(persistedState.latestReadback, finalization.readback) ||
+          matchingHistory.length !== 1 ||
+          !isDeepStrictEqual(matchingHistory[0]!.release, finalization.release) ||
+          matchingHistory[0]!.intent !== preview.intent ||
+          matchingHistory[0]!.rollbackTargetReleaseId !==
+            (preview.intent === "rollback" ? preview.targetReleaseId : null) ||
+          (record.previousReleaseId === null
+            ? persistedPreviousRelease !== null
+            : persistedPreviousRelease === null ||
+              persistedPreviousRelease.status !== "superseded" ||
+              persistedPreviousRelease.supersededByReleaseId !== releaseId)
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        const persistedEnvelope = this.#assertWriteEnvelope(
+          "deployments.publish",
+          finalization.idempotency.finalResult.envelope,
+        );
+        if (
+          !isDeepStrictEqual(persistedEnvelope, successEnvelope) ||
+          !publishedReleaseMatchesEnvelope(
+            finalization.release,
+            finalization.readback,
+            persistedEnvelope,
+            request,
+            this.#managementTenantId,
+            context.actorId,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        this.#runtime.privateDriver.commitCandidate(proof);
+        stage = null;
+        return persistedEnvelope;
+      } catch (error: unknown) {
+        if (stage !== null) {
+          try {
+            this.#runtime.privateDriver.abortCandidate(stage);
+          } catch {
+            // The fatal readiness fence below is authoritative if cleanup fails.
+          }
+        }
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+    });
   }
 
   async reconcile(
@@ -1726,6 +3440,10 @@ export function createModuleControlRuntimeAssembly(
   options: ModuleControlRuntimeAssemblyOptions,
 ): ModuleControlRuntimeAssembly {
   assertPreviewTtlSeconds(options.previewTtlSeconds);
+  const ownerBootId = options.ownerBootId ?? `boot_${randomUUID()}`;
+  if (!IDENTIFIER_PATTERN.test(ownerBootId)) {
+    throw new TypeError("ownerBootId must be a valid identifier.");
+  }
   const coordinator = createRuntimeMutationCoordinator();
   const gate = createActivationGate(options.inventory);
   const runtime: PrivateRuntimeCapabilities = {
@@ -1733,6 +3451,7 @@ export function createModuleControlRuntimeAssembly(
     privateDriver: gate.privateDriver,
     recoveryDriver: gate.recoveryDriver,
     activationSnapshot: () => gate.readFacade.snapshot(),
+    ownerBootId,
   };
   const service = new ModuleControlServiceImplementation(options, runtime);
   const activation = Object.freeze({
