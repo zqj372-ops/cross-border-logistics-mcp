@@ -334,8 +334,13 @@ function compositionTools(
 function runtimeActivationFacades(
   options: GatewayCompositionOptions,
 ): RuntimeActivationFacades | undefined {
-  if (options.activation === undefined || options.dispatch === undefined) {
+  if (options.activation === undefined && options.dispatch === undefined) {
     return undefined;
+  }
+  if (options.activation === undefined || options.dispatch === undefined) {
+    throw new Error(
+      "Runtime activation requires both activation and dispatch facades.",
+    );
   }
   return {
     activation: options.activation,
@@ -401,6 +406,7 @@ export function createFixtureComposition(
   if (options.dataMode !== "fixtures") {
     throw new Error("Fixture adapters require DATA_MODE=fixtures.");
   }
+  const runtimeActivation = runtimeActivationFacades(options);
   const platformOptions = {
     ...(options.auditRepository === undefined
       ? {}
@@ -425,7 +431,7 @@ export function createFixtureComposition(
     adapters,
     options.freightcomRateAdapter ?? createFreightcomDisabledRateAdapter(),
     options.agentAccessRuntime,
-    runtimeActivationFacades(options),
+    runtimeActivation,
   );
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
@@ -459,6 +465,7 @@ export function createProductionComposition(
   if (options.dataMode !== "production") {
     throw new Error("Production adapters require DATA_MODE=production.");
   }
+  const runtimeActivation = runtimeActivationFacades(options);
 
   const productionPlatformOptions = {
     ...(options.auditRepository === undefined
@@ -509,7 +516,7 @@ export function createProductionComposition(
     adapters,
     createFreightcomDisabledRateAdapter(),
     options.agentAccessRuntime,
-    runtimeActivationFacades(options),
+    runtimeActivation,
   );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];

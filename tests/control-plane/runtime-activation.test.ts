@@ -116,6 +116,32 @@ function dispatchForSnapshot(
 }
 
 describe("runtime activation definition wrapper", () => {
+  it("rejects an activation reader without the paired controlled dispatcher", () => {
+    expect(() =>
+      createFixtureComposition({
+        dataMode: "fixtures",
+        activation: {
+          snapshot: () => ({
+            releaseId: null,
+            revision: 0,
+            activeModules: [],
+          }),
+        },
+      }),
+    ).toThrow("Runtime activation requires both activation and dispatch facades.");
+  });
+
+  it("rejects a controlled dispatcher without the paired activation reader", () => {
+    expect(() =>
+      createFixtureComposition({
+        dataMode: "fixtures",
+        dispatch: {
+          dispatch: async (_route, handler) => handler(),
+        },
+      }),
+    ).toThrow("Runtime activation requires both activation and dispatch facades.");
+  });
+
   it("returns module_policy_not_released before an active verified release exists", async () => {
     const originalHandler = vi.fn(() => unavailableOutcome("original_handler"));
     const snapshot = () => ({
