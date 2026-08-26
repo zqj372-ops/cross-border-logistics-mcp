@@ -33,9 +33,10 @@ import {
   type ToolHandlerMap,
   type RuntimeActivationFacades,
 } from "./tool-registry";
-import type {
-  ActivationReadFacade,
-  ControlledDispatchFacade,
+import {
+  isPairedRuntimeActivationFacades,
+  type ActivationReadFacade,
+  type ControlledDispatchFacade,
 } from "../control-plane/service";
 import {
   CapabilityRegistry,
@@ -340,6 +341,11 @@ function runtimeActivationFacades(
   if (options.activation === undefined || options.dispatch === undefined) {
     throw new Error(
       "Runtime activation requires both activation and dispatch facades.",
+    );
+  }
+  if (!isPairedRuntimeActivationFacades(options.activation, options.dispatch)) {
+    throw new Error(
+      "Runtime activation facades must come from the same control-plane assembly.",
     );
   }
   return {

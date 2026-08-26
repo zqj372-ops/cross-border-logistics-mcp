@@ -1,3 +1,4 @@
+import Decimal from "decimal.js";
 import { z } from "zod";
 
 import {
@@ -100,8 +101,12 @@ const positiveDecimalStringSchema = z
   .regex(/^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$/u)
   .refine((value) => {
     const providerValue = Number(value);
-    return Number.isFinite(providerValue) && providerValue > 0;
-  }, "Measurement must be representable by the Freightcom provider number field.");
+    return (
+      Number.isFinite(providerValue) &&
+      providerValue > 0 &&
+      new Decimal(providerValue.toString()).eq(value)
+    );
+  }, "Measurement must round-trip through the Freightcom provider number field without changing value.");
 
 const weightSchema = z
   .object({

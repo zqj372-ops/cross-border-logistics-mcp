@@ -171,6 +171,38 @@ describe("Freightcom rate adapter", () => {
     });
   });
 
+  it("rejects measurements that would change when serialized as provider numbers", async () => {
+    const precisionLosingWeight = structuredClone(rateRequest()) as {
+      details: {
+        packaging_properties: {
+          pallets: Array<{ measurements: { weight: { value: string } } }>;
+        };
+      };
+    };
+    precisionLosingWeight.details.packaging_properties.pallets[0]!
+      .measurements.weight.value = "9007199254740993";
+    const precisionLosingLength = structuredClone(rateRequest()) as {
+      details: {
+        packaging_properties: {
+          pallets: Array<{ measurements: { cuboid: { l: string } } }>;
+        };
+      };
+    };
+    precisionLosingLength.details.packaging_properties.pallets[0]!
+      .measurements.cuboid.l = "0.10000000000000001";
+    const fetchImpl = vi.fn<FetchImplementation>();
+
+    for (const request of [precisionLosingWeight, precisionLosingLength]) {
+      const result = await adapter(fetchImpl).requestRate(request);
+
+      expect(result.status).toBe("needs_input");
+      expect(result.blockers?.map((item) => item.code)).toContain(
+        "freightcom.request_invalid",
+      );
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("converts public decimal insurance money to provider minor units only at the boundary", () => {
     const requestWithInsurance = structuredClone(rateRequest()) as {
       details: Record<string, unknown>;

@@ -145,6 +145,20 @@ export interface ModuleControlRuntimeAssembly {
   readonly dispatch: ControlledDispatchFacade;
 }
 
+const activationAssemblyBrands = new WeakMap<ActivationReadFacade, object>();
+const dispatchAssemblyBrands = new WeakMap<ControlledDispatchFacade, object>();
+
+export function isPairedRuntimeActivationFacades(
+  activation: ActivationReadFacade,
+  dispatch: ControlledDispatchFacade,
+): boolean {
+  const assemblyBrand = activationAssemblyBrands.get(activation);
+  return (
+    assemblyBrand !== undefined &&
+    assemblyBrand === dispatchAssemblyBrands.get(dispatch)
+  );
+}
+
 interface PrivateRuntimeCapabilities {
   readonly coordinator: RuntimeMutationCoordinator;
   readonly privateDriver: ActivationAuthorityDriver;
@@ -4527,6 +4541,9 @@ export function createModuleControlRuntimeAssembly(
     coordinator,
     gate.readFacade,
   );
+  const assemblyBrand = Object.freeze({});
+  activationAssemblyBrands.set(activation, assemblyBrand);
+  dispatchAssemblyBrands.set(dispatch, assemblyBrand);
 
   return Object.freeze({ service, activation, dispatch });
 }

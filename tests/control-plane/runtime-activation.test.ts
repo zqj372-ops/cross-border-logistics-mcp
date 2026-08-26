@@ -7,9 +7,12 @@ import type {
   ActiveModuleRef,
   ModuleActivationSnapshot,
 } from "../../src/logistics_mcp/control-plane/types";
-import type {
-  ControlledDispatchFacade,
-  ControlledDispatchRoute,
+import { createModuleInventory } from "../../src/logistics_mcp/control-plane/inventory";
+import {
+  createModuleControlRuntimeAssembly,
+  type ModuleControlRuntimeAssembly,
+  type ControlledDispatchFacade,
+  type ControlledDispatchRoute,
 } from "../../src/logistics_mcp/control-plane/service";
 import { ModuleControlServiceError } from "../../src/logistics_mcp/control-plane/errors";
 import { createFixtureComposition } from "../../src/logistics_mcp/server/composition";
@@ -20,6 +23,7 @@ import {
   type DomainToolOutcome,
   type ToolDefinition,
 } from "../../src/logistics_mcp/server/tool-registry";
+import { FakeModuleControlRepository } from "./fake-control-repository";
 
 const executionContext: ExecutionContext = {
   tenantId: "tenant_fixture",
@@ -31,6 +35,25 @@ const executionContext: ExecutionContext = {
   sessionId: "session_fixture",
   expiresAt: Math.floor(Date.now() / 1000) + 300,
 };
+
+const runtimeInventory = createModuleInventory({
+  mountedModules: [],
+  catalog: [],
+  localEvidence: [],
+});
+
+function runtimeAssembly(): ModuleControlRuntimeAssembly {
+  return createModuleControlRuntimeAssembly({
+    inventory: runtimeInventory,
+    repository: new FakeModuleControlRepository({
+      managementTenantId: "tenant_fixture",
+    }),
+    managementTenantId: "tenant_fixture",
+    previewTtlSeconds: 900,
+    clock: () => "2026-08-26T15:00:00.000000000Z",
+    idGenerator: () => "unused_runtime_activation_id",
+  });
+}
 
 function definition(
   handler: ToolDefinition["handler"],
@@ -140,6 +163,21 @@ describe("runtime activation definition wrapper", () => {
         },
       }),
     ).toThrow("Runtime activation requires both activation and dispatch facades.");
+  });
+
+  it("rejects activation and dispatch facades from different runtime assemblies", () => {
+    const first = runtimeAssembly();
+    const second = runtimeAssembly();
+
+    expect(() =>
+      createFixtureComposition({
+        dataMode: "fixtures",
+        activation: first.activation,
+        dispatch: second.dispatch,
+      }),
+    ).toThrow(
+      "Runtime activation facades must come from the same control-plane assembly.",
+    );
   });
 
   it("returns module_policy_not_released before an active verified release exists", async () => {
@@ -472,18 +510,11 @@ describe("runtime activation definition wrapper", () => {
   });
 
   it("keeps public composition, registry, definition, and diagnostics surfaces free of private capabilities", async () => {
+    const assembly = runtimeAssembly();
     const composition = createFixtureComposition({
       dataMode: "fixtures",
-      activation: {
-        snapshot: () => ({
-          releaseId: null,
-          revision: 0,
-          activeModules: [],
-        }),
-      },
-      dispatch: {
-        dispatch: async (_ref, handler) => handler(),
-      },
+      activation: assembly.activation,
+      dispatch: assembly.dispatch,
     });
     try {
       const registryDefinitions = registerModuleToolDefinitions(
