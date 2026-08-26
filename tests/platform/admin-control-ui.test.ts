@@ -495,6 +495,34 @@ describe("admin control-plane model boundary", () => {
     }).generatePreview).toBe(true);
 
     expect(actionAvailability({
+      state: {
+        ...previewState,
+        inventory_modules: previewState.inventory_modules.map((module) => ({
+          ...module,
+          registration: null,
+        })),
+      },
+      draftModules: validControlState.activation.active_modules,
+      actorRole: "admin",
+      actorRef: "actor-1",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).generatePreview).toBe(false);
+
+    expect(actionAvailability({
+      state: previewState,
+      draftModules: [{
+        module_id: "unknown-module",
+        version: "1.0.0",
+        descriptor_digest: descriptorDigest,
+      }],
+      actorRole: "admin",
+      actorRef: "actor-1",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).generatePreview).toBe(false);
+
+    expect(actionAvailability({
       state: previewState,
       draftModules: [],
       actorRole: "admin",

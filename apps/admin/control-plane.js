@@ -630,10 +630,14 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
     && approval.decision === "approve"
     && approval.consumed === false;
   const previewAlreadyDecided = approvalMatchesPreview(preview, approval);
+  const draftModulesRegistered = draftModules.length > 0
+    && draftModules.every((target) => state.inventory_modules.some(
+      (module) => matchesExactModuleRef(module, target) && module.registration !== null,
+    ));
   return {
     saveDraft: true,
     register: isAdmin && localWrite,
-    generatePreview: isAdmin && localWrite && draftModules.length > 0,
+    generatePreview: isAdmin && localWrite && draftModulesRegistered,
     submitApproval: isAdmin && localWrite && usablePreview && distinctApprover && !previewAlreadyDecided,
     publish: isAdmin && localWrite && usablePreview && publishableApproval,
     reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),

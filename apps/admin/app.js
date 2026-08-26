@@ -1434,7 +1434,14 @@ async function handleControlAction(target) {
     }
     case "generate-preview": {
       const desiredModules = controlDraftModules(state.controlState).map(controlModuleRef);
-      if (desiredModules.length === 0) return;
+      const allRegistered = desiredModules.length > 0
+        && desiredModules.every((targetModule) => state.controlState.inventory_modules.some(
+          (inventoryModule) => inventoryModule.module_id === targetModule.module_id
+            && inventoryModule.version === targetModule.version
+            && inventoryModule.descriptor_digest === targetModule.descriptor_digest
+            && inventoryModule.registration !== null,
+        ));
+      if (!allRegistered) return;
       await runControlOperation("生成预览", () => controlClient.createPreview({
         schema_version: CONTROL_SCHEMA_VERSION,
         intent: "change",
