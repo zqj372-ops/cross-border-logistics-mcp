@@ -137,7 +137,7 @@ describe("Freightcom quote form model", () => {
         },
         insurance: {
           type: "carrier",
-          total_cost: { value: "12550", currency: "USD" },
+          total_cost: { amount: "125.50", currency: "USD" },
         },
         reference_codes: ["PO-123", "REF-456"],
         shipment_classification: "B2B",

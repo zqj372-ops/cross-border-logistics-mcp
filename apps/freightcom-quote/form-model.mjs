@@ -180,14 +180,13 @@ function buildEstablishment(values, prefix, errors, destination = false) {
   return establishment;
 }
 
-function lowestUnitValue(value, field, errors) {
+function moneyAmount(value, field, errors) {
   const raw = text(value);
-  if (!/^\d+(?:\.\d{1,2})?$/u.test(raw)) {
+  if (!/^(0|[1-9][0-9]*)(?:\.\d{1,2})?$/u.test(raw)) {
     error(errors, field, "请输入非负金额，最多两位小数。");
     return null;
   }
-  const [whole, fraction = ""] = raw.split(".");
-  return `${whole}${fraction.padEnd(2, "0")}`.replace(/^0+(?=\d)/u, "");
+  return raw;
 }
 
 function buildPallet(values, errors) {
@@ -359,8 +358,8 @@ export function buildFreightcomRequest(values) {
   if (insuranceType !== "" || insuranceValue !== "" || insuranceCurrency !== "") {
     if (!["internal", "carrier"].includes(insuranceType)) error(errors, "advanced.insuranceType", "请选择保险类型。");
     if (!/^[A-Z]{3}$/u.test(insuranceCurrency)) error(errors, "advanced.insuranceCurrency", "请输入三位 ISO 币种。");
-    const lowestValue = lowestUnitValue(insuranceValue, "advanced.insuranceValue", errors);
-    if (lowestValue !== null) insurance = { type: insuranceType, total_cost: { value: lowestValue, currency: insuranceCurrency } };
+    const amount = moneyAmount(insuranceValue, "advanced.insuranceValue", errors);
+    if (amount !== null) insurance = { type: insuranceType, total_cost: { amount, currency: insuranceCurrency } };
   }
   const shipmentClassification = optionalText(advanced.shipmentClassification);
   if (shipmentClassification !== undefined && !["B2B", "B2C", "C2B", "C2C"].includes(shipmentClassification)) {

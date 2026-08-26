@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { FreightcomRatePort } from "../../src/logistics_mcp/adapters/ports";
 import {
@@ -123,6 +123,62 @@ describe("Freightcom LTL MCP tool contract", () => {
         packaging_type: "package",
       },
     }).success).toBe(false);
+  });
+
+  it.each([
+    ["token", "forbidden-token"],
+    ["base_url", "https://forbidden.example"],
+    ["tenant", "other-tenant"],
+    ["actor", "other-actor"],
+    ["authorization", "Bearer forbidden"],
+  ])("blocks client injection of server-owned %s", async (field, value) => {
+    const requestRate = vi.fn();
+    const outcome = await createFreightcomLtlToolHandler({ requestRate })(
+      { ...input(), [field]: value },
+      context,
+    );
+
+    expect(outcome.status).toBe("blocked");
+    expect(outcome.blockers).toEqual([expect.objectContaining({
+      code: "freightcom.server_owned_field_forbidden",
+      field: "input",
+    })]);
+    expect(JSON.stringify(outcome)).not.toContain(value);
+    expect(requestRate).not.toHaveBeenCalled();
+  });
+
+  it("blocks nested server-owned fields before schema validation", async () => {
+    const requestRate = vi.fn();
+    const original = input();
+    const outcome = await createFreightcomLtlToolHandler({ requestRate })(
+      {
+        ...original,
+        details: {
+          ...(original.details as Record<string, unknown>),
+          actor_id: "nested-forbidden-actor",
+        },
+      },
+      context,
+    );
+
+    expect(outcome.status).toBe("blocked");
+    expect(outcome.blockers?.map((item) => item.code)).toEqual([
+      "freightcom.server_owned_field_forbidden",
+    ]);
+    expect(JSON.stringify(outcome)).not.toContain("nested-forbidden-actor");
+    expect(requestRate).not.toHaveBeenCalled();
+  });
+
+  it("keeps ordinary schema failures as needs_input", async () => {
+    const requestRate = vi.fn();
+    const outcome = await createFreightcomLtlToolHandler({ requestRate })(
+      { ...input(), details: {} },
+      context,
+    );
+
+    expect(outcome.status).toBe("needs_input");
+    expect(outcome.blockers?.map((item) => item.code)).toEqual(["freightcom.request_invalid"]);
+    expect(requestRate).not.toHaveBeenCalled();
   });
 
   it("preserves source CAD and adds the test-only same-number USD display field", async () => {

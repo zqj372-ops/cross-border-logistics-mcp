@@ -20,6 +20,32 @@ export const FREIGHTCOM_LTL_RESULT_VERSION =
 export const FREIGHTCOM_USD_DISPLAY_POLICY =
   "usd_numeric_relabel_test_only" as const;
 
+const SERVER_OWNED_INPUT_KEYS = new Set([
+  "actor",
+  "actorid",
+  "authorization",
+  "baseurl",
+  "endpoint",
+  "environment",
+  "tenant",
+  "tenantid",
+  "token",
+  "url",
+]);
+
+function containsServerOwnedInput(value: unknown, seen = new Set<object>()): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.some((item) => containsServerOwnedInput(item, seen));
+  }
+  return Object.entries(value).some(([key, nested]) => {
+    const normalizedKey = key.toLowerCase().replaceAll("_", "").replaceAll("-", "");
+    return SERVER_OWNED_INPUT_KEYS.has(normalizedKey) || containsServerOwnedInput(nested, seen);
+  });
+}
+
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 const decimalSchema = z.string().regex(/^(0|[1-9][0-9]*)(\.[0-9]+)?$/u);
@@ -312,6 +338,19 @@ function invalidAdapterData(): ModuleToolOutcome {
 
 export function createFreightcomLtlToolHandler(adapter: FreightcomRatePort): ModuleToolHandler {
   return async (input, _context, signal) => {
+    if (containsServerOwnedInput(input)) {
+      return {
+        status: "blocked",
+        data: null,
+        sourceRefs: [],
+        blockers: [{
+          code: "freightcom.server_owned_field_forbidden",
+          message: "Freightcom endpoint, credential, environment, tenant, and actor fields are server-owned.",
+          severity: "error",
+          field: "input",
+        }],
+      };
+    }
     const parsed = freightcomLtlInputSchema.safeParse(input);
     if (!parsed.success) {
       return {

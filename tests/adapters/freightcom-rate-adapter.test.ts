@@ -171,6 +171,30 @@ describe("Freightcom rate adapter", () => {
     });
   });
 
+  it("converts public decimal insurance money to provider minor units only at the boundary", () => {
+    const requestWithInsurance = structuredClone(rateRequest()) as {
+      details: Record<string, unknown>;
+    };
+    requestWithInsurance.details.insurance = {
+      type: "carrier",
+      total_cost: { amount: "125.50", currency: "USD" },
+    };
+    const request = freightcomRateRequestSchema.parse(requestWithInsurance);
+
+    expect(toFreightcomProviderRateRequest(request)).toMatchObject({
+      details: {
+        insurance: {
+          type: "carrier",
+          total_cost: { value: "12550", currency: "USD" },
+        },
+      },
+    });
+    expect(request.details.insurance?.total_cost).toEqual({
+      amount: "125.50",
+      currency: "USD",
+    });
+  });
+
   it("rejects impossible calendar dates before any provider request", async () => {
     const impossibleDate = structuredClone(rateRequest()) as {
       details: { expected_ship_date: { year: number; month: number; day: number } };

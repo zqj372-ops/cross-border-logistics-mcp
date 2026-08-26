@@ -36,7 +36,7 @@ const phoneNumberSchema = z
 const moneyRequestSchema = z
   .object({
     currency: z.string().regex(/^[A-Z]{3}$/u),
-    value: z.string().regex(/^(0|[1-9][0-9]*)$/u),
+    amount: z.string().regex(/^(0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/u),
   })
   .strict();
 
@@ -381,12 +381,27 @@ export const freightcomRatePollResponseSchema = z
 export type FreightcomRateRequest = z.infer<typeof freightcomRateRequestSchema>;
 export type FreightcomRatePollResponse = z.infer<typeof freightcomRatePollResponseSchema>;
 
+function toFreightcomMinorUnitValue(amount: string): string {
+  const [whole, fraction = ""] = amount.split(".");
+  return `${whole}${fraction.padEnd(2, "0")}`.replace(/^0+(?=\d)/u, "");
+}
+
 export function toFreightcomProviderRateRequest(request: FreightcomRateRequest): unknown {
   const packaging = request.details.packaging_properties;
+  const insurance = request.details.insurance;
   return {
     ...request,
     details: {
       ...request.details,
+      ...(insurance === undefined ? {} : {
+        insurance: {
+          ...insurance,
+          total_cost: {
+            currency: insurance.total_cost.currency,
+            value: toFreightcomMinorUnitValue(insurance.total_cost.amount),
+          },
+        },
+      }),
       packaging_properties: {
         ...packaging,
         pallets: packaging.pallets.map((pallet) => ({
