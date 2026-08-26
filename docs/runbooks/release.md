@@ -28,7 +28,7 @@ initializer 是唯一创建者，且必须显式调用。runtime open/startup �
 
 ### 备份与兼容性清单
 
-`non-empty backup` 必须在任何变更前生成并可定位。备份摘要可以记录 hash、size、时间、版本和恢复演练结果，但不得记录 token、密码、客户地址、报价明细、税务材料全文或原始凭证。
+第二步 `non-empty backup` 必须在 candidate build 完成后、任何 staging/生产 control-plane 变更前生成并可定位。备份摘要可以记录 hash、size、时间、版本和恢复演练结果，但不得记录 token、密码、客户地址、报价明细、税务材料全文或原始凭证。
 
 | 对象 | 备份/核对内容 | 兼容门不满足时 |
 | --- | --- | --- |
