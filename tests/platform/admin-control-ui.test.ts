@@ -420,10 +420,12 @@ describe("admin control-plane model boundary", () => {
     expect(request?.init.credentials).toBe("omit");
 
     const source = await readFile(new URL("../../apps/admin/control-plane.js", import.meta.url), "utf8");
+    const appSource = await readFile(new URL("../../apps/admin/app.js", import.meta.url), "utf8");
     expect(source).not.toMatch(/\b(?:localStorage|sessionStorage)\b/);
     expect(source).not.toMatch(/\bdocument\b|\bwindow\.location\b|\blocation\.(?:href|search|hash)\b/);
     expect(source).not.toMatch(/\bconsole\.(?:log|error|warn|info|debug)\b/);
     expect(source).not.toMatch(/(?:throw new Error|Promise\.reject)\([^)]*module-scoped-fixture-token/);
+    expect(appSource).not.toMatch(/bindControlIdentity\(\{\s*actor:\s*["']session["']/);
   });
 
   it("keeps release gating deterministic and requires a distinct approver", () => {
@@ -482,6 +484,22 @@ describe("admin control-plane model boundary", () => {
     expect(sameActor.submitApproval).toBe(false);
     expect(sameActor.reconcile).toBe(true);
 
+    expect(actionAvailability({
+      state: previewState,
+      draftModules: [],
+      actorRole: "admin",
+      creatorActorRef: "actor-1",
+      environment: "local",
+    }).submitApproval).toBe(false);
+
+    expect(actionAvailability({
+      state: previewState,
+      draftModules: [],
+      actorRole: "admin",
+      actorRef: "actor-2",
+      environment: "local",
+    }).submitApproval).toBe(false);
+
     const distinctActor = actionAvailability({
       state: previewState,
       draftModules: [],
@@ -500,6 +518,25 @@ describe("admin control-plane model boundary", () => {
     expect(deriveReleaseStages(rejectedState).find((stage: { key: string }) => stage.key === "approval")?.status).toBe("blocked");
     expect(actionAvailability({
       state: rejectedState,
+      draftModules: [],
+      actorRole: "admin",
+      actorRef: "actor-2",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).publish).toBe(false);
+
+    const crossLinkedApprovalState = {
+      ...previewState,
+      latest_preview: previewSnapshot({ previewRef: "preview-2" }),
+      latest_approval: approvalSnapshot("approve"),
+    };
+    expect(derivePreviewPresentation(crossLinkedApprovalState)).toEqual({
+      status: "pending",
+      label: "待审批",
+    });
+    expect(deriveReleaseStages(crossLinkedApprovalState).find((stage: { key: string }) => stage.key === "approval")?.status).toBe("manual_review");
+    expect(actionAvailability({
+      state: crossLinkedApprovalState,
       draftModules: [],
       actorRole: "admin",
       actorRef: "actor-2",

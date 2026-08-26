@@ -474,6 +474,12 @@ function matchesExactModuleRef(module, target) {
     && module.descriptor_digest === target.descriptor_digest;
 }
 
+function approvalMatchesPreview(preview, approval) {
+  return preview !== null
+    && approval !== null
+    && preview.preview_ref === approval.preview_ref;
+}
+
 export function derivePreviewPresentation(state) {
   validateControlState(state);
   const preview = state.latest_preview;
@@ -483,8 +489,9 @@ export function derivePreviewPresentation(state) {
       ? { status: "complete", label: "已用于发布" }
       : { status: "blocked", label: "预览已消费" };
   }
-  if (state.latest_approval?.decision === "reject") return { status: "blocked", label: "审批未通过" };
-  if (state.latest_approval?.decision === "approve") return { status: "complete", label: "已审批" };
+  const approval = approvalMatchesPreview(preview, state.latest_approval) ? state.latest_approval : null;
+  if (approval?.decision === "reject") return { status: "blocked", label: "审批未通过" };
+  if (approval?.decision === "approve") return { status: "complete", label: "已审批" };
   return { status: "pending", label: "待审批" };
 }
 
@@ -518,6 +525,7 @@ export function deriveReleaseStages(state) {
       label: "双人审批",
       status: approval === null
         ? "empty"
+        : !approvalMatchesPreview(state.latest_preview, approval) ? "manual_review"
         : approval.decision === "approve" ? "complete" : approval.decision === "reject" ? "blocked" : "pending",
     },
     {
@@ -609,17 +617,24 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   const approval = state.latest_approval;
   const readback = state.latest_readback;
   const localWrite = environment === "local" || environment === "fixture";
-  const distinctApprover = creatorActorRef === undefined || actorRef === undefined || actorRef !== creatorActorRef;
+  const distinctApprover = typeof actorRef === "string"
+    && IDENTIFIER_PATTERN.test(actorRef)
+    && typeof creatorActorRef === "string"
+    && IDENTIFIER_PATTERN.test(creatorActorRef)
+    && actorRef !== creatorActorRef;
   const hasPendingRelease = state.release_history.some((release) => release.status === "pending" || release.status === "published_pending_readback" || release.status === "manual_review");
   const reconcileReleaseId = selectReconcileReleaseId(state);
   const rollbackReleaseId = selectRollbackReleaseId(state);
-  const usablePreview = preview !== null && preview.consumed !== true;
+  const usablePreview = preview !== null && preview.consumed === false;
+  const publishableApproval = approvalMatchesPreview(preview, approval)
+    && approval.decision === "approve"
+    && approval.consumed === false;
   return {
     saveDraft: true,
     register: isAdmin && localWrite,
     generatePreview: isAdmin && localWrite,
     submitApproval: isAdmin && localWrite && usablePreview && distinctApprover,
-    publish: isAdmin && localWrite && usablePreview && approval?.decision === "approve" && approval?.consumed !== true,
+    publish: isAdmin && localWrite && usablePreview && publishableApproval,
     reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),
     rollback: isAdmin && localWrite && rollbackReleaseId !== null,
   };

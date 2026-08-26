@@ -1317,7 +1317,11 @@ function closeIdentityDialog() {
 function bindControlIdentity(identity) {
   if (!controlClient || !identity) return;
   controlClient.setToken(identity.token);
-  state.controlActor = { actor: identity.actor, label: identity.label, role: identity.role };
+  state.controlActor = {
+    ...(typeof identity.actor === "string" ? { actor: identity.actor } : {}),
+    label: identity.label,
+    role: identity.role,
+  };
   state.controlStatus = "pending";
   state.controlError = null;
   state.controlDraftModules = null;
@@ -1339,7 +1343,7 @@ function submitControlIdentity() {
     return;
   }
   if (error instanceof HTMLElement) error.hidden = true;
-  bindControlIdentity({ actor: "session", label: "已绑定控制面身份", role: "admin", token });
+  bindControlIdentity({ label: "已绑定控制面身份", role: "admin", token });
 }
 
 async function runControlOperation(label, operation, { resetDraft = false } = {}) {
@@ -1447,13 +1451,20 @@ async function handleControlAction(target) {
       break;
     }
     case "publish": {
-      const previewRef = state.controlState.latest_preview?.preview_ref;
-      const approvalId = state.controlState.latest_approval?.approval_id;
-      if (typeof previewRef !== "string" || typeof approvalId !== "string") return;
+      const preview = state.controlState.latest_preview;
+      const approval = state.controlState.latest_approval;
+      if (
+        preview === null
+        || approval === null
+        || preview.consumed !== false
+        || approval.consumed !== false
+        || approval.decision !== "approve"
+        || approval.preview_ref !== preview.preview_ref
+      ) return;
       await runControlOperation("发布并读回", () => controlClient.publish({
         schema_version: CONTROL_SCHEMA_VERSION,
-        preview_ref: previewRef,
-        approval_id: approvalId,
+        preview_ref: preview.preview_ref,
+        approval_id: approval.approval_id,
       }, controlIdempotencyKey()), { resetDraft: true });
       break;
     }
