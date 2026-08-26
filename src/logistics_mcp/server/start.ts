@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { createModuleInventory } from "../control-plane/inventory";
 import {
@@ -430,10 +431,16 @@ async function createRuntimeInventory(): Promise<TrustedModuleInventory> {
   }
 }
 
-async function assertManagedStateIsRestorable(
+type ManagedActivationRestoreEvidence = Readonly<{
+  release: unknown;
+  readback: unknown;
+  attempt: unknown;
+}>;
+
+async function loadManagedActivationRestoreEvidence(
   store: SqliteControlStore,
   managementTenantId: string,
-): Promise<void> {
+): Promise<ManagedActivationRestoreEvidence | undefined> {
   const unfinished = await store.listUnfinishedReadbackAttempts();
   if (unfinished.length > 0) {
     throw new Error("Pre-listen readback recovery is unavailable through the public assembly.");
@@ -448,16 +455,87 @@ async function assertManagedStateIsRestorable(
   if (pendingRelease !== null || unresolvedRelease !== null) {
     throw new Error("Pre-listen release recovery is unavailable through the public assembly.");
   }
+
+  if (state.activeRelease === null) {
+    if (state.activeRevision !== 0 || state.activeModules.length !== 0) {
+      throw new Error("Managed inactive activation state is inconsistent.");
+    }
+    if (!(await store.health()).ready) {
+      throw new Error("Managed control store is not ready after validation.");
+    }
+    return undefined;
+  }
+
+  const activeRelease = await store.getActiveRelease();
   if (
-    state.activeRelease !== null ||
-    state.activeRevision !== 0 ||
-    state.activeModules.length !== 0
+    activeRelease === null ||
+    activeRelease.status !== "active_verified" ||
+    activeRelease.managementTenantId !== managementTenantId ||
+    activeRelease.revision !== state.activeRevision ||
+    !isDeepStrictEqual(activeRelease, state.activeRelease) ||
+    !isDeepStrictEqual(activeRelease.desiredModules, state.activeModules)
   ) {
-    throw new Error("Pre-listen active-release restore is unavailable through the public assembly.");
+    throw new Error("Managed active release evidence is inconsistent.");
+  }
+
+  const readback = await store.getReadback({
+    managementTenantId,
+    releaseId: activeRelease.releaseId,
+  });
+  if (
+    readback === null ||
+    readback.status !== "verified" ||
+    readback.managementTenantId !== managementTenantId ||
+    readback.releaseId !== activeRelease.releaseId ||
+    readback.revision !== activeRelease.revision ||
+    readback.readbackRef !== activeRelease.readbackRef ||
+    typeof readback.attemptId !== "string" ||
+    readback.appliedReleaseId !== activeRelease.releaseId ||
+    readback.appliedRevision !== activeRelease.revision ||
+    readback.reasonCodes.length !== 0 ||
+    !isDeepStrictEqual(readback.appliedModules, activeRelease.desiredModules) ||
+    !isDeepStrictEqual(readback, state.latestReadback)
+  ) {
+    throw new Error("Managed active readback evidence is inconsistent.");
+  }
+
+  const attempts = await store.getReadbackAttemptHistory({
+    managementTenantId,
+    releaseId: activeRelease.releaseId,
+    revision: activeRelease.revision,
+  });
+  const matchingAttempts = attempts.filter(
+    (attempt) =>
+      attempt.attemptId === readback.attemptId &&
+      attempt.releaseId === activeRelease.releaseId &&
+      attempt.revision === activeRelease.revision &&
+      attempt.readbackRef === readback.readbackRef,
+  );
+  if (matchingAttempts.length !== 1) {
+    throw new Error("Managed active readback attempt evidence is ambiguous.");
+  }
+  const attempt = matchingAttempts[0]!;
+  if (
+    attempt.phase !== "finalized" ||
+    attempt.terminalStatus !== "verified" ||
+    attempt.managementTenantId !== managementTenantId ||
+    attempt.attemptId !== readback.attemptId ||
+    attempt.releaseId !== activeRelease.releaseId ||
+    attempt.revision !== activeRelease.revision ||
+    attempt.readbackRef !== readback.readbackRef ||
+    attempt.appliedReleaseId !== activeRelease.releaseId ||
+    attempt.appliedRevision !== activeRelease.revision ||
+    attempt.checkedAt !== readback.checkedAt ||
+    attempt.reasonCodes.length !== 0 ||
+    !isDeepStrictEqual(attempt.desiredModules, activeRelease.desiredModules) ||
+    !isDeepStrictEqual(attempt.appliedModules, readback.appliedModules)
+  ) {
+    throw new Error("Managed active readback attempt evidence is inconsistent.");
   }
   if (!(await store.health()).ready) {
     throw new Error("Managed control store is not ready after validation.");
   }
+  return Object.freeze({ release: activeRelease, readback, attempt });
 }
 
 function interruptedRecoveryFinalResult(
@@ -573,7 +651,11 @@ async function createManagedFixtureRuntime(
   let composition: GatewayComposition | undefined;
   try {
     await recoverPriorBootReadbackAttempts(controlStore, opened.recoveryDriver);
-    await assertManagedStateIsRestorable(controlStore, config.managementTenantId);
+    const activationRestoreEvidence = await loadManagedActivationRestoreEvidence(
+      controlStore,
+      config.managementTenantId,
+    );
+    const persistedState = await controlStore.getControlState();
     const inventory = await createRuntimeInventory();
     const assembly = createModuleControlRuntimeAssembly({
       inventory,
@@ -582,7 +664,19 @@ async function createManagedFixtureRuntime(
       previewTtlSeconds: 15 * 60,
       clock: () => new Date().toISOString(),
       idGenerator: () => randomUUID(),
+      ...(activationRestoreEvidence === undefined
+        ? {}
+        : { activationRestoreEvidence }),
     });
+    const restoredActivation = assembly.activation.snapshot();
+    const expectedActivation = {
+      releaseId: persistedState.activeRelease?.releaseId ?? null,
+      revision: persistedState.activeRevision,
+      activeModules: persistedState.activeModules,
+    };
+    if (!isDeepStrictEqual(restoredActivation, expectedActivation)) {
+      throw new Error("Managed activation restore did not match persisted state.");
+    }
     composition = makeComposition({
       managementTenantId: config.managementTenantId,
       authenticate: config.authenticate,
