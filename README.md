@@ -5,7 +5,7 @@
 这是一个独立运行的 MCP 服务端平台：它负责 transport、身份与租户上下文、RBAC、Schema、审计、幂等、会话、状态包络和窄 API 适配；报价、关务、文档等业务系统继续拥有自己的业务权威。MCP 不复制报价、Zone、关税、客户记录或文档主表。
 
 > [!IMPORTANT]
-> 本 README 描述的是 main 的可核对边界，不把代码存在、fixture 通过、fake HTTP 测试或计划文档写成生产上线证明。当前未获生产资格的能力必须保持 unavailable、manual_review、blocked 或 needs_input。
+> 本 README 描述的是当前 checkout 的可核对边界，不把代码存在、fixture 通过、fake HTTP 测试或计划文档写成生产上线证明。当前未获生产资格的能力必须保持 unavailable、manual_review、blocked 或 needs_input。
 
 ## 先看结论
 
@@ -13,6 +13,7 @@
 - AI 负责理解意图、补齐输入、选择工具和解释结果；金额、税率、Zone、重量、容量、状态和版本由确定性代码或上游权威系统决定。
 - Module Runtime v0 在启动时挂载静态可信模块，通过 manifest、capability、lease 和 catalog 暴露工具；远程安装、模型驱动写入和运行时 hot-plug 仍不是当前生产能力。
 - Agent Standard Access v0 为不同 Agent 角色提供 allowlisted profile、Standard Pack、固定 MCP resources 和只读 system.agent_context.get。
+- Admin control-plane v1 只管理当前已挂载模块的 inventory、preview、四眼审批、activation policy 和 runtime exact readback；它不加载任意代码，也不拥有报价、关务或客户数据。
 - ready=false、版本缺失、响应冲突、超时和写后读回失败不会被 AI 或 fixture 静默补成 success。
 
 ## 一眼看懂：客户端如何进入受控工具
@@ -40,6 +41,7 @@ flowchart LR
 
 | 能力 | 当前状态 | 可调用边界 | 下一门禁 / 证据 |
 | --- | --- | --- | --- |
+| Admin control-plane | control contracts、inventory/hash、SQLite identity marker、activation gate、register/preview/approval 与 UI/API 模型可见；完整 publish/reconcile、startup 接线和真实 HTTP exact readback 仍待并行最终回读 | 仅本地受控 fixture/loopback；生产 `POST /admin/api/v1/control/**` 固定 `blocked` | 显式 initializer/root、identity/tenant/schema/permission/lock continuity、不同 actor approval、publish 后 exact readback 和独立证据 |
 | cargo.calculate / container.plan_summary | 本地确定性计算；返回单位、规则/数据版本、假设、warnings、blockers 和 trace | 可在 fixture/local composition 验证；container 是理论/可解释摘要，不是 3D 装柜承诺 | 继续保持契约、单位和重量证据约束 |
 | quote.canada_final_mile.calculate | adapter 已实现并通过 fake HTTP/local 组合验证，但生产合同未获资格 | 生产路径保持 unavailable / fail-closed；不返回可发送报价 | 完成生产 API 合同、发布快照、staging 和 readback 验收 |
 | customs.ca.search | 已有 status→query 和失败闭合；main 尚未注入生产组合 | 缺 M2M 认证合同、ready gate 或非测试 release 时不可用 | 服务 JWT、tenant mapping、M2M 限流/审计、非测试 staging 证据 |
@@ -78,6 +80,20 @@ sequenceDiagram
 进入工具前由服务端注入并校验 tenant/actor、token、profile、权限和请求 Schema。ready=false 必须原样保留，不能由 AI 或 fixture fallback 升级；写工具还必须经过 preview、approval、commit 和 readback。
 
 统一响应包络只允许五种状态：success、needs_input、manual_review、blocked、unavailable。
+
+### Admin control-plane 的固定边界
+
+control state 只能由显式 initializer 建立，startup/runtime open 不隐式创建、修复、替换或删除。application root 必须由 assembly 明确提供，并固定派生以下路径：
+
+```text
+state_dir  = <application-root>/.runtime/mcp-instance-state
+control_db = <state_dir>/control.sqlite
+marker     = <state_dir>/control-identity.json
+```
+
+control DB、marker、root、`instance_id`、`management_tenant_id`、schema、permission 和 single-process SQLite lock 任一漂移，都在 listen/写入前 fail closed。发布流程固定为 preview → 不同 actor approval → publish → exact readback；`active_verified` 只是 runtime exact readback，不是 artifact signature 或 production qualification。未闭合的 pending/readback 必须进入 `manual_review`/`unavailable`，并由 operator-only reconcile 处理。
+
+本地 Admin 页面只展示脱敏状态，回滚用语固定为“回滚到上一已读回版本（本地受控环境）”。fixture identity 只允许 loopback local。浏览器 password/token 只在内存中短暂存在，不进 URL、storage、cookie、日志或审计；生产 Admin POST 固定 blocked，不能靠环境变量打开。
 
 ## Agent 调用适配
 
@@ -140,10 +156,11 @@ flowchart TB
 
 ~~~bash
 npm ci
+npm run init:control-fixture
 npm run start:fixture
 ~~~
 
-start:fixture 会先构建真实编译产物，再以 fixture 模式启动本地服务。另开一个终端执行：
+`npm run init:control-fixture` 是一次显式的本地 control-state 初始化；必须先成功执行，startup 不会隐式创建或修复 control DB/marker。`start:fixture` 随后构建真实编译产物，再以 fixture 模式启动本地服务。另开一个终端执行：
 
 ~~~bash
 npm run verify:runtime
@@ -153,7 +170,8 @@ npm run verify:runtime
 
 | 地址 | 用途 | 边界 |
 | --- | --- | --- |
-| http://127.0.0.1:8080/admin/ | 中文脱敏只读 Admin 快照 | 只展示当前进程的 fixture/运行时信息，不代表生产控制台 |
+| http://127.0.0.1:8080/admin/ | 中文脱敏 Admin 快照/本地控制面入口 | 只展示当前进程的 fixture/运行时信息；回滚文案为“回滚到上一已读回版本（本地受控环境）”，不代表生产控制台 |
+| http://127.0.0.1:8080/admin/api/v1/control/state | control state read-only endpoint（若当前 assembly 已接线） | loopback fixture；完整写链路与 exact readback 仍待最终回读 |
 | http://127.0.0.1:8080/mcp | MCP Streamable HTTP 入口 | 本地假 token 为 local-fixture-token |
 | http://127.0.0.1:8080/readyz | readiness 观察 | fixture 模式保持 503/fixture_mode_not_production_ready，这是预期结果 |
 
@@ -199,8 +217,11 @@ tests/                platform、module-runtime、agent-context、domains、adap
 ## 安全与生产边界
 
 - 生产运行时由服务端注入 tenant/actor 和上游身份映射；客户端不能提交 token、base URL、密码或跨租户上下文。
+- control-plane 的 application root、control DB、marker、management tenant、schema 和 single-process lock 必须通过显式 initializer/兼容门建立并连续核对；startup 不隐式 create/repair。
+- 发布/回滚只操作已挂载模块的 activation policy；回滚通过新 revision 恢复上一份已读回 profile，不修改 target release 或事件历史。pre-control-plane image 不是 managed rollback target。
 - 出站 URL 必须经过服务端 allowlist；不允许客户端选择任意上游地址、凭据 URL、重定向绕过或私有网络目标。
 - 日志默认不写客户地址、报价明细、税务材料全文、原始聊天和凭证，使用 opaque handle、hash 和脱敏摘要。
+- Admin 浏览器 password/token 只在内存中短暂存在，不写 URL、local/session storage、cookie、持久化 DOM、服务日志或 audit event。
 - ready=false 的 RiskCustoms 结果只能进入 unavailable 或 manual_review；AI 不得把候选补成 confirmed，也不得补造税率。
 - 报价和关务数据的权威仍在既有系统；MCP 不在本地建立价格、Zone、关税或客户记录主表。
 - 组合测试通过不等于生产 API 获准启用；生产资格还需要真实合同、认证、tenant mapping、版本/发布证据、staging 读回和安全发布门禁。
@@ -237,5 +258,6 @@ tests/                platform、module-runtime、agent-context、domains、adap
 - customs.ca.estimate 没有已核验生产 API 合同，不在本地拼造税额。
 - PDF/文档工具未注册；没有完整 API、副作用和写后读回合同前不启用。
 - quote.save_draft 和 review.create_task 的生产写源仍需要审批、幂等和读回合同；不会发送、发布、订舱或覆盖既有记录。
+- Admin control-plane 的 publish/reconcile、startup initializer/store/API 完整接线和真实 HTTP exact readback 仍需并行完成后重新回读；在此之前生产 Admin POST 固定 blocked，不能把本地 fixture 当作上线。
 
 任何能力从 pending/disabled/unavailable 进入生产，都必须沿现有 RFC、契约、runbook 和发布门禁完成验证，而不是只更新 README。

@@ -1,103 +1,197 @@
-# 跨境物流 MCP 控制台原型说明
+# 跨境物流 MCP Admin 控制面
 
-**范围：** 08A 单页控制面原型
-**版本：** `2026-08-11.v1` 兼容展示
-**状态：** 已接只读脱敏运行快照，未接入正式后台写 API
+**范围：** Admin 控制面 v1 的产品边界、状态语义和本地受控操作说明。它不是 FastAdmin
+后端的替代品，也不是生产运维授权。
+
+**合同版本：** `2026-08-22.v1`
+
+**验收状态（截至本次文档切片读入的 checkout）：**
+
+- **当前已实现、已有测试切片：** closed control contracts、inventory/descriptor hash、
+  独立 SQLite control store、identity marker、activation read/dispatch facade、
+  register/preview/approval service 路径，以及 Admin UI 的 closed state/API client 模型。
+  这些是当前源码和测试资产的事实，不等同于最终全量通过。
+- **并行未完成/待最终回读：** 本次读入时 `publish`、`reconcile` 的 service 路径仍处于未实现
+  分支；启动入口尚未完成 initializer、control store、recovery 和 Admin control API 的统一接线；
+  真实 HTTP 的注册→四眼审批→发布→exact readback→reconcile→rollback 仍须由最终集成验收重新
+  执行。不能用测试文件存在、静态页面或计划文本代替这些证据。
+- **本地受控环境：** 只允许显式初始化的 fixture/local assembly、回环访问和合成数据。其状态
+  只能写成 `evidence_level=local_build`、`production_eligible=false`。
+- **生产：** `MCP_DATA_MODE=production` 下所有 Admin `POST` 固定返回
+  `blocked/admin_control_production_disabled_v1`，且必须在 authenticator 和 service 之前
+  阻断。本次不连接、不部署、不宣称生产资格。
+
+## 产品定位
+
+Admin 控制面只管理“当前应用构建已经挂载的静态可信模块”的登记、激活策略和审计元数据。
+它不下载任意插件，不执行源码或命令，不改变 Module Runtime v0 的挂载集合，也不建立报价、
+关务、客户或文档业务主表。
+
+业务权威边界如下：
+
+| 事实 | 权威归属 | Admin/MCP 的职责 |
+| --- | --- | --- |
+| 报价金额、Zone、计费规则、有效期 | 外部报价系统 | 只显示适配状态和受控引用；适配器未验收时保持 `待适配验证`/`unavailable` |
+| 关务分类、税费和放行规则 | 外部关务系统 | 不复制规则或客户材料；`ready=false` 保持 `unavailable`/`manual_review` |
+| 客户地址、订单、业务记录、报价单文件 | 各自业务系统 | 不写入 control DB、fixture、普通审计日志或页面 |
+| CBM、体积重、分泡、计费重、理论装柜摘要 | MCP 内确定性工具 | 按既有工具合同计算，保留单位、版本、假设、warnings、blockers 和 trace |
+| 模块 inventory、preview、approval、release、readback | MCP control DB | 只保存控制元数据、opaque 引用和生命周期证据 |
+
+AI 可以理解意图、补齐输入和解释结构化结果；不能补造价格、税率、Zone、客户记录、
+生产签名或 activation policy。
 
 ## 信息架构
 
-单页左侧导航包含 7 个视图，使用 URL hash 保留当前视图，不引入多页路由框架：
+主导航保持六个视图：
 
-1. **总览**：展示 `/healthz`、`/readyz`、来源就绪、阻断原因、待处理项和状态说明。
-2. **客户端接入**：只展示客户端业务名称、登记状态和最近校验结果；身份来源、使用范围、允许来源地址和内部标识均隐藏。
-3. **工具权限**：按已校验快照返回的中文角色和工具名称展示操作类型、当前可用性和角色授权；内部工具名与权限码不显示，字段未返回时不生成默认权限。
-4. **数据源与适配器**：展示智能报价、关务查询、报价单、精选知识、系统状态和复核任务的配置状态与就绪原因；接口、凭证和版本只显示是否已登记，不显示具体值。
-5. **系统结构**：以 C4-like 静态结构展示 `clients → MCP 控制层 → tools → sources`，并以第二张图展示 `draft → validate → approval → publish → readback/rollback` 的审批生命周期。
-6. **审批与发布**：展示草稿差异、校验结果、审批链和禁用的发布/回滚动作。
-7. **审计日志**：只展示中文、脱敏的操作类别、结果和原因；用户、租户、版本和追踪标识不回显。
+1. **总览：** 显示进程健康、平台 readiness、当前控制面状态和阻断原因。`healthz` 只代表进程
+   存活；`readyz` 也不能单独证明业务 API 或生产资格。
+2. **模块中心：** 显示当前 deployment inventory、登记状态、desired draft、运行时状态、
+   preview 差异和受控操作。
+3. **Agent 接入：** 只显示脱敏的客户端登记和身份边界，不显示凭证正文。
+4. **适配器状态：** 显示报价、关务、知识、状态和复核适配器的 readiness；未取得真实合同、
+   版本和 staging readback 时固定显示“待适配验证”或“未获生产资格”。
+5. **审批与发布：** 显示 preview、校验、creator/approver 区分、release trail、readback 和
+   rollback target。
+6. **审计日志：** 只显示脱敏 action、status、reason、revision 和 opaque reference；不显示
+   token、地址、报价金额、税务材料、原始聊天或下游响应全文。
 
-## 系统结构视图
+页面固定显示的警告是：
 
-`#architecture` 只在 `validateSnapshot` 成功后从快照生成展示模型。clients、tools、sources 和 `approvals.chain` 的数组为空时不生成假动态节点；MCP 控制层是固定的产品边界说明，表示身份、tenant/actor 绑定、RBAC allowlist 和审计，不表示实时证据。
+> 报价、关务与客户数据仍由外部权威系统管理
 
-工具分组只读取 `name` 的第一个 `.` 前缀，按以下固定映射处理：`quote.`/`cargo.` → 报价与计费，`customs.` → 关务，`container.` → 装柜，`knowledge.`/`system.`/`review.` → 平台支持；其他、空或非字符串名称进入“未知工具/未分类”，保留原始顺序和名称位置。不得依据 label、permission、roles 或包含关系推断分组。
+## 模块中心的真实生命周期
 
-节点关系使用可读动词：客户端“通过身份与租户边界接入”；控制层“认证后绑定 tenant/actor，按 RBAC 调用”；工具“执行确定性计算或窄适配”；来源“提供版本、引用和 readiness 原因”，并返回结构化结果。连接箭头只是布局符号，不暗示实时流量。
-
-结构图明确声明：它不证明真实网络连通、认证已接通或正式配置生效。tool allowlist、client check、source readiness、approval 状态四类信号分别展示，不汇总成“系统健康”或“可发布”。详情只使用 `display`/`escapeHtml` 处理的安全字段；`secret_ref` 只作为 opaque 引用，实际 endpoint URL、原始 token/secret、客户内容和下游响应不展示。
-
-审批生命周期只有在 `approvals.chain` 非空时才绘制。缺少的阶段显示未返回，`blocked`、未读回或其他非成功状态不得被提升为成功；空链直接显示暂无审批链，不把固定阶段画成已完成。
-
-## 数据边界
-
-控制台是现有 MCP 的控制面，不建立第二套报价、关税、Zone、航线、装柜或业务记录库。AI 报价 API、RiskCustoms API、PDF API 均归外部服务；MCP 本地只有 cargo/container 确定性计算。页面只展示版本、状态、来源引用、权限和审批信息。
-
-展示字段应遵守以下约束：
-
-- 凭证只使用 opaque `secret_ref`，不出现原始 token、secret、环境变量或密码。
-- 客户地址、原始聊天、报价明细、税务材料和附件不进入 fixture、页面或普通审计日志。
-- `ready=false` 的 RiskCustoms 结果保持 `unavailable` 或 `manual_review`，不能由 AI 或前端补成成功。
-- fixture 只由 URL 明确带 `?fixture=1` 启用，并持续显示“演示数据 / 未连接正式后台”。
-- 正式快照请求失败必须 fail-closed；页面不使用 fixture 或默认配置作静默回退。
-
-## 状态机
-
-后端包络沿用 5 个接口状态：`success`、`needs_input`、`manual_review`、`blocked`、`unavailable`。前端另有展示层状态：
+页面用四段 release rail 表示流程：
 
 ```text
-加载中 loading
-  ├─ 正式快照成功且 schema_version 有效 → 展示控制台
-  ├─ 无记录 → 暂无记录 empty
-  ├─ 请求/格式失败 → 加载失败 error + 不可用 unavailable
-  └─ fixture=1 → 展示明确标记的演示快照
+登记制品 → 生成预览 → 双人审批 → 发布读回
+```
 
-控制台内的配置草稿
-  → validate/preview
-  → approval
+四段都必须有服务端状态和证据；开关只修改浏览器内的 desired draft，不直接修改运行时。
+正式控制流程为：
+
+```text
+当前 deployment inventory
+  → exact module_id/version/descriptor_digest 登记
+  → 固定 base release/revision 的 preview 与 redacted diff
+  → 与 creator 不同的 actor approval
   → publish
-  → readback
-  → 成功才可报告 success；权限、阶段或安全禁止时 blocked，来源不可靠时 unavailable，冲突时 manual_review。
+  → runtime activation exact readback
+  → 只有 readback 完全匹配，才提交 active policy
 ```
 
-`ready` 是就绪检查文案，不是替代后端包络状态。颜色不是唯一依据；状态同时使用文字和图标。
+“不同 actor”是硬约束；请求体不能提供或覆盖 tenant、actor、role、scope、URL、路径、源码、
+token 或 secret。`inventory` 是 allowlist，不是 active set。初始运行时快照必须是：
 
-## 只读快照与未来写 API
+```json
+{"releaseId":null,"revision":0,"activeModules":[]}
+```
 
-当前实现只读运行快照；未来正式写入至少需要：
+没有 `active_verified` release 时，模块调用返回
+`unavailable/module_policy_not_released`，但模块工具仍保留在 `tools/list`；普通
+`module_disabled_by_release` 同样保留目录可见性并返回 `unavailable`。security quarantine、
+retirement 和 administrator security-disable 不是 v1 的 operational toggle，必须返回
+`blocked`，不能借普通禁用语义模拟目录移除。
 
-### 读取快照
+### 三个必须同时区分的状态
+
+一次成功的本地/fixture publish 的三条状态不是同一个字段：
+
+| 层 | 成功状态 | 含义 |
+| --- | --- | --- |
+| `module_control_idempotency` | `completed` | 该控制写请求的最终持久化结果可 replay |
+| `module_releases` | `active_verified` | 该 release 已经通过当前 runtime activation exact readback |
+| Admin envelope `readback` | `verified` | 返回的 release/revision/module refs 与 runtime 完全一致 |
+
+`active_verified`/`verified` **只表示当前运行时 activation 的 exact readback**；它不是 artifact
+signature、source attestation、SBOM、镜像签名或 production qualification。v1 inventory 永远
+写成 `evidence_level=local_build`、`production_eligible=false`，不能在 UI 中显示为已签名或可上线。
+
+## 未决读回与人工复核
+
+- `published_pending_readback` 表示 domain 已提交、运行时读回尚未终态；只允许针对该固定
+  release 的 pending-only readback。
+- `manual_review` 表示运行时应用或读回发生未知/不一致结果。它保留服务端状态和原因，页面
+  强制刷新并要求人工确认；启动时不自动重试，也不重复 activation/readback。
+- `domain_committed` 只能恢复该请求已经固定的 pending release，不能创建第二个 release。
+- 只有 operator 通过 reconcile 才能对 unresolved release 创建新的 readback attempt；新的
+  release 不在 reconcile 中产生。未解决的最新 release 存在时，新的 publish 必须阻断。
+- 相同 idempotency key 与相同 canonical request hash 只 replay 已持久化结果；同 key 不同 hash
+  返回冲突并阻断。
+
+## 回滚语义
+
+UI 和操作文案固定为：
+
+> 回滚到上一已读回版本（本地受控环境）
+
+回滚不是编辑旧行、删除历史或把指针静默改回去。它必须：
+
+1. 选择一个历史中已有、且自身有 runtime exact readback 的旧 profile；
+2. 生成 rollback preview，固定当前 base release/revision 和 target release；
+3. 由不同 actor 完成 approval；
+4. 以新 release/new revision publish；
+5. 对新 revision 做 exact readback；
+6. 保持 target release、target readback、event history 和审计历史不变。
+
+如果 target 没有完整 readback、不是当前 inventory、已过期、不是更早 revision，或最新状态
+仍 unresolved，回滚必须 `blocked`/`manual_review`，不能直接编辑 SQLite。
+
+## 启动、身份与本地边界
+
+managed entrypoint 必须在监听前得到显式 application root，并固定派生：
+
+```text
+state_dir  = <application-root>/.runtime/mcp-instance-state
+control_db = <state_dir>/control.sqlite
+marker     = <state_dir>/control-identity.json
+```
+
+显式 initializer 是唯一创建者。runtime open 不隐式创建、修复、替换或删除 state directory、
+DB 或 marker；`MCP_ADMIN_CONTROL_ENABLED` 不是 initializer、activation policy 或绕过开关，
+只接受字面 `true` 作为已初始化 managed instance 的一致性断言。缺少/不为 `true`、root 变化、
+身份或 tenant 变化、marker/DB 缺失或漂移、schema/权限/锁不兼容，均必须 fail closed 且不监听。
+
+本地 fixture 的两个身份只存在于 loopback fixture assembly：申请人和审批人必须使用不同 actor。
+fixture identity 不进入 production verifier、生产环境变量、生产日志或生产 UI 路径。
+
+## Secret 和显示安全
+
+- 浏览器身份对话框使用 password input；Bearer 只保存在模块作用域的内存变量中。
+- token/secret 不得写入 URL/query string、`localStorage`、`sessionStorage`、cookie、DOM 文本、
+  error report、console、audit 或普通日志。
+- 服务端日志和事件只保留脱敏 actor/tenant/object reference、revision、status、reason 和
+  必要的 opaque ref；endpoint 和 credential 只允许 opaque `endpoint_ref`/`secret_ref`。
+- `?fixture=1` 只允许在明确的 loopback 本地演示路径显示两个 demo identity 入口；正式路径不得
+  显示 fixture identity，也不得用 fixture 数据静默回退。
+
+## Admin API 约定
+
+控制面 API 是独立的 Admin API，不进入既有 MCP 业务工具目录：
 
 ```http
-GET /admin/api/v1/snapshot
-Accept: application/json
+GET  /admin/api/v1/control/state
+POST /admin/api/v1/control/packages/register
+POST /admin/api/v1/control/deployments/preview
+POST /admin/api/v1/control/approvals
+POST /admin/api/v1/control/deployments/publish
+POST /admin/api/v1/control/deployments/reconcile
 ```
 
-返回带 `schema_version`，并返回本页需要的对象和数组。当前路由没有管理端用户上下文，因此 `clients`、`audit` 为空，租户和用户仅显示未绑定；来源不返回接口、凭证和版本原值。数组为空时不让前端猜测或补默认业务数据。
+所有 POST 都必须有服务端注入的 identity/tenant、`Idempotency-Key`、strict schema、审计关联和
+审批约束。当前 checkout 中 API 路由/请求模型资产已经出现，但全链路 dispatch、启动接线和
+HTTP exact-readback 仍以并行实现和最终验收为准；不要把路由存在写成可发布。
 
-### 预览差异
+## 产品验收口径
 
-```http
-POST /admin/api/v1/config/preview
-```
+以下四句话必须分别回答，不能合并为一个绿色标签：
 
-请求最小包含服务端绑定的租户/actor 上下文、配置草稿版本和幂等键；响应至少包含 `status`、`preview_ref`、脱敏 `diff`、校验结果、来源版本和 `trace_id`。preview 不写外部权威系统。
+| 问题 | 允许的证据 | 当前文档口径 |
+| --- | --- | --- |
+| 代码是否存在？ | 当前 checkout 的源码 diff | 已有 control-plane/UI/API 切片；按最终 diff 复核 |
+| 局部行为是否通过？ | 对应 focused/unit/HTTP fixture 输出 | 待最终命令实际执行；不预写通过数 |
+| 本地受控流程是否闭合？ | initializer、restart、四眼、publish/readback、reconcile、rollback 的独立证据 | 待并行接线完成后最终回读 |
+| 是否具备生产资格？ | Deployment Evidence、签名/信任链、生产身份、durable 多实例 fencing、staging readback | v1 不具备；生产 Admin POST 固定 `blocked` |
 
-### 发布与回滚
-
-```http
-POST /admin/api/v1/config/publish
-POST /admin/api/v1/config/rollback
-```
-
-两者都必须引用同一 `preview_ref` 或明确目标版本，并带服务端审批 ID、幂等键和审计关联。只有目标系统写入后读回，且租户、版本和关键状态核对通过，才可返回 `success`；未知写结果转 `manual_review`，依赖不可用转 `unavailable`。fixture 模式永远不调用这些接口。
-
-## 发布前检查
-
-- 严格 CSP 下不允许 `style="..."` 内联属性；表格宽度使用 CSS class。
-- 使用键盘可达的跳过链接、导航、按钮、对话框和局部横向表格区域。
-- 发布/回滚/保存到服务器在没有正式 API、审批和读回证据时保持禁用。
-- 通过静态服务器分别验证 `?fixture=1` 和不带 fixture 的 fail-closed 路径。
-
-## 运行安全边界
-
-运行时 `/admin` 静态路由发生在 MCP bearer auth 之前，因此 `MCP_ADMIN_UI_ENABLED` 默认关闭，已开启的只读页面也只接受本机回环访问。多人访问只有在批准的企业身份网关/访问控制之后才可开放，并仍需独立的管理端角色权限、租户绑定、来源校验、版本/审批/审计。本控制台不提供 header bypass、共享密钥、万能 admin token 或真实保存/发布/回滚。
+状态颜色不是证据；页面必须同时显示文字、reason 和 readback 状态。
