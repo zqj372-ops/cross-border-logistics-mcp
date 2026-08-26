@@ -71,7 +71,10 @@ function isAllowedStatusResponse(value: unknown): value is FetchJsonAllowedStatu
   );
 }
 
-function mapHttpError(error: unknown): FreightcomTestClientError {
+function mapHttpError(
+  error: unknown,
+  operation: "submit" | "poll",
+): FreightcomTestClientError {
   if (error instanceof FreightcomTestClientError) return error;
   if (error instanceof HttpAdapterError && (error.status === 401 || error.status === 403)) {
     return new FreightcomTestClientError(
@@ -81,6 +84,7 @@ function mapHttpError(error: unknown): FreightcomTestClientError {
     );
   }
   if (
+    operation === "submit" &&
     error instanceof HttpAdapterError &&
     error.status !== undefined &&
     [400, 409, 422].includes(error.status)
@@ -160,7 +164,7 @@ export function createFreightcomTestRateClient(
           [202],
         );
       } catch (error: unknown) {
-        throw mapHttpError(error);
+        throw mapHttpError(error, "submit");
       }
       if (!isAllowedStatusResponse(accepted) || accepted.status !== 202) {
         throw new FreightcomTestClientError(
@@ -194,7 +198,7 @@ export function createFreightcomTestRateClient(
           signal,
         );
       } catch (error: unknown) {
-        throw mapHttpError(error);
+        throw mapHttpError(error, "poll");
       }
       const parsed = freightcomRatePollResponseSchema.safeParse(polled);
       if (!parsed.success) {

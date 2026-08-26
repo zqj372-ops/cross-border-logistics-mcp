@@ -482,7 +482,17 @@ describe("admin control-plane model boundary", () => {
       environment: "fixture",
     });
     expect(sameActor.submitApproval).toBe(false);
+    expect(sameActor.generatePreview).toBe(false);
     expect(sameActor.reconcile).toBe(true);
+
+    expect(actionAvailability({
+      state: previewState,
+      draftModules: validControlState.activation.active_modules,
+      actorRole: "admin",
+      actorRef: "actor-1",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).generatePreview).toBe(true);
 
     expect(actionAvailability({
       state: previewState,

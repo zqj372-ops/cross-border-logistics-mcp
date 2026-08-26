@@ -632,7 +632,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   return {
     saveDraft: true,
     register: isAdmin && localWrite,
-    generatePreview: isAdmin && localWrite,
+    generatePreview: isAdmin && localWrite && draftModules.length > 0,
     submitApproval: isAdmin && localWrite && usablePreview && distinctApprover,
     publish: isAdmin && localWrite && usablePreview && publishableApproval,
     reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),

@@ -1432,13 +1432,16 @@ async function handleControlAction(target) {
       }, controlIdempotencyKey()));
       break;
     }
-    case "generate-preview":
+    case "generate-preview": {
+      const desiredModules = controlDraftModules(state.controlState).map(controlModuleRef);
+      if (desiredModules.length === 0) return;
       await runControlOperation("生成预览", () => controlClient.createPreview({
         schema_version: CONTROL_SCHEMA_VERSION,
         intent: "change",
-        desired_modules: controlDraftModules(state.controlState).map(controlModuleRef),
+        desired_modules: desiredModules,
       }, controlIdempotencyKey()));
       break;
+    }
     case "submit-approval": {
       const previewRef = state.controlState.latest_preview?.preview_ref;
       if (typeof previewRef !== "string") return;

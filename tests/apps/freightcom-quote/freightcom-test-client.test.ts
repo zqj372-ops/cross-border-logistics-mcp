@@ -147,4 +147,26 @@ describe("Freightcom test-only rate client", () => {
     if (!(failure instanceof FreightcomTestClientError)) throw new Error("expected FreightcomTestClientError");
     expect(failure.message).not.toContain("private provider detail");
   });
+
+  it.each([400, 409, 422])(
+    "does not classify a polling HTTP %s as a shipment field rejection",
+    async (status) => {
+      const fetchImpl = vi.fn<FetchImplementation>(() =>
+        Promise.resolve(new Response(JSON.stringify({ message: "private provider detail" }), { status })),
+      );
+      const client = createFreightcomTestRateClient({
+        baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+        token: "synthetic-test-credential",
+        allowedHosts: ["customer-external-api.ssd-test.freightcom.com"],
+        fetchImpl,
+      });
+
+      await expect(client.pollRate("test-rate-001")).rejects.toMatchObject({
+        code: "freightcom.test_upstream_unavailable",
+      });
+      await expect(client.pollRate("test-rate-001")).rejects.not.toMatchObject({
+        code: "freightcom.test_request_rejected",
+      });
+    },
+  );
 });
