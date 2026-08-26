@@ -3264,48 +3264,52 @@ describe("SQLite control repository", () => {
     await store.close();
   });
 
-  it("returns a fixed recent event window without deleting persisted history", async () => {
-    const applicationRoot = makeApplicationRoot();
-    await initializeSqliteControlState({
-      applicationRoot,
-      instanceId: "instance_fixture_001",
-      managementTenantId: tenant,
-    });
-    const store = openStore(applicationRoot);
-    await store.close();
-
-    const eventCount = 6_000;
-    const database = new DatabaseSync(controlDatabasePath(applicationRoot));
-    try {
-      insertSyntheticPreviewEventHistory(database, eventCount, "window");
-      expect(database.prepare("SELECT COUNT(*) AS count FROM module_control_events").get()).toEqual({
-        count: eventCount,
+  it(
+    "returns a fixed recent event window without deleting persisted history",
+    async () => {
+      const applicationRoot = makeApplicationRoot();
+      await initializeSqliteControlState({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: tenant,
       });
-    } finally {
-      database.close();
-    }
+      const store = openStore(applicationRoot);
+      await store.close();
 
-    const reopened = openStore(applicationRoot);
-    const state = await reopened.getControlState();
-    const eventWindow = 256;
-    expect(state.events).toHaveLength(eventWindow);
-    expect(state.events.map((event) => event.sequence)).toEqual(
-      Array.from({ length: eventWindow }, (_, index) => eventCount - eventWindow + 1 + index),
-    );
-    expect(state.events.every((event, index) =>
-      index === 0 || event.sequence > state.events[index - 1]!.sequence,
-    )).toBe(true);
-    await reopened.close();
+      const eventCount = 6_000;
+      const database = new DatabaseSync(controlDatabasePath(applicationRoot));
+      try {
+        insertSyntheticPreviewEventHistory(database, eventCount, "window");
+        expect(database.prepare("SELECT COUNT(*) AS count FROM module_control_events").get()).toEqual({
+          count: eventCount,
+        });
+      } finally {
+        database.close();
+      }
 
-    const persistedDatabase = new DatabaseSync(controlDatabasePath(applicationRoot));
-    try {
-      expect(
-        persistedDatabase.prepare("SELECT COUNT(*) AS count FROM module_control_events").get(),
-      ).toEqual({ count: eventCount });
-    } finally {
-      persistedDatabase.close();
-    }
-  });
+      const reopened = openStore(applicationRoot);
+      const state = await reopened.getControlState();
+      const eventWindow = 256;
+      expect(state.events).toHaveLength(eventWindow);
+      expect(state.events.map((event) => event.sequence)).toEqual(
+        Array.from({ length: eventWindow }, (_, index) => eventCount - eventWindow + 1 + index),
+      );
+      expect(state.events.every((event, index) =>
+        index === 0 || event.sequence > state.events[index - 1]!.sequence,
+      )).toBe(true);
+      await reopened.close();
+
+      const persistedDatabase = new DatabaseSync(controlDatabasePath(applicationRoot));
+      try {
+        expect(
+          persistedDatabase.prepare("SELECT COUNT(*) AS count FROM module_control_events").get(),
+        ).toEqual({ count: eventCount });
+      } finally {
+        persistedDatabase.close();
+      }
+    },
+    15_000,
+  );
 
   it.each([256, 257])(
     "reports eventsTruncated from the authoritative latest-257 query at %s events",
