@@ -6,7 +6,11 @@ import type {
   ActiveModuleRef,
   ModuleActivationSnapshot,
 } from "../../src/logistics_mcp/control-plane/types";
-import type { ControlledDispatchFacade } from "../../src/logistics_mcp/control-plane/service";
+import type {
+  ControlledDispatchFacade,
+  ControlledDispatchRoute,
+} from "../../src/logistics_mcp/control-plane/service";
+import { ModuleControlServiceError } from "../../src/logistics_mcp/control-plane/errors";
 import { createFixtureComposition } from "../../src/logistics_mcp/server/composition";
 import {
   registerModuleToolDefinitions,
@@ -79,13 +83,34 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve: () => resolvePromise() };
 }
 
+type DispatchRunner = <T>(
+  ref: ActiveModuleRef,
+  handler: () => T | Promise<T>,
+) => Promise<T>;
+
+function dispatchForSnapshot(
+  snapshot: () => ModuleActivationSnapshot,
+  run: DispatchRunner = async (_ref, handler) => handler(),
+): ControlledDispatchFacade["dispatch"] {
+  return async <T>(
+    route: ControlledDispatchRoute,
+    handler: () => T | Promise<T>,
+  ): Promise<T> => {
+    const ref = typeof route === "function" ? route(snapshot()) : route;
+    if (ref === null) throw new ModuleControlServiceError("module_not_active");
+    return run(ref, handler);
+  };
+}
+
 describe("runtime activation definition wrapper", () => {
   it("returns module_policy_not_released before an active verified release exists", async () => {
     const originalHandler = vi.fn(() => unavailableOutcome("original_handler"));
-    const dispatch: ControlledDispatchFacade["dispatch"] = <T>(
-      _ref: ActiveModuleRef,
-      handler: () => T | Promise<T>,
-    ) => Promise.resolve(handler());
+    const snapshot = () => ({
+      releaseId: null,
+      revision: 0,
+      activeModules: [],
+    } as const);
+    const dispatch = dispatchForSnapshot(snapshot);
     const wrapped = wrapModuleToolDefinitions(
       [
         definition(originalHandler, {
@@ -94,13 +119,7 @@ describe("runtime activation definition wrapper", () => {
         }),
       ],
       {
-        activation: {
-          snapshot: () => ({
-            releaseId: null,
-            revision: 0,
-            activeModules: [],
-          }),
-        },
+        activation: { snapshot },
         dispatch: { dispatch },
       },
     );
@@ -155,7 +174,7 @@ describe("runtime activation definition wrapper", () => {
       await releaseHandler.promise;
       return unavailableOutcome("handler_settled");
     });
-    const dispatch: ControlledDispatchFacade["dispatch"] = async (
+    const dispatch = dispatchForSnapshot(() => activeSnapshot(ref), async (
       _activeRef,
       handler,
     ) => {
@@ -166,7 +185,7 @@ describe("runtime activation definition wrapper", () => {
         readerHeld = false;
         readerReleased = true;
       }
-    };
+    });
     const wrapped = wrapModuleToolDefinitions(
       [
         definition(originalHandler, {
@@ -199,10 +218,7 @@ describe("runtime activation definition wrapper", () => {
     let currentSnapshot = activeSnapshot(ref);
     const snapshot = vi.fn(() => currentSnapshot);
     const originalHandler = vi.fn(() => unavailableOutcome("original_handler"));
-    const dispatch: ControlledDispatchFacade["dispatch"] = async (
-      _activeRef,
-      handler,
-    ) => handler();
+    const dispatch = dispatchForSnapshot(snapshot);
     const wrapped = wrapModuleToolDefinitions(
       [
         definition(originalHandler, {
@@ -224,7 +240,7 @@ describe("runtime activation definition wrapper", () => {
       revision: 2,
       activeModules: [],
     };
-    expect(wrapped[0]!.handler!({}, {} as never)).toMatchObject({
+    await expect(wrapped[0]!.handler!({}, {} as never)).resolves.toMatchObject({
       status: "unavailable",
       blockers: [{ code: "module_disabled_by_release" }],
     });
@@ -266,6 +282,41 @@ describe("runtime activation definition wrapper", () => {
     await expect(wrapped[0]!.handler!({}, {} as never)).rejects.toBe(fatal);
     expect(fatalCheckedInsideSection).toBe(true);
     expect(inDispatchSection).toBe(false);
+    expect(originalHandler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "unreleased activation",
+      { releaseId: null, revision: 0, activeModules: [] },
+    ],
+    [
+      "release-disabled module",
+      { releaseId: "release_disabled", revision: 2, activeModules: [] },
+    ],
+  ] as const)("lets the fatal dispatch fence dominate %s", async (_label, snapshot) => {
+    const originalHandler = vi.fn(() => unavailableOutcome("handler_called"));
+    const fatal = Object.assign(new Error("fatal"), { code: "fatal" });
+    const dispatchCalls = vi.fn();
+    const dispatch: ControlledDispatchFacade["dispatch"] = () => {
+      dispatchCalls();
+      return Promise.reject(fatal);
+    };
+    const wrapped = wrapModuleToolDefinitions(
+      [
+        definition(originalHandler, {
+          moduleId: "cargo",
+          moduleVersion: "2026-08-21.v0",
+        }),
+      ],
+      {
+        activation: { snapshot: () => snapshot },
+        dispatch: { dispatch },
+      },
+    );
+
+    await expect(wrapped[0]!.handler!({}, {} as never)).rejects.toBe(fatal);
+    expect(dispatchCalls).toHaveBeenCalledTimes(1);
     expect(originalHandler).not.toHaveBeenCalled();
   });
 
@@ -349,13 +400,10 @@ describe("runtime activation definition wrapper", () => {
     const snapshot = vi.fn(() => currentSnapshot);
     const originalHandler = vi.fn(() => unavailableOutcome("original_handler"));
     const dispatchRefs: ActiveModuleRef[] = [];
-    const dispatch: ControlledDispatchFacade["dispatch"] = async (
-      ref,
-      handler,
-    ) => {
+    const dispatch = dispatchForSnapshot(snapshot, async (ref, handler) => {
       dispatchRefs.push(ref);
       return handler();
-    };
+    });
     const wrapped = wrapModuleToolDefinitions(
       [
         definition(originalHandler, {
@@ -377,7 +425,7 @@ describe("runtime activation definition wrapper", () => {
       revision: 2,
       activeModules: [],
     };
-    expect(wrapped[0]!.handler!({}, {} as never)).toMatchObject({
+    await expect(wrapped[0]!.handler!({}, {} as never)).resolves.toMatchObject({
       status: "unavailable",
       blockers: [{ code: "module_disabled_by_release" }],
     });

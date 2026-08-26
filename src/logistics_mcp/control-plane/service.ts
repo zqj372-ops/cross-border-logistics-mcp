@@ -128,9 +128,13 @@ export interface ActivationReadFacade {
   readonly snapshot: () => ModuleActivationSnapshot;
 }
 
+export type ControlledDispatchRoute =
+  | ActiveModuleRef
+  | ((snapshot: ModuleActivationSnapshot) => ActiveModuleRef | null);
+
 export interface ControlledDispatchFacade {
   readonly dispatch: <T>(
-    ref: ActiveModuleRef,
+    route: ControlledDispatchRoute,
     handler: () => Promise<T> | T,
   ) => Promise<T>;
 }
@@ -4469,7 +4473,7 @@ function createControlledDispatchFacade(
   activation: ActivationDispatchGate,
 ): ControlledDispatchFacade {
   const dispatch = async <T>(
-    ref: ActiveModuleRef,
+    route: ControlledDispatchRoute,
     handler: () => Promise<T> | T,
   ): Promise<T> =>
     coordinator.withControlledDispatch(async () => {
@@ -4478,7 +4482,11 @@ function createControlledDispatchFacade(
           new ModuleControlServiceError("runtime_fatal"),
         );
       }
-      activation.snapshot();
+      const snapshot = activation.snapshot();
+      const ref = typeof route === "function" ? route(snapshot) : route;
+      if (ref === null) {
+        throw new ModuleControlServiceError("module_not_active");
+      }
       if (!activation.isActive(ref)) {
         throw new ModuleControlServiceError("module_not_active");
       }

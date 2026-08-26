@@ -32,6 +32,7 @@ import type {
   ActivationReadFacade,
   ControlledDispatchFacade,
 } from "../control-plane/service";
+import { ModuleControlServiceError } from "../control-plane/errors";
 import type { ModuleCatalogEntry } from "../module-runtime";
 
 export const phaseOneToolNames = allowlistedToolNames;
@@ -293,30 +294,42 @@ export function wrapModuleToolDefinitions(
     }
 
     const originalHandler = definition.handler;
-    const handler: DomainToolHandler = (input, context, signal) => {
-      const snapshot = facades.activation.snapshot();
-      if (snapshot.releaseId === null || snapshot.revision === 0) {
-        return unavailableModuleOutcome(
-          "module_policy_not_released",
-          "The module is unavailable until an active verified release exists.",
-        );
-      }
+    const handler: DomainToolHandler = async (input, context, signal) => {
+      let inactiveOutcome: DomainToolOutcome | undefined;
+      try {
+        return await facades.dispatch.dispatch((snapshot) => {
+          if (snapshot.releaseId === null || snapshot.revision === 0) {
+            inactiveOutcome = unavailableModuleOutcome(
+              "module_policy_not_released",
+              "The module is unavailable until an active verified release exists.",
+            );
+            return null;
+          }
 
-      const activeRef = snapshot.activeModules.find(
-        (ref) =>
-          ref.moduleId === definition.moduleId &&
-          ref.version === definition.moduleVersion,
-      );
-      if (activeRef === undefined) {
-        return unavailableModuleOutcome(
-          "module_disabled_by_release",
-          "The module is disabled by the active release.",
-        );
+          const activeRef = snapshot.activeModules.find(
+            (ref) =>
+              ref.moduleId === definition.moduleId &&
+              ref.version === definition.moduleVersion,
+          );
+          if (activeRef === undefined) {
+            inactiveOutcome = unavailableModuleOutcome(
+              "module_disabled_by_release",
+              "The module is disabled by the active release.",
+            );
+            return null;
+          }
+          return activeRef;
+        }, () => originalHandler(input, context, signal));
+      } catch (error: unknown) {
+        if (
+          inactiveOutcome !== undefined &&
+          error instanceof ModuleControlServiceError &&
+          error.code === "module_not_active"
+        ) {
+          return inactiveOutcome;
+        }
+        throw error;
       }
-
-      return facades.dispatch.dispatch(activeRef, () =>
-        originalHandler(input, context, signal),
-      );
     };
 
     return { ...definition, handler };

@@ -5977,6 +5977,11 @@ describe("ModuleControlService slice A", () => {
           handler,
         ),
       ).rejects.toMatchObject({ code: "fatal" });
+      const routeResolver = vi.fn(() => null);
+      await expect(
+        assembly.dispatch.dispatch(routeResolver, handler),
+      ).rejects.toMatchObject({ code: "fatal" });
+      expect(routeResolver).not.toHaveBeenCalled();
       expect(handler).not.toHaveBeenCalled();
       expect(getControlState).not.toHaveBeenCalled();
     });
