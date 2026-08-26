@@ -614,22 +614,25 @@ export const FIXTURE_IDENTITIES = Object.freeze([
   Object.freeze({ actor: "local_approver", label: "本地演示审批人", role: "admin", token: "local-fixture-approver-token" }),
 ]);
 
-const RECONCILABLE_RELEASE_STATUSES = new Set([
-  "pending",
-  "published_pending_readback",
-  "manual_review",
-]);
+const RECONCILABLE_READBACK_STATUSES = new Set(["mismatch", "unknown"]);
 
 export function selectReconcileReleaseId(state) {
   validateControlState(state);
-  for (const release of state.release_history) {
-    if (RECONCILABLE_RELEASE_STATUSES.has(release.status)) {
-      return typeof release.release_id === "string" && IDENTIFIER_PATTERN.test(release.release_id)
-        ? release.release_id
-        : null;
-    }
+  const readback = state.latest_readback;
+  if (readback === null || !RECONCILABLE_READBACK_STATUSES.has(readback.status)) {
+    return null;
   }
-  return state.activation.state === "active" ? state.activation.release_id : null;
+  const release = state.release_history[0];
+  if (
+    release?.status === "manual_review"
+    && release.release_id === readback.release_id
+    && release.revision === readback.revision
+  ) {
+    return typeof release.release_id === "string" && IDENTIFIER_PATTERN.test(release.release_id)
+      ? release.release_id
+      : null;
+  }
+  return null;
 }
 
 const ROLLBACK_ELIGIBLE_RELEASE_STATUSES = new Set([
@@ -663,14 +666,12 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   const isAdmin = actorRole === "admin";
   const preview = state.latest_preview;
   const approval = state.latest_approval;
-  const readback = state.latest_readback;
   const localWrite = environment === "local" || environment === "fixture";
   const distinctApprover = typeof actorRef === "string"
     && IDENTIFIER_PATTERN.test(actorRef)
     && typeof creatorActorRef === "string"
     && IDENTIFIER_PATTERN.test(creatorActorRef)
     && actorRef !== creatorActorRef;
-  const hasPendingRelease = state.release_history.some((release) => release.status === "pending" || release.status === "published_pending_readback" || release.status === "manual_review");
   const reconcileReleaseId = selectReconcileReleaseId(state);
   const rollbackReleaseId = selectRollbackReleaseId(state);
   const usablePreview = isPreviewUsable(preview, nowMs);
@@ -688,7 +689,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
     generatePreview: isAdmin && localWrite && draftModulesRegistered,
     submitApproval: isAdmin && localWrite && usablePreview && distinctApprover && !previewAlreadyDecided,
     publish: isAdmin && localWrite && usablePreview && publishableApproval,
-    reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),
+    reconcile: isAdmin && localWrite && reconcileReleaseId !== null,
     rollback: isAdmin && localWrite && rollbackReleaseId !== null,
   };
 }

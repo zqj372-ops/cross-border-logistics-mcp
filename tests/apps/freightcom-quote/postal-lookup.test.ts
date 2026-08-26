@@ -86,8 +86,20 @@ describe("美加邮编自动识别", () => {
       "POSTAL_LOOKUP_RESPONSE_INVALID",
       503,
     ],
+    [
+      "an oversized not-found response",
+      new Response("{}", {
+        status: 404,
+        headers: {
+          "content-length": String(64 * 1024 + 1),
+          "content-type": "application/json",
+        },
+      }),
+      "POSTAL_LOOKUP_RESPONSE_INVALID",
+      503,
+    ],
   ] as const)("preserves the classification for %s", async (_label, providerResponse, code, status) => {
-    const fetchImpl = vi.fn(() => Promise.resolve(providerResponse.clone()));
+    const fetchImpl = vi.fn(() => Promise.resolve(providerResponse));
     const lookup = createPostalLookup({ fetchImpl });
 
     await expect(lookup("10001")).rejects.toMatchObject({ code, status });

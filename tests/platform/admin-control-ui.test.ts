@@ -491,7 +491,7 @@ describe("admin control-plane model boundary", () => {
     });
     expect(sameActor.submitApproval).toBe(false);
     expect(sameActor.generatePreview).toBe(false);
-    expect(sameActor.reconcile).toBe(true);
+    expect(sameActor.reconcile).toBe(false);
 
     expect(availabilityAtPreviewTime({
       state: previewState,
@@ -704,7 +704,7 @@ describe("admin control-plane model boundary", () => {
     expect(isPreviewUsable(precisePreview, truncatedExpiryMs + 1)).toBe(false);
   });
 
-  it("selects the unresolved published release for reconciliation", () => {
+  it("selects only a manual-review release with mismatch or unknown readback", () => {
     const initialPublishedState = {
       ...validControlState,
       activation: {
@@ -720,7 +720,56 @@ describe("admin control-plane model boundary", () => {
       })],
     } as const;
 
-    expect(selectReconcileReleaseId(initialPublishedState)).toBe("release-pending-readback");
+    expect(selectReconcileReleaseId(initialPublishedState)).toBeNull();
+    expect(availabilityAtPreviewTime({
+      state: initialPublishedState,
+      draftModules: [],
+      actorRole: "admin",
+      environment: "local",
+    }).reconcile).toBe(false);
+    expect(selectReconcileReleaseId(validControlState)).toBeNull();
+
+    const manualReviewState = {
+      ...initialPublishedState,
+      latest_readback: {
+        ...readbackSnapshot("mismatch"),
+        release_id: "release-manual-review",
+        revision: 2,
+      },
+      release_history: [releaseSummary({
+        status: "manual_review",
+        releaseId: "release-manual-review",
+        revision: 2,
+      })],
+    } as const;
+    expect(selectReconcileReleaseId(manualReviewState)).toBe("release-manual-review");
+    expect(availabilityAtPreviewTime({
+      state: manualReviewState,
+      draftModules: [],
+      actorRole: "admin",
+      environment: "local",
+    }).reconcile).toBe(true);
+
+    expect(selectReconcileReleaseId({
+      ...manualReviewState,
+      release_history: [
+        releaseSummary({
+          status: "active_verified",
+          releaseId: "release-newer",
+          revision: 3,
+        }),
+        manualReviewState.release_history[0],
+      ],
+    })).toBeNull();
+
+    expect(selectReconcileReleaseId({
+      ...manualReviewState,
+      latest_readback: {
+        ...readbackSnapshot("verified"),
+        release_id: "release-manual-review",
+        revision: 2,
+      },
+    })).toBeNull();
   });
 
   it("enables rollback only when the handler has an older eligible target", () => {

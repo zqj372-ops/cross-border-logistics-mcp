@@ -153,6 +153,15 @@ function resolveAllowedUrl(
   return resolved;
 }
 
+function cancelResponseBody(response: Response): void {
+  if (response.body === null) return;
+  try {
+    void response.body.cancel().catch(() => undefined);
+  } catch {
+    // The response is already unusable; cancellation is best-effort cleanup.
+  }
+}
+
 async function readBoundedText(
   response: Response,
   maxResponseBytes: number,
@@ -161,6 +170,7 @@ async function readBoundedText(
   if (declaredLength !== null) {
     const parsed = Number(declaredLength);
     if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maxResponseBytes) {
+      cancelResponseBody(response);
       throw new HttpAdapterError(
         "upstream_response_too_large",
         "The upstream response exceeds the configured size limit.",
@@ -295,11 +305,16 @@ export function createFetchJsonClient(
         ...abortables,
       ]);
       if (response.status >= 300 && response.status < 400) {
+        cancelResponseBody(response);
         throw new HttpAdapterError(
           "upstream_redirect_rejected",
           "The upstream redirect was rejected by policy.",
         );
       }
+      const text = await Promise.race([
+        readBoundedText(response, maxResponseBytes),
+        ...abortables,
+      ]);
       if (!response.ok && !(allowedStatuses?.includes(response.status) ?? false)) {
         throw new HttpAdapterError(
           "upstream_http_error",
@@ -307,10 +322,6 @@ export function createFetchJsonClient(
           response.status,
         );
       }
-      const text = await Promise.race([
-        readBoundedText(response, maxResponseBytes),
-        ...abortables,
-      ]);
       try {
         const body = JSON.parse(text) as unknown;
         return allowedStatuses?.includes(response.status) === true
