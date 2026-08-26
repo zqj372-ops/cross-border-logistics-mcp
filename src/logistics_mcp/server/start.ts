@@ -13,9 +13,15 @@ import {
 } from "../control-plane/service";
 import type { TrustedModuleInventory } from "../control-plane/types";
 import {
-  openSqliteControlStore,
+  createSqliteControlStoreWithRecovery,
   type SqliteControlStore,
+  type SqliteReadbackRecoveryDriver,
 } from "../control-plane/sqlite-control-store";
+import type {
+  ControlFinalResult,
+  DeepReadonly,
+  ReadbackAttemptRecord,
+} from "../control-plane/repository";
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import { getToolPolicy } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
@@ -453,6 +459,71 @@ async function assertManagedStateIsRestorable(
   }
 }
 
+function interruptedRecoveryFinalResult(
+  attempt: DeepReadonly<ReadbackAttemptRecord>,
+): ControlFinalResult {
+  return {
+    domainRecordRef: attempt.releaseId,
+    envelope: {
+      schema_version: "2026-08-22.v1",
+      request_id: attempt.requestId,
+      trace_id: attempt.traceId,
+      audit_id: attempt.auditId,
+      status: "manual_review",
+      data: attempt.action === "deployments.publish"
+        ? {
+            kind: "release",
+            release_id: attempt.releaseId,
+            revision: attempt.revision,
+            active_modules: attempt.desiredModules.map((module) => ({
+              module_id: module.moduleId,
+              version: module.version,
+              descriptor_digest: module.descriptorDigest,
+            })),
+          }
+        : {
+            kind: "reconciliation",
+            release_id: attempt.releaseId,
+            revision: attempt.revision,
+            status: "unknown",
+          },
+      reason_codes: ["readback.interrupted"],
+      readback: {
+        status: "unknown",
+        release_id: attempt.releaseId,
+        revision: attempt.revision,
+      },
+    },
+  };
+}
+
+async function recoverPriorBootReadbackAttempts(
+  store: SqliteControlStore,
+  recoveryDriver: SqliteReadbackRecoveryDriver,
+): Promise<void> {
+  const unfinished = await store.listUnfinishedReadbackAttempts();
+  for (const attempt of unfinished) {
+    const checkedAt = new Date().toISOString();
+    await recoveryDriver.finalizePriorBootAttempt({
+      attemptId: attempt.attemptId,
+      observation: {
+        status: "unknown",
+        appliedReleaseId: null,
+        appliedRevision: null,
+        appliedModules: [],
+        reasonCodes: ["readback.interrupted"],
+        checkedAt,
+      },
+      finalResult: interruptedRecoveryFinalResult(attempt),
+    });
+  }
+
+  const remaining = await store.listUnfinishedReadbackAttempts();
+  if (remaining.length > 0) {
+    throw new Error("Pre-listen readback recovery did not finalize every prior-boot attempt.");
+  }
+}
+
 interface RuntimeResources {
   readonly composition: GatewayComposition;
   readonly controlStore?: SqliteControlStore;
@@ -463,16 +534,18 @@ async function createManagedFixtureRuntime(
   applicationRoot: string,
 ): Promise<RuntimeResources & { readonly controlStore: SqliteControlStore }> {
   const config = managedFixtureRuntimeConfig(applicationRoot);
-  const controlStore = openSqliteControlStore({
+  const opened = createSqliteControlStoreWithRecovery({
     applicationRoot: config.applicationRoot,
     instanceId: config.instanceId,
     managementTenantId: config.managementTenantId,
     adminControlEnabled: true,
   });
+  const controlStore = opened.repository;
   let composition: GatewayComposition | undefined;
   try {
-    const inventory = await createRuntimeInventory();
+    await recoverPriorBootReadbackAttempts(controlStore, opened.recoveryDriver);
     await assertManagedStateIsRestorable(controlStore, config.managementTenantId);
+    const inventory = await createRuntimeInventory();
     const assembly = createModuleControlRuntimeAssembly({
       inventory,
       repository: controlStore,
