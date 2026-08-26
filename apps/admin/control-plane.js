@@ -26,9 +26,10 @@ const INVENTORY_MODULE_KEYS = [
 const ACTIVATION_KEYS = ["state", "release_id", "revision", "active_modules"];
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.+:_-]{0,63}$/;
+const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
 const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const RISK_LEVELS = new Set(["T0", "T1", "T2", "T3"]);
+const CONTROL_STATE_MAX_RELEASE_HISTORY = 128;
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -147,8 +148,8 @@ export function validateControlState(value) {
   validateOptionalRecord(value.latest_preview, "latest_preview");
   validateOptionalRecord(value.latest_approval, "latest_approval");
   validateOptionalRecord(value.latest_readback, "latest_readback");
-  if (!Array.isArray(value.release_history) || value.release_history.length > 64) {
-    throw new Error("release_history 必须是有界数组。");
+  if (!Array.isArray(value.release_history) || value.release_history.length > CONTROL_STATE_MAX_RELEASE_HISTORY) {
+    throw new Error(`release_history 必须是 0 到 ${CONTROL_STATE_MAX_RELEASE_HISTORY} 项的数组。`);
   }
   if (!Array.isArray(value.events) || value.events.length > 256 || !value.events.every(isRecord)) {
     throw new Error("events 必须是有界对象数组。");
@@ -277,6 +278,31 @@ export function selectReconcileReleaseId(state) {
   return state.activation.state === "active" ? state.activation.release_id : null;
 }
 
+const ROLLBACK_ELIGIBLE_RELEASE_STATUSES = new Set([
+  "active_verified",
+  "superseded",
+]);
+
+export function selectRollbackReleaseId(state) {
+  validateControlState(state);
+  if (state.activation.state !== "active") return null;
+  for (const release of state.release_history) {
+    if (
+      !isRecord(release)
+      || !ROLLBACK_ELIGIBLE_RELEASE_STATUSES.has(release.status)
+      || !Number.isSafeInteger(release.revision)
+      || release.revision <= 0
+      || release.revision >= state.activation.revision
+    ) {
+      continue;
+    }
+    if (typeof release.release_id === "string" && IDENTIFIER_PATTERN.test(release.release_id)) {
+      return release.release_id;
+    }
+  }
+  return null;
+}
+
 export function actionAvailability({ state, draftModules, actorRole, actorRef, creatorActorRef, environment = "local" }) {
   validateControlState(state);
   validateModuleRefs(draftModules, "draft_modules");
@@ -288,6 +314,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   const distinctApprover = creatorActorRef === undefined || actorRef === undefined || actorRef !== creatorActorRef;
   const hasPendingRelease = state.release_history.some((release) => release.status === "pending" || release.status === "published_pending_readback" || release.status === "manual_review");
   const reconcileReleaseId = selectReconcileReleaseId(state);
+  const rollbackReleaseId = selectRollbackReleaseId(state);
   const usablePreview = preview !== null && preview.consumed !== true;
   return {
     saveDraft: true,
@@ -296,7 +323,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
     submitApproval: isAdmin && localWrite && usablePreview && distinctApprover,
     publish: isAdmin && localWrite && usablePreview && approval?.decision === "approve" && approval?.consumed !== true,
     reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),
-    rollback: isAdmin && localWrite && state.release_history.length > 0,
+    rollback: isAdmin && localWrite && rollbackReleaseId !== null,
   };
 }
 

@@ -11,6 +11,7 @@ import {
   isFixtureIdentityVisible,
   redactReference,
   selectReconcileReleaseId,
+  selectRollbackReleaseId,
   validateControlState,
 } from "./control-plane.js";
 
@@ -889,7 +890,10 @@ function releaseStatusLabel(status) {
 
 function renderControlReleaseTrail(data) {
   const history = Array.isArray(data.release_history) ? data.release_history : [];
-  const previous = history.find((release) => release.status === "superseded") ?? history[1] ?? null;
+  const rollbackReleaseId = selectRollbackReleaseId(data);
+  const previous = rollbackReleaseId === null
+    ? null
+    : history.find((release) => release.release_id === rollbackReleaseId) ?? null;
   return `<section class="panel release-trail-panel" aria-labelledby="release-trail-title"><div class="card-head"><div><h2 id="release-trail-title">发布轨迹与回滚目标</h2><p>回滚仍经过预览、双人审批和发布读回，不直接改运行时。</p></div>${controlStatusMarkup(history.length ? "complete" : "empty", history.length ? `${history.length} 条服务端记录` : "暂无记录")}</div>${history.length ? `<ol class="trail-list">${history.slice(0, 8).map((release) => { const [status, label] = releaseStatusLabel(release.status); return `<li><div><strong>${escapeHtml(redactReference(release.release_id, "发布记录"))}</strong><span>${release.revision === undefined ? "修订号未返回" : `修订 ${escapeHtml(String(release.revision))}`}</span></div>${controlStatusMarkup(status, label)}</li>`; }).join("")}</ol><p class="rollback-target">回滚目标：<strong>${previous ? "回滚到上一已读回版本（本地受控环境，标识隐藏）" : "未返回"}</strong></p>` : emptyState("暂无发布轨迹", "服务端没有返回可用的回滚目标。")}</section>`;
 }
 
@@ -1463,12 +1467,12 @@ async function handleControlAction(target) {
       break;
     }
     case "rollback": {
-      const target = state.controlState.release_history.find((release) => release.status === "superseded") ?? state.controlState.release_history[1];
-      if (!target || typeof target.release_id !== "string") return;
+      const targetReleaseId = selectRollbackReleaseId(state.controlState);
+      if (targetReleaseId === null) return;
       await runControlOperation("生成回滚预览", () => controlClient.createPreview({
         schema_version: CONTROL_SCHEMA_VERSION,
         intent: "rollback",
-        target_release_id: target.release_id,
+        target_release_id: targetReleaseId,
       }, controlIdempotencyKey()));
       break;
     }

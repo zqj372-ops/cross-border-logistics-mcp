@@ -156,6 +156,8 @@ export declare function deriveDesiredDraftDiff(
 
 export declare function selectReconcileReleaseId(state: ControlState): string | null;
 
+export declare function selectRollbackReleaseId(state: ControlState): string | null;
+
 export declare function isFixtureIdentityVisible(search?: unknown): boolean;
 
 export type FixtureIdentity = Readonly<{

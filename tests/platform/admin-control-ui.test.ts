@@ -1,7 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-import { actionAvailability, CONTROL_SCHEMA_VERSION, createControlPlaneClient, deriveDesiredDraftDiff, derivePreviewPresentation, deriveReleaseStages, isFixtureIdentityVisible, redactReference, selectReconcileReleaseId, validateControlState } from "../../apps/admin/control-plane.js";
+import {
+  actionAvailability,
+  CONTROL_SCHEMA_VERSION,
+  createControlPlaneClient,
+  deriveDesiredDraftDiff,
+  derivePreviewPresentation,
+  deriveReleaseStages,
+  isFixtureIdentityVisible,
+  redactReference,
+  selectReconcileReleaseId,
+  selectRollbackReleaseId,
+  validateControlState,
+} from "../../apps/admin/control-plane.js";
 
 const descriptorDigest = `sha256:${"a".repeat(64)}`;
 
@@ -66,6 +78,58 @@ describe("admin control-plane model boundary", () => {
         ...validControlState.inventory_modules[0],
         production_eligible: true,
       }],
+    })).toThrow();
+  });
+
+  it("accepts the authoritative version grammar and full release-history window", () => {
+    const maximumLengthVersion = `v${"1".repeat(127)}`;
+    const extendedVersionState = {
+      ...validControlState,
+      activation: {
+        ...validControlState.activation,
+        active_modules: [{
+          ...validControlState.activation.active_modules[0],
+          version: "pkg@1",
+        }],
+      },
+      inventory_modules: [
+        {
+          ...validControlState.inventory_modules[0],
+          version: "pkg@1",
+        },
+        {
+          ...validControlState.inventory_modules[0],
+          module_id: "release-module",
+          version: "release/2026",
+        },
+        {
+          ...validControlState.inventory_modules[0],
+          module_id: "max-version-module",
+          version: maximumLengthVersion,
+        },
+      ],
+    };
+    expect(validateControlState(extendedVersionState)).toEqual(extendedVersionState);
+    expect(() => validateControlState({
+      ...extendedVersionState,
+      inventory_modules: extendedVersionState.inventory_modules.map((module) => (
+        module.module_id === "max-version-module"
+          ? { ...module, version: `v${"1".repeat(128)}` }
+          : module
+      )),
+    })).toThrow();
+
+    const releaseHistory = Array.from({ length: 128 }, (_, index) => ({
+      release_id: `release-${index + 1}`,
+      status: "superseded",
+    }));
+    expect(() => validateControlState({
+      ...validControlState,
+      release_history: releaseHistory,
+    })).not.toThrow();
+    expect(() => validateControlState({
+      ...validControlState,
+      release_history: [...releaseHistory, { release_id: "release-129", status: "superseded" }],
     })).toThrow();
   });
 
@@ -208,6 +272,43 @@ describe("admin control-plane model boundary", () => {
     } as const;
 
     expect(selectReconcileReleaseId(initialPublishedState)).toBe("release-pending-readback");
+  });
+
+  it("enables rollback only when the handler has an older eligible target", () => {
+    const singleReleaseState = {
+      ...validControlState,
+      release_history: [{
+        status: "active_verified",
+        release_id: "release-3",
+        revision: 3,
+      }],
+    };
+    expect(selectRollbackReleaseId(singleReleaseState)).toBeNull();
+    expect(actionAvailability({
+      state: singleReleaseState,
+      draftModules: [],
+      actorRole: "admin",
+      environment: "local",
+    }).rollback).toBe(false);
+
+    const rollbackReadyState = {
+      ...singleReleaseState,
+      release_history: [
+        singleReleaseState.release_history[0]!,
+        {
+          status: "superseded",
+          release_id: "release-2",
+          revision: 2,
+        },
+      ],
+    };
+    expect(selectRollbackReleaseId(rollbackReadyState)).toBe("release-2");
+    expect(actionAvailability({
+      state: rollbackReadyState,
+      draftModules: [],
+      actorRole: "admin",
+      environment: "local",
+    }).rollback).toBe(true);
   });
 
   it("derives registration from exact release targets instead of unrelated inventory", () => {
