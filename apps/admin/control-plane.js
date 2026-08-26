@@ -168,6 +168,13 @@ export function redactReference(value, fallback = "未返回") {
   return "已记录（具体内容隐藏）";
 }
 
+function matchesExactModuleRef(module, target) {
+  return isRecord(target)
+    && module.module_id === target.module_id
+    && module.version === target.version
+    && module.descriptor_digest === target.descriptor_digest;
+}
+
 export function derivePreviewPresentation(state) {
   validateControlState(state);
   const preview = state.latest_preview;
@@ -188,14 +195,19 @@ export function deriveReleaseStages(state) {
   const approval = state.latest_approval;
   const activation = state.activation;
   const readback = state.latest_readback;
-  const registeredModules = state.inventory_modules.filter((module) => module.registration !== null);
+  const registrationTargets = state.latest_preview !== null
+    ? (Array.isArray(state.latest_preview.desired_modules) ? state.latest_preview.desired_modules : [])
+    : activation.state === "active" ? activation.active_modules : state.inventory_modules;
+  const registrationStatus = state.inventory_modules.length === 0 || registrationTargets.length === 0
+    ? "empty"
+    : registrationTargets.every((target) => state.inventory_modules.some(
+      (module) => matchesExactModuleRef(module, target) && module.registration !== null,
+    )) ? "complete" : "pending";
   return [
     {
       key: "registration",
       label: "登记制品",
-      status: registeredModules.length === 0
-        ? (state.inventory_modules.length === 0 ? "empty" : "pending")
-        : registeredModules.length === state.inventory_modules.length ? "complete" : "pending",
+      status: registrationStatus,
     },
     {
       key: "preview",

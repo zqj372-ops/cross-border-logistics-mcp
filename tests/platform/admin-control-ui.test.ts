@@ -106,6 +106,7 @@ describe("admin control-plane model boundary", () => {
         preview_ref: "preview-1",
         creator_actor_ref: "actor-1",
         consumed: false,
+        desired_modules: validControlState.activation.active_modules,
       },
       release_history: [{ status: "manual_review", release_id: "release-0" }],
     };
@@ -189,6 +190,61 @@ describe("admin control-plane model boundary", () => {
       ...validControlState,
       inventory_modules: [{ ...validControlState.inventory_modules[0], registration: null }],
     }).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("pending");
+  });
+
+  it("derives registration from exact release targets instead of unrelated inventory", () => {
+    const targetModule = {
+      module_id: "freightcom-ltl",
+      version: "1.0.0",
+      descriptor_digest: descriptorDigest,
+    } as const;
+    const inventoryModules = [
+      targetModule,
+      { module_id: "riskcustoms", version: "1.0.0", descriptor_digest: `sha256:${"b".repeat(64)}` },
+      { module_id: "canada-final-mile", version: "1.0.0", descriptor_digest: `sha256:${"c".repeat(64)}` },
+      { module_id: "knowledge", version: "1.0.0", descriptor_digest: `sha256:${"d".repeat(64)}` },
+    ].map((module, index) => ({
+      ...validControlState.inventory_modules[0],
+      ...module,
+      registration: index === 0 ? validControlState.inventory_modules[0].registration : null,
+    }));
+    const publishedState = {
+      ...validControlState,
+      activation: {
+        ...validControlState.activation,
+        active_modules: [targetModule],
+      },
+      inventory_modules: inventoryModules,
+      latest_preview: {
+        preview_ref: "preview-freightcom-ltl",
+        consumed: true,
+        desired_modules: [targetModule],
+      },
+      latest_readback: { status: "verified" },
+    };
+
+    expect(deriveReleaseStages(publishedState).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("complete");
+
+    const descriptorDriftState = {
+      ...publishedState,
+      latest_preview: {
+        ...publishedState.latest_preview,
+        desired_modules: [{
+          ...targetModule,
+          descriptor_digest: `sha256:${"e".repeat(64)}`,
+        }],
+      },
+    };
+    expect(deriveReleaseStages(descriptorDriftState).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("pending");
+
+    const unregisteredTargetState = {
+      ...publishedState,
+      inventory_modules: publishedState.inventory_modules.map((module) => ({
+        ...module,
+        registration: module.module_id === targetModule.module_id ? null : module.registration,
+      })),
+    };
+    expect(deriveReleaseStages(unregisteredTargetState).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("pending");
   });
 
   it("uses the control API client for each write path without persisting credentials", async () => {
