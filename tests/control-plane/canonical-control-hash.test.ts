@@ -77,6 +77,34 @@ function expectPayloadError(
   );
 }
 
+function proxyWithTrapCounter<T extends object>(
+  value: T,
+  counter: { count: number },
+): T {
+  return new Proxy(value, {
+    get(target, property, receiver) {
+      counter.count += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    has(target, property) {
+      counter.count += 1;
+      return Reflect.has(target, property);
+    },
+    getPrototypeOf(target) {
+      counter.count += 1;
+      return Reflect.getPrototypeOf(target);
+    },
+    ownKeys(target) {
+      counter.count += 1;
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, property) {
+      counter.count += 1;
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+}
+
 describe("canonical control hash", () => {
   it("matches the locked request and preview golden vectors", () => {
     expect(
@@ -403,6 +431,83 @@ describe("canonical control hash", () => {
 
     expectPayloadError(getPrototypeProxy, "payload_fields_invalid");
     expectPayloadError(ownKeysProxy, "payload_fields_invalid");
+  });
+
+  it("rejects root and nested proxies before invoking any proxy trap", () => {
+    const rootCounter = { count: 0 };
+    expectPayloadError(
+      proxyWithTrapCounter(registerPayload, rootCounter),
+      "payload_fields_invalid",
+    );
+    expect(rootCounter.count).toBe(0);
+
+    const requestCounter = { count: 0 };
+    expectPayloadError(
+      {
+        ...registerPayload,
+        request: proxyWithTrapCounter(registerPayload.request, requestCounter),
+      },
+      "payload_fields_invalid",
+    );
+    expect(requestCounter.count).toBe(0);
+
+    const modulesCounter = { count: 0 };
+    expectPayloadError(
+      {
+        ...previewPayload,
+        desired_modules: proxyWithTrapCounter(
+          [...previewPayload.desired_modules],
+          modulesCounter,
+        ),
+      },
+      "array_invalid",
+      "preview",
+    );
+    expect(modulesCounter.count).toBe(0);
+
+    const moduleCounter = { count: 0 };
+    expectPayloadError(
+      {
+        ...previewPayload,
+        desired_modules: [
+          proxyWithTrapCounter(previewPayload.desired_modules[0], moduleCounter),
+        ],
+      },
+      "payload_fields_invalid",
+      "preview",
+    );
+    expect(moduleCounter.count).toBe(0);
+
+    const validationCounter = { count: 0 };
+    expectPayloadError(
+      {
+        ...previewPayload,
+        validation: proxyWithTrapCounter(
+          previewPayload.validation,
+          validationCounter,
+        ),
+      },
+      "payload_fields_invalid",
+      "preview",
+    );
+    expect(validationCounter.count).toBe(0);
+
+    const reasonCodesCounter = { count: 0 };
+    expectPayloadError(
+      {
+        ...previewPayload,
+        validation: {
+          ...previewPayload.validation,
+          reason_codes: proxyWithTrapCounter(
+            [...previewPayload.validation.reason_codes],
+            reasonCodesCounter,
+          ),
+        },
+      },
+      "array_invalid",
+      "preview",
+    );
+    expect(reasonCodesCounter.count).toBe(0);
   });
 
   it("returns a digest distinct from descriptor digests", () => {

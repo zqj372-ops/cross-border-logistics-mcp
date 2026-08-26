@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { types as nodeUtilTypes } from "node:util";
 
 import {
   DESCRIPTOR_DIGEST_PATTERN,
@@ -205,9 +206,12 @@ function exactRecord(
   code: HashErrorCode,
 ): Record<string, unknown> {
   try {
+    if (nodeUtilTypes.isProxy(value)) fail(code);
     if (!isPlainRecord(value)) fail(code);
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (!hasExactOwnKeys(descriptors, keys)) fail(code);
+    if (nodeUtilTypes.isProxy(descriptors) || !hasExactOwnKeys(descriptors, keys)) {
+      fail(code);
+    }
     const snapshot: Record<string, unknown> = {};
     for (const key of keys) {
       const descriptor = descriptors[key];
@@ -233,6 +237,7 @@ function ownEnumerableDataValue(
   code: HashErrorCode,
 ): unknown {
   try {
+    if (nodeUtilTypes.isProxy(value)) fail(code);
     if (!isPlainRecord(value)) fail(code);
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (
@@ -251,6 +256,7 @@ function ownEnumerableDataValue(
 
 function exactArray(value: unknown): readonly unknown[] {
   try {
+    if (nodeUtilTypes.isProxy(value)) fail("array_invalid");
     if (!Array.isArray(value)) fail("array_invalid");
     const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
       PropertyKey,
@@ -263,6 +269,7 @@ function exactArray(value: unknown): readonly unknown[] {
       typeof lengthDescriptor.value !== "number" ||
       !Number.isSafeInteger(lengthDescriptor.value) ||
       lengthDescriptor.value < 0 ||
+      nodeUtilTypes.isProxy(descriptors) ||
       Reflect.ownKeys(descriptors).length !== lengthDescriptor.value + 1
     ) {
       fail("array_invalid");
@@ -579,6 +586,7 @@ function normalizePayload(
   value: unknown,
 ): { readonly value: CanonicalValue; readonly schemaVersion: string } {
   try {
+    if (nodeUtilTypes.isProxy(value)) fail("payload_fields_invalid");
     if (!isPlainRecord(value)) fail("payload_fields_invalid");
     if (
       hasExactOwnKeys(value, REQUEST_PAYLOAD_KEYS) &&
