@@ -84,8 +84,7 @@ import {
 } from "../adapters/quote/quote-api-adapter";
 import { envelopeSchema } from "../platform/envelope";
 import {
-  createFreightcomFixtureRateAdapter,
-  FreightcomRateAdapter,
+  createFreightcomDisabledRateAdapter,
 } from "../adapters/quote/freightcom-rate-adapter";
 
 /*
@@ -424,7 +423,7 @@ export function createFixtureComposition(
   );
   const tools = compositionTools(
     adapters,
-    options.freightcomRateAdapter ?? createFreightcomFixtureRateAdapter(),
+    options.freightcomRateAdapter ?? createFreightcomDisabledRateAdapter(),
     options.agentAccessRuntime,
     runtimeActivationFacades(options),
   );
@@ -508,11 +507,7 @@ export function createProductionComposition(
   };
   const tools = compositionTools(
     adapters,
-    new FreightcomRateAdapter({
-      mode: "production",
-      baseUrl: "https://freightcom-production-disabled.invalid",
-      allowedHosts: ["freightcom-production-disabled.invalid"],
-    }),
+    createFreightcomDisabledRateAdapter(),
     options.agentAccessRuntime,
     runtimeActivationFacades(options),
   );

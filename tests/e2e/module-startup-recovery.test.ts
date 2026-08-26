@@ -123,7 +123,7 @@ function configureManagedFixtureEnvironment(): void {
 }
 
 describe("module startup recovery", () => {
-  it("finalizes a prior-boot claimed attempt as interrupted manual review before listen and re-enumerates empty", async () => {
+  it("finalizes an interrupted attempt and keeps later startups open for operator reconciliation", async () => {
     const applicationRoot = realpathSync(
       mkdtempSync(join(tmpdir(), "logistics-mcp-prior-claim-")),
     );
@@ -132,6 +132,8 @@ describe("module startup recovery", () => {
     );
     let ownerStore: ReturnType<typeof openSqliteControlStore> | undefined;
     let inspectedStore: ReturnType<typeof openSqliteControlStore> | undefined;
+    let firstRuntime: Awaited<ReturnType<typeof startRuntime>> | undefined;
+    let secondRuntime: Awaited<ReturnType<typeof startRuntime>> | undefined;
 
     try {
       configureManagedFixtureEnvironment();
@@ -296,10 +298,15 @@ describe("module startup recovery", () => {
       ownerStore = undefined;
 
       const listen = vi.fn(() => Promise.resolve());
-      await expect(startRuntime({ applicationRoot, listen })).rejects.toThrow(
-        "Pre-listen release recovery is unavailable through the public assembly.",
-      );
-      expect(listen).not.toHaveBeenCalled();
+      firstRuntime = await startRuntime({ applicationRoot, listen });
+      expect(listen).toHaveBeenCalledTimes(1);
+      await firstRuntime.close();
+      firstRuntime = undefined;
+
+      secondRuntime = await startRuntime({ applicationRoot, listen });
+      expect(listen).toHaveBeenCalledTimes(2);
+      await secondRuntime.close();
+      secondRuntime = undefined;
 
       inspectedStore = openSqliteControlStore({
         applicationRoot,
@@ -341,6 +348,8 @@ describe("module startup recovery", () => {
         reasonCodes: ["readback.interrupted"],
       });
     } finally {
+      await secondRuntime?.close().catch(() => undefined);
+      await firstRuntime?.close().catch(() => undefined);
       await inspectedStore?.close().catch(() => undefined);
       await ownerStore?.close().catch(() => undefined);
       for (const [name, value] of previousEnvironment) {

@@ -629,11 +629,12 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   const publishableApproval = approvalMatchesPreview(preview, approval)
     && approval.decision === "approve"
     && approval.consumed === false;
+  const previewAlreadyDecided = approvalMatchesPreview(preview, approval);
   return {
     saveDraft: true,
     register: isAdmin && localWrite,
     generatePreview: isAdmin && localWrite && draftModules.length > 0,
-    submitApproval: isAdmin && localWrite && usablePreview && distinctApprover,
+    submitApproval: isAdmin && localWrite && usablePreview && distinctApprover && !previewAlreadyDecided,
     publish: isAdmin && localWrite && usablePreview && publishableApproval,
     reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),
     rollback: isAdmin && localWrite && rollbackReleaseId !== null,

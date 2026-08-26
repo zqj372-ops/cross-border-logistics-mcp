@@ -59,6 +59,7 @@ import {
 } from "./admin-control-api";
 import { createProductionTokenVerifier } from "./production-token-verifier";
 import {
+  createFreightcomDisabledRateAdapter,
   createFreightcomFixtureRateAdapter,
   FreightcomRateAdapter,
 } from "../adapters/quote/freightcom-rate-adapter";
@@ -501,8 +502,32 @@ async function loadManagedActivationRestoreEvidence(
   }
   const pendingRelease = await store.getPendingRelease();
   const unresolvedRelease = await store.getNewestUnresolvedRelease();
-  if (pendingRelease !== null || unresolvedRelease !== null) {
+  if (pendingRelease !== null) {
     throw new Error("Pre-listen release recovery is unavailable through the public assembly.");
+  }
+  if (unresolvedRelease !== null) {
+    const unresolvedReadback = await store.getReadback({
+      managementTenantId,
+      releaseId: unresolvedRelease.releaseId,
+    });
+    if (
+      unresolvedRelease.status !== "manual_review" ||
+      unresolvedRelease.managementTenantId !== managementTenantId ||
+      unresolvedReadback === null ||
+      (unresolvedReadback.status !== "mismatch" &&
+        unresolvedReadback.status !== "unknown") ||
+      unresolvedReadback.managementTenantId !== managementTenantId ||
+      unresolvedReadback.releaseId !== unresolvedRelease.releaseId ||
+      unresolvedReadback.revision !== unresolvedRelease.revision ||
+      unresolvedReadback.readbackRef !== unresolvedRelease.readbackRef ||
+      !isDeepStrictEqual(
+        unresolvedReadback.reasonCodes,
+        unresolvedRelease.reasonCodes,
+      ) ||
+      !isDeepStrictEqual(unresolvedReadback, state.latestReadback)
+    ) {
+      throw new Error("Managed unresolved release evidence is inconsistent.");
+    }
   }
 
   if (state.activeRelease === null) {
@@ -810,6 +835,13 @@ export function createFreightcomTestAdapterFromEnvironment(
     timeoutMs: 20_000,
     maxResponseBytes: 2 * 1024 * 1024,
   });
+}
+
+export function createFreightcomRuntimeAdapterFromEnvironment(
+  readSecret: FreightcomKeychainReader = readFreightcomKeychainSecret,
+): FreightcomRatePort {
+  return createFreightcomTestAdapterFromEnvironment(readSecret) ??
+    createFreightcomDisabledRateAdapter();
 }
 
 async function toRequest(
@@ -1148,14 +1180,14 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     if (wiring.managementTenantId === undefined || wiring.authenticate === undefined) {
       throw new Error("Managed fixture composition requires explicit control identity.");
     }
-    const freightcomRateAdapter = createFreightcomTestAdapterFromEnvironment();
+    const freightcomRateAdapter = createFreightcomRuntimeAdapterFromEnvironment();
     return createFixtureComposition({
       dataMode: "fixtures",
       ...common,
       authenticate: wiring.authenticate,
       ...(wiring.activation === undefined ? {} : { activation: wiring.activation }),
       ...(wiring.dispatch === undefined ? {} : { dispatch: wiring.dispatch }),
-      ...(freightcomRateAdapter === undefined ? {} : { freightcomRateAdapter }),
+      freightcomRateAdapter,
     });
   }
   if (mode !== "production") {

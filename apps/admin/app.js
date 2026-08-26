@@ -1443,11 +1443,15 @@ async function handleControlAction(target) {
       break;
     }
     case "submit-approval": {
-      const previewRef = state.controlState.latest_preview?.preview_ref;
-      if (typeof previewRef !== "string") return;
+      const preview = state.controlState.latest_preview;
+      if (
+        preview === null
+        || preview.consumed !== false
+        || state.controlState.latest_approval?.preview_ref === preview.preview_ref
+      ) return;
       await runControlOperation("提交审批", () => controlClient.decideApproval({
         schema_version: CONTROL_SCHEMA_VERSION,
-        preview_ref: previewRef,
+        preview_ref: preview.preview_ref,
         decision: "approve",
         reason_code: "admin_ui_approval",
       }, controlIdempotencyKey()));

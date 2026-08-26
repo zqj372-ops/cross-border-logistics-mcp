@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createFreightcomTestAdapterFromEnvironment } from "../../src/logistics_mcp/server/start";
+import {
+  createFreightcomRuntimeAdapterFromEnvironment,
+  createFreightcomTestAdapterFromEnvironment,
+} from "../../src/logistics_mcp/server/start";
 
 const original = {
   enabled: process.env.MCP_FREIGHTCOM_TEST_ENABLED,
@@ -24,6 +27,23 @@ describe("Freightcom test MCP runtime configuration", () => {
   it("is disabled unless explicitly enabled", () => {
     delete process.env.MCP_FREIGHTCOM_TEST_ENABLED;
     expect(createFreightcomTestAdapterFromEnvironment()).toBeUndefined();
+  });
+
+  it("injects an unavailable adapter instead of fixture rates when disabled", async () => {
+    delete process.env.MCP_FREIGHTCOM_TEST_ENABLED;
+    const readSecret = vi.fn(() => Promise.resolve("fixture-token"));
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const result = await createFreightcomRuntimeAdapterFromEnvironment(readSecret)
+      .requestRate({});
+
+    expect(result.status).toBe("unavailable");
+    expect(result.data).toBeNull();
+    expect(result.blockers?.map((blocker) => blocker.code)).toContain(
+      "freightcom.production_disabled",
+    );
+    expect(readSecret).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("creates a test adapter backed by the configured Keychain identity", () => {

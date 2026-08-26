@@ -812,3 +812,11 @@ export function createFreightcomFixtureRateAdapter(): FreightcomRateAdapter {
     clock: () => new Date("2026-08-25T00:00:00.000Z"),
   });
 }
+
+export function createFreightcomDisabledRateAdapter(): FreightcomRateAdapter {
+  return new FreightcomRateAdapter({
+    mode: "production",
+    baseUrl: "https://freightcom-test-disabled.invalid",
+    allowedHosts: ["freightcom-test-disabled.invalid"],
+  });
+}

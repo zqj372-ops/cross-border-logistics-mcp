@@ -139,6 +139,51 @@ const customsSearchInput = {
   selected_hs6: null,
 };
 
+const freightcomInput = {
+  schema_version: "2026-08-11.v1",
+  version: "freightcom-ltl-rate-request@2026-08-26.v1",
+  display_policy: "usd_numeric_relabel_test_only",
+  details: {
+    origin: {
+      name: "Origin",
+      address: {
+        address_line_1: "1 Test Way",
+        city: "Markham",
+        region: "ON",
+        country: "CA",
+        postal_code: "L3R 8N4",
+      },
+    },
+    destination: {
+      name: "Destination",
+      address: {
+        address_line_1: "2 Test Way",
+        city: "Montreal",
+        region: "QC",
+        country: "CA",
+        postal_code: "H1H 1H1",
+      },
+      ready_at: { hour: 9, minute: 0 },
+      ready_until: { hour: 17, minute: 0 },
+      signature_requirement: "not-required",
+    },
+    expected_ship_date: { year: 2026, month: 8, day: 26 },
+    packaging_type: "pallet",
+    packaging_properties: {
+      pallet_type: "ltl",
+      pallets: [{
+        measurements: {
+          weight: { unit: "lb", value: "100" },
+          cuboid: { unit: "in", l: "48", w: "40", h: "48" },
+        },
+        description: "Synthetic test freight",
+        freight_class: "70",
+        num_pieces: 1,
+      }],
+    },
+  },
+};
+
 function serverContext(): ExecutionContext {
   return parseExecutionContext({
     ...securityClaims,
@@ -287,6 +332,26 @@ function customsApi(
 }
 
 describe("gateway composition modes", () => {
+  it("keeps Freightcom unavailable in a default fixture composition", async () => {
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    try {
+      const definition = composition.definitions.find(
+        (candidate) => candidate.name === "quote.freightcom_ltl.preview",
+      );
+      if (definition?.handler === undefined) throw new Error("Freightcom handler missing");
+
+      const result = await definition.handler(freightcomInput, serverContext());
+
+      expect(result.status).toBe("unavailable");
+      expect(result.data).toBeNull();
+      expect(result.blockers?.map((blocker) => blocker.code)).toContain(
+        "freightcom.production_disabled",
+      );
+    } finally {
+      await composition.close();
+    }
+  });
+
   it("keeps applicant and approver fixture claims distinct within one tenant", () => {
     const names = ["MCP_FIXTURE_TOKEN", "MCP_FIXTURE_APPROVER_TOKEN"] as const;
     const previous = new Map(names.map((name) => [name, process.env[name]]));

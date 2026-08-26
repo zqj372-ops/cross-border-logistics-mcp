@@ -533,7 +533,23 @@ describe("admin control-plane model boundary", () => {
       actorRef: "actor-2",
       creatorActorRef: "actor-1",
       environment: "fixture",
-    }).publish).toBe(false);
+    })).toMatchObject({
+      submitApproval: false,
+      publish: false,
+    });
+
+    const approvedState = {
+      ...previewState,
+      latest_approval: approvalSnapshot("approve"),
+    };
+    expect(actionAvailability({
+      state: approvedState,
+      draftModules: [],
+      actorRole: "admin",
+      actorRef: "actor-2",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).submitApproval).toBe(false);
 
     const crossLinkedApprovalState = {
       ...previewState,
