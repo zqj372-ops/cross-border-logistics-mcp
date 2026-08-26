@@ -167,12 +167,62 @@ describe("Freightcom quote form model", () => {
     ]);
   });
 
-  it("formats the source value without FX conversion while retaining source currency", () => {
+  it("relabels CAD as USD without changing the numeric amount or applying FX", () => {
     expect(formatDisplayMoney({ value: "17936", currency: "CAD" })).toEqual({
       amount: "179.36",
       displayCurrency: "USD",
       sourceCurrency: "CAD",
       conversionApplied: false,
+      relabelApplied: true,
+      available: true,
+    });
+    expect(formatDisplayMoney({ value: "21939", currency: "USD" })).toEqual({
+      amount: "219.39",
+      displayCurrency: "USD",
+      sourceCurrency: "USD",
+      conversionApplied: false,
+      relabelApplied: false,
+      available: true,
+    });
+  });
+
+  it("does not relabel unsupported source currencies as USD", () => {
+    expect(formatDisplayMoney({ value: "10000", currency: "EUR" })).toEqual({
+      amount: "—",
+      displayCurrency: "USD",
+      sourceCurrency: "EUR",
+      conversionApplied: false,
+      relabelApplied: false,
+      available: false,
+    });
+  });
+
+  it("maps the four portal location types to the external API address flags", () => {
+    const form = validForm();
+    form.origin.locationType = "commercial-no-tailgate";
+    form.destination.locationType = "residential-tailgate";
+
+    const result = buildFreightcomRequest(form);
+
+    expect(result.errors).toEqual([]);
+    expect(result.request).toMatchObject({
+      details: {
+        origin: { residential: false, tailgate_required: false },
+        destination: { residential: true, tailgate_required: true },
+      },
+    });
+  });
+
+  it("rejects an unknown location type instead of guessing accessorial flags", () => {
+    const form = validForm();
+    form.destination.locationType = "warehouse";
+
+    const result = buildFreightcomRequest(form);
+
+    expect(result.request).toBeNull();
+    expect(result.errors).toContainEqual({
+      field: "destination.locationType",
+      message: "请选择有效的地点类型。",
     });
   });
 });

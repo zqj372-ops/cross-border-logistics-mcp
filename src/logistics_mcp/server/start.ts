@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { AuthenticationError, type AuthClaims } from "../platform/context";
@@ -19,11 +22,15 @@ import {
   type AdminStaticHandler,
 } from "./admin-static";
 import { createProductionTokenVerifier } from "./production-token-verifier";
+import { FreightcomRateAdapter } from "../adapters/quote/freightcom-rate-adapter";
+import { DEFAULT_FREIGHTCOM_TEST_BASE_URL } from "../adapters/quote/freightcom-test-client";
+import type { FreightcomRatePort } from "../adapters/ports";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
-const RUNTIME_REQUEST_TIMEOUT_MS = 15_000;
+const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
+const execFileAsync = promisify(execFile);
 
 class RuntimeBodyTooLargeError extends Error {}
 class RuntimeRequestError extends Error {}
@@ -148,6 +155,23 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
     },
     {
       ...common,
+      name: "freightcom_test_api",
+      label: "Freightcom LTL 测试询价",
+      business_key: "quote.freightcom_ltl",
+      affected_tools: ["quote.freightcom_ltl.preview"],
+      environment: fixture ? "测试/演示环境" : "正式环境",
+      readiness: fixture && process.env.MCP_FREIGHTCOM_TEST_ENABLED === "true" ? "manual_review" : "unavailable",
+      registration_status: "MCP 工具已登记；真实调用仅允许固定测试环境",
+      business_version_evidence: "Freightcom Customer API 2.10.0；测试结果不可提升为正式报价。",
+      reason: fixture
+        ? "测试调用需要显式启用，并且结果始终要求人工复核。"
+        : "生产 Freightcom 调用被代码级禁用。",
+      blocker: fixture
+        ? "测试响应缺少正式发布、租户快照和生产有效性证据，必须人工复核。"
+        : "生产 Freightcom 调用被代码级禁用。",
+    },
+    {
+      ...common,
       name: "pdf_api",
       label: "报价单服务",
       business_key: "pdf",
@@ -254,6 +278,67 @@ function fixtureAuthenticatorFromEnvironment(): (token: string) => AuthClaims {
       expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
     };
   };
+}
+
+export type FreightcomKeychainReader = (
+  account: string,
+  service: string,
+) => Promise<string>;
+
+async function readFreightcomKeychainSecret(
+  account: string,
+  service: string,
+): Promise<string> {
+  const helper = resolve(
+    homedir(),
+    "Library",
+    "Application Support",
+    "Codex",
+    "Freightcom",
+    "freightcom-keychain-helper-v1",
+  );
+  const result = await execFileAsync(
+    helper,
+    ["read", account, service],
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 4_096 },
+  );
+  const token = result.stdout.trim();
+  if (token.length === 0) throw new Error("Freightcom test credential is empty.");
+  return token;
+}
+
+export function createFreightcomTestAdapterFromEnvironment(
+  readSecret: FreightcomKeychainReader = readFreightcomKeychainSecret,
+): FreightcomRatePort | undefined {
+  const setting = process.env.MCP_FREIGHTCOM_TEST_ENABLED?.trim();
+  if (setting === undefined || setting === "" || setting === "false") return undefined;
+  if (setting !== "true") {
+    throw new Error("MCP_FREIGHTCOM_TEST_ENABLED must be true or false.");
+  }
+  const account = (
+    process.env.FREIGHTCOM_TEST_KEYCHAIN_ACCOUNT ?? "JHT LOGISTICS CO., LTD."
+  ).trim();
+  const service = (
+    process.env.FREIGHTCOM_TEST_KEYCHAIN_SERVICE ?? "freightcom-api-test-mcp-v1"
+  ).trim();
+  if (account.length === 0 || service.length === 0) {
+    throw new Error("Freightcom Keychain account and service must be configured.");
+  }
+  return new FreightcomRateAdapter({
+    mode: "test",
+    baseUrl: DEFAULT_FREIGHTCOM_TEST_BASE_URL,
+    allowedHosts: ["customer-external-api.ssd-test.freightcom.com"],
+    headerProvider: async (signal) => {
+      if (signal.aborted) throw new Error("Freightcom credential request was aborted.");
+      const token = (await readSecret(account, service)).trim();
+      if (token.length === 0) throw new Error("Freightcom test credential is empty.");
+      return { Authorization: token };
+    },
+    maxPollAttempts: 12,
+    pollDelayMs: 750,
+    timeoutMs: 20_000,
+    maxResponseBytes: 2 * 1024 * 1024,
+  });
 }
 
 async function toRequest(
@@ -459,6 +544,7 @@ export async function closeRuntimeServer(
 function makeComposition(): GatewayComposition {
   const mode = process.env.MCP_DATA_MODE;
   const common = {
+    requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
     allowedOrigins: splitSetting(
       "MCP_ALLOWED_ORIGINS",
       mode === "fixtures" ? `http://127.0.0.1:${PORT}` : "",
@@ -469,10 +555,12 @@ function makeComposition(): GatewayComposition {
     ),
   };
   if (mode === "fixtures") {
+    const freightcomRateAdapter = createFreightcomTestAdapterFromEnvironment();
     return createFixtureComposition({
       dataMode: "fixtures",
       ...common,
       authenticate: fixtureAuthenticatorFromEnvironment(),
+      ...(freightcomRateAdapter === undefined ? {} : { freightcomRateAdapter }),
     });
   }
   if (mode !== "production") {

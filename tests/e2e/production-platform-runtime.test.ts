@@ -141,7 +141,9 @@ describe("production platform runtime", () => {
         tenantId: "tenant_demo_a",
         ownerId: "production-test-worker",
       });
-      expect((await client.listTools()).tools).toHaveLength(10);
+      const tools = (await client.listTools()).tools;
+      expect(tools).toHaveLength(11);
+      expect(tools.map((tool) => tool.name)).toContain("quote.freightcom_ltl.preview");
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),

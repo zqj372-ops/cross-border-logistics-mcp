@@ -28,4 +28,6 @@ export function formatDisplayMoney(money: {
   readonly displayCurrency: "USD";
   readonly sourceCurrency: string;
   readonly conversionApplied: false;
+  readonly relabelApplied: boolean;
+  readonly available: boolean;
 };

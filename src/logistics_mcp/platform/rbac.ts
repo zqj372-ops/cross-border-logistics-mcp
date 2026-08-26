@@ -20,7 +20,8 @@ export const phaseOneToolNames = [
 
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
 export const agentContextToolName = "system.agent_context.get" as const;
-type KnownToolName = PhaseOneToolName | typeof agentContextToolName;
+export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName;
 
 type ToolPolicy = {
   readonly permission: string;
@@ -68,6 +69,11 @@ const toolPolicies: Record<KnownToolName, ToolPolicy> = {
     roles: readRoles,
   },
   "quote.canada_final_mile.calculate": {
+    permission: "quote:calculate",
+    kind: "read",
+    roles: readRoles,
+  },
+  [freightcomLtlToolName]: {
     permission: "quote:calculate",
     kind: "read",
     roles: readRoles,

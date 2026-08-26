@@ -114,6 +114,13 @@
       "tool_names": ["container.plan_summary"]
     },
     {
+      "module_id": "freightcom-ltl",
+      "version": "2026-08-26.v1",
+      "risk_level": "T1",
+      "standard_ids": ["module-runtime.v0", "platform.contracts"],
+      "tool_names": ["quote.freightcom_ltl.preview"]
+    },
+    {
       "module_id": "agent-access",
       "version": "2026-08-21.v0",
       "risk_level": "T0",

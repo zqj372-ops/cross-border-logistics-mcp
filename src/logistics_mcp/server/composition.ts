@@ -39,11 +39,15 @@ import {
   cargoModule,
   containerModule,
   createAgentAccessModule,
+  createFreightcomLtlModule,
+  FREIGHTCOM_RATE_CAPABILITY,
+  FREIGHTCOM_RATE_CAPABILITY_VERSION,
 } from "../modules";
 import { createAgentAccessRuntime, type AgentAccessRuntime } from "../agent-context/runtime";
 import type {
   CustomsAdapter,
   FixtureAdapters,
+  FreightcomRatePort,
 } from "../adapters/ports";
 import {
   createFixtureAdapters,
@@ -73,6 +77,10 @@ import {
   quoteV2ResultSchema,
 } from "../adapters/quote/quote-api-adapter";
 import { envelopeSchema } from "../platform/envelope";
+import {
+  createFreightcomFixtureRateAdapter,
+  FreightcomRateAdapter,
+} from "../adapters/quote/freightcom-rate-adapter";
 
 /*
  * The import grouping above deliberately keeps all platform ownership at this
@@ -119,6 +127,7 @@ export interface GatewayCompositionOptions {
 export interface FixtureCompositionOptions extends GatewayCompositionOptions {
   readonly dataMode: "fixtures";
   readonly customsFixture?: FixtureAdapterOptions["customsFixture"];
+  readonly freightcomRateAdapter?: FreightcomRatePort;
 }
 
 export interface ProductionCompositionOptions
@@ -188,6 +197,7 @@ interface CompositionTools {
 
 function compositionTools(
   adapters: FixtureAdapters,
+  freightcomRateAdapter: FreightcomRatePort,
   configuredAgentAccessRuntime?: AgentAccessRuntime,
 ): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
@@ -277,9 +287,20 @@ function compositionTools(
     "container.plan_summary": containerPlanSummaryToolContract,
   };
   const agentAccessRuntime = configuredAgentAccessRuntime ?? createAgentAccessRuntime();
+  const capabilities = new CapabilityRegistry();
+  capabilities.provide(
+    FREIGHTCOM_RATE_CAPABILITY,
+    freightcomRateAdapter,
+    FREIGHTCOM_RATE_CAPABILITY_VERSION,
+  );
   const moduleHost = new ModuleHost({
-    capabilities: new CapabilityRegistry(),
-    modules: [cargoModule, containerModule, createAgentAccessModule(agentAccessRuntime)],
+    capabilities,
+    modules: [
+      cargoModule,
+      containerModule,
+      createFreightcomLtlModule(),
+      createAgentAccessModule(agentAccessRuntime),
+    ],
   });
   moduleHost.mountSync();
   const moduleToolNames = new Set(moduleHost.catalog.list().map((tool) => tool.name));
@@ -370,7 +391,11 @@ export function createFixtureComposition(
       ? {}
       : { customsFixture: options.customsFixture },
   );
-  const tools = compositionTools(adapters, options.agentAccessRuntime);
+  const tools = compositionTools(
+    adapters,
+    options.freightcomRateAdapter ?? createFreightcomFixtureRateAdapter(),
+    options.agentAccessRuntime,
+  );
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
     allowedHosts: options.allowedHosts ?? ["mcp.example.invalid"],
@@ -449,7 +474,15 @@ export function createProductionComposition(
         },
     review: new ManualTaskAdapter(),
   };
-  const tools = compositionTools(adapters, options.agentAccessRuntime);
+  const tools = compositionTools(
+    adapters,
+    new FreightcomRateAdapter({
+      mode: "production",
+      baseUrl: "https://freightcom-production-disabled.invalid",
+      allowedHosts: ["freightcom-production-disabled.invalid"],
+    }),
+    options.agentAccessRuntime,
+  );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
   const validSessionOwner =

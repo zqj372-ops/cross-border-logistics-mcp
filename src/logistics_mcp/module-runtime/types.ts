@@ -9,7 +9,11 @@ import type {
   SourceRef,
 } from "../platform/envelope";
 import type { ExecutionContext } from "../platform/context";
-import type { CapabilityRegistry } from "./capabilities";
+import type {
+  CapabilityRegistry,
+  CapabilityRequirementInput,
+  CapabilityView,
+} from "./capabilities";
 import type { ModuleCatalog } from "./catalog";
 import type { RegistrationLease } from "./lease";
 
@@ -19,8 +23,8 @@ export interface ModuleManifest {
   readonly module_id: string;
   readonly version: string;
   readonly risk_level: ModuleRiskLevel;
-  readonly required_capabilities: readonly string[];
-  readonly optional_capabilities: readonly string[];
+  readonly required_capabilities: readonly CapabilityRequirementInput[];
+  readonly optional_capabilities: readonly CapabilityRequirementInput[];
   readonly standard_ids: readonly string[];
   readonly lifecycle: "static";
 }
@@ -56,6 +60,7 @@ export interface ModuleToolContribution {
   readonly outputSchemaId: string;
   readonly permission: string;
   readonly kind: "read" | "write";
+  readonly idempotentHint?: boolean;
   readonly riskLevel: ModuleRiskLevel;
   readonly standardRefs: readonly string[];
   readonly handler: ModuleToolHandler;
@@ -69,7 +74,7 @@ export interface ModuleToolRegistrar {
 }
 
 export interface ModuleMountContext {
-  readonly capabilities: CapabilityRegistry;
+  readonly capabilities: CapabilityView;
   readonly tools: ModuleToolRegistrar;
   readonly lease: RegistrationLease;
 }

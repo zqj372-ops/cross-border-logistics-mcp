@@ -361,6 +361,7 @@ describe("built runtime smoke", () => {
         "customs.ca.search",
         "knowledge.search_curated",
         "quote.canada_final_mile.calculate",
+        "quote.freightcom_ltl.preview",
         "quote.save_draft",
         "review.create_task",
         "system.agent_context.get",

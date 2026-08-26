@@ -310,9 +310,11 @@ describe("admin static runtime boundary", () => {
         clients: [],
         audit: [],
       });
-      expect((snapshot.tools as unknown[])).toHaveLength(10);
+      expect((snapshot.tools as Array<{ name?: string }>)).toHaveLength(11);
+      expect((snapshot.tools as Array<{ name?: string }>).map((tool) => tool.name))
+        .toContain("quote.freightcom_ltl.preview");
       expect((snapshot.roles as unknown[])).toHaveLength(7);
-      expect((snapshot.sources as unknown[])).toHaveLength(3);
+      expect((snapshot.sources as unknown[])).toHaveLength(4);
       expect(body).not.toMatch(
         /https?:\/\/|Bearer|token|secret|password|client_id|tenant_id|actor_id|request_id|audit_id|source_id|endpoint_ref|secret_ref|MCP_/i,
       );

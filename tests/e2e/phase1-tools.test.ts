@@ -13,7 +13,7 @@ import {
 const schemaVersion = "2026-08-11.v1";
 
 describe("Phase 1 integrated fixture gateway", () => {
-  it("exposes nine business tools plus the read-only Agent context tool", async () => {
+  it("exposes the registered business and Agent tools", async () => {
     const harness = createFixtureHarness();
     try {
       const sessionId = await initialize(harness);
@@ -50,6 +50,7 @@ describe("Phase 1 integrated fixture gateway", () => {
         "customs.ca.estimate",
         "knowledge.search_curated",
         "quote.canada_final_mile.calculate",
+        "quote.freightcom_ltl.preview",
         "quote.save_draft",
         "review.create_task",
         "system.agent_context.get",
@@ -72,6 +73,12 @@ describe("Phase 1 integrated fixture gateway", () => {
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(tools["quote.freightcom_ltl.preview"]?.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
         openWorldHint: true,
       });
       expect(tools["quote.save_draft"]?.annotations).toMatchObject({

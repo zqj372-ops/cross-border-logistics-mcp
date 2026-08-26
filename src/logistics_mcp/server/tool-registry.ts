@@ -109,6 +109,7 @@ export interface ToolDefinition {
   readonly outputSchemaId: string;
   readonly permission: string;
   readonly kind: "read" | "write";
+  readonly idempotentHint?: boolean;
   readonly statusMapping: typeof ENVELOPE_STATUSES;
   readonly handler?: DomainToolHandler;
   readonly inputSchema?: ZodType;
@@ -236,6 +237,9 @@ export function registerModuleToolDefinitions(
     outputSchemaId: entry.outputSchemaId,
     permission: entry.permission,
     kind: entry.kind,
+    ...(entry.idempotentHint === undefined
+      ? {}
+      : { idempotentHint: entry.idempotentHint }),
     statusMapping: ENVELOPE_STATUSES,
     handler: entry.handler,
     inputSchema: entry.inputSchema,

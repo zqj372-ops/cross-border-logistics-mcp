@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FetchImplementation } from "../../../src/logistics_mcp/adapters/http-client";
-import { createFreightcomTestRateClient } from "../../../src/logistics_mcp/adapters/quote/freightcom-test-client";
+import {
+  createFreightcomTestRateClient,
+  FreightcomTestClientError,
+} from "../../../src/logistics_mcp/adapters/quote/freightcom-test-client";
 
 const REQUEST = {
   details: {
@@ -96,5 +99,31 @@ describe("Freightcom test-only rate client", () => {
       code: "freightcom.test_auth_failed",
       status: 401,
     });
+  });
+
+  it("preserves a provider request rejection status without exposing its body", async () => {
+    const fetchImpl = vi.fn<FetchImplementation>(() =>
+      Promise.resolve(new Response(JSON.stringify({ message: "private provider detail" }), { status: 422 })),
+    );
+    const client = createFreightcomTestRateClient({
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+      token: "synthetic-test-credential",
+      allowedHosts: ["customer-external-api.ssd-test.freightcom.com"],
+      fetchImpl,
+    });
+
+    let failure: unknown;
+    try {
+      await client.submitRate(REQUEST);
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: "freightcom.test_request_rejected",
+      status: 422,
+    });
+    if (!(failure instanceof FreightcomTestClientError)) throw new Error("expected FreightcomTestClientError");
+    expect(failure.message).not.toContain("private provider detail");
   });
 });

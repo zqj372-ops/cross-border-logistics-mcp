@@ -6,6 +6,6 @@
   "standard_ids": ["agent.bootstrap", "platform.contracts", "agent-access.v0", "active-workstreams", "release-agent-adapters"],
   "allowed_rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001", "CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001", "AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001", "WORKSTREAM-001", "RELEASE-ADAPTER-001", "RELEASE-ADAPTER-002"],
   "context_scopes": ["bootstrap", "standards", "module_catalog", "workstreams", "release"],
-  "allowed_module_ids": ["cargo", "container"],
+  "allowed_module_ids": ["cargo", "container", "freightcom-ltl"],
   "content_mode": "summary"
 }

@@ -78,6 +78,19 @@ describe("platform context and RBAC", () => {
     );
   });
 
+  it("allows the Freightcom LTL preview only through quote calculation permission", () => {
+    const sales = parseExecutionContext(claims("sales"));
+    expect(authorizeTool(sales, "quote.freightcom_ltl.preview")).toBe(true);
+
+    const withoutScope = parseExecutionContext({
+      ...claims("sales"),
+      scopes: ["system:read"],
+    });
+    expect(() => authorizeTool(withoutScope, "quote.freightcom_ltl.preview")).toThrow(
+      ForbiddenError,
+    );
+  });
+
   it("blocks a target tenant that differs from the authenticated tenant", () => {
     const context = parseExecutionContext(claims("sales"));
 

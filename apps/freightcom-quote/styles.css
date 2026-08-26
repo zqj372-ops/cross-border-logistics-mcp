@@ -44,7 +44,7 @@ a { color: inherit; }
 
 .app-shell { display: flex; min-height: 100vh; }
 
-.rail { display: flex; flex: 0 0 228px; flex-direction: column; min-height: 100vh; padding: 28px 20px 20px; background: var(--navy); color: #d8e7ec; }
+.rail { display: flex; flex: 0 0 228px; flex-direction: column; min-width: 0; min-height: 100vh; padding: 28px 20px 20px; background: var(--navy); color: #d8e7ec; }
 .rail-brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; }
 .rail-brand strong { display: block; color: #fff; font-size: 15px; letter-spacing: 0.02em; }
 .rail-brand small { display: block; margin-top: 3px; color: #92acb9; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
@@ -118,6 +118,7 @@ a { color: inherit; }
 .field textarea { min-height: 68px; padding: 9px 10px; resize: vertical; }
 .field input::placeholder, .field textarea::placeholder { color: #b1c0c5; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: #69c7c0; background: #fff; box-shadow: 0 0 0 3px rgba(0, 143, 135, 0.09); }
+.field input[readonly] { border-color: #e1e9eb; background: #f2f6f7; color: #4f6973; cursor: default; }
 .field input:invalid:not(:placeholder-shown), .field select:invalid { border-color: #e7a0a0; }
 .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; }
 .toggle { display: inline-flex; align-items: center; gap: 7px; color: #5e7680; font-size: 11px; font-weight: 650; cursor: pointer; }
@@ -129,6 +130,7 @@ a { color: inherit; }
 .toggle input:focus-visible + .toggle-track { box-shadow: 0 0 0 3px rgba(0, 143, 135, .15); }
 .callout { display: flex; gap: 9px; align-items: flex-start; margin-bottom: 15px; padding: 11px 12px; border-radius: 7px; font-size: 11px; line-height: 1.55; }
 .callout-info { border: 1px solid #cce9e7; background: #f0fbfa; color: #477973; }
+.minimum-note { margin-top: 18px; margin-bottom: 0; }
 .callout-muted { margin-top: 16px; border: 1px solid #e1eaec; background: #f8fafb; color: #778c94; }
 .callout-icon { display: inline-grid; flex: 0 0 16px; width: 16px; height: 16px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-family: Georgia, serif; font-size: 10px; }
 .conditional-block { margin-top: 14px; padding: 14px; border: 1px solid #e0ecee; border-radius: 8px; background: #fbfdfd; }
@@ -140,6 +142,15 @@ a { color: inherit; }
 .pallet-list-heading div { display: flex; align-items: baseline; gap: 7px; }
 .pallet-list-heading span { color: #9aacb1; font-size: 10px; font-weight: 500; }
 .pallet-list { display: grid; gap: 10px; }
+.postal-status { min-height: 14px; line-height: 1.45; }
+.postal-neutral { color: #94a5aa !important; }
+.postal-loading { color: #4f84a7 !important; }
+.postal-success { color: #277d70 !important; }
+.postal-error { color: #ae5a5a !important; }
+.freight-class-status { line-height: 1.45; }
+.freight-class-status.is-calculated { color: #277d70; font-weight: 650; }
+.origin-preset-summary { min-height: 42px; padding: 10px 12px; border: 1px dashed #d5e3e6; border-radius: 6px; background: #f8fafb; color: #8a9ca2; font-size: 11px; line-height: 1.55; }
+.origin-preset-summary.is-selected { border-style: solid; border-color: #cce9e7; background: #f0fbfa; color: #316f68; font-weight: 650; }
 .pallet-row { padding: 14px; border: 1px solid #dce8eb; border-radius: 8px; background: #fff; }
 .pallet-row-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
 .pallet-row-head > div { display: flex; align-items: center; gap: 8px; color: #3d5e69; font-size: 11px; }
@@ -219,8 +230,11 @@ a { color: inherit; }
 .results-summary h3 { margin: 6px 0 0; color: var(--navy); font-size: 16px; }
 .results-summary-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; color: #93a5aa; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
 .manual-pill { padding: 4px 6px; border-radius: 3px; background: var(--amber-soft); color: #ac7a21; font-family: inherit; font-size: 8px; font-weight: 800; letter-spacing: .07em; }
-.results-table-wrap { overflow-x: auto; border: 1px solid #e0e9eb; border-radius: 7px; }
-.results-table { width: 100%; min-width: 690px; border-collapse: collapse; table-layout: auto; }
+.results-table-wrap { overflow: hidden; border: 1px solid #e0e9eb; border-radius: 7px; }
+.results-table { width: 100%; min-width: 0; border-collapse: collapse; table-layout: fixed; }
+.results-table th:nth-child(1), .results-table td:nth-child(1) { width: 46%; }
+.results-table th:nth-child(2), .results-table td:nth-child(2) { width: 34%; }
+.results-table th:nth-child(3), .results-table td:nth-child(3) { width: 20%; }
 .results-table th { padding: 10px 10px; border-bottom: 1px solid #dfe9eb; background: #f8fbfb; color: #7d939a; font-size: 9px; font-weight: 750; letter-spacing: .05em; text-align: left; text-transform: uppercase; }
 .results-table th small { display: block; margin-top: 2px; color: #b0bfc2; font-size: 8px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .results-table td { padding: 12px 10px; border-bottom: 1px solid #edf2f3; color: #5f7881; font-size: 10px; vertical-align: middle; }
@@ -231,8 +245,6 @@ a { color: inherit; }
 .carrier-cell small { display: block; max-width: 120px; margin-top: 3px; overflow: hidden; color: #94a5aa; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .money { display: block; color: var(--navy); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: nowrap; }
 .source-currency { display: block; margin-top: 3px; color: #a4b3b6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; white-space: nowrap; }
-.charge-cell { color: #798f96; font-size: 9px; line-height: 1.55; white-space: nowrap; }
-.row-status { color: #ae7b21; font-size: 8px; font-weight: 800; letter-spacing: .04em; white-space: nowrap; }
 .missing-value { color: #b17d7d; font-size: 9px; }
 .no-rates { padding: 22px !important; color: #9b6e6e !important; text-align: center; }
 .result-footnote { margin: 10px 2px 0; color: #96a7ac; font-size: 9px; line-height: 1.5; }
