@@ -1,3 +1,21 @@
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { parseExecutionContext, type ExecutionContext } from "../../src/logistics_mcp/platform/context";
@@ -14,6 +32,12 @@ import {
   type ProductionAdapterSource,
 } from "../../src/logistics_mcp/server/composition";
 import {
+  createFixtureAuthenticatorFromEnvironment,
+  initializeSqliteControlState,
+  startRuntime,
+} from "../../src/logistics_mcp/server/start";
+import { openSqliteControlStore } from "../../src/logistics_mcp/control-plane/sqlite-control-store";
+import {
   cargoInput,
   containerInput,
   quoteInput,
@@ -22,11 +46,78 @@ import { securityClaims } from "./fixtures/security-fixtures";
 
 const API_DATE = "2026-08-12";
 const API_TIME = `${API_DATE}T00:00:00.000Z`;
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const FIXTURE_INITIALIZER = resolve(
+  REPOSITORY_ROOT,
+  "deploy/scripts/init-control-fixture.mjs",
+);
+type FixtureInitializerModule = {
+  readonly applicationRoot: () => string;
+};
+type ControlIdentityMarkerForTest = {
+  readonly control_db_id: string;
+  readonly control_db_path: string;
+  readonly instance_id: string;
+  readonly management_tenant_id: string;
+  readonly marker_format: string;
+  readonly schema_version: number;
+};
+type StartupMutationResult = {
+  readonly startupRoot?: string;
+  readonly cleanup?: () => void | Promise<void>;
+};
+
+const CONTROL_RUNTIME_ENV_NAMES = [
+  "MCP_DATA_MODE",
+  "MCP_ADMIN_CONTROL_ENABLED",
+  "MCP_INSTANCE_ID",
+  "MCP_ADMIN_TENANT_ID",
+  "MCP_FIXTURE_TOKEN",
+  "MCP_FIXTURE_APPROVER_TOKEN",
+  "MCP_APPLICATION_ROOT",
+  "MCP_RUNTIME_DIR",
+  "MCP_STATE_DIR",
+  "MCP_STATE_DB_PATH",
+  "MCP_CONTROL_DB_PATH",
+  "MCP_CONTROL_MARKER_PATH",
+  "MCP_CONTROL_STATE_PATH",
+] as const;
+
+function fixedControlPaths(applicationRoot: string): {
+  readonly runtimeDir: string;
+  readonly stateDir: string;
+  readonly controlDbPath: string;
+  readonly markerPath: string;
+} {
+  const runtimeDir = resolve(applicationRoot, ".runtime");
+  const stateDir = resolve(runtimeDir, "mcp-instance-state");
+  return {
+    runtimeDir,
+    stateDir,
+    controlDbPath: resolve(stateDir, "control.sqlite"),
+    markerPath: resolve(stateDir, "control-identity.json"),
+  };
+}
+
+function rewriteControlMarker(
+  markerPath: string,
+  patch: Partial<ControlIdentityMarkerForTest>,
+): void {
+  const marker = JSON.parse(readFileSync(markerPath, "utf8")) as ControlIdentityMarkerForTest;
+  const replacement = { ...marker, ...patch };
+  chmodSync(markerPath, 0o600);
+  try {
+    writeFileSync(markerPath, `${JSON.stringify(replacement)}\n`);
+  } finally {
+    chmodSync(markerPath, 0o400);
+  }
+}
 const RISK_CUSTOMS_IDENTITY = {
   contractVersion: "riskcustoms-query.v1",
   serviceVersion: "riskcustoms-service.fixture-1",
   publishedAt: "2026-08-11T00:00:00.000Z",
   supportedOperations: ["status", "query"],
+  ruleDate: API_DATE,
   releaseIds: ["release-ca-1"],
   snapshotHash: "a".repeat(64),
   releaseHash: "b".repeat(64),
@@ -46,6 +137,51 @@ const customsSearchInput = {
   query: "synthetic widget",
   product_attributes: { material: "synthetic", origin_country: "CN" },
   selected_hs6: null,
+};
+
+const freightcomInput = {
+  schema_version: "2026-08-11.v1",
+  version: "freightcom-ltl-rate-request@2026-08-26.v1",
+  display_policy: "usd_numeric_relabel_test_only",
+  details: {
+    origin: {
+      name: "Origin",
+      address: {
+        address_line_1: "1 Test Way",
+        city: "Markham",
+        region: "ON",
+        country: "CA",
+        postal_code: "L3R 8N4",
+      },
+    },
+    destination: {
+      name: "Destination",
+      address: {
+        address_line_1: "2 Test Way",
+        city: "Montreal",
+        region: "QC",
+        country: "CA",
+        postal_code: "H1H 1H1",
+      },
+      ready_at: { hour: 9, minute: 0 },
+      ready_until: { hour: 17, minute: 0 },
+      signature_requirement: "not-required",
+    },
+    expected_ship_date: { year: 2026, month: 8, day: 26 },
+    packaging_type: "pallet",
+    packaging_properties: {
+      pallet_type: "ltl",
+      pallets: [{
+        measurements: {
+          weight: { unit: "lb", value: "100" },
+          cuboid: { unit: "in", l: "48", w: "40", h: "48" },
+        },
+        description: "Synthetic test freight",
+        freight_class: "70",
+        num_pieces: 1,
+      }],
+    },
+  },
 };
 
 function serverContext(): ExecutionContext {
@@ -196,6 +332,498 @@ function customsApi(
 }
 
 describe("gateway composition modes", () => {
+  it("keeps Freightcom unavailable in a default fixture composition", async () => {
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    try {
+      const definition = composition.definitions.find(
+        (candidate) => candidate.name === "quote.freightcom_ltl.preview",
+      );
+      if (definition?.handler === undefined) throw new Error("Freightcom handler missing");
+
+      const result = await definition.handler(freightcomInput, serverContext());
+
+      expect(result.status).toBe("unavailable");
+      expect(result.data).toBeNull();
+      expect(result.blockers?.map((blocker) => blocker.code)).toContain(
+        "freightcom.production_disabled",
+      );
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it("keeps applicant and approver fixture claims distinct within one tenant", () => {
+    const names = ["MCP_FIXTURE_TOKEN", "MCP_FIXTURE_APPROVER_TOKEN"] as const;
+    const previous = new Map(names.map((name) => [name, process.env[name]]));
+    try {
+      process.env.MCP_FIXTURE_TOKEN = "fixture-applicant-token";
+      process.env.MCP_FIXTURE_APPROVER_TOKEN = "fixture-approver-token";
+      const authenticate = createFixtureAuthenticatorFromEnvironment("tenant_fixture");
+      const applicant = authenticate("fixture-applicant-token");
+      const approver = authenticate("fixture-approver-token");
+
+      expect(applicant).toMatchObject({
+        tenant_id: "tenant_fixture",
+        actor_id: "local_operator",
+        actor_role: "admin",
+        roles: ["admin"],
+        scopes: ["platform:admin"],
+        client_id: "local_fixture_applicant_client",
+        session_id: "local_fixture_applicant_session",
+      });
+      expect(approver).toMatchObject({
+        tenant_id: "tenant_fixture",
+        actor_id: "local_approver",
+        actor_role: "admin",
+        roles: ["admin"],
+        scopes: ["platform:admin"],
+        client_id: "local_fixture_approver_client",
+        session_id: "local_fixture_approver_session",
+      });
+      expect(new Set([applicant.actor_id, approver.actor_id]).size).toBe(2);
+      expect(new Set([applicant.client_id, approver.client_id]).size).toBe(2);
+      expect(new Set([applicant.session_id, approver.session_id]).size).toBe(2);
+      expect(() => authenticate("unknown-fixture-token")).toThrow();
+      process.env.MCP_FIXTURE_APPROVER_TOKEN = "fixture-applicant-token";
+      expect(() => createFixtureAuthenticatorFromEnvironment("tenant_fixture")).toThrow();
+      delete process.env.MCP_FIXTURE_APPROVER_TOKEN;
+      expect(() => createFixtureAuthenticatorFromEnvironment("tenant_fixture")).toThrow();
+    } finally {
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  it.each([
+    ["missing enabled gate", { MCP_ADMIN_CONTROL_ENABLED: undefined }],
+    ["non-literal enabled gate", { MCP_ADMIN_CONTROL_ENABLED: "TRUE" }],
+    ["missing instance id", {
+      MCP_ADMIN_CONTROL_ENABLED: "true",
+      MCP_INSTANCE_ID: undefined,
+    }],
+    ["missing management tenant id", {
+      MCP_ADMIN_CONTROL_ENABLED: "true",
+      MCP_ADMIN_TENANT_ID: undefined,
+    }],
+    ["caller path override", {
+      MCP_ADMIN_CONTROL_ENABLED: "true",
+      MCP_APPLICATION_ROOT: "/tmp/fixture-path-env-root",
+    }],
+    ["missing initialized state", { MCP_ADMIN_CONTROL_ENABLED: "true" }],
+  ] as const)("does not call listen for %s", async (_label, overrides) => {
+    const applicationRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "logistics-mcp-startup-gate-")),
+    );
+    const previous = new Map(
+      CONTROL_RUNTIME_ENV_NAMES.map((name) => [name, process.env[name]]),
+    );
+    let listenCalls = 0;
+    try {
+      for (const name of CONTROL_RUNTIME_ENV_NAMES) delete process.env[name];
+      process.env.MCP_DATA_MODE = "fixtures";
+      process.env.MCP_INSTANCE_ID = "instance_fixture_001";
+      process.env.MCP_ADMIN_TENANT_ID = "tenant_fixture";
+      process.env.MCP_FIXTURE_TOKEN = "fixture-applicant-token";
+      process.env.MCP_FIXTURE_APPROVER_TOKEN = "fixture-approver-token";
+      for (const [name, value] of Object.entries(overrides)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+
+      await expect(startRuntime({
+        applicationRoot,
+        listen: () => {
+          listenCalls += 1;
+          return Promise.resolve();
+        },
+      })).rejects.toThrow();
+      expect(listenCalls).toBe(0);
+      expect(existsSync(resolve(applicationRoot, ".runtime"))).toBe(false);
+    } finally {
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(applicationRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["state directory missing", (applicationRoot: string): StartupMutationResult | undefined => {
+      rmSync(fixedControlPaths(applicationRoot).stateDir, { force: true, recursive: true });
+      return undefined;
+    }],
+    ["marker missing", (applicationRoot: string): StartupMutationResult | undefined => {
+      unlinkSync(fixedControlPaths(applicationRoot).markerPath);
+      return undefined;
+    }],
+    ["database missing", (applicationRoot: string): StartupMutationResult | undefined => {
+      unlinkSync(fixedControlPaths(applicationRoot).controlDbPath);
+      return undefined;
+    }],
+    ["fresh database replacement", (applicationRoot: string): StartupMutationResult | undefined => {
+      const { controlDbPath } = fixedControlPaths(applicationRoot);
+      unlinkSync(controlDbPath);
+      const replacement = new DatabaseSync(controlDbPath);
+      replacement.close();
+      chmodSync(controlDbPath, 0o600);
+      return undefined;
+    }],
+    ["application root symlink", (applicationRoot: string): StartupMutationResult => {
+      const symlinkPath = `${applicationRoot}-link`;
+      symlinkSync(applicationRoot, symlinkPath, "dir");
+      return {
+        startupRoot: symlinkPath,
+        cleanup: () => unlinkSync(symlinkPath),
+      };
+    }],
+    ["state directory symlink", (applicationRoot: string): StartupMutationResult => {
+      const { stateDir } = fixedControlPaths(applicationRoot);
+      const symlinkTarget = mkdtempSync(join(tmpdir(), "logistics-mcp-state-target-"));
+      rmSync(stateDir, { force: true, recursive: true });
+      symlinkSync(symlinkTarget, stateDir, "dir");
+      return {
+        cleanup: () => {
+          unlinkSync(stateDir);
+          rmSync(symlinkTarget, { force: true, recursive: true });
+        },
+      };
+    }],
+    ["marker symlink", (applicationRoot: string): StartupMutationResult => {
+      const { markerPath } = fixedControlPaths(applicationRoot);
+      const symlinkTarget = `${markerPath}.target`;
+      copyFileSync(markerPath, symlinkTarget);
+      chmodSync(symlinkTarget, 0o400);
+      unlinkSync(markerPath);
+      symlinkSync(symlinkTarget, markerPath);
+      return {
+        cleanup: () => {
+          unlinkSync(markerPath);
+          unlinkSync(symlinkTarget);
+        },
+      };
+    }],
+    ["database symlink", (applicationRoot: string): StartupMutationResult => {
+      const { controlDbPath } = fixedControlPaths(applicationRoot);
+      const symlinkTarget = `${controlDbPath}.target`;
+      copyFileSync(controlDbPath, symlinkTarget);
+      chmodSync(symlinkTarget, 0o600);
+      unlinkSync(controlDbPath);
+      symlinkSync(symlinkTarget, controlDbPath);
+      return {
+        cleanup: () => {
+          unlinkSync(controlDbPath);
+          unlinkSync(symlinkTarget);
+        },
+      };
+    }],
+    ["control identity mismatch", (applicationRoot: string): StartupMutationResult | undefined => {
+      rewriteControlMarker(
+        fixedControlPaths(applicationRoot).markerPath,
+        { control_db_id: `db_${"0".repeat(31)}1` },
+      );
+      return undefined;
+    }],
+    ["database identity mismatch", (applicationRoot: string): StartupMutationResult | undefined => {
+      const { controlDbPath } = fixedControlPaths(applicationRoot);
+      const database = new DatabaseSync(controlDbPath);
+      try {
+        database
+          .prepare("UPDATE control_identity SET control_db_id = ?")
+          .run(`db_${"0".repeat(31)}1`);
+      } finally {
+        database.close();
+      }
+      chmodSync(controlDbPath, 0o600);
+      return undefined;
+    }],
+    ["instance mismatch", (applicationRoot: string): StartupMutationResult | undefined => {
+      rewriteControlMarker(
+        fixedControlPaths(applicationRoot).markerPath,
+        { instance_id: "instance_other" },
+      );
+      return undefined;
+    }],
+    ["tenant mismatch", (applicationRoot: string): StartupMutationResult | undefined => {
+      rewriteControlMarker(
+        fixedControlPaths(applicationRoot).markerPath,
+        { management_tenant_id: "tenant_other" },
+      );
+      return undefined;
+    }],
+    ["schema mismatch", (applicationRoot: string): StartupMutationResult | undefined => {
+      const { controlDbPath } = fixedControlPaths(applicationRoot);
+      const database = new DatabaseSync(controlDbPath);
+      try {
+        database.exec("PRAGMA user_version = 999");
+      } finally {
+        database.close();
+      }
+      chmodSync(controlDbPath, 0o600);
+      return undefined;
+    }],
+    ["derived path mismatch", (applicationRoot: string): StartupMutationResult | undefined => {
+      rewriteControlMarker(
+        fixedControlPaths(applicationRoot).markerPath,
+        { control_db_path: resolve(applicationRoot, ".runtime/other/control.sqlite") },
+      );
+      return undefined;
+    }],
+    ["exclusive lock conflict", (applicationRoot: string): StartupMutationResult => {
+      const lockedStore = openSqliteControlStore({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: "tenant_fixture",
+        adminControlEnabled: true,
+      });
+      return { cleanup: () => lockedStore.close() };
+    }],
+  ] as const)("fails closed before listen for %s", async (_label, mutate) => {
+    const applicationRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "logistics-mcp-startup-state-gate-")),
+    );
+    const previous = new Map(
+      CONTROL_RUNTIME_ENV_NAMES.map((name) => [name, process.env[name]]),
+    );
+    let mutationResult: StartupMutationResult | undefined;
+    let listenCalls = 0;
+    try {
+      process.env.MCP_DATA_MODE = "fixtures";
+      process.env.MCP_ADMIN_CONTROL_ENABLED = "true";
+      process.env.MCP_INSTANCE_ID = "instance_fixture_001";
+      process.env.MCP_ADMIN_TENANT_ID = "tenant_fixture";
+      process.env.MCP_FIXTURE_TOKEN = "fixture-applicant-token";
+      process.env.MCP_FIXTURE_APPROVER_TOKEN = "fixture-approver-token";
+      for (const name of CONTROL_RUNTIME_ENV_NAMES) {
+        if (name === "MCP_DATA_MODE" ||
+            name === "MCP_ADMIN_CONTROL_ENABLED" ||
+            name === "MCP_INSTANCE_ID" ||
+            name === "MCP_ADMIN_TENANT_ID" ||
+            name === "MCP_FIXTURE_TOKEN" ||
+            name === "MCP_FIXTURE_APPROVER_TOKEN") {
+          continue;
+        }
+        delete process.env[name];
+      }
+      await initializeSqliteControlState({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: "tenant_fixture",
+      });
+      mutationResult = mutate(applicationRoot);
+
+      await expect(startRuntime({
+        applicationRoot: mutationResult?.startupRoot ?? applicationRoot,
+        listen: () => {
+          listenCalls += 1;
+          return Promise.resolve();
+        },
+      })).rejects.toThrow();
+      expect(listenCalls).toBe(0);
+    } finally {
+      await mutationResult?.cleanup?.();
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(applicationRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("does not treat an initialized sentinel as optional when managed identity env is removed", async () => {
+    const applicationRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "logistics-mcp-startup-identity-env-")),
+    );
+    const previous = new Map(
+      CONTROL_RUNTIME_ENV_NAMES.map((name) => [name, process.env[name]]),
+    );
+    let listenCalls = 0;
+    try {
+      for (const name of CONTROL_RUNTIME_ENV_NAMES) delete process.env[name];
+      process.env.MCP_DATA_MODE = "fixtures";
+      process.env.MCP_ADMIN_CONTROL_ENABLED = "true";
+      process.env.MCP_INSTANCE_ID = "instance_fixture_001";
+      process.env.MCP_ADMIN_TENANT_ID = "tenant_fixture";
+      process.env.MCP_FIXTURE_TOKEN = "fixture-applicant-token";
+      process.env.MCP_FIXTURE_APPROVER_TOKEN = "fixture-approver-token";
+      await initializeSqliteControlState({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: "tenant_fixture",
+      });
+      delete process.env.MCP_ADMIN_CONTROL_ENABLED;
+      delete process.env.MCP_INSTANCE_ID;
+      delete process.env.MCP_ADMIN_TENANT_ID;
+
+      await expect(startRuntime({
+        applicationRoot,
+        listen: () => {
+          listenCalls += 1;
+          return Promise.resolve();
+        },
+      })).rejects.toThrow();
+      expect(listenCalls).toBe(0);
+      expect(existsSync(fixedControlPaths(applicationRoot).markerPath)).toBe(true);
+      expect(existsSync(fixedControlPaths(applicationRoot).controlDbPath)).toBe(true);
+    } finally {
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(applicationRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("closes the initialized control store through one idempotent runtime close path", async () => {
+    const applicationRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "logistics-mcp-startup-close-")),
+    );
+    const names = [
+      "MCP_DATA_MODE",
+      "MCP_ADMIN_CONTROL_ENABLED",
+      "MCP_INSTANCE_ID",
+      "MCP_ADMIN_TENANT_ID",
+      "MCP_FIXTURE_TOKEN",
+      "MCP_FIXTURE_APPROVER_TOKEN",
+    ] as const;
+    const previous = new Map(names.map((name) => [name, process.env[name]]));
+    let runtime: Awaited<ReturnType<typeof startRuntime>> | undefined;
+    let reopened: ReturnType<typeof openSqliteControlStore> | undefined;
+    try {
+      process.env.MCP_DATA_MODE = "fixtures";
+      process.env.MCP_ADMIN_CONTROL_ENABLED = "true";
+      process.env.MCP_INSTANCE_ID = "instance_fixture_001";
+      process.env.MCP_ADMIN_TENANT_ID = "tenant_fixture";
+      process.env.MCP_FIXTURE_TOKEN = "fixture-applicant-token";
+      process.env.MCP_FIXTURE_APPROVER_TOKEN = "fixture-approver-token";
+      await initializeSqliteControlState({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: "tenant_fixture",
+      });
+
+      let listenCalls = 0;
+      runtime = await startRuntime({
+        applicationRoot,
+        listen: async (server) => {
+          listenCalls += 1;
+          await new Promise<void>((resolvePromise, reject) => {
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", () => resolvePromise());
+          });
+        },
+      });
+      expect(listenCalls).toBe(1);
+      await runtime.close();
+      await runtime.close();
+
+      reopened = openSqliteControlStore({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: "tenant_fixture",
+        adminControlEnabled: true,
+      });
+      expect(await reopened.health()).toEqual({ ready: true });
+    } finally {
+      await reopened?.close().catch(() => undefined);
+      await runtime?.close().catch(() => undefined);
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(applicationRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("derives the fixture application root from the checked-in wrapper, independent of cwd or path env", async () => {
+    const temporaryCwd = mkdtempSync(join(tmpdir(), "logistics-mcp-fixture-cwd-"));
+    const pathEnvironment = {
+      MCP_APPLICATION_ROOT: "/tmp/fixture-path-env-root",
+      MCP_STATE_DIR: "/tmp/fixture-path-env-state",
+      MCP_STATE_DB_PATH: "/tmp/fixture-path-env.sqlite",
+      MCP_CONTROL_DB_PATH: "/tmp/fixture-path-env.sqlite",
+      MCP_CONTROL_MARKER_PATH: "/tmp/fixture-path-env-marker.json",
+    } as const;
+    const previousCwd = process.cwd();
+    const previousEnvironment = new Map(
+      Object.keys(pathEnvironment).map((name) => [name, process.env[name]]),
+    );
+
+    try {
+      process.chdir(temporaryCwd);
+      for (const [name, value] of Object.entries(pathEnvironment)) {
+        process.env[name] = value;
+      }
+      const initializer = (await import(
+        pathToFileURL(FIXTURE_INITIALIZER).href,
+      )) as FixtureInitializerModule;
+
+      expect(initializer.applicationRoot()).toBe(REPOSITORY_ROOT);
+    } finally {
+      process.chdir(previousCwd);
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(temporaryCwd, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects every CLI argument so no caller-selected path can reach the initializer", () => {
+    for (const args of [
+      ["/tmp/fixture-path"],
+      ["--root=/tmp/fixture-path"],
+      ["--state-dir", "/tmp/fixture-path"],
+      ["--db", "/tmp/fixture-path.sqlite"],
+    ]) {
+      const result = spawnSync(process.execPath, [FIXTURE_INITIALIZER, ...args], {
+        cwd: "/tmp",
+        env: {
+          ...process.env,
+          MCP_APPLICATION_ROOT: "/tmp/fixture-path-env-root",
+          MCP_STATE_DIR: "/tmp/fixture-path-env-state",
+          MCP_STATE_DB_PATH: "/tmp/fixture-path-env.sqlite",
+          MCP_CONTROL_DB_PATH: "/tmp/fixture-path-env.sqlite",
+          MCP_CONTROL_MARKER_PATH: "/tmp/fixture-path-env-marker.json",
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("does not accept command-line arguments");
+    }
+  });
+
+  it("keeps fixture initialization and startup scripts explicit and path-free", () => {
+    const packageJson = JSON.parse(
+      readFileSync(resolve(REPOSITORY_ROOT, "package.json"), "utf8"),
+    ) as {
+      readonly scripts: Record<string, string>;
+    };
+    const gitignore = readFileSync(resolve(REPOSITORY_ROOT, ".gitignore"), "utf8");
+    const initializerSource = readFileSync(FIXTURE_INITIALIZER, "utf8");
+    const initScript = packageJson.scripts["init:control-fixture"];
+    const startScript = packageJson.scripts["start:fixture"];
+
+    expect(initScript).toBe(
+      "npm run build && node deploy/scripts/init-control-fixture.mjs",
+    );
+    expect(startScript).toContain("MCP_ADMIN_CONTROL_ENABLED=true");
+    expect(startScript).toContain("MCP_INSTANCE_ID=instance_fixture_001");
+    expect(startScript).toContain("MCP_ADMIN_TENANT_ID=tenant_fixture");
+    expect(startScript).toContain("MCP_FIXTURE_TOKEN=local-fixture-token");
+    expect(startScript).not.toContain("init:control-fixture");
+    expect(startScript).not.toMatch(
+      /MCP_(?:APPLICATION_ROOT|RUNTIME_DIR|STATE_DIR|STATE_DB_PATH|CONTROL_DB_PATH|CONTROL_MARKER_PATH|CONTROL_STATE_PATH)=/,
+    );
+    expect(gitignore.split("\n")).toContain(".runtime/");
+    expect(initializerSource).not.toContain("process.cwd");
+    expect(initializerSource).not.toContain("process.env");
+    expect(initializerSource).toContain("initializeSqliteControlState");
+  });
+
   it("keeps source health local and omitted API adapters fail closed", async () => {
     const customsHealthFetch = vi.fn<FetchImplementation>();
     const source = createProductionApiAdapterSource({
@@ -308,7 +936,7 @@ describe("gateway composition modes", () => {
       jurisdiction: "CA",
       candidates: [{ hs_code: "345678", classification_status: "confirmed" }],
     });
-    expect(result.sourceRefs).toHaveLength(2);
+    expect(result.sourceRefs).toHaveLength(3);
     expect(authorizationProvider).toHaveBeenCalledTimes(2);
     expect(authorizationProvider).toHaveBeenNthCalledWith(1, context, expect.any(AbortSignal));
     expect(authorizationProvider).toHaveBeenNthCalledWith(2, context, expect.any(AbortSignal));
@@ -417,7 +1045,12 @@ describe("gateway composition modes", () => {
     });
     try {
       expect(composition.dataMode).toBe("production");
-      expect(composition.definitions).toHaveLength(10);
+      expect(composition.definitions).toHaveLength(11);
+      expect(
+        composition.definitions.find(
+          (definition) => definition.name === "quote.freightcom_ltl.preview",
+        )?.handler,
+      ).toBeTypeOf("function");
       expect(composition.adapters.quote).not.toBe(composition.adapters.status);
 
       const context = parseExecutionContext(securityClaims);

@@ -1,8 +1,13 @@
-import { request as httpRequest, type Server } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  request as httpRequest,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAdminStaticHandler } from "../../src/logistics_mcp/server/admin-static";
 import {
@@ -16,6 +21,11 @@ const ASSETS = {
   "styles.css": "body { color: black; }",
   "app.js": "window.adminFixture = false;",
   "fixture-data.js": "window.adminFixtureData = true;",
+  "control-plane.js": "export const controlPlaneFixture = true;",
+  "vendor/adminlte/adminlte.min.css": "/* adminlte fixture */",
+  "vendor/adminlte/adminlte.min.js": "window.adminLteFixture = true;",
+  "vendor/bootstrap/bootstrap.min.css": "/* bootstrap fixture */",
+  "vendor/bootstrap/bootstrap.bundle.min.js": "window.bootstrapFixture = true;",
 } as const;
 
 const temporaryPaths: string[] = [];
@@ -24,7 +34,11 @@ async function makeAssets(names: readonly string[] = Object.keys(ASSETS)): Promi
   const directory = await mkdtemp(resolve(tmpdir(), "logistics-mcp-admin-"));
   temporaryPaths.push(directory);
   await Promise.all(
-    names.map((name) => writeFile(resolve(directory, name), ASSETS[name as keyof typeof ASSETS])),
+    names.map(async (name) => {
+      const file = resolve(directory, name);
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, ASSETS[name as keyof typeof ASSETS]);
+    }),
   );
   return directory;
 }
@@ -68,6 +82,74 @@ afterEach(async () => {
 });
 
 describe("admin static runtime boundary", () => {
+  it("delegates control routes before static fallback, including when UI assets are disabled", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const controlApi = {
+      handle: vi.fn((_request: IncomingMessage, response: ServerResponse): boolean => {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ delegated: true }));
+        return true;
+      }),
+    };
+    const { server, baseUrl } = await listen(
+      composition,
+      createAdminStaticHandler({
+        staticDir: directory,
+        adminControlApi: controlApi,
+      }),
+    );
+    try {
+      const delegated = await fetch(`${baseUrl}/admin/api/v1/control/state`);
+      expect(delegated.status).toBe(200);
+      expect(await delegated.json()).toEqual({ delegated: true });
+      expect(controlApi.handle).toHaveBeenCalledTimes(1);
+
+      const fallback = await fetch(`${baseUrl}/admin/api/v1/not-control`);
+      expect(fallback.status).toBe(404);
+      expect(await fallback.json()).toEqual({ status: "blocked", reason: "admin_ui_disabled" });
+      expect(controlApi.handle).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+  });
+
+  it("serves the explicit control-plane and vendor allowlist without exposing node_modules", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const { server, baseUrl } = await listen(
+      composition,
+      createAdminStaticHandler({ enabledSetting: "true", staticDir: directory }),
+    );
+    try {
+      for (const path of [
+        "/admin/control-plane.js",
+        "/admin/vendor/adminlte/adminlte.min.css",
+        "/admin/vendor/adminlte/adminlte.min.js",
+        "/admin/vendor/bootstrap/bootstrap.min.css",
+        "/admin/vendor/bootstrap/bootstrap.bundle.min.js",
+      ]) {
+        const response = await fetch(`${baseUrl}${path}`);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+      }
+
+      for (const path of [
+        "/admin/node_modules/admin-lte/dist/css/adminlte.min.css",
+        "/admin/node_modules/bootstrap/dist/js/bootstrap.bundle.min.js",
+      ]) {
+        const response = await fetch(`${baseUrl}${path}`);
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ status: "blocked", reason: "admin_route_not_found" });
+      }
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+  });
+
   it("is closed by default", async () => {
     const directory = await makeAssets();
     const composition = createFixtureComposition({ dataMode: "fixtures" });
@@ -310,9 +392,11 @@ describe("admin static runtime boundary", () => {
         clients: [],
         audit: [],
       });
-      expect((snapshot.tools as unknown[])).toHaveLength(10);
+      expect((snapshot.tools as Array<{ name?: string }>)).toHaveLength(11);
+      expect((snapshot.tools as Array<{ name?: string }>).map((tool) => tool.name))
+        .toContain("quote.freightcom_ltl.preview");
       expect((snapshot.roles as unknown[])).toHaveLength(7);
-      expect((snapshot.sources as unknown[])).toHaveLength(3);
+      expect((snapshot.sources as unknown[])).toHaveLength(4);
       expect(body).not.toMatch(
         /https?:\/\/|Bearer|token|secret|password|client_id|tenant_id|actor_id|request_id|audit_id|source_id|endpoint_ref|secret_ref|MCP_/i,
       );

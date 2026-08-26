@@ -6,6 +6,7 @@ import {
   ModuleHost,
   ModuleRuntimeError,
   RegistrationLease,
+  type CapabilityRequirementInput,
   type ModuleDefinition,
 } from "../../src/logistics_mcp/module-runtime";
 
@@ -27,7 +28,8 @@ const tool = (name: string) => ({
 function moduleDefinition(
   moduleId: string,
   mount: ModuleDefinition["mount"],
-  requiredCapabilities: readonly string[] = [],
+  requiredCapabilities: readonly CapabilityRequirementInput[] = [],
+  optionalCapabilities: readonly CapabilityRequirementInput[] = [],
 ): ModuleDefinition {
   return {
     manifest: {
@@ -35,7 +37,7 @@ function moduleDefinition(
       version: "2026-08-21.v0",
       risk_level: "T0",
       required_capabilities: requiredCapabilities,
-      optional_capabilities: [],
+      optional_capabilities: optionalCapabilities,
       standard_ids: ["module-runtime.v0"],
       lifecycle: "static",
     },
@@ -99,5 +101,75 @@ describe("Module Runtime v0", () => {
     });
     await expect(duplicate.mount()).rejects.toThrow(ModuleRuntimeError);
     expect(duplicate.catalog.list()).toEqual([]);
+  });
+
+  it("scopes modules to declared, version-matching capabilities", async () => {
+    const declared = { name: "declared" };
+    const hidden = { name: "hidden" };
+    const optionalMissing = "optional-missing@v1";
+    const capabilities = new CapabilityRegistry();
+    capabilities.provide("declared", declared, "v1");
+    capabilities.provide("hidden", hidden, "v1");
+
+    const host = new ModuleHost({
+      capabilities,
+      modules: [
+        moduleDefinition(
+          "scoped",
+          (context) => {
+            expect(context.capabilities.names()).toEqual(["declared"]);
+            expect(context.capabilities.has("declared")).toBe(true);
+            expect(context.capabilities.resolve<typeof declared>("declared")).toBe(declared);
+            expect(context.capabilities.has("hidden")).toBe(false);
+            expect(context.capabilities.has("optional-missing")).toBe(false);
+            expect(() => context.capabilities.resolve("hidden")).toThrowError(
+              expect.objectContaining({ code: "capability_undeclared" }),
+            );
+          },
+          [{ name: "declared", version: "v1" }],
+          [optionalMissing],
+        ),
+      ],
+    });
+
+    await host.mount();
+    expect(host.status).toBe("mounted");
+    await host.close();
+  });
+
+  it("blocks mount before module code runs when a required capability version mismatches", async () => {
+    const capabilities = new CapabilityRegistry();
+    capabilities.provide("jht_browser_session", {}, "v2");
+    let mounted = false;
+    const host = new ModuleHost({
+      capabilities,
+      modules: [
+        moduleDefinition("needs-jht-session", () => {
+          mounted = true;
+        }, ["jht_browser_session@v1"]),
+      ],
+    });
+
+    await expect(host.mount()).rejects.toMatchObject({ code: "capability_version_mismatch" });
+    expect(mounted).toBe(false);
+    expect(host.status).toBe("failed");
+    expect(host.catalog.list()).toEqual([]);
+  });
+
+  it("fails closed when a module resolves a globally provided but undeclared capability", async () => {
+    const capabilities = new CapabilityRegistry();
+    capabilities.provide("global-only", { secret: true }, "v1");
+    const host = new ModuleHost({
+      capabilities,
+      modules: [
+        moduleDefinition("undeclared-resolver", (context) => {
+          context.capabilities.resolve("global-only");
+        }),
+      ],
+    });
+
+    await expect(host.mount()).rejects.toMatchObject({ code: "capability_undeclared" });
+    expect(host.status).toBe("failed");
+    expect(host.catalog.list()).toEqual([]);
   });
 });

@@ -1,16 +1,15 @@
 import addFormats from "ajv-formats";
 import Ajv2020 from "ajv/dist/2020.js";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
 import { buildAgentStandardPack } from "./pack";
 import {
   loadAgentProfile,
   loadAgentRegistry,
   loadWorkstreamProjection,
+  readRegisteredJson,
+  readRegisteredText,
   readRegisteredStandard,
-  resolveRegisteredPath,
 } from "./registry";
 
 export interface AgentStandardsValidationReport {
@@ -21,8 +20,8 @@ export interface AgentStandardsValidationReport {
   readonly failures: readonly string[];
 }
 
-function readJson(path: string): unknown {
-  return JSON.parse(readFileSync(path, "utf8")) as unknown;
+function readSchemaJson(content: string): unknown {
+  return JSON.parse(content) as unknown;
 }
 
 function defaultRootDir(): string {
@@ -36,7 +35,6 @@ export function validateAgentStandards(rootDir = defaultRootDir()): AgentStandar
   let moduleCount = 0;
   let resourceCount = 0;
   try {
-    const schemaDir = join(rootDir, "schemas");
     const ajv = new Ajv2020({ allErrors: true, strict: true });
     addFormats(ajv);
     for (const file of [
@@ -46,11 +44,13 @@ export function validateAgentStandards(rootDir = defaultRootDir()): AgentStandar
       "agent-context-get.schema.json",
       "agent-context-envelope.schema.json",
     ]) {
-      ajv.addSchema(readJson(join(schemaDir, file)) as object);
+      ajv.addSchema(readSchemaJson(readRegisteredText(rootDir, `schemas/${file}`)) as object);
     }
-    const registryPath = resolveRegisteredPath(rootDir, "docs/agent/index.json");
     const registrySchema = ajv.getSchema("https://schemas.example.invalid/logistics-mcp/2026-08-21/agent-index.schema.json");
-    if (registrySchema === undefined || !registrySchema(readJson(registryPath))) {
+    if (
+      registrySchema === undefined ||
+      !registrySchema(readRegisteredJson(rootDir, "docs/agent/index.json"))
+    ) {
       failures.push(`docs/agent/index.json: ${registrySchema?.errors === null ? "schema validation failed" : ajv.errorsText(registrySchema?.errors)}`);
     }
     const registry = loadAgentRegistry(rootDir);
@@ -67,8 +67,10 @@ export function validateAgentStandards(rootDir = defaultRootDir()): AgentStandar
     }
     const profileSchema = ajv.getSchema("https://schemas.example.invalid/logistics-mcp/2026-08-21/agent-profile.schema.json");
     for (const profileRef of registry.profiles) {
-      const profilePath = resolveRegisteredPath(rootDir, profileRef.path);
-      if (profileSchema === undefined || !profileSchema(readJson(profilePath))) {
+      if (
+        profileSchema === undefined ||
+        !profileSchema(readRegisteredJson(rootDir, profileRef.path))
+      ) {
         failures.push(`profile ${profileRef.profile_id}: ${ajv.errorsText(profileSchema?.errors)}`);
       }
       try {
@@ -78,8 +80,12 @@ export function validateAgentStandards(rootDir = defaultRootDir()): AgentStandar
       }
     }
     const workstreamSchema = ajv.getSchema("https://schemas.example.invalid/logistics-mcp/2026-08-21/agent-workstreams.schema.json");
-    const workstreamPath = resolveRegisteredPath(rootDir, "docs/agent/workstreams/current.json");
-    if (workstreamSchema === undefined || !workstreamSchema(readJson(workstreamPath))) {
+    if (
+      workstreamSchema === undefined ||
+      !workstreamSchema(
+        readRegisteredJson(rootDir, "docs/agent/workstreams/current.json"),
+      )
+    ) {
       failures.push(`workstreams: ${ajv.errorsText(workstreamSchema?.errors)}`);
     }
     loadWorkstreamProjection(rootDir);

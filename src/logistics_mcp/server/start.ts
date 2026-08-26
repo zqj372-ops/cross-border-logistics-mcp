@@ -1,12 +1,47 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual, promisify } from "node:util";
 
+import { createModuleInventory } from "../control-plane/inventory";
+import {
+  createModuleControlRuntimeAssembly,
+  type ActivationReadFacade,
+  type ControlledDispatchFacade,
+  type ModuleControlService,
+} from "../control-plane/service";
+import type { TrustedModuleInventory } from "../control-plane/types";
+import {
+  createSqliteControlStoreWithRecovery,
+  type SqliteControlStore,
+  type SqliteReadbackRecoveryDriver,
+} from "../control-plane/sqlite-control-store";
+import type {
+  ControlFinalResult,
+  DeepReadonly,
+  ReadbackAttemptRecord,
+} from "../control-plane/repository";
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import { getToolPolicy } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
+import {
+  CapabilityRegistry,
+  ModuleHost,
+  normalizeCapabilityRequirement,
+} from "../module-runtime";
+import {
+  cargoModule,
+  containerModule,
+  createAgentAccessModule,
+  createFreightcomLtlModule,
+  FREIGHTCOM_RATE_CAPABILITY,
+  FREIGHTCOM_RATE_CAPABILITY_VERSION,
+} from "../modules";
 import {
   createFixtureComposition,
   createProductionApiAdapterSource,
@@ -18,15 +53,116 @@ import {
   createAdminStaticHandler,
   type AdminStaticHandler,
 } from "./admin-static";
+import {
+  createAdminControlApiHandler,
+  type AdminControlApiHandler,
+} from "./admin-control-api";
 import { createProductionTokenVerifier } from "./production-token-verifier";
+import {
+  createFreightcomDisabledRateAdapter,
+  createFreightcomFixtureRateAdapter,
+  FreightcomRateAdapter,
+} from "../adapters/quote/freightcom-rate-adapter";
+import { DEFAULT_FREIGHTCOM_TEST_BASE_URL } from "../adapters/quote/freightcom-test-client";
+import type { FreightcomRatePort } from "../adapters/ports";
+import { createRiskCustomsApiAdapterFromEnvironment } from "../adapters/customs/riskcustoms-runtime";
+
+export { initializeSqliteControlState } from "../control-plane/sqlite-control-store";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
-const RUNTIME_REQUEST_TIMEOUT_MS = 15_000;
+const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
+const execFileAsync = promisify(execFile);
+const MANAGED_PATH_SETTINGS = [
+  "MCP_APPLICATION_ROOT",
+  "MCP_RUNTIME_DIR",
+  "MCP_STATE_DIR",
+  "MCP_STATE_DB_PATH",
+  "MCP_CONTROL_DB_PATH",
+  "MCP_CONTROL_MARKER_PATH",
+  "MCP_CONTROL_STATE_PATH",
+] as const;
+
+type RuntimeListen = (
+  server: ReturnType<typeof createServer>,
+  port: number,
+  host: string,
+) => Promise<void>;
+
+export interface RuntimeStartOptions {
+  /** Explicit only for trusted test/assembly callers; production uses the built entry location. */
+  readonly applicationRoot?: string;
+  readonly listen?: RuntimeListen;
+}
+
+export interface RuntimeStartHandle {
+  readonly close: () => Promise<void>;
+}
 
 class RuntimeBodyTooLargeError extends Error {}
 class RuntimeRequestError extends Error {}
+
+export function applicationRootFromEntry(): string {
+  const entryPath = realpathSync(fileURLToPath(import.meta.url));
+  const sourceOrDistRoot = resolve(dirname(entryPath), "../../..");
+  return basename(sourceOrDistRoot) === "dist"
+    ? resolve(sourceOrDistRoot, "..")
+    : sourceOrDistRoot;
+}
+
+function requiredRuntimeSetting(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.trim().length === 0) {
+    throw new Error(`${name} is required for managed runtime startup.`);
+  }
+  return value;
+}
+
+function rejectManagedPathSettings(): void {
+  for (const name of MANAGED_PATH_SETTINGS) {
+    if (process.env[name] !== undefined) {
+      throw new Error(`${name} is not accepted for managed runtime startup.`);
+    }
+  }
+}
+
+export function createFixtureAuthenticatorFromEnvironment(
+  managementTenantId: string,
+): (token: string) => AuthClaims {
+  const applicantToken = requiredRuntimeSetting("MCP_FIXTURE_TOKEN");
+  const approverToken = requiredRuntimeSetting("MCP_FIXTURE_APPROVER_TOKEN");
+  if (applicantToken === approverToken) {
+    throw new Error("Fixture identity tokens must be distinct.");
+  }
+
+  return (token) => {
+    const identity = token === applicantToken
+      ? {
+          actor_id: "local_operator",
+          client_id: "local_fixture_applicant_client",
+          session_id: "local_fixture_applicant_session",
+        }
+      : token === approverToken
+        ? {
+            actor_id: "local_approver",
+            client_id: "local_fixture_approver_client",
+            session_id: "local_fixture_approver_session",
+          }
+        : undefined;
+    if (identity === undefined) throw new AuthenticationError();
+    return {
+      tenant_id: managementTenantId,
+      actor_id: identity.actor_id,
+      actor_role: "admin",
+      roles: ["admin"],
+      scopes: ["platform:admin"],
+      client_id: identity.client_id,
+      session_id: identity.session_id,
+      expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
+    };
+  };
+}
 
 function splitSetting(name: string, fallback: string): string[] {
   const value = process.env[name] ?? fallback;
@@ -148,6 +284,23 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
     },
     {
       ...common,
+      name: "freightcom_test_api",
+      label: "Freightcom LTL 测试询价",
+      business_key: "quote.freightcom_ltl",
+      affected_tools: ["quote.freightcom_ltl.preview"],
+      environment: fixture ? "测试/演示环境" : "正式环境",
+      readiness: fixture && process.env.MCP_FREIGHTCOM_TEST_ENABLED === "true" ? "manual_review" : "unavailable",
+      registration_status: "MCP 工具已登记；真实调用仅允许固定测试环境",
+      business_version_evidence: "Freightcom Customer API 2.10.0；测试结果不可提升为正式报价。",
+      reason: fixture
+        ? "测试调用需要显式启用，并且结果始终要求人工复核。"
+        : "生产 Freightcom 调用被代码级禁用。",
+      blocker: fixture
+        ? "测试响应缺少正式发布、租户快照和生产有效性证据，必须人工复核。"
+        : "生产 Freightcom 调用被代码级禁用。",
+    },
+    {
+      ...common,
       name: "pdf_api",
       label: "报价单服务",
       business_key: "pdf",
@@ -236,24 +389,459 @@ function tokenPolicyFromEnvironment(): ShortLivedTokenValidationOptions | undefi
   return { issuer, audience };
 }
 
-function fixtureAuthenticatorFromEnvironment(): (token: string) => AuthClaims {
-  const expectedToken = process.env.MCP_FIXTURE_TOKEN?.trim();
-  if (expectedToken === undefined || expectedToken.length === 0) {
-    throw new Error("MCP_FIXTURE_TOKEN must be explicitly set in fixtures mode.");
+interface ManagedFixtureRuntimeConfig {
+  readonly applicationRoot: string;
+  readonly instanceId: string;
+  readonly managementTenantId: string;
+  readonly allowedOrigins: readonly string[];
+  readonly allowedHosts: readonly string[];
+  readonly authenticate: (token: string) => AuthClaims;
+}
+
+function managedFixtureRuntimeConfig(applicationRoot: string): ManagedFixtureRuntimeConfig {
+  if (process.env.MCP_ADMIN_CONTROL_ENABLED !== "true") {
+    throw new Error("MCP_ADMIN_CONTROL_ENABLED must be the literal string true.");
   }
-  return (token) => {
-    if (token !== expectedToken) throw new AuthenticationError();
-    return {
-      tenant_id: "tenant_fixture",
-      actor_id: "local_operator",
-      actor_role: "admin",
-      roles: ["admin"],
-      scopes: ["platform:admin"],
-      client_id: "local_fixture_client",
-      session_id: "local_fixture_auth",
-      expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
-    };
+  rejectManagedPathSettings();
+  const instanceId = requiredRuntimeSetting("MCP_INSTANCE_ID");
+  const managementTenantId = requiredRuntimeSetting("MCP_ADMIN_TENANT_ID");
+  const authenticate = createFixtureAuthenticatorFromEnvironment(managementTenantId);
+  return {
+    applicationRoot,
+    instanceId,
+    managementTenantId,
+    allowedOrigins: splitSetting(
+      "MCP_ALLOWED_ORIGINS",
+      `http://127.0.0.1:${PORT}`,
+    ),
+    allowedHosts: splitSetting(
+      "MCP_ALLOWED_HOSTS",
+      `127.0.0.1:${PORT}`,
+    ),
+    authenticate,
   };
+}
+
+async function createRuntimeInventory(): Promise<TrustedModuleInventory> {
+  const agentAccessModule = createAgentAccessModule();
+  const freightcomLtlModule = createFreightcomLtlModule();
+  const modules = [cargoModule, containerModule, freightcomLtlModule, agentAccessModule];
+  const capabilities = new CapabilityRegistry();
+  capabilities.provide(
+    FREIGHTCOM_RATE_CAPABILITY,
+    createFreightcomFixtureRateAdapter(),
+    FREIGHTCOM_RATE_CAPABILITY_VERSION,
+  );
+  const host = new ModuleHost({
+    capabilities,
+    modules,
+  });
+  try {
+    host.mountSync();
+    return createModuleInventory({
+      mountedModules: modules.map((module) => ({
+        moduleId: module.manifest.module_id,
+        version: module.manifest.version,
+        riskLevel: module.manifest.risk_level,
+        lifecycle: module.manifest.lifecycle,
+        requiredCapabilities: module.manifest.required_capabilities.map(
+          (requirement) => normalizeCapabilityRequirement(requirement).name,
+        ),
+        optionalCapabilities: module.manifest.optional_capabilities.map(
+          (requirement) => normalizeCapabilityRequirement(requirement).name,
+        ),
+        standardRefs: [...module.manifest.standard_ids],
+      })),
+      catalog: host.catalog.list().map((tool) => ({
+        owner: tool.module_id,
+        name: tool.name,
+        permission: tool.permission,
+        kind: tool.kind,
+        riskLevel: tool.riskLevel,
+        inputSchemaId: tool.inputSchemaId,
+        outputSchemaId: tool.outputSchemaId,
+        standardRefs: [...tool.standardRefs],
+      })),
+      localEvidence: modules.map((module) => ({
+        moduleId: module.manifest.module_id,
+        version: module.manifest.version,
+        evidenceLevel: "local_build" as const,
+        productionEligible: false as const,
+        evidenceRefs: {
+          sourceShaRef: null,
+          artifactDigestRef: null,
+          signatureRef: null,
+          sbomRef: null,
+          attestationRef: null,
+        },
+      })),
+    });
+  } finally {
+    await host.close();
+  }
+}
+
+type ManagedActivationRestoreEvidence = Readonly<{
+  release: unknown;
+  readback: unknown;
+  attempt: unknown;
+}>;
+
+async function loadManagedActivationRestoreEvidence(
+  store: SqliteControlStore,
+  managementTenantId: string,
+): Promise<ManagedActivationRestoreEvidence | undefined> {
+  const unfinished = await store.listUnfinishedReadbackAttempts();
+  if (unfinished.length > 0) {
+    throw new Error("Pre-listen readback recovery is unavailable through the public assembly.");
+  }
+
+  const state = await store.getControlState();
+  if (state.managementTenantId !== managementTenantId) {
+    throw new Error("Managed control state tenant does not match runtime configuration.");
+  }
+  const pendingRelease = await store.getPendingRelease();
+  const unresolvedRelease = await store.getNewestUnresolvedRelease();
+  if (pendingRelease !== null) {
+    throw new Error("Pre-listen release recovery is unavailable through the public assembly.");
+  }
+  if (unresolvedRelease !== null) {
+    const unresolvedReadback = await store.getReadback({
+      managementTenantId,
+      releaseId: unresolvedRelease.releaseId,
+    });
+    if (
+      unresolvedRelease.status !== "manual_review" ||
+      unresolvedRelease.managementTenantId !== managementTenantId ||
+      unresolvedReadback === null ||
+      (unresolvedReadback.status !== "mismatch" &&
+        unresolvedReadback.status !== "unknown") ||
+      unresolvedReadback.managementTenantId !== managementTenantId ||
+      unresolvedReadback.releaseId !== unresolvedRelease.releaseId ||
+      unresolvedReadback.revision !== unresolvedRelease.revision ||
+      unresolvedReadback.readbackRef !== unresolvedRelease.readbackRef ||
+      !isDeepStrictEqual(
+        unresolvedReadback.reasonCodes,
+        unresolvedRelease.reasonCodes,
+      ) ||
+      !isDeepStrictEqual(unresolvedReadback, state.latestReadback)
+    ) {
+      throw new Error("Managed unresolved release evidence is inconsistent.");
+    }
+  }
+
+  if (state.activeRelease === null) {
+    if (state.activeRevision !== 0 || state.activeModules.length !== 0) {
+      throw new Error("Managed inactive activation state is inconsistent.");
+    }
+    if (!(await store.health()).ready) {
+      throw new Error("Managed control store is not ready after validation.");
+    }
+    return undefined;
+  }
+
+  const activeRelease = await store.getActiveRelease();
+  if (
+    activeRelease === null ||
+    activeRelease.status !== "active_verified" ||
+    activeRelease.managementTenantId !== managementTenantId ||
+    activeRelease.revision !== state.activeRevision ||
+    !isDeepStrictEqual(activeRelease, state.activeRelease) ||
+    !isDeepStrictEqual(activeRelease.desiredModules, state.activeModules)
+  ) {
+    throw new Error("Managed active release evidence is inconsistent.");
+  }
+
+  const readback = await store.getReadback({
+    managementTenantId,
+    releaseId: activeRelease.releaseId,
+  });
+  if (
+    readback === null ||
+    readback.status !== "verified" ||
+    readback.managementTenantId !== managementTenantId ||
+    readback.releaseId !== activeRelease.releaseId ||
+    readback.revision !== activeRelease.revision ||
+    readback.readbackRef !== activeRelease.readbackRef ||
+    typeof readback.attemptId !== "string" ||
+    readback.appliedReleaseId !== activeRelease.releaseId ||
+    readback.appliedRevision !== activeRelease.revision ||
+    readback.reasonCodes.length !== 0 ||
+    !isDeepStrictEqual(readback.appliedModules, activeRelease.desiredModules) ||
+    !isDeepStrictEqual(readback, state.latestReadback)
+  ) {
+    throw new Error("Managed active readback evidence is inconsistent.");
+  }
+
+  const attempts = await store.getReadbackAttemptHistory({
+    managementTenantId,
+    releaseId: activeRelease.releaseId,
+    revision: activeRelease.revision,
+  });
+  const matchingAttempts = attempts.filter(
+    (attempt) =>
+      attempt.attemptId === readback.attemptId &&
+      attempt.releaseId === activeRelease.releaseId &&
+      attempt.revision === activeRelease.revision &&
+      attempt.readbackRef === readback.readbackRef,
+  );
+  if (matchingAttempts.length !== 1) {
+    throw new Error("Managed active readback attempt evidence is ambiguous.");
+  }
+  const attempt = matchingAttempts[0]!;
+  if (
+    attempt.phase !== "finalized" ||
+    attempt.terminalStatus !== "verified" ||
+    attempt.managementTenantId !== managementTenantId ||
+    attempt.attemptId !== readback.attemptId ||
+    attempt.releaseId !== activeRelease.releaseId ||
+    attempt.revision !== activeRelease.revision ||
+    attempt.readbackRef !== readback.readbackRef ||
+    attempt.appliedReleaseId !== activeRelease.releaseId ||
+    attempt.appliedRevision !== activeRelease.revision ||
+    attempt.checkedAt !== readback.checkedAt ||
+    attempt.reasonCodes.length !== 0 ||
+    !isDeepStrictEqual(attempt.desiredModules, activeRelease.desiredModules) ||
+    !isDeepStrictEqual(attempt.appliedModules, readback.appliedModules)
+  ) {
+    throw new Error("Managed active readback attempt evidence is inconsistent.");
+  }
+  if (!(await store.health()).ready) {
+    throw new Error("Managed control store is not ready after validation.");
+  }
+  return Object.freeze({ release: activeRelease, readback, attempt });
+}
+
+function interruptedRecoveryFinalResult(
+  attempt: DeepReadonly<ReadbackAttemptRecord>,
+): ControlFinalResult {
+  return {
+    domainRecordRef: attempt.releaseId,
+    envelope: {
+      schema_version: "2026-08-22.v1",
+      request_id: attempt.requestId,
+      trace_id: attempt.traceId,
+      audit_id: attempt.auditId,
+      status: "manual_review",
+      data: attempt.action === "deployments.publish"
+        ? {
+            kind: "release",
+            release_id: attempt.releaseId,
+            revision: attempt.revision,
+            active_modules: attempt.desiredModules.map((module) => ({
+              module_id: module.moduleId,
+              version: module.version,
+              descriptor_digest: module.descriptorDigest,
+            })),
+          }
+        : {
+            kind: "reconciliation",
+            release_id: attempt.releaseId,
+            revision: attempt.revision,
+            status: "unknown",
+          },
+      reason_codes: ["readback.interrupted"],
+      readback: {
+        status: "unknown",
+        release_id: attempt.releaseId,
+        revision: attempt.revision,
+      },
+    },
+  };
+}
+
+async function recoverPriorBootReadbackAttempts(
+  store: SqliteControlStore,
+  recoveryDriver: SqliteReadbackRecoveryDriver,
+): Promise<void> {
+  const unfinished = await store.listUnfinishedReadbackAttempts();
+  for (const attempt of unfinished) {
+    const checkedAt = new Date().toISOString();
+    await recoveryDriver.finalizePriorBootAttempt({
+      attemptId: attempt.attemptId,
+      observation: {
+        status: "unknown",
+        appliedReleaseId: null,
+        appliedRevision: null,
+        appliedModules: [],
+        reasonCodes: ["readback.interrupted"],
+        checkedAt,
+      },
+      finalResult: interruptedRecoveryFinalResult(attempt),
+    });
+  }
+
+  const remaining = await store.listUnfinishedReadbackAttempts();
+  if (remaining.length > 0) {
+    throw new Error("Pre-listen readback recovery did not finalize every prior-boot attempt.");
+  }
+}
+
+interface RuntimeResources {
+  readonly composition: GatewayComposition;
+  readonly controlStore?: SqliteControlStore;
+  readonly adminControlApi?: AdminControlApiHandler;
+}
+
+function rejectProductionAdminControlCall(): Promise<never> {
+  return Promise.reject(new Error("Production Admin control is disabled."));
+}
+
+const PRODUCTION_DISABLED_ADMIN_CONTROL_SERVICE: ModuleControlService =
+  Object.freeze({
+    getState: rejectProductionAdminControlCall,
+    registerPackage: rejectProductionAdminControlCall,
+    createDeploymentPreview: rejectProductionAdminControlCall,
+    decideApproval: rejectProductionAdminControlCall,
+    publish: rejectProductionAdminControlCall,
+    reconcile: rejectProductionAdminControlCall,
+  });
+
+function createProductionAdminControlApi(): AdminControlApiHandler {
+  return createAdminControlApiHandler({
+    dataMode: "production",
+    service: PRODUCTION_DISABLED_ADMIN_CONTROL_SERVICE,
+    authenticate: rejectProductionAdminControlCall,
+    managementTenantId: "production_admin_control_disabled",
+    allowedOrigins: splitSetting("MCP_ALLOWED_ORIGINS", ""),
+    allowedHosts: splitSetting("MCP_ALLOWED_HOSTS", ""),
+    allowLoopbackHttp: true,
+    maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
+    clock: () => new Date().toISOString(),
+  });
+}
+
+async function createManagedFixtureRuntime(
+  applicationRoot: string,
+): Promise<RuntimeResources & { readonly controlStore: SqliteControlStore }> {
+  const config = managedFixtureRuntimeConfig(applicationRoot);
+  const opened = createSqliteControlStoreWithRecovery({
+    applicationRoot: config.applicationRoot,
+    instanceId: config.instanceId,
+    managementTenantId: config.managementTenantId,
+    adminControlEnabled: true,
+  });
+  const controlStore = opened.repository;
+  let composition: GatewayComposition | undefined;
+  try {
+    await recoverPriorBootReadbackAttempts(controlStore, opened.recoveryDriver);
+    const activationRestoreEvidence = await loadManagedActivationRestoreEvidence(
+      controlStore,
+      config.managementTenantId,
+    );
+    const persistedState = await controlStore.getControlState();
+    const inventory = await createRuntimeInventory();
+    const assembly = createModuleControlRuntimeAssembly({
+      inventory,
+      repository: controlStore,
+      managementTenantId: config.managementTenantId,
+      previewTtlSeconds: 15 * 60,
+      clock: () => new Date().toISOString(),
+      idGenerator: () => randomUUID(),
+      ...(activationRestoreEvidence === undefined
+        ? {}
+        : { activationRestoreEvidence }),
+    });
+    const restoredActivation = assembly.activation.snapshot();
+    const expectedActivation = {
+      releaseId: persistedState.activeRelease?.releaseId ?? null,
+      revision: persistedState.activeRevision,
+      activeModules: persistedState.activeModules,
+    };
+    if (!isDeepStrictEqual(restoredActivation, expectedActivation)) {
+      throw new Error("Managed activation restore did not match persisted state.");
+    }
+    composition = makeComposition({
+      managementTenantId: config.managementTenantId,
+      authenticate: config.authenticate,
+      activation: assembly.activation,
+      dispatch: assembly.dispatch,
+    });
+    const adminControlApi = createAdminControlApiHandler({
+      dataMode: "fixtures",
+      service: assembly.service,
+      authenticate: config.authenticate,
+      managementTenantId: config.managementTenantId,
+      allowedOrigins: config.allowedOrigins,
+      allowedHosts: config.allowedHosts,
+      allowLoopbackHttp: true,
+      maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
+      clock: () => new Date().toISOString(),
+    });
+    return { composition, controlStore, adminControlApi };
+  } catch (error) {
+    await composition?.close().catch(() => undefined);
+    await controlStore.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+export type FreightcomKeychainReader = (
+  account: string,
+  service: string,
+) => Promise<string>;
+
+async function readFreightcomKeychainSecret(
+  account: string,
+  service: string,
+): Promise<string> {
+  const helper = resolve(
+    homedir(),
+    "Library",
+    "Application Support",
+    "Codex",
+    "Freightcom",
+    "freightcom-keychain-helper-v1",
+  );
+  const result = await execFileAsync(
+    helper,
+    ["read", account, service],
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 4_096 },
+  );
+  const token = result.stdout.trim();
+  if (token.length === 0) throw new Error("Freightcom test credential is empty.");
+  return token;
+}
+
+export function createFreightcomTestAdapterFromEnvironment(
+  readSecret: FreightcomKeychainReader = readFreightcomKeychainSecret,
+): FreightcomRatePort | undefined {
+  const setting = process.env.MCP_FREIGHTCOM_TEST_ENABLED?.trim();
+  if (setting === undefined || setting === "" || setting === "false") return undefined;
+  if (setting !== "true") {
+    throw new Error("MCP_FREIGHTCOM_TEST_ENABLED must be true or false.");
+  }
+  const account = (
+    process.env.FREIGHTCOM_TEST_KEYCHAIN_ACCOUNT ?? "JHT LOGISTICS CO., LTD."
+  ).trim();
+  const service = (
+    process.env.FREIGHTCOM_TEST_KEYCHAIN_SERVICE ?? "freightcom-api-test-mcp-v1"
+  ).trim();
+  if (account.length === 0 || service.length === 0) {
+    throw new Error("Freightcom Keychain account and service must be configured.");
+  }
+  return new FreightcomRateAdapter({
+    mode: "test",
+    baseUrl: DEFAULT_FREIGHTCOM_TEST_BASE_URL,
+    allowedHosts: ["customer-external-api.ssd-test.freightcom.com"],
+    headerProvider: async (signal) => {
+      if (signal.aborted) throw new Error("Freightcom credential request was aborted.");
+      const token = (await readSecret(account, service)).trim();
+      if (token.length === 0) throw new Error("Freightcom test credential is empty.");
+      return { Authorization: token };
+    },
+    maxPollAttempts: 12,
+    pollDelayMs: 750,
+    timeoutMs: 20_000,
+    maxResponseBytes: 2 * 1024 * 1024,
+  });
+}
+
+export function createFreightcomRuntimeAdapterFromEnvironment(
+  readSecret: FreightcomKeychainReader = readFreightcomKeychainSecret,
+): FreightcomRatePort {
+  return createFreightcomTestAdapterFromEnvironment(readSecret) ??
+    createFreightcomDisabledRateAdapter();
 }
 
 async function toRequest(
@@ -333,48 +921,52 @@ async function handleRuntimeRequest(
   response: ServerResponse,
   composition: GatewayComposition,
   adminUi: AdminStaticHandler,
+  adminControlApi: AdminControlApiHandler | undefined,
   trustedProxy: (address: string | undefined) => boolean,
 ): Promise<void> {
-    if (adminUi.handle(request, response)) return;
-    const path = (request.url ?? "/").split("?", 1)[0];
-    if (request.method === "GET" && path === "/healthz") {
-      json(response, 200, { status: "ok", service: "cross-border-logistics-mcp" });
+  if (adminControlApi?.handle(request, response)) return;
+  if (adminUi.handle(request, response)) return;
+  const path = (request.url ?? "/").split("?", 1)[0];
+  if (request.method === "GET" && path === "/healthz") {
+    json(response, 200, { status: "ok", service: "cross-border-logistics-mcp" });
+    return;
+  }
+  if (request.method === "GET" && path === "/readyz") {
+    const state = await readiness(composition);
+    json(response, state.ready ? 200 : 503, {
+      status: state.ready ? "ready" : "not_ready",
+      reasons: state.reasons,
+    });
+    return;
+  }
+  if (path !== "/mcp") {
+    json(response, 404, { status: "blocked", reason: "route_not_found" });
+    return;
+  }
+  try {
+    await forward(
+      await composition.handler(
+        await toRequest(request, composition.mode === "fixtures", trustedProxy),
+      ),
+      response,
+    );
+  } catch (error) {
+    if (error instanceof RuntimeBodyTooLargeError) {
+      json(response, 413, { status: "blocked", reason: "body_too_large" });
       return;
     }
-    if (request.method === "GET" && path === "/readyz") {
-      const state = await readiness(composition);
-      json(response, state.ready ? 200 : 503, {
-        status: state.ready ? "ready" : "not_ready",
-        reasons: state.reasons,
-      });
+    if (error instanceof RuntimeRequestError) {
+      json(response, 400, { status: "blocked", reason: "invalid_request" });
       return;
     }
-    if (path !== "/mcp") {
-      json(response, 404, { status: "blocked", reason: "route_not_found" });
-      return;
-    }
-    try {
-      await forward(
-        await composition.handler(
-          await toRequest(request, composition.mode === "fixtures", trustedProxy),
-        ),
-        response,
-      );
-    } catch (error) {
-      if (error instanceof RuntimeBodyTooLargeError) {
-        json(response, 413, { status: "blocked", reason: "body_too_large" });
-        return;
-      }
-      if (error instanceof RuntimeRequestError) {
-        json(response, 400, { status: "blocked", reason: "invalid_request" });
-        return;
-      }
-      json(response, 503, { status: "unavailable", reason: "gateway_unavailable" });
-    }
+    json(response, 503, { status: "unavailable", reason: "gateway_unavailable" });
+  }
 }
 
 export interface RuntimeServerOptions {
   readonly adminUi?: AdminStaticHandler;
+  readonly adminControlApi?: AdminControlApiHandler;
+  readonly applicationRoot?: string;
   readonly trustedProxyAddresses?: readonly string[];
 }
 
@@ -414,7 +1006,10 @@ export function createRuntimeServer(
   const adminUi =
     options.adminUi ??
     createAdminStaticHandler({
-      staticDir: resolve(process.cwd(), "dist/admin"),
+      staticDir: resolve(
+        options.applicationRoot ?? applicationRootFromEntry(),
+        "dist/admin",
+      ),
       ...(enabledSetting === undefined ? {} : { enabledSetting }),
       snapshotProvider: () => adminRuntimeSnapshot(composition),
     });
@@ -427,7 +1022,14 @@ export function createRuntimeServer(
       requestTimeout: RUNTIME_REQUEST_TIMEOUT_MS,
     },
     (request, response) => {
-    void handleRuntimeRequest(request, response, composition, adminUi, trustedProxy);
+      void handleRuntimeRequest(
+        request,
+        response,
+        composition,
+        adminUi,
+        options.adminControlApi,
+        trustedProxy,
+      );
     },
   );
 }
@@ -456,9 +1058,115 @@ export async function closeRuntimeServer(
   }
 }
 
-function makeComposition(): GatewayComposition {
+function closeOnce(action: () => Promise<void>): () => Promise<void> {
+  let closePromise: Promise<void> | undefined;
+  return () => {
+    closePromise ??= action();
+    return closePromise;
+  };
+}
+
+async function closeRuntimeResources(
+  server: ReturnType<typeof createServer> | undefined,
+  resources: RuntimeResources,
+): Promise<void> {
+  let failed = false;
+  try {
+    if (server === undefined || !server.listening) {
+      await resources.composition.close();
+    } else {
+      await closeRuntimeServer(server, resources.composition);
+    }
+  } catch {
+    failed = true;
+  }
+  try {
+    await resources.controlStore?.close();
+  } catch {
+    failed = true;
+  }
+  if (failed) {
+    throw new Error("The runtime could not close every resource cleanly.");
+  }
+}
+
+const listenRuntime: RuntimeListen = (server, port, host) =>
+  new Promise<void>((resolvePromise, reject) => {
+    const onError = (error: Error) => {
+      server.removeListener("error", onError);
+      reject(error);
+    };
+    server.once("error", onError);
+    try {
+      server.listen(port, host, () => {
+        server.removeListener("error", onError);
+        resolvePromise();
+      });
+    } catch (error) {
+      server.removeListener("error", onError);
+      reject(
+        error instanceof Error
+          ? error
+          : new Error("Runtime listen failed.", { cause: error }),
+      );
+    }
+  });
+
+export async function startRuntime(
+  options: RuntimeStartOptions = {},
+): Promise<RuntimeStartHandle> {
+  const applicationRoot = options.applicationRoot ?? applicationRootFromEntry();
+  const mode = process.env.MCP_DATA_MODE;
+  let resources: RuntimeResources | undefined;
+  let server: ReturnType<typeof createServer> | undefined;
+  let close: (() => Promise<void>) | undefined;
+  try {
+    resources = mode === "fixtures"
+      ? await createManagedFixtureRuntime(applicationRoot)
+      : {
+          composition: makeComposition(),
+          adminControlApi: createProductionAdminControlApi(),
+        };
+    server = createRuntimeServer(resources.composition, {
+      applicationRoot,
+      ...(resources.adminControlApi === undefined
+        ? {}
+        : { adminControlApi: resources.adminControlApi }),
+    });
+    close = closeOnce(() => closeRuntimeResources(server, resources!));
+    await (options.listen ?? listenRuntime)(
+      server,
+      PORT,
+      mode === "fixtures" ? "127.0.0.1" : "0.0.0.0",
+    );
+    return Object.freeze({ close });
+  } catch (error) {
+    if (close !== undefined) {
+      await close().catch(() => undefined);
+    } else if (resources !== undefined) {
+      await closeRuntimeResources(server, resources).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
+function assertNoRuntimeArguments(): void {
+  if (process.argv.slice(2).length !== 0) {
+    throw new Error("The runtime entry does not accept command-line arguments.");
+  }
+}
+
+interface CompositionWiring {
+  readonly managementTenantId?: string;
+  readonly authenticate?: (token: string) => AuthClaims;
+  readonly activation?: ActivationReadFacade;
+  readonly dispatch?: ControlledDispatchFacade;
+}
+
+function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
   const mode = process.env.MCP_DATA_MODE;
   const common = {
+    requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
     allowedOrigins: splitSetting(
       "MCP_ALLOWED_ORIGINS",
       mode === "fixtures" ? `http://127.0.0.1:${PORT}` : "",
@@ -469,10 +1177,17 @@ function makeComposition(): GatewayComposition {
     ),
   };
   if (mode === "fixtures") {
+    if (wiring.managementTenantId === undefined || wiring.authenticate === undefined) {
+      throw new Error("Managed fixture composition requires explicit control identity.");
+    }
+    const freightcomRateAdapter = createFreightcomRuntimeAdapterFromEnvironment();
     return createFixtureComposition({
       dataMode: "fixtures",
       ...common,
-      authenticate: fixtureAuthenticatorFromEnvironment(),
+      authenticate: wiring.authenticate,
+      ...(wiring.activation === undefined ? {} : { activation: wiring.activation }),
+      ...(wiring.dispatch === undefined ? {} : { dispatch: wiring.dispatch }),
+      freightcomRateAdapter,
     });
   }
   if (mode !== "production") {
@@ -497,10 +1212,13 @@ function makeComposition(): GatewayComposition {
           jwksUrl,
           allowedHosts: outboundHosts,
         });
+  const riskCustoms = createRiskCustomsApiAdapterFromEnvironment();
   return createProductionComposition({
     dataMode: "production",
     ...common,
-    adapterSource: createProductionApiAdapterSource(),
+    adapterSource: createProductionApiAdapterSource(
+      riskCustoms === undefined ? {} : { customs: riskCustoms },
+    ),
     ...(store === undefined
       ? {}
       : {
@@ -531,13 +1249,19 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  const composition = makeComposition();
-  const server = createRuntimeServer(composition);
-  server.listen(PORT, process.env.MCP_DATA_MODE === "fixtures" ? "127.0.0.1" : "0.0.0.0");
-  const shutdown = () => void closeRuntimeServer(server, composition).then(
-    () => process.exit(0),
-    () => process.exit(1),
-  );
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+  void (async () => {
+    try {
+      assertNoRuntimeArguments();
+      const runtime = await startRuntime();
+      const shutdown = () => void runtime.close().then(
+        () => process.exit(0),
+        () => process.exit(1),
+      );
+      process.once("SIGTERM", shutdown);
+      process.once("SIGINT", shutdown);
+    } catch {
+      console.error("Runtime startup failed.");
+      process.exitCode = 1;
+    }
+  })();
 }

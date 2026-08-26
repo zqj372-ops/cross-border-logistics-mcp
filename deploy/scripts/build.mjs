@@ -1,9 +1,31 @@
 import { cpSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
-const adminAssetNames = ["index.html", "styles.css", "app.js", "fixture-data.js"];
-const adminSourcePaths = adminAssetNames.map((name) => resolve("apps/admin", name));
+const adminAssetSpecs = [
+  { name: "index.html", source: resolve("apps/admin/index.html") },
+  { name: "styles.css", source: resolve("apps/admin/styles.css") },
+  { name: "app.js", source: resolve("apps/admin/app.js") },
+  { name: "control-plane.js", source: resolve("apps/admin/control-plane.js") },
+  { name: "fixture-data.js", source: resolve("apps/admin/fixture-data.js") },
+  {
+    name: "vendor/adminlte/adminlte.min.css",
+    source: resolve("node_modules/admin-lte/dist/css/adminlte.min.css"),
+  },
+  {
+    name: "vendor/adminlte/adminlte.min.js",
+    source: resolve("node_modules/admin-lte/dist/js/adminlte.min.js"),
+  },
+  {
+    name: "vendor/bootstrap/bootstrap.min.css",
+    source: resolve("node_modules/bootstrap/dist/css/bootstrap.min.css"),
+  },
+  {
+    name: "vendor/bootstrap/bootstrap.bundle.min.js",
+    source: resolve("node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"),
+  },
+];
+const adminSourcePaths = adminAssetSpecs.map(({ source }) => source);
 
 rmSync("dist", { recursive: true, force: true });
 
@@ -14,7 +36,7 @@ if (adminSourcePaths.some((path) => {
     return true;
   }
 })) {
-  throw new Error("Admin UI build requires all four apps/admin assets.");
+  throw new Error("Admin UI build requires all declared application and vendor assets.");
 }
 
 const { build } = await import("esbuild");
@@ -39,6 +61,8 @@ execFileSync(process.execPath, [
 ], { stdio: "inherit" });
 
 mkdirSync(resolve("dist/admin"), { recursive: true });
-for (const [index, sourcePath] of adminSourcePaths.entries()) {
-  cpSync(sourcePath, resolve("dist/admin", adminAssetNames[index]));
+for (const asset of adminAssetSpecs) {
+  const destination = resolve("dist/admin", asset.name);
+  mkdirSync(dirname(destination), { recursive: true });
+  cpSync(asset.source, destination);
 }

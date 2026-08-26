@@ -157,21 +157,37 @@ describe("allowlisted upstream HTTP client", () => {
       code: "upstream_response_too_large",
     });
 
+    const oversizedError = createFetchJsonClient({
+      baseUrl: "https://quote.example.invalid",
+      allowedHosts: ["quote.example.invalid"],
+      enabled: true,
+      maxResponseBytes: 10,
+      fetchImpl: () => Promise.resolve(new Response('{"error":true}', {
+        status: 404,
+        headers: { "content-length": "100" },
+      })),
+    });
+    await expect(oversizedError.get("/api/status")).rejects.toMatchObject({
+      code: "upstream_response_too_large",
+    });
+
+    const redirectResponse = new Response("redirect body", {
+      status: 302,
+      headers: { location: "https://other.example.invalid" },
+    });
     const redirected = createFetchJsonClient({
       baseUrl: "https://quote.example.invalid",
       allowedHosts: ["quote.example.invalid"],
       enabled: true,
       fetchImpl: (_input, init) => {
         expect(init?.redirect).toBe("error");
-        return Promise.resolve(new Response("", {
-          status: 302,
-          headers: { location: "https://other.example.invalid" },
-        }));
+        return Promise.resolve(redirectResponse);
       },
     });
     await expect(redirected.get("/api/status")).rejects.toMatchObject({
       code: "upstream_redirect_rejected",
     });
+    expect(redirectResponse.bodyUsed).toBe(true);
   });
 
   it("redacts credential values before any diagnostic projection", () => {

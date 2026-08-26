@@ -89,6 +89,7 @@ export interface AgentWorkstream {
 }
 
 export interface AgentWorkstreamProjection {
+  readonly $schema: string;
   readonly schema_version: "2026-08-21.v1";
   readonly workstreams: readonly AgentWorkstream[];
   readonly escalation: string;

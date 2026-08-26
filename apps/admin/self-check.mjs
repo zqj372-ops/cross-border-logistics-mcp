@@ -9,11 +9,22 @@ import {
   toChineseDisplayText,
   validateSnapshot,
 } from "./app.js";
+import {
+  CONTROL_SCHEMA_VERSION,
+  FIXTURE_IDENTITIES,
+  actionAvailability,
+  deriveDesiredDraftDiff,
+  deriveReleaseStages,
+  isFixtureIdentityVisible,
+  redactReference,
+  validateControlState,
+} from "./control-plane.js";
 
 const files = {
   html: await readFile(new URL("./index.html", import.meta.url), "utf8"),
   css: await readFile(new URL("./styles.css", import.meta.url), "utf8"),
   app: await readFile(new URL("./app.js", import.meta.url), "utf8"),
+  controlPlane: await readFile(new URL("./control-plane.js", import.meta.url), "utf8"),
   build: await readFile(new URL("../../deploy/scripts/build.mjs", import.meta.url), "utf8"),
 };
 
@@ -42,6 +53,40 @@ assert.match(files.app, /source\.business_version_evidence/);
 assert.match(files.app, /source\.last_checked_at/);
 assert.match(files.app, /source\.last_success_at/);
 assert.match(files.app, /source\.affected_tools/);
+assert.match(files.app, /renderModuleCenter/);
+assert.match(files.app, /createControlPlaneClient/);
+assert.match(files.app, /data-control-action/);
+assert.match(files.app, /manual_review/);
+assert.match(files.app, /运行时状态只在发布并精确读回后变化/);
+assert.match(files.app, /未获生产资格/);
+assert.match(files.app, /不写入存储、地址栏、页面文本或日志/);
+assert.match(files.app, /本地演示申请人/);
+assert.match(files.app, /本地演示审批人/);
+assert.match(files.html, /data-view="modules"/);
+assert.match(files.html, /模块中心/);
+assert.match(files.html, /Agent 接入/);
+assert.match(files.html, /适配器状态/);
+assert.match(files.html, /审批与发布/);
+assert.match(files.html, /审计日志/);
+assert.match(files.app, /报价、关务与客户数据仍由外部权威系统管理/);
+assert.match(files.html, /id="identity-dialog"/);
+assert.match(files.html, /id="identity-token"[^>]+type="password"/);
+assert.match(files.css, /--navy:/);
+assert.match(files.css, /prefers-reduced-motion/);
+assert.match(files.css, /overflow-x: auto/);
+assert.doesNotMatch(files.css, /linear-gradient|radial-gradient|backdrop-filter/i);
+assert.doesNotMatch(files.controlPlane, /\b(?:localStorage|sessionStorage|document|window|console)\b/);
+assert.match(files.controlPlane, /authorization/);
+assert.match(files.controlPlane, /CONTROL_API_ROOT/);
+assert.equal(CONTROL_SCHEMA_VERSION, "2026-08-22.v1");
+assert.equal(isFixtureIdentityVisible("?fixture=1"), true);
+assert.equal(isFixtureIdentityVisible("?fixture=0"), false);
+assert.equal(isFixtureIdentityVisible("?fixture=1&other=ok"), true);
+assert.equal(isFixtureIdentityVisible(""), false);
+assert.equal(FIXTURE_IDENTITIES.length, 2);
+assert.ok(FIXTURE_IDENTITIES.every((identity) => identity.role === "admin" && identity.token.length > 0));
+assert.equal(redactReference("actor-secret-ref"), "已记录（具体内容隐藏）");
+assert.equal(redactReference(undefined), "未返回");
 assert.match(files.app, /一个业务接口不可达/);
 assert.match(files.app, /affected_tools/);
 assert.match(files.app, /metricCard\("发布就绪"/);
@@ -75,6 +120,61 @@ assert.equal(
 assert.equal(safeOpaqueReference("secret_ref:Bearer secret-token", "secret_ref"), "已配置（具体内容隐藏）");
 assert.equal(safeOpaqueReference("endpoint_ref:knowledge/curated", "endpoint_ref"), "已配置（具体内容隐藏）");
 assert.equal(safeOpaqueReference(undefined, "secret_ref"), "未返回");
+
+const controlDescriptorDigest = `sha256:${"b".repeat(64)}`;
+const controlState = {
+  kind: "control_state",
+  activation: {
+    state: "active",
+    release_id: "release-1",
+    revision: 1,
+    active_modules: [{
+      module_id: "cargo",
+      version: "1.0.0",
+      descriptor_digest: controlDescriptorDigest,
+    }],
+  },
+  inventory_modules: [{
+    module_id: "cargo",
+    version: "1.0.0",
+    risk_level: "T0",
+    descriptor_digest: controlDescriptorDigest,
+    evidence_level: "local_build",
+    production_eligible: false,
+    tool_names: ["cargo.calculate"],
+    standard_ids: ["cargo.contract.v1"],
+    registration: {
+      registered_by_actor_ref: "actor-1",
+      registered_at: "2026-08-26T00:00:00Z",
+    },
+  }],
+  latest_preview: null,
+  latest_approval: null,
+  latest_readback: null,
+  release_history: [],
+  events: [],
+  events_truncated: false,
+};
+assert.equal(validateControlState(controlState), controlState);
+assert.deepEqual(deriveReleaseStages(controlState).map((stage) => stage.status), ["complete", "empty", "empty", "empty"]);
+const controlDiff = deriveDesiredDraftDiff(controlState.activation.active_modules, []);
+assert.deepEqual([controlDiff.added.length, controlDiff.removed.length, controlDiff.retained.length], [0, 1, 0]);
+const availableControlActions = actionAvailability({
+  state: controlState,
+  draftModules: controlState.activation.active_modules,
+  actorRole: "admin",
+  actorRef: "actor-1",
+  environment: "fixture",
+});
+assert.equal(availableControlActions.saveDraft, true);
+assert.equal(availableControlActions.generatePreview, true);
+assert.equal(availableControlActions.publish, false);
+assert.equal(availableControlActions.reconcile, false);
+assert.equal(availableControlActions.rollback, false);
+assert.throws(
+  () => validateControlState({ ...controlState, inventory_modules: [{ ...controlState.inventory_modules[0], production_eligible: true }] }),
+  /production_eligible/,
+);
 assert.throws(() => validateSnapshot({ ...fixtureSnapshot, roles: undefined }), /角色/);
 assert.throws(
   () => validateSnapshot({

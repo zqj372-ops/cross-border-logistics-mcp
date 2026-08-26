@@ -52,13 +52,13 @@
           <nav aria-label="控制台主导航">
             <ul id="primary-nav" class="nav-list">
               <li><button class="nav-item is-active" type="button" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true"></span><span>总览</span></button></li>
-              <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"></span><span>客户端接入</span></button></li>
-              <li><button class="nav-item" type="button" data-view="tools"><span class="nav-icon" aria-hidden="true"></span><span>工具权限</span></button></li>
-              <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"></span><span>数据源与适配器</span></button></li>
-              <li><button class="nav-item" type="button" data-view="architecture"><span class="nav-icon" aria-hidden="true"></span><span>系统结构</span></button></li>
+              <li><button class="nav-item" type="button" data-view="modules"><span class="nav-icon" aria-hidden="true"></span><span>模块中心</span></button></li>
+              <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"></span><span>Agent 接入</span></button></li>
+              <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"></span><span>适配器状态</span></button></li>
               <li><button class="nav-item" type="button" data-view="approvals"><span class="nav-icon" aria-hidden="true"></span><span>审批与发布</span></button></li>
               <li><button class="nav-item" type="button" data-view="audit"><span class="nav-icon" aria-hidden="true"></span><span>审计日志</span></button></li>
             </ul>
+            <template id="legacy-read-only-views"><button type="button" data-view="tools">工具权限</button><button type="button" data-view="architecture">系统结构</button></template>
           </nav>
           <div class="sidebar-note">
             <span class="icon-wrap" aria-hidden="true"></span>
@@ -79,7 +79,7 @@
       </div>
 
       <footer class="app-footer">
-        <span>只读控制台范围：客户端接入、权限、适配器状态、审批边界和审计状态</span>
+        <span>控制台范围：接入、适配器、模块草稿、审批边界和审计状态</span>
         <span id="footer-mode">未连接正式后台</span>
       </footer>
     </div>
@@ -96,6 +96,22 @@
       <div class="dialog-actions">
         <button class="button button-secondary" type="button" data-action="close-dialog">关闭</button>
       </div>
+    </dialog>
+
+    <dialog id="identity-dialog" class="identity-dialog" aria-labelledby="identity-dialog-title" aria-describedby="identity-dialog-description">
+      <form id="identity-form" class="identity-form" novalidate>
+        <div class="dialog-head">
+          <div>
+            <span class="eyebrow">控制面身份</span>
+            <h2 id="identity-dialog-title">输入模块作用域身份</h2>
+          </div>
+          <button class="icon-button" type="button" data-control-action="close-identity" aria-label="关闭身份输入"><span class="close-icon" aria-hidden="true"></span></button>
+        </div>
+        <p id="identity-dialog-description">身份只用于当前页面内的同源控制面请求。提交后输入框立即清空，页面不保存、不回显凭证。</p>
+        <div class="field"><label for="identity-token">Bearer 身份</label><input id="identity-token" name="identity-token" type="password" autocomplete="current-password" required /></div>
+        <p id="identity-form-error" class="field-error" role="alert" hidden>请输入身份后继续。</p>
+        <div class="dialog-actions"><button class="button button-secondary" type="button" data-control-action="close-identity">取消</button><button class="button button-primary" type="submit" data-control-action="submit-identity">绑定并读取</button></div>
+      </form>
     </dialog>
 
     <noscript>

@@ -1,9 +1,9 @@
 import { createServer } from "node:net";
-import { existsSync } from "node:fs";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -17,6 +17,7 @@ import {
 } from "./fixtures/tenant-fixtures";
 
 const root = resolve(import.meta.dirname, "../..");
+const FIXTURE_INITIALIZER = resolve(root, "deploy/scripts/init-control-fixture.mjs");
 
 type ToolEnvelope = {
   readonly request_id?: string;
@@ -87,8 +88,8 @@ function runtimeWriteContext(
       tenant_id: tenantId,
       actor_id: "local_operator",
       actor_role: "admin",
-      client_id: "local_fixture_client",
-      session_id: "local_fixture_auth",
+      client_id: "local_fixture_applicant_client",
+      session_id: "local_fixture_applicant_session",
     },
     idempotency_key: idempotencyKey,
     operation_mode: operationMode,
@@ -147,6 +148,59 @@ async function stop(child: ChildProcess): Promise<void> {
   });
 }
 
+async function prepareFixtureLayout(layout: string): Promise<string> {
+  await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
+  await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), {
+    recursive: true,
+  });
+  await mkdir(resolve(layout, "deploy/scripts"), { recursive: true });
+  await cp(
+    FIXTURE_INITIALIZER,
+    resolve(layout, "deploy/scripts/init-control-fixture.mjs"),
+  );
+  return resolve(layout, "dist/src/logistics_mcp/server/start.mjs");
+}
+
+function fixtureEnvironment(
+  port: number,
+  overrides: Record<string, string | undefined> = {},
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: process.env.PATH ?? "",
+    MCP_PORT: String(port),
+    MCP_DATA_MODE: "fixtures",
+    MCP_ADMIN_UI_ENABLED: "true",
+    MCP_ADMIN_CONTROL_ENABLED: "true",
+    MCP_INSTANCE_ID: "instance_fixture_001",
+    MCP_ADMIN_TENANT_ID: "tenant_fixture",
+    MCP_FIXTURE_TOKEN: "local-fixture-token",
+    MCP_FIXTURE_APPROVER_TOKEN: "local-fixture-approver-token",
+    MCP_JWT_ISSUER: "https://issuer.example.invalid/",
+    MCP_JWT_AUDIENCE: "logistics-mcp-local",
+    MCP_ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
+    MCP_ALLOWED_HOSTS: `127.0.0.1:${port}`,
+    MCP_ALLOWED_OUTBOUND_HOSTS: "fixture.example.invalid",
+  };
+  for (const [name, value] of Object.entries(overrides)) {
+    if (value === undefined) delete environment[name];
+    else environment[name] = value;
+  }
+  return environment;
+}
+
+function initializeFixtureLayout(layout: string): void {
+  execFileSync(
+    process.execPath,
+    [realpathSync(resolve(layout, "deploy/scripts/init-control-fixture.mjs"))],
+    {
+      cwd: "/tmp",
+      env: { ...process.env, PATH: process.env.PATH ?? "" },
+      stdio: "pipe",
+    },
+  );
+}
+
 describe("built runtime smoke", () => {
   beforeAll(() => {
     execFileSync("npm", ["run", "build"], {
@@ -157,6 +211,63 @@ describe("built runtime smoke", () => {
         npm_config_update_notifier: "false",
       },
     });
+  });
+
+  it("executes the fixed fixture wrapper and rejects an existing initialization target", async () => {
+    const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-init-target-"));
+    const wrapper = resolve(layout, "deploy/scripts/init-control-fixture.mjs");
+    try {
+      await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
+      await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), {
+        recursive: true,
+      });
+      await mkdir(resolve(layout, "deploy/scripts"), { recursive: true });
+      await cp(FIXTURE_INITIALIZER, wrapper);
+      const realWrapper = realpathSync(wrapper);
+      const stateDirectory = resolve(realpathSync(layout), ".runtime/mcp-instance-state");
+
+      const first = spawnSync(process.execPath, [realWrapper], {
+        cwd: "/tmp",
+        env: { ...process.env, PATH: process.env.PATH ?? "" },
+        encoding: "utf8",
+      });
+      expect(first.status).toBe(0);
+      expect(existsSync(resolve(stateDirectory, "control.sqlite"))).toBe(true);
+      expect(existsSync(resolve(stateDirectory, "control-identity.json"))).toBe(true);
+
+      const second = spawnSync(process.execPath, [realWrapper], {
+        cwd: "/tmp",
+        env: { ...process.env, PATH: process.env.PATH ?? "" },
+        encoding: "utf8",
+      });
+      expect(second.status).toBe(1);
+      expect(second.stderr).toContain("SQLite control state already exists.");
+    } finally {
+      await rm(layout, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects built runtime CLI path arguments before state discovery", async () => {
+    const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-runtime-args-"));
+    try {
+      const entry = await prepareFixtureLayout(layout);
+      const result = spawnSync(
+        process.execPath,
+        [realpathSync(entry), "--state-db=/tmp/caller-selected.sqlite"],
+        {
+          cwd: "/tmp",
+          env: fixtureEnvironment(0),
+          encoding: "utf8",
+        },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Runtime startup failed.");
+      expect(result.stderr).not.toContain("local-fixture-token");
+      expect(existsSync(resolve(realpathSync(layout), ".runtime"))).toBe(false);
+    } finally {
+      await rm(layout, { recursive: true, force: true });
+    }
   });
 
   it("starts the dist entry directly, loads cargo contracts and answers health", async () => {
@@ -251,24 +362,12 @@ describe("built runtime smoke", () => {
 
   it("starts the dist fixture entry and serves admin plus all MCP tool calls", async () => {
     const layout = await mkdtemp(resolve(tmpdir(), "logistics-mcp-fixture-runtime-"));
-    await cp(resolve(root, "dist"), resolve(layout, "dist"), { recursive: true });
-    await cp(resolve(root, "docs/contracts"), resolve(layout, "docs/contracts"), { recursive: true });
-    const entry = resolve(layout, "dist/src/logistics_mcp/server/start.mjs");
+    const entry = await prepareFixtureLayout(layout);
     const port = await freePort();
+    initializeFixtureLayout(layout);
     const child = spawn(process.execPath, [entry], {
       cwd: layout,
-      env: {
-        PATH: process.env.PATH ?? "",
-        MCP_PORT: String(port),
-        MCP_DATA_MODE: "fixtures",
-        MCP_ADMIN_UI_ENABLED: "true",
-        MCP_FIXTURE_TOKEN: "local-fixture-token",
-        MCP_JWT_ISSUER: "https://issuer.example.invalid/",
-        MCP_JWT_AUDIENCE: "logistics-mcp-local",
-        MCP_ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
-        MCP_ALLOWED_HOSTS: `127.0.0.1:${port}`,
-        MCP_ALLOWED_OUTBOUND_HOSTS: "fixture.example.invalid",
-      },
+      env: fixtureEnvironment(port),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stderr = "";
@@ -353,6 +452,16 @@ describe("built runtime smoke", () => {
       expect(transport.sessionId).toBeTruthy();
       expect(client.getInstructions()).toContain("写操作必须按预览→审批→提交→读回执行");
 
+      const agentContext = structured(await client.callTool({
+        name: "system.agent_context.get",
+        arguments: { profile_id: "runtime-caller", module_id: "cargo" },
+      }));
+      expect(agentContext).toMatchObject({
+        status: "unavailable",
+        data: null,
+        blockers: [{ code: "module_policy_not_released" }],
+      });
+
       const toolList = await client.listTools();
       expect(toolList.tools.map((tool) => tool.name).sort()).toEqual([
         "cargo.calculate",
@@ -361,6 +470,7 @@ describe("built runtime smoke", () => {
         "customs.ca.search",
         "knowledge.search_curated",
         "quote.canada_final_mile.calculate",
+        "quote.freightcom_ltl.preview",
         "quote.save_draft",
         "review.create_task",
         "system.agent_context.get",
@@ -377,18 +487,23 @@ describe("built runtime smoke", () => {
         name: "cargo.calculate",
         arguments: cargoInput(),
       }));
-      expect(cargo.status).toBe("success");
-      expect(cargo.data).toMatchObject({
-        metrics: { actual_weight: { unit: "kg" } },
-      });
-      expect(cargo.calculation_trace?.length).toBeGreaterThan(0);
+      expect(cargo.status).toBe("unavailable");
+      expect(cargo.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "module_policy_not_released" }),
+        ]),
+      );
 
       const container = structured(await client.callTool({
         name: "container.plan_summary",
         arguments: containerInput(),
       }));
-      expect(container.status).toBe("success");
-      expect(container.data).toMatchObject({ theoretical_only: true });
+      expect(container.status).toBe("unavailable");
+      expect(container.blockers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "module_policy_not_released" }),
+        ]),
+      );
 
       const quote = structured(await client.callTool({
         name: "quote.canada_final_mile.calculate",

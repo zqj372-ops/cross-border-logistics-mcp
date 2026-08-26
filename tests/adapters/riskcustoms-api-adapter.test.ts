@@ -5,6 +5,7 @@ import {
   createFetchJsonClient,
   type FetchImplementation,
 } from "../../src/logistics_mcp/adapters/http-client";
+import { hashPayload } from "../../src/logistics_mcp/platform/idempotency";
 import {
   RiskCustomsApiAdapter,
   type RiskCustomsApiAdapterOptions,
@@ -13,7 +14,6 @@ import { createFixtureAdapters } from "../../src/logistics_mcp/adapters/fixture-
 import { createPhase1Bundle } from "../../src/logistics_mcp/adapters/phase1-bundle";
 import {
   customsSearchResultSchema,
-  dataStatusSchema,
 } from "../../src/logistics_mcp/adapters/contracts";
 import {
   executeRegisteredToolWithResult,
@@ -24,6 +24,7 @@ const BASE_URL = "https://riskcustoms.example.invalid";
 const HOST = "riskcustoms.example.invalid";
 const RULE_DATE = "2026-08-12";
 const EVALUATED_AT = "2026-08-12T00:00:00.000Z";
+const QUERY_RETRIEVED_AT = "2026-08-12T00:00:01.000Z";
 const PUBLISHED_AT = "2026-08-11T00:00:00.000Z";
 const SNAPSHOT_HASH = "a".repeat(64);
 const RELEASE_HASH = "b".repeat(64);
@@ -87,6 +88,7 @@ function identity(overrides: Record<string, unknown> = {}): Record<string, unkno
     serviceVersion: "riskcustoms-service.fixture-1",
     publishedAt: PUBLISHED_AT,
     supportedOperations: ["status", "query"],
+    ruleDate: RULE_DATE,
     releaseIds: ["release-ca-1"],
     snapshotHash: SNAPSHOT_HASH,
     releaseHash: RELEASE_HASH,
@@ -185,7 +187,7 @@ function jurisdictionCandidate(
   };
 }
 
-function rateLine(sourceId: string): Record<string, unknown> {
+function rateLine(sourceId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: `rate-${sourceId}`,
     label: "Base duty",
@@ -201,6 +203,7 @@ function rateLine(sourceId: string): Record<string, unknown> {
     conditionText: "",
     interactionNote: "",
     sourceId,
+    ...overrides,
   };
 }
 
@@ -344,7 +347,7 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
   });
 
   it("uses the context tenant for every tenant, including a cross-tenant context", async () => {
-    const fake = fakeFetch([{ body: statusResponse({ ready: false, testData: false }) }]);
+    const fake = fakeFetch([{ body: statusResponse({ ready: false, testData: false, reasons: ["publication_pending"] }) }]);
     const customs = adapter(fake);
     const otherTenant = { ...context, tenantId: "tenant_server_b" };
 
@@ -454,7 +457,8 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
   });
 
   it("allows query only when ready and non-test status facts are independently true", async () => {
-    const fake = fakeFetch([{ body: statusResponse() }, { body: queryResponse() }]);
+    const query = queryResponse();
+    const fake = fakeFetch([{ body: statusResponse() }, { body: query }]);
     const customs = adapter(fake);
 
     const response = await customs.search(searchInput(), context);
@@ -467,6 +471,46 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
         release_ids: ["release-ca-1"],
       },
     });
+    expect(response.sourceRefs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        locator: "opaque://riskcustoms/m2m/query",
+        content_hash: hashPayload(query),
+      }),
+    ]));
+  });
+
+  it("records complete parsed status content and keeps snapshot identity separate", async () => {
+    const status = statusResponse({ lastSourceCheckAt: "2026-08-12T00:00:00.500Z" });
+    const fake = fakeFetch([{ body: status }]);
+
+    const response = await adapter(fake).getStatus({ rule_date: RULE_DATE }, context);
+
+    expect(response.status).toBe("success");
+    expect(response.sourceRefs).toEqual([
+      expect.objectContaining({
+        content_hash: hashPayload(status),
+      }),
+    ]);
+    expect(response.sourceRefs[0]?.content_hash).not.toBe(`sha256:${SNAPSHOT_HASH}`);
+  });
+
+  it("records one injected local query time and reuses it for query-derived evidence", async () => {
+    const query = queryResponse({
+      candidates: [candidate(), jurisdictionCandidate("CA", "source-ca-2", "234567")],
+      sources: [source(), source({ id: "source-ca-2" })],
+    });
+    const fake = fakeFetch([{ body: statusResponse() }, { body: query }]);
+    const clock = vi.fn(() => new Date(QUERY_RETRIEVED_AT));
+
+    const response = await adapter(fake, { clock }).search(searchInput(), context);
+
+    expect(response.status).toBe("success");
+    expect(response.sourceRefs.find(({ locator }) => locator === "opaque://riskcustoms/m2m/status")?.retrieved_at).toBe(EVALUATED_AT);
+    expect(response.sourceRefs.find(({ locator }) => locator === "opaque://riskcustoms/m2m/query")?.retrieved_at).toBe(QUERY_RETRIEVED_AT);
+    const queryDerivedRefs = response.sourceRefs.filter(({ locator }) => locator !== "opaque://riskcustoms/m2m/status");
+    expect(queryDerivedRefs).toHaveLength(3);
+    expect(new Set(queryDerivedRefs.map(({ retrieved_at }) => retrieved_at))).toEqual(new Set([QUERY_RETRIEVED_AT]));
+    expect(clock).toHaveBeenCalledTimes(1);
   });
 
   it("projects only CA candidates from a multi-jurisdiction M2M response", async () => {
@@ -503,7 +547,7 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect((response.data as { candidates: Array<{ hs_code: string }> }).candidates).toEqual([
       expect.objectContaining({ hs_code: "345678", classification_status: "confirmed" }),
     ]);
-    expect(response.sourceRefs).toHaveLength(2);
+    expect(response.sourceRefs).toHaveLength(3);
     expect(fake.calls).toHaveLength(2);
   });
 
@@ -532,20 +576,25 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect(fake.calls).toHaveLength(2);
   });
 
-  it("maps a valid status with independent readiness facts and identity evidence", async () => {
+  it("rejects a contradictory ready=true and testData=true status", async () => {
     const fake = fakeFetch([{ body: statusResponse({ ready: true, testData: true }) }]);
     const customs = adapter(fake);
 
     const response = await customs.getStatus({ rule_date: RULE_DATE }, context);
 
-    expect(response.status).toBe("success");
-    dataStatusSchema.parse(response.data);
-    expect(response.data).toMatchObject({
-      ready: true,
-      test_data: true,
-      release_ids: ["release-ca-1"],
-    });
-    expect(response.sourceRefs).toHaveLength(1);
+    expect(response.status).toBe("unavailable");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.status_contract_invalid");
+    expect(response.data).toBeNull();
+  });
+
+  it("rejects ready=false status without a reason", async () => {
+    const fake = fakeFetch([{ body: statusResponse({ ready: false, testData: false, reasons: [] }) }]);
+    const customs = adapter(fake);
+
+    const response = await customs.getStatus({ rule_date: RULE_DATE }, context);
+
+    expect(response.status).toBe("unavailable");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.status_contract_invalid");
   });
 
   it("preserves the complete status evidence from a 503 data_not_ready response", async () => {
@@ -603,11 +652,23 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect(response.blockers?.map(({ code }) => code)).toContain("customs.query_contract_invalid");
   });
 
+  it("does not query when status was evaluated for a different rule date", async () => {
+    const fake = fakeFetch([{ body: statusResponse({ ruleDate: "2026-08-11" }) }]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput(), context);
+
+    expect(response.status).toBe("unavailable");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.rule_date_mismatch");
+    expect(fake.calls).toHaveLength(1);
+  });
+
   it.each([
     ["contractVersion", { contractVersion: "riskcustoms-query.v2" }],
     ["serviceVersion", { serviceVersion: "riskcustoms-service.fixture-2" }],
     ["publishedAt", { publishedAt: "2026-08-10T00:00:00.000Z" }],
     ["supportedOperations", { supportedOperations: ["query", "status"] }],
+    ["ruleDate", { ruleDate: "2026-08-11" }],
     ["releaseIds", { releaseIds: ["release-ca-2"] }],
     ["snapshotHash", { snapshotHash: "c".repeat(64) }],
     ["releaseHash", { releaseHash: "d".repeat(64) }],
@@ -702,6 +763,60 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect(JSON.stringify(fake.calls[1]?.body)).not.toContain("extra_attribute");
   });
 
+  it.each([
+    ["material", 42],
+    ["use", false],
+    ["contains_steel_aluminum", "false"],
+  ] as const)("rejects a non-contract %s attribute type before query", async (key, value) => {
+    const fake = fakeFetch([{ body: statusResponse() }]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput({
+      product_attributes: {
+        material: "synthetic",
+        use: "fixture-use",
+        origin_country: "CN",
+        contains_steel_aluminum: false,
+        [key]: value,
+      },
+    }), context);
+
+    expect(response.status).toBe("needs_input");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.attributes_invalid");
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("rejects material and use values over 200 characters before query", async () => {
+    const fake = fakeFetch([{ body: statusResponse() }]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput({
+      product_attributes: {
+        material: "x".repeat(201),
+        use: "fixture-use",
+        origin_country: "CN",
+        contains_steel_aluminum: false,
+      },
+    }), context);
+
+    expect(response.status).toBe("needs_input");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.attributes_invalid");
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("rejects online_search responses from the authoritative M2M path", async () => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({ mode: "online_search" }) },
+    ]);
+    const customs = adapter(fake);
+
+    const response = await customs.search(searchInput(), context);
+
+    expect(response.status).toBe("unavailable");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.query_contract_invalid");
+  });
+
   it("keeps classification source refs separate from rate, document, measure, and unused sources", async () => {
     const rateSourceId = "source-rate-1";
     const documentSourceId = "source-document-1";
@@ -735,7 +850,64 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     expect(response.status).toBe("success");
     const data = response.data as { candidates: Array<{ source_ref_ids: string[] }> };
     expect(data.candidates[0]?.source_ref_ids).toHaveLength(1);
-    expect(response.sourceRefs).toHaveLength(2);
+    expect(response.sourceRefs).toHaveLength(3);
+  });
+
+  it.each([
+    "excise_duty",
+    "excise_tax",
+    "gst",
+    "official_fee",
+  ] as const)("accepts the current RiskCustoms %s rate category", async (category) => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({
+        candidates: [],
+        results: [{
+          ...candidate(),
+          status: "confirmed",
+          rates: [rateLine("source-ca-1", { category })],
+          confirmedTotalPercent: null,
+          documents: [],
+          measures: [],
+          warnings: [],
+        }],
+      }) },
+    ]);
+
+    const response = await adapter(fake).search(searchInput(), context);
+
+    expect(response.status).toBe("success");
+  });
+
+  it.each([
+    "tax",
+    "fee",
+    "excise_duty",
+    "excise_tax",
+    "gst",
+    "official_fee",
+  ] as const)("rejects %s from the confirmed duty total", async (category) => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({
+        candidates: [],
+        results: [{
+          ...candidate(),
+          status: "confirmed",
+          rates: [rateLine("source-ca-1", { category, includedInConfirmedTotal: true })],
+          confirmedTotalPercent: "5",
+          documents: [],
+          measures: [],
+          warnings: [],
+        }],
+      }) },
+    ]);
+
+    const response = await adapter(fake).search(searchInput(), context);
+
+    expect(response.status).toBe("unavailable");
+    expect(response.blockers?.map(({ code }) => code)).toContain("customs.query_contract_invalid");
   });
 
   it.each([
@@ -761,6 +933,17 @@ describe("RiskCustoms M2M API CustomsAdapter", () => {
     const customs = adapter(fake);
 
     const response = await customs.search(searchInput(), context);
+
+    expect(response.status).toBe("success");
+  });
+
+  it("accepts a legal source retrievedAt with an explicit timezone offset", async () => {
+    const fake = fakeFetch([
+      { body: statusResponse() },
+      { body: queryResponse({ sources: [source({ retrievedAt: "2026-08-12T08:00:00+08:00" })] }) },
+    ]);
+
+    const response = await adapter(fake).search(searchInput(), context);
 
     expect(response.status).toBe("success");
   });

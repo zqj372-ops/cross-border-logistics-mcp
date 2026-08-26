@@ -27,10 +27,17 @@ import {
 import {
   registerPhaseOneTools,
   registerModuleToolDefinitions,
+  wrapModuleToolDefinitions,
   type ToolContractMap,
   type ToolDefinition,
   type ToolHandlerMap,
+  type RuntimeActivationFacades,
 } from "./tool-registry";
+import {
+  isPairedRuntimeActivationFacades,
+  type ActivationReadFacade,
+  type ControlledDispatchFacade,
+} from "../control-plane/service";
 import {
   CapabilityRegistry,
   ModuleHost,
@@ -39,11 +46,15 @@ import {
   cargoModule,
   containerModule,
   createAgentAccessModule,
+  createFreightcomLtlModule,
+  FREIGHTCOM_RATE_CAPABILITY,
+  FREIGHTCOM_RATE_CAPABILITY_VERSION,
 } from "../modules";
 import { createAgentAccessRuntime, type AgentAccessRuntime } from "../agent-context/runtime";
 import type {
   CustomsAdapter,
   FixtureAdapters,
+  FreightcomRatePort,
 } from "../adapters/ports";
 import {
   createFixtureAdapters,
@@ -73,6 +84,9 @@ import {
   quoteV2ResultSchema,
 } from "../adapters/quote/quote-api-adapter";
 import { envelopeSchema } from "../platform/envelope";
+import {
+  createFreightcomDisabledRateAdapter,
+} from "../adapters/quote/freightcom-rate-adapter";
 
 /*
  * The import grouping above deliberately keeps all platform ownership at this
@@ -114,11 +128,14 @@ export interface GatewayCompositionOptions {
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly agentAccessRuntime?: AgentAccessRuntime;
+  readonly activation?: ActivationReadFacade;
+  readonly dispatch?: ControlledDispatchFacade;
 }
 
 export interface FixtureCompositionOptions extends GatewayCompositionOptions {
   readonly dataMode: "fixtures";
   readonly customsFixture?: FixtureAdapterOptions["customsFixture"];
+  readonly freightcomRateAdapter?: FreightcomRatePort;
 }
 
 export interface ProductionCompositionOptions
@@ -188,7 +205,9 @@ interface CompositionTools {
 
 function compositionTools(
   adapters: FixtureAdapters,
+  freightcomRateAdapter: FreightcomRatePort,
   configuredAgentAccessRuntime?: AgentAccessRuntime,
+  runtimeActivation?: RuntimeActivationFacades,
 ): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
   const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
@@ -277,9 +296,20 @@ function compositionTools(
     "container.plan_summary": containerPlanSummaryToolContract,
   };
   const agentAccessRuntime = configuredAgentAccessRuntime ?? createAgentAccessRuntime();
+  const capabilities = new CapabilityRegistry();
+  capabilities.provide(
+    FREIGHTCOM_RATE_CAPABILITY,
+    freightcomRateAdapter,
+    FREIGHTCOM_RATE_CAPABILITY_VERSION,
+  );
   const moduleHost = new ModuleHost({
-    capabilities: new CapabilityRegistry(),
-    modules: [cargoModule, containerModule, createAgentAccessModule(agentAccessRuntime)],
+    capabilities,
+    modules: [
+      cargoModule,
+      containerModule,
+      createFreightcomLtlModule(),
+      createAgentAccessModule(agentAccessRuntime),
+    ],
   });
   moduleHost.mountSync();
   const moduleToolNames = new Set(moduleHost.catalog.list().map((tool) => tool.name));
@@ -289,7 +319,39 @@ function compositionTools(
     ),
     ...registerModuleToolDefinitions(moduleHost.catalog.list()),
   ];
-  return { bundle, handlers, contracts, definitions, moduleHost, agentAccessRuntime };
+  return {
+    bundle,
+    handlers,
+    contracts,
+    definitions:
+      runtimeActivation === undefined
+        ? definitions
+        : wrapModuleToolDefinitions(definitions, runtimeActivation),
+    moduleHost,
+    agentAccessRuntime,
+  };
+}
+
+function runtimeActivationFacades(
+  options: GatewayCompositionOptions,
+): RuntimeActivationFacades | undefined {
+  if (options.activation === undefined && options.dispatch === undefined) {
+    return undefined;
+  }
+  if (options.activation === undefined || options.dispatch === undefined) {
+    throw new Error(
+      "Runtime activation requires both activation and dispatch facades.",
+    );
+  }
+  if (!isPairedRuntimeActivationFacades(options.activation, options.dispatch)) {
+    throw new Error(
+      "Runtime activation facades must come from the same control-plane assembly.",
+    );
+  }
+  return {
+    activation: options.activation,
+    dispatch: options.dispatch,
+  };
 }
 
 function buildComposition(
@@ -350,6 +412,7 @@ export function createFixtureComposition(
   if (options.dataMode !== "fixtures") {
     throw new Error("Fixture adapters require DATA_MODE=fixtures.");
   }
+  const runtimeActivation = runtimeActivationFacades(options);
   const platformOptions = {
     ...(options.auditRepository === undefined
       ? {}
@@ -370,7 +433,12 @@ export function createFixtureComposition(
       ? {}
       : { customsFixture: options.customsFixture },
   );
-  const tools = compositionTools(adapters, options.agentAccessRuntime);
+  const tools = compositionTools(
+    adapters,
+    options.freightcomRateAdapter ?? createFreightcomDisabledRateAdapter(),
+    options.agentAccessRuntime,
+    runtimeActivation,
+  );
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
     allowedHosts: options.allowedHosts ?? ["mcp.example.invalid"],
@@ -403,6 +471,7 @@ export function createProductionComposition(
   if (options.dataMode !== "production") {
     throw new Error("Production adapters require DATA_MODE=production.");
   }
+  const runtimeActivation = runtimeActivationFacades(options);
 
   const productionPlatformOptions = {
     ...(options.auditRepository === undefined
@@ -449,7 +518,12 @@ export function createProductionComposition(
         },
     review: new ManualTaskAdapter(),
   };
-  const tools = compositionTools(adapters, options.agentAccessRuntime);
+  const tools = compositionTools(
+    adapters,
+    createFreightcomDisabledRateAdapter(),
+    options.agentAccessRuntime,
+    runtimeActivation,
+  );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
   const validSessionOwner =

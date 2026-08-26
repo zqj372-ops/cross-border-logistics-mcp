@@ -2,6 +2,8 @@ import { readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 
+import type { AdminControlApiHandler } from "./admin-control-api";
+
 const CONTENT_SECURITY_POLICY =
   "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 const PERMISSIONS_POLICY = "camera=(), geolocation=(), microphone=(), payment=(), usb=()";
@@ -10,10 +12,32 @@ const ASSETS = [
   { path: "/admin/", filename: "index.html", contentType: "text/html; charset=utf-8" },
   { path: "/admin/styles.css", filename: "styles.css", contentType: "text/css; charset=utf-8" },
   { path: "/admin/app.js", filename: "app.js", contentType: "text/javascript; charset=utf-8" },
+  { path: "/admin/control-plane.js", filename: "control-plane.js", contentType: "text/javascript; charset=utf-8" },
   { path: "/admin/fixture-data.js", filename: "fixture-data.js", contentType: "text/javascript; charset=utf-8" },
+  {
+    path: "/admin/vendor/adminlte/adminlte.min.css",
+    filename: "vendor/adminlte/adminlte.min.css",
+    contentType: "text/css; charset=utf-8",
+  },
+  {
+    path: "/admin/vendor/adminlte/adminlte.min.js",
+    filename: "vendor/adminlte/adminlte.min.js",
+    contentType: "text/javascript; charset=utf-8",
+  },
+  {
+    path: "/admin/vendor/bootstrap/bootstrap.min.css",
+    filename: "vendor/bootstrap/bootstrap.min.css",
+    contentType: "text/css; charset=utf-8",
+  },
+  {
+    path: "/admin/vendor/bootstrap/bootstrap.bundle.min.js",
+    filename: "vendor/bootstrap/bootstrap.bundle.min.js",
+    contentType: "text/javascript; charset=utf-8",
+  },
 ] as const;
 
 const SNAPSHOT_PATH = "/admin/api/v1/snapshot";
+const CONTROL_API_PATH = "/admin/api/v1/control";
 
 interface LoadedAsset {
   readonly body: Buffer;
@@ -29,6 +53,7 @@ type AdminState =
 export interface AdminStaticHandlerOptions {
   readonly staticDir: string;
   readonly enabledSetting?: string;
+  readonly adminControlApi?: AdminControlApiHandler;
   readonly snapshotProvider?: () =>
     | Readonly<Record<string, unknown>>
     | Promise<Readonly<Record<string, unknown>>>;
@@ -109,6 +134,10 @@ function isAdminPath(path: string): boolean {
   return path === "/admin" || path.startsWith("/admin/");
 }
 
+function isControlApiPath(path: string): boolean {
+  return path === CONTROL_API_PATH || path.startsWith(`${CONTROL_API_PATH}/`);
+}
+
 function isLoopbackAddress(value: string | undefined): boolean {
   return (
     value === "localhost" ||
@@ -145,6 +174,10 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
     handle(request, response): boolean {
       const path = pathFromRequest(request);
       if (!isAdminPath(path)) return false;
+
+      if (isControlApiPath(path) && options.adminControlApi?.handle(request, response)) {
+        return true;
+      }
 
       if (state.kind === "disabled") {
         sendJson(request, response, 404, { status: "blocked", reason: "admin_ui_disabled" });

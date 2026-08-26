@@ -6,7 +6,7 @@ import type { ActorRole, ExecutionContext } from "./context";
 
 export { CrossTenantAccessError, ForbiddenError } from "./contract-errors";
 
-export const phaseOneToolNames = [
+export const phaseOneToolNames = Object.freeze([
   "knowledge.search_curated",
   "system.get_data_status",
   "cargo.calculate",
@@ -16,11 +16,12 @@ export const phaseOneToolNames = [
   "customs.ca.estimate",
   "quote.save_draft",
   "review.create_task",
-] as const;
+] as const);
 
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
 export const agentContextToolName = "system.agent_context.get" as const;
-type KnownToolName = PhaseOneToolName | typeof agentContextToolName;
+export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName;
 
 type ToolPolicy = {
   readonly permission: string;
@@ -28,7 +29,7 @@ type ToolPolicy = {
   readonly roles: readonly ActorRole[];
 };
 
-const readRoles = [
+const readRoles = Object.freeze([
   "admin",
   "sales",
   "operator",
@@ -36,68 +37,47 @@ const readRoles = [
   "finance",
   "viewer",
   "service",
-] as const satisfies readonly ActorRole[];
+] as const satisfies readonly ActorRole[]);
 
-const taskRoles = [
+const taskRoles = Object.freeze([
   "admin",
   "sales",
   "operator",
   "customs_reviewer",
   "finance",
-] as const satisfies readonly ActorRole[];
+] as const satisfies readonly ActorRole[]);
 
-const toolPolicies: Record<KnownToolName, ToolPolicy> = {
-  "knowledge.search_curated": {
-    permission: "knowledge:read",
-    kind: "read",
-    roles: readRoles,
-  },
-  "system.get_data_status": {
-    permission: "system:read",
-    kind: "read",
-    roles: readRoles,
-  },
-  "cargo.calculate": {
-    permission: "quote:calculate",
-    kind: "read",
-    roles: readRoles,
-  },
-  "container.plan_summary": {
-    permission: "container:calculate",
-    kind: "read",
-    roles: readRoles,
-  },
-  "quote.canada_final_mile.calculate": {
-    permission: "quote:calculate",
-    kind: "read",
-    roles: readRoles,
-  },
-  "customs.ca.search": {
-    permission: "tariff:read",
-    kind: "read",
-    roles: readRoles,
-  },
-  "customs.ca.estimate": {
-    permission: "tariff:estimate",
-    kind: "read",
-    roles: readRoles,
-  },
-  "quote.save_draft": {
-    permission: "quote:draft_write",
-    kind: "write",
-    roles: ["admin", "sales", "operator"],
-  },
-  "review.create_task": {
-    permission: "review:create_task",
-    kind: "write",
-    roles: taskRoles,
-  },
-  [agentContextToolName]: {
-    permission: "system:agent_context",
-    kind: "read",
-    roles: readRoles,
-  },
-};
+const draftRoles = Object.freeze([
+  "admin",
+  "sales",
+  "operator",
+] as const satisfies readonly ActorRole[]);
+
+function freezePolicy(
+  permission: string,
+  kind: ToolPolicy["kind"],
+  roles: readonly ActorRole[],
+): ToolPolicy {
+  return Object.freeze({
+    permission,
+    kind,
+    roles: Object.freeze(roles),
+  });
+}
+
+const toolPolicies: Readonly<Record<KnownToolName, ToolPolicy>> = Object.freeze({
+  "knowledge.search_curated": freezePolicy("knowledge:read", "read", readRoles),
+  "system.get_data_status": freezePolicy("system:read", "read", readRoles),
+  "cargo.calculate": freezePolicy("quote:calculate", "read", readRoles),
+  "container.plan_summary": freezePolicy("container:calculate", "read", readRoles),
+  "quote.canada_final_mile.calculate": freezePolicy("quote:calculate", "read", readRoles),
+  [freightcomLtlToolName]: freezePolicy("quote:calculate", "read", readRoles),
+  "customs.ca.search": freezePolicy("tariff:read", "read", readRoles),
+  "customs.ca.estimate": freezePolicy("tariff:estimate", "read", readRoles),
+  "quote.save_draft": freezePolicy("quote:draft_write", "write", draftRoles),
+  "review.create_task": freezePolicy("review:create_task", "write", taskRoles),
+  [agentContextToolName]: freezePolicy("system:agent_context", "read", readRoles),
+});
 
 function hasScope(context: ExecutionContext, permission: string): boolean {
   return (
@@ -123,10 +103,10 @@ export function authorizeTool(
 ): true {
   assertTenantScope(context, targetTenantId);
 
-  const policy = (toolPolicies as Partial<Record<string, ToolPolicy>>)[toolName];
-  if (policy === undefined) {
+  if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");
   }
+  const policy = toolPolicies[toolName as KnownToolName];
   if (!context.roles.some((role) => policy.roles.includes(role))) {
     throw new ForbiddenError("The authenticated role cannot use this tool.");
   }
@@ -138,9 +118,9 @@ export function authorizeTool(
 }
 
 export function getToolPolicy(toolName: string): ToolPolicy {
-  const policy = toolPolicies[toolName as KnownToolName];
-  if (policy === undefined) {
+  if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");
   }
+  const policy = toolPolicies[toolName as KnownToolName];
   return policy;
 }

@@ -1,5 +1,8 @@
 import { ModuleRuntimeError } from "./errors";
-import type { CapabilityRegistry } from "./capabilities";
+import {
+  normalizeCapabilityRequirement,
+  type CapabilityRegistry,
+} from "./capabilities";
 import { ModuleCatalog } from "./catalog";
 import { RegistrationLease } from "./lease";
 import { validateModuleManifest } from "./manifest";
@@ -96,11 +99,18 @@ export class ModuleHost {
 
   private assertRequiredCapabilities(): void {
     for (const module of this.modules) {
-      for (const capability of module.manifest.required_capabilities) {
-        if (!this.capabilities.has(capability)) {
+      for (const input of module.manifest.required_capabilities) {
+        const capability = normalizeCapabilityRequirement(input);
+        if (!this.capabilities.has(capability.name)) {
           throw new ModuleRuntimeError(
             "capability_missing",
-            `Module ${module.manifest.module_id} requires unavailable capability ${capability}.`,
+            `Module ${module.manifest.module_id} requires unavailable capability ${capability.name}.`,
+          );
+        }
+        if (capability.version !== undefined && !this.capabilities.satisfies(capability)) {
+          throw new ModuleRuntimeError(
+            "capability_version_mismatch",
+            `Module ${module.manifest.module_id} requires capability ${capability.name}@${capability.version}, but the provided version is ${this.capabilities.version(capability.name)}.`,
           );
         }
       }
@@ -108,8 +118,12 @@ export class ModuleHost {
   }
 
   private contextFor(module: ModuleDefinition, lease: RegistrationLease): ModuleMountContext {
+    const capabilityRequirements = [
+      ...module.manifest.required_capabilities,
+      ...module.manifest.optional_capabilities,
+    ];
     return {
-      capabilities: this.capabilities,
+      capabilities: this.capabilities.scoped(capabilityRequirements),
       lease,
       tools: {
         register: (contribution) => {

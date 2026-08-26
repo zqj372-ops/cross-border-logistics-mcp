@@ -46,6 +46,10 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
     expect(dockerfile).toContain("COPY apps/admin ./apps/admin");
+    expect(dockerfile).toContain("COPY docs/agent ./docs/agent");
+    expect(dockerfile).toContain("COPY docs/standards ./docs/standards");
+    expect(dockerfile).toContain("COPY docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md");
+    expect(dockerfile).toContain("COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md");
     expect(dockerfile).toMatch(/COPY --from=build .*\/dist \.\/dist/);
     expect(dockerfile).toMatch(/COPY --from=build .*\/docs\/contracts .*\/docs\/contracts/);
     expect(dockerfile).toContain('CMD ["node", "dist/src/logistics_mcp/server/start.mjs"]');
@@ -56,8 +60,39 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
   });
 
+  it("copies every registered Agent source into the image build stage", () => {
+    const dockerfile = read("deploy/Dockerfile");
+    const registry = JSON.parse(read("docs/agent/index.json")) as {
+      readonly standards: readonly { readonly path: string }[];
+      readonly profiles: readonly { readonly path: string }[];
+    };
+    const buildCopies = [...dockerfile.matchAll(/^COPY\s+(?!--from=)(\S+)\s+(\S+)$/gm)].map(
+      (match) => ({
+        source: match[1]!.replace(/^\.\//, "").replace(/\/$/, ""),
+        destination: match[2]!.replace(/^\.\//, "").replace(/\/$/, ""),
+      }),
+    );
+    const registeredPaths = [
+      "docs/agent/index.json",
+      ...registry.standards.map(({ path }) => path),
+      ...registry.profiles.map(({ path }) => path),
+    ];
+
+    for (const registeredPath of registeredPaths) {
+      expect(
+        buildCopies.some(
+          ({ source, destination }) =>
+            source === destination &&
+            (registeredPath === source || registeredPath.startsWith(`${source}/`)),
+        ),
+        `deploy/Dockerfile does not copy registered Agent source: ${registeredPath}`,
+      ).toBe(true);
+    }
+  });
+
   it("wires the production JWKS verifier and durable state provider", () => {
     const start = read("src/logistics_mcp/server/start.ts");
+    const riskCustomsRuntime = read("src/logistics_mcp/adapters/customs/riskcustoms-runtime.ts");
     const deployReadme = read("deploy/README.md");
     expect(start).toContain("MCP_JWT_ISSUER");
     expect(start).toContain("MCP_JWT_AUDIENCE");
@@ -67,12 +102,20 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("createProductionComposition");
     expect(start).toContain("createProductionTokenVerifier");
     expect(start).toContain("SqliteProductionStore");
+    expect(start).toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(riskCustomsRuntime).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
+    expect(riskCustomsRuntime).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
+    expect(riskCustomsRuntime).toContain("MCP_ALLOWED_OUTBOUND_HOSTS");
+    expect(riskCustomsRuntime).toContain("O_NOFOLLOW");
+    expect(riskCustomsRuntime).not.toContain("readFileSync");
+    expect(riskCustomsRuntime).not.toMatch(/MCP_RISK_CUSTOMS_M2M_TOKEN\s*:/);
     expect(deployReadme).toContain("JWKS");
     expect(deployReadme).toContain("SQLite");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
     const compose = read("deploy/compose.yml");
+    const riskCustomsOverride = read("deploy/compose.riskcustoms.override.yml.example");
     const env = read("deploy/env.example");
     expect(compose).toMatch(/expose:/);
     expect(compose).not.toMatch(/^\s*ports:/m);
@@ -104,10 +147,18 @@ describe("safe deployment artifacts", () => {
     expect(env).toContain("https://issuer.example.invalid/");
     expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
     expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
+    expect(compose).toContain("MCP_RISK_CUSTOMS_ENABLED");
+    expect(compose).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
+    expect(env).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
+    expect(env).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
+    expect(riskCustomsOverride).toContain("/run/secrets/riskcustoms_m2m_token");
+    expect(riskCustomsOverride).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
+    expect(riskCustomsOverride).toContain("RISK_CUSTOMS_M2M_TOKEN_FILE");
     expect(compose).toContain("MCP_STATE_DB_PATH");
     expect(compose).toMatch(/\/var\/lib\/logistics-mcp/);
     expect(compose).toMatch(/volumes:/);
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(riskCustomsOverride).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
   });
 
   it("sets runtime request and header timeout guards", () => {
@@ -125,5 +176,29 @@ describe("safe deployment artifacts", () => {
     expect(deployReadme).toMatch(/ready=false/i);
     expect(deployReadme).toMatch(/RiskCustoms/i);
     expect(deployReadme).toMatch(/fixtures.*production|production.*fixtures/i);
+  });
+
+  it("documents Freightcom fixture initialization and activation before provider calls", () => {
+    const runbook = read("docs/runbooks/freightcom-test-mcp.md");
+    const initialize = runbook.indexOf("npm run init:control-fixture");
+    const start = runbook.indexOf("npm run start:freightcom-test-mcp");
+    const register = runbook.indexOf("登记选中模块");
+    const preview = runbook.indexOf("生成预览");
+    const approval = runbook.indexOf("提交审批");
+    const publish = runbook.indexOf("发布并读回");
+    const providerCall = runbook.indexOf("adapter 执行 `POST /rate`");
+
+    expect(initialize).toBeGreaterThan(-1);
+    expect(initialize).toBeLessThan(start);
+    expect(runbook).toContain("http://127.0.0.1:8080/admin/?fixture=1");
+    expect(runbook).toContain("freightcom-ltl");
+    expect(register).toBeGreaterThan(start);
+    expect(register).toBeLessThan(preview);
+    expect(preview).toBeLessThan(approval);
+    expect(approval).toBeLessThan(publish);
+    expect(publish).toBeLessThan(providerCall);
+    expect(runbook).toContain("module_policy_not_released");
+    expect(runbook).toContain("active_verified");
+    expect(runbook).toContain("latest_readback.status=verified");
   });
 });

@@ -11,6 +11,21 @@
 RiskCustoms readiness 未核验前，生产 adapter 默认 disabled/fail-closed，结果为
 `unavailable` 或 `manual_review`，不能用 fixture 冒充 ready。
 
+RiskCustoms 的生产 M2M 适配器只有在服务端同时收到以下配置时才会注入：
+`MCP_RISK_CUSTOMS_ENABLED=true`、HTTPS 的 `MCP_RISK_CUSTOMS_BASE_URL`、包含该主机的
+`MCP_RISK_CUSTOMS_ALLOWED_HOSTS`、至少一个明确的 `MCP_RISK_CUSTOMS_ALLOWED_TENANTS`，以及
+`MCP_RISK_CUSTOMS_AUTH_SECRET_FILE`。该主机还必须同时出现在 `MCP_ALLOWED_OUTBOUND_HOSTS`
+中；否则适配器保持 disabled。secret 文件由部署系统挂载到容器，服务端通过拒绝符号链接、
+非普通文件和超过 8 KiB 的有界读取按请求获取 token，并发送 `Authorization: Bearer ...`；
+token、文件内容和路径不会写入日志、客户端配置或仓库。请求中的 tenant 只取自已认证的
+`ExecutionContext.tenantId`，且必须命中本地精确白名单，客户端不能覆盖。
+
+仓库提供 `deploy/compose.riskcustoms.override.yml.example` 作为 secret 文件挂载示例。它要求
+部署环境额外提供 `RISK_CUSTOMS_M2M_TOKEN_FILE`，并不包含真实 endpoint、token 或上游
+token-to-tenant mapping。本地 tenant allowlist 只是额外收窄调用范围，不替代 RiskCustoms
+上游授权。外部服务必须先由其自身发布已批准的非测试 M2M contract；本仓库的本地测试只能
+证明 MCP 适配、fail-closed 和请求头映射，不能证明外部部署已上线。
+
 Compose 不会为 production、JWT、Origin/Host 或出站 allowlist 配置静默填入示例默认值；
 这些变量必须由调用环境显式提供。只有本地只读 config 检查可以使用
 `--env-file deploy/env.example`，其中的值全部是假值。

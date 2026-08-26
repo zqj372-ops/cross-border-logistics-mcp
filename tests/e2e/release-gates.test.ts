@@ -24,9 +24,20 @@ describe("non-production release gates", () => {
       "client smoke",
       "explicit approval",
     ];
+    // The runbook repeats gate terms in explanatory sections. Only numbered
+    // checklist headings define the executable order asserted here.
+    const checklistStart = release.indexOf("## 必须按顺序完成");
+    expect(checklistStart, "missing ordered checklist heading").toBeGreaterThanOrEqual(0);
+    const checklistHeadings = [
+      ...release
+        .slice(checklistStart)
+        .matchAll(/^\d+\.\s+\*\*(.*?)\*\*/gm),
+    ]
+      .map((match) => match[1] ?? "")
+      .join("\n");
     let previous = -1;
     for (const marker of ordered) {
-      const index = release.toLowerCase().indexOf(marker.toLowerCase());
+      const index = checklistHeadings.toLowerCase().indexOf(marker.toLowerCase());
       expect(index, `missing release marker: ${marker}`).toBeGreaterThan(previous);
       previous = index;
     }

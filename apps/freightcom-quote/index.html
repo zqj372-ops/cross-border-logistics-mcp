@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="测试环境 LTL 托盘最低条件询价工作台" />
+    <title>询价工作台 · 新建询价</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <div class="app-shell">
+      <aside class="rail" aria-label="工作台导航">
+        <div class="rail-brand">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div><strong>内部询价</strong><small>询价工作台</small></div>
+        </div>
+        <div class="rail-divider"></div>
+        <nav class="rail-nav" aria-label="页面区域">
+          <a class="rail-link is-active" href="#quote-form"><span class="rail-icon rail-icon-form" aria-hidden="true"></span><span>新建询价</span></a>
+          <a class="rail-link" href="#results-panel"><span class="rail-icon rail-icon-history" aria-hidden="true"></span><span>当前结果</span></a>
+          <a class="rail-link" href="#evidence-card"><span class="rail-icon rail-icon-evidence" aria-hidden="true"></span><span>响应证据</span></a>
+        </nav>
+        <div class="rail-bottom">
+          <div class="rail-status-card">
+            <div class="eyebrow">接口环境</div>
+            <div class="rail-status-row"><span class="status-dot" id="api-dot"></span><strong id="api-environment">测试环境</strong></div>
+            <p id="api-endpoint">读取配置中…</p>
+          </div>
+          <div class="rail-note"><span class="note-icon" aria-hidden="true">$</span><div><strong>仅显示 USD</strong><p>不进行汇率换算</p></div></div>
+          <div class="rail-footer">API v2.10 · LTL 托盘询价</div>
+        </div>
+      </aside>
+
+      <main id="main-content" class="main-content" tabindex="-1">
+        <header class="page-header">
+          <div>
+            <div class="breadcrumb"><span>业务操作</span><span class="breadcrumb-separator">/</span><strong>询价工作台</strong></div>
+            <h1>询价工作台</h1>
+            <p>发货地址从固定仓库选择；收货邮编会自动带出城市、省/州和国家，仅支持加拿大和美国。</p>
+          </div>
+          <div class="header-meta"><span class="test-badge"><span class="status-dot"></span>测试环境</span><span class="header-time" id="last-query-time">尚未查询</span></div>
+        </header>
+
+        <div class="workspace-grid">
+          <section class="panel form-panel" aria-labelledby="form-title">
+            <div class="panel-heading">
+              <div><div class="eyebrow">最低必填信息</div><h2 id="form-title">LTL 托盘询价</h2></div>
+              <span class="schema-chip">POST /rate</span>
+            </div>
+
+            <form id="quote-form" novalidate>
+              <input name="expectedShipDate" type="hidden" />
+              <input name="destination.readyAt" type="hidden" value="09:00" />
+              <input name="destination.readyUntil" type="hidden" value="17:00" />
+              <input name="destination.signatureRequirement" type="hidden" value="not-required" />
+
+              <div class="callout callout-info minimum-note"><span class="callout-icon">i</span><span>发货地址限定为 Calgary 和 Markham 两个仓库；收货地仍按测试 External API 契约填写邮编、街道地址和地点类型。系统自动使用当天、09:00–17:00、无需签名。</span></div>
+
+              <section class="form-section">
+                <div class="section-title"><span class="section-number">01</span><div><h3>发货地</h3><p>从两个固定加拿大仓库中选择</p></div></div>
+                <div class="field-grid field-grid-2 location-grid">
+                  <label class="field field-span-2"><span>发货地址 <em>*</em></span><select name="origin.addressPreset" id="origin-address-preset" required><option value="">请选择固定发货地址</option></select></label>
+                  <div class="origin-preset-summary field-span-2" id="origin-address-summary" aria-live="polite">请选择 Calgary 或 Markham 发货地址</div>
+                  <input name="origin.address_line_1" type="hidden" />
+                  <input name="origin.city" type="hidden" />
+                  <input name="origin.region" type="hidden" />
+                  <input name="origin.country" type="hidden" />
+                  <input name="origin.postal_code" type="hidden" />
+                  <label class="field"><span>地点类型 <em>*</em></span><select name="origin.locationType" required><option value="commercial-no-tailgate">企业 · 不需要尾板</option><option value="commercial-tailgate">企业 · 需要尾板</option><option value="residential-no-tailgate">住宅 · 不需要尾板</option><option value="residential-tailgate">住宅 · 需要尾板</option></select></label>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <div class="section-title"><span class="section-number">02</span><div><h3>收货地</h3><p>输入加拿大邮编或美国 ZIP Code</p></div></div>
+                <div class="field-grid field-grid-2 location-grid">
+                  <label class="field"><span>收货邮编 <em>*</em></span><input name="destination.postal_code" data-postal-input="destination" type="text" autocomplete="postal-code" autocapitalize="characters" placeholder="H2Y 1C6 或 60601" required /><small class="postal-status" data-postal-status="destination">等待输入邮编</small></label>
+                  <label class="field"><span>街道地址 <em>*</em></span><input name="destination.address_line_1" type="text" autocomplete="street-address" placeholder="接口必填，例如：200 Market Street" required /></label>
+                  <label class="field"><span>城市 <em>*</em></span><input name="destination.city" data-location-field="destination.city" type="text" readonly required /></label>
+                  <label class="field"><span>省 / 州 <em>*</em></span><input name="destination.region" data-location-field="destination.region" type="text" readonly required /></label>
+                  <label class="field"><span>国家 <em>*</em></span><input name="destination.country" data-location-field="destination.country" type="text" readonly required /></label>
+                  <label class="field"><span>地点类型 <em>*</em></span><select name="destination.locationType" required><option value="commercial-no-tailgate">企业 · 不需要尾板</option><option value="commercial-tailgate">企业 · 需要尾板</option><option value="residential-no-tailgate">住宅 · 不需要尾板</option><option value="residential-tailgate">住宅 · 需要尾板</option></select></label>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <div class="section-title"><span class="section-number">03</span><div><h3>托盘明细</h3><p>仅保留接口要求的重量、尺寸、描述和货运等级</p></div></div>
+                <div class="pallet-list-heading"><div><strong>托盘</strong><span>至少一件</span></div><button class="button button-ghost button-small" id="add-pallet" type="button">＋ 添加托盘</button></div>
+                <div id="pallet-list" class="pallet-list"></div>
+              </section>
+
+              <div id="form-errors" class="form-errors" role="alert" aria-live="assertive" hidden></div>
+              <div class="form-actions">
+                <button class="button button-primary button-submit" id="submit-quote" type="submit"><span class="button-icon">↗</span><span>获取测试报价</span></button>
+                <button class="button button-secondary" id="reset-form" type="button">清空表单</button>
+                <span class="form-footnote"><span class="required-dot">*</span> 接口最低必填字段</span>
+              </div>
+            </form>
+          </section>
+
+          <section id="results-panel" class="panel results-panel" aria-labelledby="results-title">
+            <div class="panel-heading results-heading"><div><div class="eyebrow">报价响应</div><h2 id="results-title">报价结果</h2></div><span class="result-status status-neutral" id="result-status">待查询</span></div>
+            <div class="no-fx-banner"><div class="no-fx-icon">$</div><div><strong>统一显示 USD</strong><span>CAD 报价保留原数字，仅将显示币种改为 USD；不做汇率换算</span></div><span class="no-fx-lock">内部规则</span></div>
+
+            <div id="empty-state" class="empty-state">
+              <div class="empty-illustration" aria-hidden="true"><span class="empty-box box-one"></span><span class="empty-box box-two"></span><span class="empty-line"></span></div>
+              <h3>等待一条询价请求</h3>
+              <p>选择固定发货地址，填写收货地址和托盘必填信息后查询承运商报价。</p>
+              <div class="empty-points"><span><i>01</i>选择发货地</span><span><i>02</i>收货邮编识别</span><span><i>03</i>实时轮询</span></div>
+            </div>
+
+            <div id="progress-card" class="progress-card" hidden>
+              <div class="progress-top"><div><span class="eyebrow">正在查询报价</span><strong id="progress-request-id">—</strong></div><button class="button button-ghost button-small" id="stop-polling" type="button">停止轮询</button></div>
+              <div class="progress-label"><span id="progress-label">正在等待承运商响应…</span><strong id="progress-percent">0%</strong></div>
+              <div class="progress-track"><span id="progress-bar"></span></div>
+              <div class="progress-meta"><span>已处理承运商：<strong id="progress-complete">0</strong> / <strong id="progress-total">—</strong></span><span id="progress-phase">POST /rate 已接受</span></div>
+            </div>
+
+            <div id="results-card" class="results-card" hidden>
+              <div class="results-summary"><div><span class="eyebrow">承运商报价</span><h3><span id="rate-count">0</span> 条测试报价</h3></div><div class="results-summary-meta"><span id="completed-at">—</span><span class="manual-pill">人工复核</span></div></div>
+              <div class="results-table-wrap"><table class="results-table"><thead><tr><th>承运商 / 服务</th><th>总价 <small>显示为 USD</small></th><th>运输时效</th></tr></thead><tbody id="results-table-body"></tbody></table></div>
+              <p class="result-footnote">报价数据来自测试接口。100 CAD 显示为 USD 100.00；来源币种仍保留为 CAD，数字不做汇率换算。</p>
+            </div>
+
+            <details id="evidence-card" class="evidence-card">
+              <summary><span class="evidence-summary-icon">⌁</span><span><strong>响应证据与边界</strong><small>结构已校验 · 测试环境 · 不透明来源引用</small></span><span class="summary-chevron">⌄</span></summary>
+              <div class="evidence-body"><dl><div><dt>服务提供方</dt><dd id="evidence-provider">Freightcom 客户接口</dd></div><div><dt>运行环境</dt><dd>测试环境 · 非生产</dd></div><div><dt>来源引用</dt><dd id="evidence-source">—</dd></div><div><dt>币种策略</dt><dd>CAD 数字原样改标 USD · 不做汇率换算</dd></div></dl><pre id="evidence-json">尚未收到承运商响应。</pre></div>
+            </details>
+          </section>
+        </div>
+        <footer class="page-footer"><span>测试接口 · 窄适配器 · 仅支持 LTL 托盘</span><span>令牌仅保留在服务端</span></footer>
+      </main>
+    </div>
+    <div id="live-region" class="sr-only" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import * as executionContextModule from "../../src/logistics_mcp/platform/context";
 import {
   AuthenticationError,
   parseExecutionContext,
@@ -9,6 +10,8 @@ import {
   CrossTenantAccessError,
   ForbiddenError,
   authorizeTool,
+  getToolPolicy,
+  phaseOneToolNames,
 } from "../../src/logistics_mcp/platform/rbac";
 
 const claims = (role: AuthClaims["actor_role"]): AuthClaims => ({
@@ -42,6 +45,36 @@ describe("platform context and RBAC", () => {
       roles: ["sales"],
     });
     expect(context.scopes).toContain("quote:calculate");
+  });
+
+  it("deep-freezes parsed contexts and records unforgeable module provenance", () => {
+    const context = parseExecutionContext(claims("sales"));
+    const checker = (
+      executionContextModule as typeof executionContextModule & {
+        readonly isTrustedExecutionContext?: (value: unknown) => boolean;
+      }
+    ).isTrustedExecutionContext;
+
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.roles)).toBe(true);
+    expect(Object.isFrozen(context.scopes)).toBe(true);
+    expect(checker).toBeTypeOf("function");
+    expect(checker?.(context)).toBe(true);
+
+    const forged = {
+      ...context,
+      roles: [...context.roles],
+      scopes: [...context.scopes],
+    };
+    expect(checker?.(forged)).toBe(false);
+
+    expect(() => {
+      (context.roles as unknown as string[]).push("admin");
+    }).toThrow(TypeError);
+    expect(() => {
+      (context as unknown as { actorId: string }).actorId = "forged_actor";
+    }).toThrow(TypeError);
+    expect(context.actorId).toBe("actor_sales");
   });
 
   it("rejects missing or expired authentication claims", () => {
@@ -78,6 +111,89 @@ describe("platform context and RBAC", () => {
     );
   });
 
+  it("keeps returned policies and the phase-one tool list immutable", () => {
+    const viewer = parseExecutionContext({
+      ...claims("viewer"),
+      scopes: [...claims("viewer").scopes, "quote:draft_write"],
+    });
+    const readPolicy = getToolPolicy("system.get_data_status");
+    const taskPolicy = getToolPolicy("review.create_task");
+    const draftPolicy = getToolPolicy("quote.save_draft");
+
+    expect(Object.isFrozen(readPolicy)).toBe(true);
+    expect(Object.isFrozen(readPolicy.roles)).toBe(true);
+    expect(Object.isFrozen(taskPolicy)).toBe(true);
+    expect(Object.isFrozen(taskPolicy.roles)).toBe(true);
+    expect(Object.isFrozen(draftPolicy)).toBe(true);
+    expect(Object.isFrozen(draftPolicy.roles)).toBe(true);
+    expect(Object.isFrozen(phaseOneToolNames)).toBe(true);
+
+    expect(() => {
+      (draftPolicy.roles as unknown as string[]).push("viewer");
+    }).toThrow(TypeError);
+    expect(() => {
+      (draftPolicy.roles as unknown as string[])[0] = "viewer";
+    }).toThrow(TypeError);
+    expect(() => {
+      (draftPolicy as unknown as { permission: string }).permission = "system:read";
+    }).toThrow(TypeError);
+    expect(() => {
+      (phaseOneToolNames as unknown as string[]).push("rules.write");
+    }).toThrow(TypeError);
+
+    expect(() => authorizeTool(viewer, "quote.save_draft")).toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("allows the Freightcom LTL preview only through quote calculation permission", () => {
+    const sales = parseExecutionContext(claims("sales"));
+    expect(authorizeTool(sales, "quote.freightcom_ltl.preview")).toBe(true);
+
+    const withoutScope = parseExecutionContext({
+      ...claims("sales"),
+      scopes: ["system:read"],
+    });
+    expect(() => authorizeTool(withoutScope, "quote.freightcom_ltl.preview")).toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("rejects inherited tool-policy names without disclosing the input", () => {
+    const context = parseExecutionContext(claims("sales"));
+    const expectedMessage = "The requested MCP tool is not allowlisted.";
+
+    for (const toolName of ["constructor", "toString"]) {
+      let policyError: unknown;
+      try {
+        getToolPolicy(toolName);
+      } catch (error: unknown) {
+        policyError = error;
+      }
+
+      expect(policyError).toBeInstanceOf(ForbiddenError);
+      expect(policyError).toMatchObject({ message: expectedMessage });
+      expect(policyError).not.toHaveProperty(
+        "message",
+        expect.stringContaining(toolName),
+      );
+
+      let authorizationError: unknown;
+      try {
+        authorizeTool(context, toolName);
+      } catch (error: unknown) {
+        authorizationError = error;
+      }
+
+      expect(authorizationError).toBeInstanceOf(ForbiddenError);
+      expect(authorizationError).not.toBeInstanceOf(TypeError);
+      expect(authorizationError).toMatchObject({ message: expectedMessage });
+      expect(authorizationError).not.toHaveProperty(
+        "message",
+        expect.stringContaining(toolName),
+      );
+    }
+  });
   it("blocks a target tenant that differs from the authenticated tenant", () => {
     const context = parseExecutionContext(claims("sales"));
 

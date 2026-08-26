@@ -333,6 +333,53 @@ describe("Phase 1 tool registry", () => {
     ).rejects.toThrow(IdempotencyConflictError);
   });
 
+  it("validates a write handler outcome before applying write-result semantics", async () => {
+    const key = "idem_registry_contract_order_123";
+    const input = {
+      write_context: {
+        tenant_context: {
+          tenant_id: "tenant_demo",
+          actor_id: "actor_sales",
+          actor_role: "sales",
+          client_id: "client_demo",
+          session_id: "session_demo",
+        },
+        idempotency_key: key,
+        operation_mode: "preview",
+        preview_ref: null,
+        approval: {
+          required: false,
+          status: "not_required",
+          approval_id: null,
+        },
+      },
+    };
+    const tool = registerPhaseOneTools(
+      {
+        "quote.save_draft": () => ({
+          status: "success" as const,
+          data: null,
+        }),
+      },
+      {
+        "quote.save_draft": {
+          inputSchema: z.record(z.string(), z.unknown()),
+          validateOutput: () => {
+            throw new Error("output contract rejected");
+          },
+        },
+      },
+    ).find((candidate) => candidate.name === "quote.save_draft");
+
+    await expect(
+      executeRegisteredTool(tool!, input, writeContext, {
+        requestId: "req_registry_contract_order",
+        auditId: "audit_registry_contract_order",
+        idempotencyRepository: new MemoryIdempotencyRepository(),
+      }),
+    ).rejects.toThrow(ToolContractValidationError);
+  });
+
   it("rejects a committed write that lacks verified readback evidence", async () => {
     const key = "idem_registry_commit_123";
     const input = {

@@ -14,6 +14,7 @@ import {
 import type { ExecutionContext } from "../platform/context";
 import { authorizeTool } from "../platform/rbac";
 import {
+  freightcomLtlToolName,
   getToolPolicy,
   phaseOneToolNames as allowlistedToolNames,
 } from "../platform/rbac";
@@ -28,7 +29,13 @@ import type {
   IdempotencyRepository,
 } from "../platform/repositories";
 import type { ZodType } from "zod";
+import type {
+  ActivationReadFacade,
+  ControlledDispatchFacade,
+} from "../control-plane/service";
+import { ModuleControlServiceError } from "../control-plane/errors";
 import type { ModuleCatalogEntry } from "../module-runtime";
+import { preflightFreightcomLtlInput } from "../domains/quote/freightcom-ltl-tool";
 
 export const phaseOneToolNames = allowlistedToolNames;
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
@@ -109,6 +116,7 @@ export interface ToolDefinition {
   readonly outputSchemaId: string;
   readonly permission: string;
   readonly kind: "read" | "write";
+  readonly idempotentHint?: boolean;
   readonly statusMapping: typeof ENVELOPE_STATUSES;
   readonly handler?: DomainToolHandler;
   readonly inputSchema?: ZodType;
@@ -118,6 +126,11 @@ export interface ToolDefinition {
   readonly moduleVersion?: string;
   readonly riskLevel?: "T0" | "T1" | "T2" | "T3";
   readonly standardRefs?: readonly string[];
+}
+
+export interface RuntimeActivationFacades {
+  readonly activation: ActivationReadFacade;
+  readonly dispatch: ControlledDispatchFacade;
 }
 
 export interface ToolExecutionMetadata {
@@ -236,6 +249,9 @@ export function registerModuleToolDefinitions(
     outputSchemaId: entry.outputSchemaId,
     permission: entry.permission,
     kind: entry.kind,
+    ...(entry.idempotentHint === undefined
+      ? {}
+      : { idempotentHint: entry.idempotentHint }),
     statusMapping: ENVELOPE_STATUSES,
     handler: entry.handler,
     inputSchema: entry.inputSchema,
@@ -246,6 +262,118 @@ export function registerModuleToolDefinitions(
     riskLevel: entry.riskLevel,
     standardRefs: entry.standardRefs,
   }));
+}
+
+function unavailableModuleOutcome(
+  code: "module_policy_not_released" | "module_disabled_by_release",
+  message: string,
+): DomainToolOutcome {
+  return {
+    status: "unavailable",
+    data: null,
+    blockers: [
+      {
+        code,
+        message,
+        severity: "error",
+        field: null,
+      },
+    ],
+  };
+}
+
+type ModuleDispatchResult<T> =
+  | { readonly kind: "executed"; readonly value: T }
+  | { readonly kind: "inactive"; readonly outcome: DomainToolOutcome };
+
+type ModuleExecutionGuard = <T>(
+  operation: (handler: DomainToolHandler) => T | Promise<T>,
+) => Promise<ModuleDispatchResult<T>>;
+
+const moduleExecutionGuards = new WeakMap<
+  ToolDefinition,
+  ModuleExecutionGuard
+>();
+
+async function runModuleDispatch<T>(
+  moduleId: string,
+  moduleVersion: string,
+  facades: RuntimeActivationFacades,
+  operation: () => T | Promise<T>,
+): Promise<ModuleDispatchResult<T>> {
+  let inactiveOutcome: DomainToolOutcome | undefined;
+  try {
+    const value = await facades.dispatch.dispatch((snapshot) => {
+      if (snapshot.releaseId === null || snapshot.revision === 0) {
+        inactiveOutcome = unavailableModuleOutcome(
+          "module_policy_not_released",
+          "The module is unavailable until an active verified release exists.",
+        );
+        return null;
+      }
+
+      const activeRef = snapshot.activeModules.find(
+        (ref) => ref.moduleId === moduleId && ref.version === moduleVersion,
+      );
+      if (activeRef === undefined) {
+        inactiveOutcome = unavailableModuleOutcome(
+          "module_disabled_by_release",
+          "The module is disabled by the active release.",
+        );
+        return null;
+      }
+      return activeRef;
+    }, operation);
+    return { kind: "executed", value };
+  } catch (error: unknown) {
+    if (
+      inactiveOutcome !== undefined &&
+      error instanceof ModuleControlServiceError &&
+      error.code === "module_not_active"
+    ) {
+      return { kind: "inactive", outcome: inactiveOutcome };
+    }
+    throw error;
+  }
+}
+
+export function wrapModuleToolDefinitions(
+  definitions: readonly ToolDefinition[],
+  facades: RuntimeActivationFacades,
+): readonly ToolDefinition[] {
+  return definitions.map((definition) => {
+    if (
+      definition.moduleId === undefined ||
+      definition.moduleVersion === undefined ||
+      definition.handler === undefined
+    ) {
+      return definition;
+    }
+
+    const originalHandler = definition.handler;
+    const moduleId = definition.moduleId;
+    const moduleVersion = definition.moduleVersion;
+    const handler: DomainToolHandler = async (input, context, signal) => {
+      const result = await runModuleDispatch(
+        moduleId,
+        moduleVersion,
+        facades,
+        () => originalHandler(input, context, signal),
+      );
+      return result.kind === "executed" ? result.value : result.outcome;
+    };
+
+    const wrappedDefinition: ToolDefinition = { ...definition, handler };
+    const executionGuard: ModuleExecutionGuard = (operation) =>
+      runModuleDispatch(
+        moduleId,
+        moduleVersion,
+        facades,
+        () => operation(originalHandler),
+      );
+    moduleExecutionGuards.set(wrappedDefinition, executionGuard);
+    return wrappedDefinition;
+  });
 }
 
 interface WriteRequest {
@@ -417,6 +545,34 @@ function validateOutputEnvelope(
   return validated;
 }
 
+function createValidatedToolEnvelope(
+  definition: ToolDefinition,
+  outcome: DomainToolOutcome,
+  metadata: ToolExecutionMetadata,
+): ResponseEnvelope {
+  const envelopeInput: CreateEnvelopeInput = {
+    requestId: metadata.requestId,
+    auditId: metadata.auditId,
+    status: outcome.status,
+    data: outcome.data,
+    ...(outcome.sourceRefs === undefined
+      ? {}
+      : { sourceRefs: outcome.sourceRefs }),
+    ...(outcome.assumptions === undefined
+      ? {}
+      : { assumptions: outcome.assumptions }),
+    ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
+    ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
+    ...(outcome.calculationTrace === undefined
+      ? {}
+      : { calculationTrace: outcome.calculationTrace }),
+    ...(outcome.reviewStatus === undefined
+      ? {}
+      : { reviewStatus: outcome.reviewStatus }),
+  };
+  return validateOutputEnvelope(definition, createEnvelope(envelopeInput));
+}
+
 function validateWriteOutcome(
   request: WriteRequest,
   outcome: DomainToolOutcome,
@@ -478,21 +634,26 @@ function validateWriteOutcome(
   }
 }
 
-export async function executeRegisteredToolWithResult(
+async function executeRegisteredToolCore(
   definition: ToolDefinition,
   input: unknown,
   context: ExecutionContext,
   metadata: ToolExecutionMetadata,
+  inputSchema: ZodType,
+  handler: DomainToolHandler,
 ): Promise<ToolExecutionResult> {
-  authorizeTool(context, definition.name);
-  metadata.signal?.throwIfAborted();
-  if (definition.handler === undefined) {
-    throw new HandlerUnavailableError();
+  if (definition.name === freightcomLtlToolName) {
+    const preflightOutcome = preflightFreightcomLtlInput(input);
+    if (preflightOutcome !== undefined) {
+      validateToolOutput(definition, preflightOutcome);
+      return {
+        envelope: createValidatedToolEnvelope(definition, preflightOutcome, metadata),
+        idempotencyOutcome: "not_applicable",
+      };
+    }
   }
-  if (definition.inputSchema === undefined || definition.validateOutput === undefined) {
-    throw new ToolContractUnavailableError();
-  }
-  if (!definition.inputSchema.safeParse(input).success) {
+
+  if (!inputSchema.safeParse(input).success) {
     throw writeContractError(
       "tool_input.invalid",
       "needs_input",
@@ -534,37 +695,13 @@ export async function executeRegisteredToolWithResult(
     idempotencyOutcome = "reserved";
   }
 
-  const outcome = await definition.handler(input, context, metadata.signal);
+  const outcome = await handler(input, context, metadata.signal);
   metadata.signal?.throwIfAborted();
   validateToolOutput(definition, outcome);
   if (writeRequest !== null) {
     validateWriteOutcome(writeRequest, outcome);
   }
-
-  const envelopeInput: CreateEnvelopeInput = {
-    requestId: metadata.requestId,
-    auditId: metadata.auditId,
-    status: outcome.status,
-    data: outcome.data,
-    ...(outcome.sourceRefs === undefined
-      ? {}
-      : { sourceRefs: outcome.sourceRefs }),
-    ...(outcome.assumptions === undefined
-      ? {}
-      : { assumptions: outcome.assumptions }),
-    ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
-    ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
-    ...(outcome.calculationTrace === undefined
-      ? {}
-      : { calculationTrace: outcome.calculationTrace }),
-    ...(outcome.reviewStatus === undefined
-      ? {}
-      : { reviewStatus: outcome.reviewStatus }),
-  };
-  const envelope = validateOutputEnvelope(
-    definition,
-    createEnvelope(envelopeInput),
-  );
+  const envelope = createValidatedToolEnvelope(definition, outcome, metadata);
 
   if (writeRequest !== null && reservation !== undefined) {
     metadata.signal?.throwIfAborted();
@@ -578,6 +715,54 @@ export async function executeRegisteredToolWithResult(
   }
 
   return { envelope, idempotencyOutcome };
+}
+
+export async function executeRegisteredToolWithResult(
+  definition: ToolDefinition,
+  input: unknown,
+  context: ExecutionContext,
+  metadata: ToolExecutionMetadata,
+): Promise<ToolExecutionResult> {
+  authorizeTool(context, definition.name);
+  metadata.signal?.throwIfAborted();
+  if (definition.handler === undefined) {
+    throw new HandlerUnavailableError();
+  }
+  if (definition.inputSchema === undefined || definition.validateOutput === undefined) {
+    throw new ToolContractUnavailableError();
+  }
+  const inputSchema = definition.inputSchema;
+
+  const executionGuard = moduleExecutionGuards.get(definition);
+  if (executionGuard !== undefined) {
+    const result = await executionGuard((originalHandler) =>
+      executeRegisteredToolCore(
+        definition,
+        input,
+        context,
+        metadata,
+        inputSchema,
+        originalHandler,
+      ));
+    metadata.signal?.throwIfAborted();
+    if (result.kind === "inactive") {
+      validateToolOutput(definition, result.outcome);
+      return {
+        envelope: createValidatedToolEnvelope(definition, result.outcome, metadata),
+        idempotencyOutcome: "not_applicable",
+      };
+    }
+    return result.value;
+  }
+
+  return executeRegisteredToolCore(
+    definition,
+    input,
+    context,
+    metadata,
+    inputSchema,
+    definition.handler,
+  );
 }
 
 export async function executeRegisteredTool(

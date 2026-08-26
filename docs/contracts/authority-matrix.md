@@ -13,6 +13,7 @@
 | 货物、CBM、体积重、分泡、计费重 | MCP 本地确定性计算及请求提供的版本化规则/证据 | 以 decimal string 和单位计算，返回 trace、来源和证据状态 | 不用 float 猜重量，不把缺证据补成成功，不调用上游价格公式 | 计算结果不缓存；下一次请求按输入和规则重新计算 | 缺证据为 `needs_input`；冲突/规则缺失为 `manual_review` |
 | 柜型物理容量与运营目标 | 运营批准的版本化配置；未有统一 API 时由请求携带并验证 | 计算理论/运营装柜摘要，标明 `theoretical_only=true` | 不把物理容量当可承诺装载，不做 3D/现场承诺 | 计算结果不缓存；配置更新随下一次请求生效 | 配置缺失、超方/超重或约束冲突为 `manual_review` |
 | 精选知识与系统状态 | 服务端明确注入的精选索引和各 API status | 返回 supporting source refs、版本、ready/reasons | 不让文档覆盖 Quote/RiskCustoms API 结果，不静默回退 archived/fixture | 运行结果不缓存；状态/索引下一次请求重新读取 | 索引/status 不可用为 `unavailable` |
+| Freightcom LTL 测试费率 | Freightcom test `POST /rate` 与 `GET /rate/{request_id}` 的 Schema-valid 响应；不具生产权威 | 提交已确认的实体 pallet、轮询、保留源币种并生成测试 USD 显示字段 | 不把 `billing_pallets` 当实体托盘，不接受客户端 Token/URL/tenant/actor，不改价、不执行 FX、不保存/发送/订舱 | 不缓存费率；只保留请求期 opaque ref、source hash 和审计摘要 | 完整测试响应固定 `manual_review`、`sendable=false`、`bookable=false`；认证/网络/Schema/轮询失败为 `blocked|unavailable`；production 固定禁用 |
 | 租户、身份、密钥 | 服务端真实 token verifier、session binding、受控 secret reference 和 tenant mapping | 重新绑定 tenant/actor/client/role/scope，向 adapter 注入最小权限身份 | 不信任客户端 actor/tenant，不暴露 token、API key、密码、base URL | 不缓存凭证和原文；session 受生命周期限制 | 缺凭证、越权、跨租户或安全策略失败为 `blocked` |
 | 审计、幂等、写后读回 | MCP durable audit/idempotency 与目标 API readback | 记录脱敏 audit、request hash、preview/approval、readback evidence | 不以客户端 audit ID 或 `code:0` 代替服务端证据 | 审计/幂等按其生命周期保存，不缓存业务结果 | 平台依赖或 readback 不可用阻断全局或返回 `manual_review` |
 

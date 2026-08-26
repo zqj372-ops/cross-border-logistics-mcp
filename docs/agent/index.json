@@ -22,6 +22,15 @@
       "summary": "Schema, status, units, evidence and write-boundary invariants."
     },
     {
+      "standard_id": "readback-attempt-finalization-v1",
+      "version": "2026-08-23.v1",
+      "path": "docs/rfcs/2026-08-23-readback-attempt-finalization-v1.md",
+      "priority": 87,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["CONTROL-ATTEMPT-001", "CONTROL-FINALIZE-001", "CONTROL-RECOVERY-001"],
+      "summary": "Accepted terminal-only readback-attempt lineage, atomic finalization, startup recovery and runtime-barrier contract."
+    },
+    {
       "standard_id": "module-runtime.v0",
       "version": "2026-08-21.v0",
       "path": "docs/standards/module-runtime-v0.md",
@@ -47,6 +56,24 @@
       "audiences": ["developer", "reviewer", "operator"],
       "rule_ids": ["WORKSTREAM-001"],
       "summary": "Current workstream ownership and RFC escalation path."
+    },
+    {
+      "standard_id": "writable-module-control-plane-v1",
+      "version": "2026-08-22.v1",
+      "path": "docs/rfcs/2026-08-22-writable-module-control-plane-v1.md",
+      "priority": 85,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["CONTROL-WRITE-001", "CONTROL-AUTH-001", "CONTROL-RELEASE-001"],
+      "summary": "Accepted local/fixture module-control rules for static mounted modules; profiles provide standard content only, not HTTP permissions; production Admin POST remains blocked."
+    },
+    {
+      "standard_id": "admin-control-state-dto-v1",
+      "version": "2026-08-22.v1",
+      "path": "docs/rfcs/2026-08-22-admin-control-state-dto-v1.md",
+      "priority": 86,
+      "audiences": ["developer", "reviewer", "operator"],
+      "rule_ids": ["CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003"],
+      "summary": "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness."
     },
     {
       "standard_id": "release-agent-adapters",
@@ -112,6 +139,13 @@
       "risk_level": "T0",
       "standard_ids": ["module-runtime.v0", "platform.contracts"],
       "tool_names": ["container.plan_summary"]
+    },
+    {
+      "module_id": "freightcom-ltl",
+      "version": "2026-08-26.v1",
+      "risk_level": "T1",
+      "standard_ids": ["module-runtime.v0", "platform.contracts"],
+      "tool_names": ["quote.freightcom_ltl.preview"]
     },
     {
       "module_id": "agent-access",
