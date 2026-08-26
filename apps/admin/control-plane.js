@@ -291,11 +291,22 @@ export class ControlPlaneError extends Error {
   }
 }
 
+const CONTROL_ENVELOPE_STATUSES = new Set([
+  "success",
+  "needs_input",
+  "manual_review",
+  "blocked",
+  "unavailable",
+]);
+
 function responseData(envelope, fallbackStatus, responseOk = true) {
   if (!isRecord(envelope)) {
     throw new ControlPlaneError("控制面返回格式无效。", { status: fallbackStatus });
   }
-  const status = responseOk && typeof envelope.status === "string" ? envelope.status : fallbackStatus;
+  const envelopeStatus = typeof envelope.status === "string" && CONTROL_ENVELOPE_STATUSES.has(envelope.status)
+    ? envelope.status
+    : fallbackStatus;
+  const status = !responseOk && envelopeStatus === "success" ? fallbackStatus : envelopeStatus;
   const reasons = Array.isArray(envelope.reason_codes) ? envelope.reason_codes : [];
   if (status !== "success") {
     throw new ControlPlaneError("控制面操作未完成。", {

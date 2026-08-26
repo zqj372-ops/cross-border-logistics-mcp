@@ -77,10 +77,19 @@ const destinationSchema = establishmentSchema
   })
   .strict();
 
+const positiveDecimalStringSchema = z
+  .string()
+  .max(128)
+  .regex(/^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$/u)
+  .refine((value) => {
+    const providerValue = Number(value);
+    return Number.isFinite(providerValue) && providerValue > 0;
+  }, "Weight must be representable by the Freightcom provider number field.");
+
 const weightSchema = z
   .object({
     unit: z.enum(["kg", "lb", "g", "oz"]),
-    value: z.number().finite().positive(),
+    value: positiveDecimalStringSchema,
   })
   .strict();
 
@@ -355,6 +364,29 @@ export const freightcomRatePollResponseSchema = z
 export type FreightcomRateRequest = z.infer<typeof freightcomRateRequestSchema>;
 export type FreightcomRatePollResponse = z.infer<typeof freightcomRatePollResponseSchema>;
 
+export function toFreightcomProviderRateRequest(request: FreightcomRateRequest): unknown {
+  const packaging = request.details.packaging_properties;
+  return {
+    ...request,
+    details: {
+      ...request.details,
+      packaging_properties: {
+        ...packaging,
+        pallets: packaging.pallets.map((pallet) => ({
+          ...pallet,
+          measurements: {
+            ...pallet.measurements,
+            weight: {
+              ...pallet.measurements.weight,
+              value: Number(pallet.measurements.weight.value),
+            },
+          },
+        })),
+      },
+    },
+  };
+}
+
 export interface FreightcomRateData extends Record<string, unknown> {
   readonly provider: "freightcom";
   readonly api_version: typeof FREIGHTCOM_API_VERSION;
@@ -578,7 +610,13 @@ export class FreightcomRateAdapter {
 
     let accepted: unknown;
     try {
-      accepted = await this.client.post("/rate", parsedInput.data, headers, requestSignal, [202]);
+      accepted = await this.client.post(
+        "/rate",
+        toFreightcomProviderRateRequest(parsedInput.data),
+        headers,
+        requestSignal,
+        [202],
+      );
     } catch (error: unknown) {
       return mapError(error) as AdapterResult<FreightcomRateData>;
     }

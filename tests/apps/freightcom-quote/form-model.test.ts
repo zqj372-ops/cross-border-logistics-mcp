@@ -114,6 +114,11 @@ describe("Freightcom quote form model", () => {
         packaging_type: "pallet",
         packaging_properties: {
           pallet_type: "ltl",
+          pallets: [{
+            measurements: {
+              weight: { unit: "lb", value: "100" },
+            },
+          }],
           dangerous_goods: "fully-regulated",
           dangerous_goods_details: {
             united_nations_number: "UN1993",

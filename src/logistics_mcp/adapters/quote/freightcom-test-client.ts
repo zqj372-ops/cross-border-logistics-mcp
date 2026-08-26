@@ -12,6 +12,7 @@ import {
   freightcomRateAcceptedResponseSchema,
   freightcomRatePollResponseSchema,
   freightcomRateRequestSchema,
+  toFreightcomProviderRateRequest,
   type FreightcomRatePollResponse,
 } from "./freightcom-rate-adapter";
 
@@ -151,7 +152,13 @@ export function createFreightcomTestRateClient(
       }
       let accepted: unknown;
       try {
-        accepted = await client.post("/rate", parsed.data, headers, signal, [202]);
+        accepted = await client.post(
+          "/rate",
+          toFreightcomProviderRateRequest(parsed.data),
+          headers,
+          signal,
+          [202],
+        );
       } catch (error: unknown) {
         throw mapHttpError(error);
       }

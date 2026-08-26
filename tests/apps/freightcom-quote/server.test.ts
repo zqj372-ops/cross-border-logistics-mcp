@@ -32,7 +32,7 @@ const VALID_REQUEST = {
       pallet_type: "ltl",
       pallets: [{
         measurements: {
-          weight: { unit: "lb", value: 100 },
+          weight: { unit: "lb", value: "100" },
           cuboid: { unit: "in", l: 48, w: 40, h: 52 },
         },
         description: "Industrial parts",

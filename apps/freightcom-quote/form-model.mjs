@@ -28,6 +28,18 @@ function positiveNumber(value, field, errors) {
   return parsed;
 }
 
+function positiveDecimalString(value, field, errors) {
+  const raw = text(value);
+  if (
+    raw.length > 128 ||
+    !/^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$/u.test(raw)
+  ) {
+    error(errors, field, "请输入大于 0 的普通十进制数字。");
+    return null;
+  }
+  return raw;
+}
+
 function positiveInteger(value, field, errors) {
   const parsed = positiveNumber(value, field, errors);
   if (parsed === null) return null;
@@ -183,7 +195,7 @@ function buildPallet(values, errors) {
   if (pallets.length === 0) error(errors, "pallet.pallets", "至少添加一件 pallet。");
   const palletRequests = pallets.map((item, index) => {
     const prefix = `pallet.pallets.${index}`;
-    const weight = positiveNumber(item?.weightValue, `${prefix}.weightValue`, errors);
+    const weight = positiveDecimalString(item?.weightValue, `${prefix}.weightValue`, errors);
     const length = positiveNumber(item?.length, `${prefix}.length`, errors);
     const width = positiveNumber(item?.width, `${prefix}.width`, errors);
     const height = positiveNumber(item?.height, `${prefix}.height`, errors);

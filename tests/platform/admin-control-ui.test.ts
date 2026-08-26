@@ -332,6 +332,29 @@ describe("admin control-plane model boundary", () => {
     expect(request?.init.credentials).toBe("omit");
   });
 
+  it.each([
+    [409, "manual_review"],
+    [503, "unavailable"],
+  ] as const)("preserves a non-success envelope from HTTP %s as %s", async (httpStatus, envelopeStatus) => {
+    const client = createControlPlaneClient({
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify({
+        status: envelopeStatus,
+        reason_codes: [`control.${envelopeStatus}`],
+        data: validControlState,
+      }), {
+        status: httpStatus,
+        headers: { "content-type": "application/json" },
+      })),
+    });
+
+    await expect(client.getControlState()).rejects.toMatchObject({
+      name: "ControlPlaneError",
+      status: envelopeStatus,
+      reasonCodes: [`control.${envelopeStatus}`],
+      data: validControlState,
+    });
+  });
+
   it("wires the module-center shell, identity dialog, and fail-closed interactions", async () => {
     const [html, app, css] = await Promise.all([
       readFile(new URL("../../apps/admin/index.html", import.meta.url), "utf8"),

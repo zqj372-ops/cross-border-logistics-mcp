@@ -35,7 +35,7 @@ const REQUEST = {
       pallet_type: "ltl",
       pallets: [{
         measurements: {
-          weight: { unit: "lb", value: 100 },
+          weight: { unit: "lb", value: "100" },
           cuboid: { unit: "in", l: 48, w: 40, h: 52 },
         },
         description: "Industrial parts",
@@ -81,6 +81,16 @@ describe("Freightcom test-only rate client", () => {
     expect(calls).toHaveLength(2);
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("synthetic-test-credential");
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).not.toContain("Bearer");
+    const submittedBody = calls[0]?.init?.body;
+    if (typeof submittedBody !== "string") throw new Error("expected a JSON request body");
+    expect(JSON.parse(submittedBody)).toMatchObject({
+      details: {
+        packaging_properties: {
+          pallets: [{ measurements: { weight: { unit: "lb", value: 100 } } }],
+        },
+      },
+    });
+    expect(REQUEST.details.packaging_properties.pallets[0]?.measurements.weight.value).toBe("100");
     expect(JSON.stringify(polled)).not.toContain("synthetic-test-credential");
   });
 

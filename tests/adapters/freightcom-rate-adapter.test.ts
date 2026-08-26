@@ -51,7 +51,7 @@ function rateRequest(): Record<string, unknown> {
         pallets: [
           {
             measurements: {
-              weight: { unit: "lb", value: 100 },
+              weight: { unit: "lb", value: "100.125" },
               cuboid: { unit: "ft", l: 4, w: 4, h: 4 },
             },
             description: "Fixture freight",
@@ -125,6 +125,11 @@ describe("Freightcom rate adapter", () => {
 
   it("validates the narrow pallet rate request shape", () => {
     expect(freightcomRateRequestSchema.safeParse(rateRequest()).success).toBe(true);
+    const numericWeight = structuredClone(rateRequest()) as {
+      details: { packaging_properties: { pallets: Array<{ measurements: { weight: { value: unknown } } }> } };
+    };
+    numericWeight.details.packaging_properties.pallets[0]!.measurements.weight.value = 100.125;
+    expect(freightcomRateRequestSchema.safeParse(numericWeight).success).toBe(false);
     expect(freightcomRateRequestSchema.safeParse({
       details: { packaging_type: "pallet" },
     }).success).toBe(false);
@@ -174,7 +179,17 @@ describe("Freightcom rate adapter", () => {
     expect(calls[0]).toMatchObject({
       url: `${BASE_URL}/rate`,
       method: "POST",
-      body: rateRequest(),
+      body: {
+        details: {
+          packaging_properties: {
+            pallets: [{
+              measurements: {
+                weight: { unit: "lb", value: 100.125 },
+              },
+            }],
+          },
+        },
+      },
     });
     expect(calls[1]).toMatchObject({
       url: `${BASE_URL}/rate/rate-fixture-001`,
