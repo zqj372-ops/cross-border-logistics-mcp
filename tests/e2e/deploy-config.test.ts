@@ -177,4 +177,28 @@ describe("safe deployment artifacts", () => {
     expect(deployReadme).toMatch(/RiskCustoms/i);
     expect(deployReadme).toMatch(/fixtures.*production|production.*fixtures/i);
   });
+
+  it("documents Freightcom fixture initialization and activation before provider calls", () => {
+    const runbook = read("docs/runbooks/freightcom-test-mcp.md");
+    const initialize = runbook.indexOf("npm run init:control-fixture");
+    const start = runbook.indexOf("npm run start:freightcom-test-mcp");
+    const register = runbook.indexOf("登记选中模块");
+    const preview = runbook.indexOf("生成预览");
+    const approval = runbook.indexOf("提交审批");
+    const publish = runbook.indexOf("发布并读回");
+    const providerCall = runbook.indexOf("adapter 执行 `POST /rate`");
+
+    expect(initialize).toBeGreaterThan(-1);
+    expect(initialize).toBeLessThan(start);
+    expect(runbook).toContain("http://127.0.0.1:8080/admin/?fixture=1");
+    expect(runbook).toContain("freightcom-ltl");
+    expect(register).toBeGreaterThan(start);
+    expect(register).toBeLessThan(preview);
+    expect(preview).toBeLessThan(approval);
+    expect(approval).toBeLessThan(publish);
+    expect(publish).toBeLessThan(providerCall);
+    expect(runbook).toContain("module_policy_not_released");
+    expect(runbook).toContain("active_verified");
+    expect(runbook).toContain("latest_readback.status=verified");
+  });
 });
