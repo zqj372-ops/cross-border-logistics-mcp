@@ -640,6 +640,59 @@ describe("admin control-plane model boundary", () => {
     }).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("pending");
   });
 
+  it.each([
+    [
+      "a failed validation flag",
+      {
+        base_matches: false,
+        desired_modules_valid: true,
+        inventory_matches: true,
+        minimum_active_modules: true,
+        reason_codes: ["preview_base_stale"],
+      },
+    ],
+    [
+      "a validation reason",
+      {
+        base_matches: true,
+        desired_modules_valid: true,
+        inventory_matches: true,
+        minimum_active_modules: true,
+        reason_codes: ["preview_validation_failed"],
+      },
+    ],
+  ] as const)("disables approval and publish for a preview with %s", (_label, validation) => {
+    const failedPreview = {
+      ...previewSnapshot(),
+      validation,
+    };
+    const failedState = {
+      ...validControlState,
+      latest_preview: failedPreview,
+    };
+
+    expect(isPreviewUsable(failedPreview, PREVIEW_ACTIVE_NOW_MS)).toBe(false);
+    expect(availabilityAtPreviewTime({
+      state: failedState,
+      draftModules: [],
+      actorRole: "admin",
+      actorRef: "actor-2",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).submitApproval).toBe(false);
+    expect(availabilityAtPreviewTime({
+      state: {
+        ...failedState,
+        latest_approval: approvalSnapshot("approve"),
+      },
+      draftModules: [],
+      actorRole: "admin",
+      actorRef: "actor-2",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+    }).publish).toBe(false);
+  });
+
   it("selects the unresolved published release for reconciliation", () => {
     const initialPublishedState = {
       ...validControlState,

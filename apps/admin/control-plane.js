@@ -481,11 +481,19 @@ function approvalMatchesPreview(preview, approval) {
 }
 
 export function isPreviewUsable(preview, nowMs = Date.now()) {
+  const validation = isRecord(preview) ? preview.validation : null;
   if (
     !isRecord(preview)
     || preview.consumed !== false
     || typeof preview.expires_at !== "string"
     || !Number.isFinite(nowMs)
+    || !isRecord(validation)
+    || validation.base_matches !== true
+    || validation.desired_modules_valid !== true
+    || validation.inventory_matches !== true
+    || validation.minimum_active_modules !== true
+    || !Array.isArray(validation.reason_codes)
+    || validation.reason_codes.length !== 0
   ) {
     return false;
   }
