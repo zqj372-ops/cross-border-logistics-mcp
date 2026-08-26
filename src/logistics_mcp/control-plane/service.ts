@@ -121,6 +121,7 @@ export interface ModuleControlRuntimeAssemblyOptions {
   readonly clock: () => string;
   readonly idGenerator: () => string;
   readonly ownerBootId?: string;
+  readonly activationRestoreEvidence?: unknown;
 }
 
 export interface ActivationReadFacade {
@@ -4497,6 +4498,12 @@ export function createModuleControlRuntimeAssembly(
   }
   const coordinator = createRuntimeMutationCoordinator();
   const gate = createActivationGate(options.inventory);
+  if (options.activationRestoreEvidence !== undefined) {
+    const proof = gate.recoveryDriver.verifyRestoreEvidence(
+      options.activationRestoreEvidence,
+    );
+    gate.recoveryDriver.restoreVerified(proof);
+  }
   const runtime: PrivateRuntimeCapabilities = {
     coordinator,
     privateDriver: gate.privateDriver,
