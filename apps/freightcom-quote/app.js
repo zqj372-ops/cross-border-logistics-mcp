@@ -1,6 +1,7 @@
 import { buildFreightcomRequest, formatDisplayMoney } from "./form-model.mjs";
 import { suggestFreightClass } from "./freight-class.mjs";
 import { findOriginAddressPreset, ORIGIN_ADDRESS_PRESETS } from "./origin-presets.mjs";
+import { schedulePollingTask } from "./polling.mjs";
 
 const form = document.querySelector("#quote-form");
 const palletList = document.querySelector("#pallet-list");
@@ -364,6 +365,15 @@ function renderProgress(data) {
   setResultStatus(data.status?.done === true ? "已返回" : "轮询中", data.status?.done === true ? "warning" : "info");
 }
 
+function handlePollingFailure(generation) {
+  if (generation !== pollGeneration) return;
+  progressCard.hidden = true;
+  emptyState.hidden = false;
+  setResultStatus("不可用", "error");
+  showErrors([{ field: "network", message: "无法连接页面测试服务，请检查本地服务是否仍在运行。" }]);
+  setLive("页面测试服务连接失败");
+}
+
 async function poll(pollUrl, requestId, generation) {
   if (generation !== pollGeneration) return;
   const response = await fetch(pollUrl, { headers: { accept: "application/json" } });
@@ -381,7 +391,12 @@ async function poll(pollUrl, requestId, generation) {
     renderRates(body.data);
     return;
   }
-  window.setTimeout(() => void poll(pollUrl, requestId, generation), 1200);
+  schedulePollingTask({
+    schedule: window.setTimeout.bind(window),
+    delayMs: 1200,
+    task: () => poll(pollUrl, requestId, generation),
+    onFailure: () => handlePollingFailure(generation),
+  });
 }
 
 async function submitQuote(event) {
@@ -440,10 +455,7 @@ async function submitQuote(event) {
     document.querySelector("#last-query-time").textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     await poll(pollUrl, requestId, generation);
   } catch {
-    progressCard.hidden = true;
-    emptyState.hidden = false;
-    setResultStatus("不可用", "error");
-    showErrors([{ field: "network", message: "无法连接页面测试服务，请检查本地服务是否仍在运行。" }]);
+    handlePollingFailure(generation);
   } finally {
     submitButton.disabled = false;
     submitButton.querySelector("span:last-child").textContent = "获取测试报价";

@@ -62,9 +62,10 @@ describe("Freightcom quote page API", () => {
     try {
       const address = runtime.server.address();
       if (address === null || typeof address === "string") throw new Error("test server address unavailable");
-      const [originResponse, freightClassResponse] = await Promise.all([
+      const [originResponse, freightClassResponse, pollingResponse] = await Promise.all([
         fetch(`http://${runtime.host}:${address.port}/origin-presets.mjs`),
         fetch(`http://${runtime.host}:${address.port}/freight-class.mjs`),
+        fetch(`http://${runtime.host}:${address.port}/polling.mjs`),
       ]);
 
       expect(originResponse.status).toBe(200);
@@ -73,6 +74,9 @@ describe("Freightcom quote page API", () => {
       expect(freightClassResponse.status).toBe(200);
       expect(freightClassResponse.headers.get("content-type")).toContain("text/javascript");
       expect(await freightClassResponse.text()).toContain("suggestFreightClass");
+      expect(pollingResponse.status).toBe(200);
+      expect(pollingResponse.headers.get("content-type")).toContain("text/javascript");
+      expect(await pollingResponse.text()).toContain("schedulePollingTask");
     } finally {
       await new Promise<void>((resolve, reject) => runtime.server.close((error) => error === undefined ? resolve() : reject(error)));
     }

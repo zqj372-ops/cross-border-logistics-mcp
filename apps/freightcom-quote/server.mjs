@@ -25,6 +25,7 @@ const STATIC_ASSETS = new Map([
   ["/freight-class.mjs", ["freight-class.mjs", "text/javascript; charset=utf-8"]],
   ["/form-model.mjs", ["form-model.mjs", "text/javascript; charset=utf-8"]],
   ["/origin-presets.mjs", ["origin-presets.mjs", "text/javascript; charset=utf-8"]],
+  ["/polling.mjs", ["polling.mjs", "text/javascript; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
 ]);
 
