@@ -299,7 +299,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        credentials: "same-origin",
+        credentials: "omit",
       });
     } catch {
       throw new ControlPlaneError("控制面请求不可用。", { status: "unavailable" });

@@ -1,10 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-// @ts-expect-error The browser-only ES module intentionally has no declaration file in this UI batch.
-import { actionAvailability, createControlPlaneClient, deriveDesiredDraftDiff, deriveReleaseStages, isFixtureIdentityVisible, redactReference, validateControlState } from "../../apps/admin/control-plane.js";
+import { actionAvailability, CONTROL_SCHEMA_VERSION, createControlPlaneClient, deriveDesiredDraftDiff, deriveReleaseStages, isFixtureIdentityVisible, redactReference, validateControlState } from "../../apps/admin/control-plane.js";
 
 const descriptorDigest = `sha256:${"a".repeat(64)}`;
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
 
 const validControlState = {
   kind: "control_state",
@@ -67,8 +72,8 @@ describe("admin control-plane model boundary", () => {
   it("keeps the module token out of storage, DOM, URL, console, and error visibility", async () => {
     let request: { url: string; init: RequestInit } | undefined;
     const client = createControlPlaneClient({
-      fetchImpl: async (url: RequestInfo | URL, init?: RequestInit) => {
-        request = { url: String(url), init: init ?? {} };
+      fetchImpl: (url: RequestInfo | URL, init?: RequestInit) => {
+        request = { url: requestUrl(url), init: init ?? {} };
         return new Response(JSON.stringify({
           status: "success",
           data: validControlState,
@@ -85,6 +90,7 @@ describe("admin control-plane model boundary", () => {
     expect(new Headers(request?.init.headers).get("authorization")).toBe(
       "Bearer module-scoped-fixture-token",
     );
+    expect(request?.init.credentials).toBe("omit");
 
     const source = await readFile(new URL("../../apps/admin/control-plane.js", import.meta.url), "utf8");
     expect(source).not.toMatch(/\b(?:localStorage|sessionStorage)\b/);
@@ -167,9 +173,9 @@ describe("admin control-plane model boundary", () => {
   it("uses the control API client for each write path without persisting credentials", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const client = createControlPlaneClient({
-      fetchImpl: async (url: RequestInfo | URL, init?: RequestInit) => {
-        requests.push({ url: String(url), init: init ?? {} });
-        const path = String(url);
+      fetchImpl: (url: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestUrl(url);
+        requests.push({ url: path, init: init ?? {} });
         const data = path.endsWith("/state") ? validControlState : {};
         return new Response(JSON.stringify({ status: "success", data }), {
           status: 200,
@@ -180,11 +186,36 @@ describe("admin control-plane model boundary", () => {
 
     client.setToken("request-scoped-token");
     await client.getControlState();
-    await client.registerPackage({ module_id: "cargo" }, "key-register");
-    await client.createPreview({ intent: "change" }, "key-preview");
-    await client.decideApproval({ decision: "approve" }, "key-approval");
-    await client.publish({ preview_ref: "preview-1", approval_id: "approval-1" }, "key-publish");
-    await client.reconcile({ release_id: "release-1" }, "key-reconcile");
+    await client.registerPackage({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      module_id: "cargo",
+      version: "1.0.0",
+      descriptor_digest: descriptorDigest,
+    }, "key-register");
+    await client.createPreview({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      intent: "change",
+      desired_modules: [{
+        module_id: "cargo",
+        version: "1.0.0",
+        descriptor_digest: descriptorDigest,
+      }],
+    }, "key-preview");
+    await client.decideApproval({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      preview_ref: "preview-1",
+      decision: "approve",
+      reason_code: "admin_ui_approval",
+    }, "key-approval");
+    await client.publish({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      preview_ref: "preview-1",
+      approval_id: "approval-1",
+    }, "key-publish");
+    await client.reconcile({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      release_id: "release-1",
+    }, "key-reconcile");
 
     expect(requests.map((request) => request.url)).toEqual([
       "/admin/api/v1/control/state",
@@ -197,7 +228,7 @@ describe("admin control-plane model boundary", () => {
     for (const [index, request] of requests.entries()) {
       const headers = new Headers(request.init.headers);
       expect(headers.get("authorization")).toBe("Bearer request-scoped-token");
-      expect(request.init.credentials).toBe("same-origin");
+      expect(request.init.credentials).toBe("omit");
       if (index > 0) expect(headers.get("idempotency-key")).toBeTruthy();
     }
     expect(redactReference("opaque-ref")).toBe("已记录（具体内容隐藏）");
@@ -206,17 +237,22 @@ describe("admin control-plane model boundary", () => {
   });
 
   it("does not accept a success envelope from a non-2xx response", async () => {
+    let request: { init: RequestInit } | undefined;
     const client = createControlPlaneClient({
-      fetchImpl: async () => new Response(JSON.stringify({ status: "success", data: validControlState }), {
-        status: 503,
-        headers: { "content-type": "application/json" },
-      }),
+      fetchImpl: (_url: RequestInfo | URL, init?: RequestInit) => {
+        request = { init: init ?? {} };
+        return new Response(JSON.stringify({ status: "success", data: validControlState }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      },
     });
 
     await expect(client.getControlState()).rejects.toMatchObject({
       name: "ControlPlaneError",
       status: "blocked",
     });
+    expect(request?.init.credentials).toBe("omit");
   });
 
   it("wires the module-center shell, identity dialog, and fail-closed interactions", async () => {
