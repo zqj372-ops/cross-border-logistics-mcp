@@ -71,7 +71,16 @@ const validControlState = {
   events_truncated: false,
 } as const;
 
-function successControlEnvelope(data: unknown) {
+const notApplicableControlReadback = {
+  status: "not_applicable",
+  release_id: null,
+  revision: null,
+} as const;
+
+function successControlEnvelope(
+  data: unknown,
+  readback: unknown = notApplicableControlReadback,
+) {
   return {
     schema_version: CONTROL_SCHEMA_VERSION,
     request_id: "request-admin-ui",
@@ -80,20 +89,13 @@ function successControlEnvelope(data: unknown) {
     status: "success",
     data,
     reason_codes: [],
-    readback: {
-      status: "not_applicable",
-      release_id: null,
-      revision: null,
-    },
+    readback,
   } as const;
 }
 
-function failureControlEnvelope(
-  status: "manual_review" | "blocked" | "unavailable",
-  data: unknown = validControlState,
-) {
+function terminalFailureControlEnvelope(status: "blocked" | "unavailable") {
   return {
-    ...successControlEnvelope(data),
+    ...successControlEnvelope(null),
     status,
     reason_codes: [`control.${status}`],
   } as const;
@@ -879,6 +881,36 @@ describe("admin control-plane model boundary", () => {
       actorRole: "admin",
       environment: "local",
     }).rollback).toBe(true);
+
+    const invalidInventoryStates = [
+      {
+        ...rollbackReadyState,
+        inventory_modules: [],
+      },
+      {
+        ...rollbackReadyState,
+        inventory_modules: rollbackReadyState.inventory_modules.map((module) => ({
+          ...module,
+          descriptor_digest: `sha256:${"b".repeat(64)}`,
+        })),
+      },
+      {
+        ...rollbackReadyState,
+        inventory_modules: rollbackReadyState.inventory_modules.map((module) => ({
+          ...module,
+          registration: null,
+        })),
+      },
+    ] as const;
+    for (const state of invalidInventoryStates) {
+      expect(selectRollbackReleaseId(state)).toBeNull();
+      expect(availabilityAtPreviewTime({
+        state,
+        draftModules: [],
+        actorRole: "admin",
+        environment: "local",
+      }).rollback).toBe(false);
+    }
   });
 
   it("derives registration from exact release targets instead of unrelated inventory", () => {
@@ -945,18 +977,48 @@ describe("admin control-plane model boundary", () => {
       fetchImpl: (url: RequestInfo | URL, init?: RequestInit) => {
         const path = requestUrl(url);
         requests.push({ url: path, init: init ?? {} });
-        const data = path.endsWith("/state")
-          ? validControlState
-          : path.endsWith("/packages/register")
-            ? { kind: "registration" }
-            : path.endsWith("/deployments/preview")
-              ? { kind: "preview" }
-              : path.endsWith("/approvals")
-                ? { kind: "approval" }
-                : path.endsWith("/deployments/publish")
-                  ? { kind: "release" }
-                  : { kind: "reconciliation" };
-        return new Response(JSON.stringify(successControlEnvelope(data)), {
+        let data: unknown = validControlState;
+        let readback: unknown = notApplicableControlReadback;
+        if (path.endsWith("/packages/register")) {
+          data = {
+            kind: "registration",
+            module_id: "cargo",
+            version: "1.0.0",
+            descriptor_digest: descriptorDigest,
+            evidence_level: "local_build",
+            production_eligible: false,
+          };
+        } else if (path.endsWith("/deployments/preview")) {
+          data = {
+            kind: "preview",
+            ...previewSnapshot(),
+            target_release_id: null,
+          };
+        } else if (path.endsWith("/approvals")) {
+          data = {
+            kind: "approval",
+            approval_id: "approval-1",
+            preview_ref: "preview-1",
+            decision: "approve",
+          };
+        } else if (path.endsWith("/deployments/publish")) {
+          data = {
+            kind: "release",
+            release_id: "release-1",
+            revision: 3,
+            active_modules: validControlState.activation.active_modules,
+          };
+          readback = { status: "verified", release_id: "release-1", revision: 3 };
+        } else if (path.endsWith("/deployments/reconcile")) {
+          data = {
+            kind: "reconciliation",
+            release_id: "release-1",
+            revision: 3,
+            status: "verified",
+          };
+          readback = { status: "verified", release_id: "release-1", revision: 3 };
+        }
+        return new Response(JSON.stringify(successControlEnvelope(data, readback)), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -1035,11 +1097,11 @@ describe("admin control-plane model boundary", () => {
   });
 
   it.each([
-    [409, "manual_review"],
+    [409, "blocked"],
     [503, "unavailable"],
   ] as const)("preserves a non-success envelope from HTTP %s as %s", async (httpStatus, envelopeStatus) => {
     const client = createControlPlaneClient({
-      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(failureControlEnvelope(
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(terminalFailureControlEnvelope(
         envelopeStatus,
       )), {
         status: httpStatus,
@@ -1051,8 +1113,229 @@ describe("admin control-plane model boundary", () => {
       name: "ControlPlaneError",
       status: envelopeStatus,
       reasonCodes: [`control.${envelopeStatus}`],
-      data: validControlState,
+      data: null,
     });
+  });
+
+  it("preserves a valid manual-review publish envelope", async () => {
+    const releaseData = {
+      kind: "release",
+      release_id: "release-1",
+      revision: 3,
+      active_modules: validControlState.activation.active_modules,
+    } as const;
+    const envelope = {
+      ...successControlEnvelope(releaseData, {
+        status: "mismatch",
+        release_id: "release-1",
+        revision: 3,
+      }),
+      status: "manual_review",
+      reason_codes: ["runtime_readback_mismatch"],
+    } as const;
+    const client = createControlPlaneClient({
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(envelope), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      })),
+    });
+
+    await expect(client.publish({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      preview_ref: "preview-1",
+      approval_id: "approval-1",
+    }, "key-publish-review")).rejects.toMatchObject({
+      name: "ControlPlaneError",
+      status: "manual_review",
+      reasonCodes: ["runtime_readback_mismatch"],
+      data: releaseData,
+    });
+  });
+
+  it("preserves valid needs-input preview and manual-review reconciliation branches", async () => {
+    const previewData = {
+      kind: "preview",
+      ...previewSnapshot(),
+      target_release_id: null,
+      validation: {
+        ...previewSnapshot().validation,
+        base_matches: false,
+        reason_codes: ["preview_base_stale"],
+      },
+    } as const;
+    const previewEnvelope = {
+      ...successControlEnvelope(previewData),
+      status: "needs_input",
+      reason_codes: ["preview_base_stale"],
+    } as const;
+    const previewClient = createControlPlaneClient({
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(previewEnvelope), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      })),
+    });
+    await expect(previewClient.createPreview({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      intent: "change",
+      desired_modules: validControlState.activation.active_modules,
+    }, "key-preview-needs-input")).rejects.toMatchObject({
+      name: "ControlPlaneError",
+      status: "needs_input",
+      reasonCodes: ["preview_base_stale"],
+      data: previewData,
+    });
+
+    const reconciliationData = {
+      kind: "reconciliation",
+      release_id: "release-1",
+      revision: 3,
+      status: "mismatch",
+    } as const;
+    const reconciliationEnvelope = {
+      ...successControlEnvelope(reconciliationData, {
+        status: "mismatch",
+        release_id: "release-1",
+        revision: 3,
+      }),
+      status: "manual_review",
+      reason_codes: ["runtime_readback_mismatch"],
+    } as const;
+    const reconciliationClient = createControlPlaneClient({
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(reconciliationEnvelope), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      })),
+    });
+    await expect(reconciliationClient.reconcile({
+      schema_version: CONTROL_SCHEMA_VERSION,
+      release_id: "release-1",
+    }, "key-reconcile-review")).rejects.toMatchObject({
+      name: "ControlPlaneError",
+      status: "manual_review",
+      reasonCodes: ["runtime_readback_mismatch"],
+      data: reconciliationData,
+    });
+  });
+
+  it("rejects incomplete success data for every control action", async () => {
+    const scenarios = [
+      {
+        kind: "registration",
+        invoke: (client: ReturnType<typeof createControlPlaneClient>) => client.registerPackage({
+          schema_version: CONTROL_SCHEMA_VERSION,
+          module_id: "cargo",
+          version: "1.0.0",
+          descriptor_digest: descriptorDigest,
+        }, "key-incomplete-registration"),
+      },
+      {
+        kind: "preview",
+        invoke: (client: ReturnType<typeof createControlPlaneClient>) => client.createPreview({
+          schema_version: CONTROL_SCHEMA_VERSION,
+          intent: "change",
+          desired_modules: validControlState.activation.active_modules,
+        }, "key-incomplete-preview"),
+      },
+      {
+        kind: "approval",
+        invoke: (client: ReturnType<typeof createControlPlaneClient>) => client.decideApproval({
+          schema_version: CONTROL_SCHEMA_VERSION,
+          preview_ref: "preview-1",
+          decision: "approve",
+          reason_code: "admin_ui_approval",
+        }, "key-incomplete-approval"),
+      },
+      {
+        kind: "release",
+        invoke: (client: ReturnType<typeof createControlPlaneClient>) => client.publish({
+          schema_version: CONTROL_SCHEMA_VERSION,
+          preview_ref: "preview-1",
+          approval_id: "approval-1",
+        }, "key-incomplete-release"),
+      },
+      {
+        kind: "reconciliation",
+        invoke: (client: ReturnType<typeof createControlPlaneClient>) => client.reconcile({
+          schema_version: CONTROL_SCHEMA_VERSION,
+          release_id: "release-1",
+        }, "key-incomplete-reconciliation"),
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const client = createControlPlaneClient({
+        fetchImpl: () => Promise.resolve(new Response(JSON.stringify(
+          successControlEnvelope({ kind: scenario.kind }),
+        ), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })),
+      });
+      await expect(scenario.invoke(client)).rejects.toMatchObject({
+        name: "ControlPlaneError",
+        status: "unavailable",
+      });
+    }
+  });
+
+  it("rejects success action data whose readback or validation invariants are not closed", async () => {
+    const invalidEnvelopes = [
+      successControlEnvelope({
+        kind: "release",
+        release_id: "release-1",
+        revision: 3,
+        active_modules: validControlState.activation.active_modules,
+      }),
+      successControlEnvelope({
+        kind: "reconciliation",
+        release_id: "release-1",
+        revision: 3,
+        status: "verified",
+      }, {
+        status: "verified",
+        release_id: "release-other",
+        revision: 3,
+      }),
+      successControlEnvelope({
+        kind: "preview",
+        ...previewSnapshot(),
+        target_release_id: null,
+        validation: {
+          ...previewSnapshot().validation,
+          base_matches: false,
+          reason_codes: ["preview_base_stale"],
+        },
+      }),
+    ] as const;
+    const invocations = [
+      (client: ReturnType<typeof createControlPlaneClient>) => client.publish({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        preview_ref: "preview-1",
+        approval_id: "approval-1",
+      }, "key-invalid-publish-readback"),
+      (client: ReturnType<typeof createControlPlaneClient>) => client.reconcile({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        release_id: "release-1",
+      }, "key-invalid-reconcile-readback"),
+      (client: ReturnType<typeof createControlPlaneClient>) => client.createPreview({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        intent: "change",
+        desired_modules: validControlState.activation.active_modules,
+      }, "key-invalid-preview-validation"),
+    ] as const;
+
+    for (const [index, envelope] of invalidEnvelopes.entries()) {
+      const client = createControlPlaneClient({
+        fetchImpl: () => Promise.resolve(new Response(JSON.stringify(envelope), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })),
+      });
+      await expect(invocations[index]!(client)).rejects.toMatchObject({
+        name: "ControlPlaneError",
+        status: "unavailable",
+      });
+    }
   });
 
   it.each([

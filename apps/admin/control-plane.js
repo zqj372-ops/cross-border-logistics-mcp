@@ -131,6 +131,14 @@ const CONTROL_DATA_KEYS = Object.freeze({
   release: ["kind", "release_id", "revision", "active_modules"],
   reconciliation: ["kind", "release_id", "revision", "status"],
 });
+const CONTROL_ACTION_DATA_KINDS = Object.freeze({
+  state: "control_state",
+  "packages.register": "registration",
+  "deployments.preview": "preview",
+  "approvals.decide": "approval",
+  "deployments.publish": "release",
+  "deployments.reconcile": "reconciliation",
+});
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
@@ -278,6 +286,11 @@ function moduleExactKey(module) {
     : null;
 }
 
+function moduleLogicalKey(module) {
+  const exactKey = moduleExactKey(module);
+  return exactKey === null ? null : exactKey.slice(0, exactKey.lastIndexOf("\u0000"));
+}
+
 function moduleRefSetsEqual(left, right) {
   if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
   const leftValues = left.map(moduleExactKey);
@@ -285,8 +298,8 @@ function moduleRefSetsEqual(left, right) {
   if (leftValues.includes(null) || rightValues.includes(null)) return false;
   const leftKeys = new Set(leftValues);
   const rightKeys = new Set(rightValues);
-  const leftLogicalKeys = new Set(leftValues.map((key) => key.slice(0, key.lastIndexOf("\u0000"))));
-  const rightLogicalKeys = new Set(rightValues.map((key) => key.slice(0, key.lastIndexOf("\u0000"))));
+  const leftLogicalKeys = new Set(left.map(moduleLogicalKey));
+  const rightLogicalKeys = new Set(right.map(moduleLogicalKey));
   return leftKeys.size === left.length
     && rightKeys.size === right.length
     && leftLogicalKeys.size === left.length
@@ -752,6 +765,9 @@ export function selectRollbackReleaseId(state) {
       || !Number.isSafeInteger(release.revision)
       || release.revision <= 0
       || release.revision >= state.activation.revision
+      || !release.desired_modules.every((target) => state.inventory_modules.some(
+        (module) => matchesExactModuleRef(module, target) && module.registration !== null,
+      ))
     ) {
       continue;
     }
@@ -901,10 +917,221 @@ function validateControlEnvelope(value) {
   return value;
 }
 
-function responseData(envelope, fallbackStatus, responseOk = true, expectedKind) {
+function hasOwnFields(value, fields) {
+  return isRecord(value) && fields.every((field) => Object.hasOwn(value, field));
+}
+
+function identifierSetsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === left.length
+    && rightSet.size === right.length
+    && left.every((value) => rightSet.has(value));
+}
+
+function previewDiffIsClosed(desiredModules, diff) {
+  if (!isRecord(diff)) return false;
+  const groups = [diff.added, diff.removed, diff.retained];
+  if (groups.some((group) => !Array.isArray(group))) return false;
+  const logicalKeys = groups.flatMap((group) => group.map(moduleLogicalKey));
+  return !logicalKeys.includes(null)
+    && new Set(logicalKeys).size === logicalKeys.length
+    && moduleRefSetsEqual(desiredModules, [...diff.added, ...diff.retained]);
+}
+
+function isNotApplicableReadback(readback) {
+  return isRecord(readback)
+    && readback.status === "not_applicable"
+    && readback.release_id === null
+    && readback.revision === null;
+}
+
+function terminalFailureIsClosed(envelope) {
+  return envelope.data === null
+    && envelope.reason_codes.length > 0
+    && isNotApplicableReadback(envelope.readback);
+}
+
+function validateControlActionEnvelope(envelope, action) {
+  const expectedKind = Object.hasOwn(CONTROL_ACTION_DATA_KINDS, action)
+    ? CONTROL_ACTION_DATA_KINDS[action]
+    : undefined;
+  if (expectedKind === undefined) throw new Error("control action 无效。");
+
+  if (envelope.status === "blocked" || envelope.status === "unavailable") {
+    if (!terminalFailureIsClosed(envelope)) throw new Error("control action 失败包络不完整。");
+    return envelope;
+  }
+  if (action === "state") {
+    if (
+      envelope.status !== "success"
+      || envelope.data?.kind !== expectedKind
+      || envelope.reason_codes.length !== 0
+      || !isNotApplicableReadback(envelope.readback)
+    ) {
+      throw new Error("control state 成功包络不完整。");
+    }
+    return envelope;
+  }
+
+  const data = envelope.data;
+  if (!isRecord(data) || data.kind !== expectedKind) throw new Error("control action data 分支不匹配。");
+  if (action === "packages.register") {
+    if (
+      envelope.status !== "success"
+      || !hasOwnFields(data, ["module_id", "version", "descriptor_digest", "evidence_level", "production_eligible"])
+      || data.evidence_level !== "local_build"
+      || data.production_eligible !== false
+      || envelope.reason_codes.length !== 0
+      || !isNotApplicableReadback(envelope.readback)
+    ) {
+      throw new Error("registration 成功包络不完整。");
+    }
+    return envelope;
+  }
+  if (action === "deployments.preview") {
+    if (
+      (envelope.status !== "success" && envelope.status !== "needs_input")
+      || !hasOwnFields(data, [
+        "preview_ref",
+        "intent",
+        "base_release_id",
+        "base_revision",
+        "desired_modules",
+        "target_release_id",
+        "expires_at",
+        "canonical_hash",
+        "diff",
+        "validation",
+        "creator_actor_ref",
+        "created_at",
+        "consumed",
+      ])
+      || !Array.isArray(data.desired_modules)
+      || data.desired_modules.length === 0
+      || data.expires_at === null
+      || data.consumed !== false
+      || !isNotApplicableReadback(envelope.readback)
+    ) {
+      throw new Error("preview 输出不完整。");
+    }
+    const baseIsClosed = (data.base_release_id === null && data.base_revision === 0)
+      || (data.base_release_id !== null && data.base_revision > 0);
+    const intentIsClosed = (data.intent === "change" && data.target_release_id === null)
+      || (data.intent === "rollback" && data.target_release_id !== null);
+    const createdAt = parseRfc3339Nanoseconds(data.created_at);
+    const expiresAt = parseRfc3339Nanoseconds(data.expires_at);
+    const timestampsAreOrdered = createdAt !== null && expiresAt !== null && createdAt < expiresAt;
+    const desiredLogicalKeys = data.desired_modules.map(moduleLogicalKey);
+    const validationFlags = [
+      data.validation.base_matches,
+      data.validation.desired_modules_valid,
+      data.validation.inventory_matches,
+      data.validation.minimum_active_modules,
+    ];
+    const allValidationPassed = validationFlags.every((flag) => flag === true);
+    if (
+      !baseIsClosed
+      || !intentIsClosed
+      || !timestampsAreOrdered
+      || desiredLogicalKeys.includes(null)
+      || new Set(desiredLogicalKeys).size !== desiredLogicalKeys.length
+      || !previewDiffIsClosed(data.desired_modules, data.diff)
+    ) {
+      throw new Error("preview 输出不一致。");
+    }
+    if (envelope.status === "success") {
+      if (
+        envelope.reason_codes.length !== 0
+        || !allValidationPassed
+        || data.validation.reason_codes.length !== 0
+      ) {
+        throw new Error("preview 成功校验未闭合。");
+      }
+      return envelope;
+    }
+    if (
+      allValidationPassed
+      || data.validation.reason_codes.length === 0
+      || !identifierSetsEqual(envelope.reason_codes, data.validation.reason_codes)
+    ) {
+      throw new Error("preview needs_input 校验未闭合。");
+    }
+    return envelope;
+  }
+  if (action === "approvals.decide") {
+    if (
+      envelope.status !== "success"
+      || !hasOwnFields(data, ["approval_id", "preview_ref", "decision"])
+      || envelope.reason_codes.length !== 0
+      || !isNotApplicableReadback(envelope.readback)
+    ) {
+      throw new Error("approval 成功包络不完整。");
+    }
+    return envelope;
+  }
+
+  const readbackIdentityMatches = envelope.readback.release_id === data.release_id
+    && envelope.readback.revision === data.revision;
+  if (action === "deployments.publish") {
+    if (
+      (envelope.status !== "success" && envelope.status !== "manual_review")
+      || !hasOwnFields(data, ["release_id", "revision", "active_modules"])
+      || !Array.isArray(data.active_modules)
+      || data.active_modules.length === 0
+      || !readbackIdentityMatches
+    ) {
+      throw new Error("publish 输出不完整。");
+    }
+    if (envelope.status === "success") {
+      if (envelope.reason_codes.length !== 0 || envelope.readback.status !== "verified") {
+        throw new Error("publish 成功读回不一致。");
+      }
+      return envelope;
+    }
+    if (
+      envelope.reason_codes.length === 0
+      || (envelope.readback.status !== "mismatch" && envelope.readback.status !== "unknown")
+    ) {
+      throw new Error("publish 人工复核读回不一致。");
+    }
+    return envelope;
+  }
+  if (
+    (envelope.status !== "success" && envelope.status !== "manual_review")
+    || !hasOwnFields(data, ["release_id", "revision", "status"])
+    || data.release_id === null
+    || data.revision === null
+    || !readbackIdentityMatches
+  ) {
+    throw new Error("reconcile 输出不完整。");
+  }
+  if (envelope.status === "success") {
+    if (
+      envelope.reason_codes.length !== 0
+      || data.status !== "verified"
+      || envelope.readback.status !== "verified"
+    ) {
+      throw new Error("reconcile 成功读回不一致。");
+    }
+    return envelope;
+  }
+  if (
+    envelope.reason_codes.length === 0
+    || (data.status !== "mismatch" && data.status !== "unknown")
+    || envelope.readback.status !== data.status
+  ) {
+    throw new Error("reconcile 人工复核读回不一致。");
+  }
+  return envelope;
+}
+
+function responseData(envelope, fallbackStatus, responseOk = true, action) {
   let validatedEnvelope;
   try {
     validatedEnvelope = validateControlEnvelope(envelope);
+    validateControlActionEnvelope(validatedEnvelope, action);
   } catch {
     throw new ControlPlaneError("控制面返回格式无效。", { status: fallbackStatus });
   }
@@ -918,9 +1145,6 @@ function responseData(envelope, fallbackStatus, responseOk = true, expectedKind)
       data: validatedEnvelope.data,
     });
   }
-  if (!isRecord(validatedEnvelope.data) || validatedEnvelope.data.kind !== expectedKind) {
-    throw new ControlPlaneError("控制面返回格式无效。", { status: fallbackStatus });
-  }
   return validatedEnvelope.data;
 }
 
@@ -929,7 +1153,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
   const root = typeof basePath === "string" && basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
   let bearerToken = "";
 
-  async function request(path, { method = "GET", body, idempotencyKey, expectedKind } = {}) {
+  async function request(path, { method = "GET", body, idempotencyKey, action } = {}) {
     const headers = new Headers({ accept: "application/json" });
     if (bearerToken !== "") headers.set("authorization", `Bearer ${bearerToken}`);
     if (body !== undefined) {
@@ -957,7 +1181,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
       envelope,
       response.ok ? "unavailable" : "blocked",
       response.ok,
-      expectedKind,
+      action,
     );
   }
 
@@ -970,14 +1194,14 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
       bearerToken = "";
     },
     async getControlState() {
-      return request("state", { expectedKind: "control_state" });
+      return request("state", { action: "state" });
     },
     async registerPackage(payload, idempotencyKey) {
       return request("packages/register", {
         method: "POST",
         body: payload,
         idempotencyKey,
-        expectedKind: "registration",
+        action: "packages.register",
       });
     },
     async createPreview(payload, idempotencyKey) {
@@ -985,7 +1209,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
         method: "POST",
         body: payload,
         idempotencyKey,
-        expectedKind: "preview",
+        action: "deployments.preview",
       });
     },
     async decideApproval(payload, idempotencyKey) {
@@ -993,7 +1217,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
         method: "POST",
         body: payload,
         idempotencyKey,
-        expectedKind: "approval",
+        action: "approvals.decide",
       });
     },
     async publish(payload, idempotencyKey) {
@@ -1001,7 +1225,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
         method: "POST",
         body: payload,
         idempotencyKey,
-        expectedKind: "release",
+        action: "deployments.publish",
       });
     },
     async reconcile(payload, idempotencyKey) {
@@ -1009,7 +1233,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
         method: "POST",
         body: payload,
         idempotencyKey,
-        expectedKind: "reconciliation",
+        action: "deployments.reconcile",
       });
     },
   });
