@@ -21,10 +21,9 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { types as nodeUtilTypes } from "node:util";
 import { isAbsolute, join, normalize, parse, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { Stats } from "node:fs";
 import { controlEnvelopeSchema } from "./contracts";
 import {
@@ -107,6 +106,7 @@ const DATABASE_MODE = 0o600;
 const MARKER_MODE = 0o400;
 const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const DIRECTORY_FLAG = fsConstants.O_DIRECTORY ?? 0;
+const ACTIVE_SQLITE_ITERATION_STATEMENTS = new Set<object>();
 
 const MARKER_FORMAT = "mcp-control-identity/v1" as const;
 const SCHEMA_VERSION = 1 as const;
@@ -1484,10 +1484,27 @@ function pragmaValue(database: DatabaseSync, statement: string, key: string): un
   return row?.[key];
 }
 
-function readWriteDatabaseUrl(pathValue: string): URL {
-  const databaseUrl = pathToFileURL(pathValue);
-  databaseUrl.searchParams.set("mode", "rw");
-  return databaseUrl;
+function* iterateRows(
+  database: DatabaseSync,
+  statement: string,
+  ...parameters: SQLInputValue[]
+): IterableIterator<unknown> {
+  const prepared = database.prepare(statement);
+  // Node 22.13's iterator does not reliably retain its StatementSync wrapper.
+  // Keep the statement strongly reachable until iteration completes or closes.
+  ACTIVE_SQLITE_ITERATION_STATEMENTS.add(prepared);
+  try {
+    yield* prepared.iterate(...parameters);
+  } finally {
+    ACTIVE_SQLITE_ITERATION_STATEMENTS.delete(prepared);
+  }
+}
+
+function readWriteDatabasePath(pathValue: string): string {
+  // Node 22.13's node:sqlite binding accepts filesystem strings here, but not URL
+  // objects. The caller already requires an existing verified inode and validates
+  // the opened database path and inode immediately after DatabaseSync returns.
+  return pathValue;
 }
 
 function verifyOpenedDatabasePath(
@@ -1590,7 +1607,7 @@ function initializeDatabase(
     );
     assertVerifiedHandleEntry(databaseHandle, "initialization_failed");
     assertVerifiedHandleEntry(stagingHandle, "initialization_failed");
-    database = new DatabaseSync(readWriteDatabaseUrl(pathValue), {
+    database = new DatabaseSync(readWriteDatabasePath(pathValue), {
       allowExtension: false,
       enableDoubleQuotedStringLiterals: false,
     });
@@ -3535,14 +3552,14 @@ function findLatestPreview(
   database: DatabaseSync,
   managementTenantId: string,
 ): ModulePreviewRecord | null {
-  const rows = database
-    .prepare(
-      `${PREVIEW_SELECT.replace(
-        "WHERE management_tenant_id = ? AND preview_ref = ?",
-        "WHERE management_tenant_id = ? ORDER BY preview_ref",
-      )}`,
-    )
-    .iterate(managementTenantId) as Iterable<unknown>;
+  const rows = iterateRows(
+    database,
+    `${PREVIEW_SELECT.replace(
+      "WHERE management_tenant_id = ? AND preview_ref = ?",
+      "WHERE management_tenant_id = ? ORDER BY preview_ref",
+    )}`,
+    managementTenantId,
+  );
   return latestByInstant(
     rows,
     decodePreviewRow,
@@ -3555,14 +3572,14 @@ function findLatestApproval(
   database: DatabaseSync,
   managementTenantId: string,
 ): ModuleApprovalRecord | null {
-  const rows = database
-    .prepare(
-      `${APPROVAL_SELECT.replace(
-        "WHERE management_tenant_id = ? AND approval_id = ?",
-        "WHERE management_tenant_id = ? ORDER BY approval_id",
-      )}`,
-    )
-    .iterate(managementTenantId) as Iterable<unknown>;
+  const rows = iterateRows(
+    database,
+    `${APPROVAL_SELECT.replace(
+      "WHERE management_tenant_id = ? AND approval_id = ?",
+      "WHERE management_tenant_id = ? ORDER BY approval_id",
+    )}`,
+    managementTenantId,
+  );
   return latestByInstant(
     rows,
     decodeApprovalRow,
@@ -3575,14 +3592,14 @@ function findLatestReadback(
   database: DatabaseSync,
   managementTenantId: string,
 ): ModuleReadbackRecord | null {
-  const rows = database
-    .prepare(
-      `${READBACK_SELECT.replace(
-        "WHERE management_tenant_id = ? AND release_id = ?",
-        "WHERE management_tenant_id = ? ORDER BY release_id",
-      )}`,
-    )
-    .iterate(managementTenantId) as Iterable<unknown>;
+  const rows = iterateRows(
+    database,
+    `${READBACK_SELECT.replace(
+      "WHERE management_tenant_id = ? AND release_id = ?",
+      "WHERE management_tenant_id = ? ORDER BY release_id",
+    )}`,
+    managementTenantId,
+  );
   return latestByInstant(
     rows,
     decodeReadbackRow,
@@ -5211,17 +5228,18 @@ function verifyReleaseRecoverySemantics(
   release: ModuleReleaseRecord,
 ): void {
   const readback = findReadback(database, managementTenantId, release.releaseId);
-  const idempotencyRows = database
-    .prepare(
-      `SELECT management_tenant_id, action, idempotency_key, request_hash, actor_ref, status,
-              domain_record_ref, final_result_json, created_at, expires_at
-       FROM module_control_idempotency
-       WHERE management_tenant_id = ? AND domain_record_ref = ?
-         AND action IN ('deployments.publish', 'deployments.reconcile')
-         AND status IN ('domain_committed', 'completed')
-       ORDER BY created_at, action, idempotency_key`,
-    )
-    .iterate(managementTenantId, release.releaseId) as Iterable<unknown>;
+  const idempotencyRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, action, idempotency_key, request_hash, actor_ref, status,
+            domain_record_ref, final_result_json, created_at, expires_at
+     FROM module_control_idempotency
+     WHERE management_tenant_id = ? AND domain_record_ref = ?
+       AND action IN ('deployments.publish', 'deployments.reconcile')
+       AND status IN ('domain_committed', 'completed')
+     ORDER BY created_at, action, idempotency_key`,
+    managementTenantId,
+    release.releaseId,
+  );
   let hasPublishRecovery = false;
   for (const row of idempotencyRows) {
     const record = decodeIdempotencyRow(row);
@@ -5497,9 +5515,12 @@ function idempotencyDomainTimestamp(
         record.idempotencyKey,
       );
       if (attempt !== null) return attempt.claimedAt;
-      const rows = database
-        .prepare(EVENT_SELECT)
-        .iterate(managementTenantId, record.domainRecordRef) as Iterable<unknown>;
+      const rows = iterateRows(
+        database,
+        EVENT_SELECT,
+        managementTenantId,
+        record.domainRecordRef,
+      );
       for (const row of rows) {
         const event = decodeEventRow(row);
         if (
@@ -5599,9 +5620,7 @@ function hasHistoricalReadbackEvent(
   status: "pending" | "verified" | "mismatch" | "unknown",
   reasonCodes?: readonly string[],
 ): boolean {
-  const rows = database
-    .prepare(EVENT_SELECT)
-    .iterate(managementTenantId, releaseId) as Iterable<unknown>;
+  const rows = iterateRows(database, EVENT_SELECT, managementTenantId, releaseId);
   for (const row of rows) {
     const event = decodeEventRow(row);
     if (
@@ -6348,15 +6367,14 @@ function verifyEventGraph(
 ): void {
   const authorities = new Map<string, PersistedIdempotencyAuthority>();
   const lifecycleCounts = new Map<string, ControlEventLifecycleCounts>();
-  const idempotencyRows = database
-    .prepare(
-      `SELECT management_tenant_id, action, idempotency_key, request_hash,
-              actor_ref, status, domain_record_ref, final_result_json,
-              created_at, expires_at
-       FROM module_control_idempotency
-       ORDER BY management_tenant_id, action, idempotency_key`,
-    )
-    .iterate() as Iterable<unknown>;
+  const idempotencyRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, action, idempotency_key, request_hash,
+            actor_ref, status, domain_record_ref, final_result_json,
+            created_at, expires_at
+     FROM module_control_idempotency
+     ORDER BY management_tenant_id, action, idempotency_key`,
+  );
   for (const row of idempotencyRows) {
     const authority = decodeIdempotencyAuthorityRow(row);
     verifyRecordTenant(authority.record.managementTenantId, managementTenantId);
@@ -6390,15 +6408,14 @@ function verifyEventGraph(
       attemptTerminalActors.set(sequence, attempt.finalizedByActorRef);
     }
   }
-  const eventRows = database
-    .prepare(
-      `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
-              idempotency_key, request_hash, object_ref, status,
-              reason_codes_json, payload_json, occurred_at
-       FROM module_control_events
-       ORDER BY sequence`,
-    )
-    .iterate() as Iterable<unknown>;
+  const eventRows = iterateRows(
+    database,
+    `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
+            idempotency_key, request_hash, object_ref, status,
+            reason_codes_json, payload_json, occurred_at
+     FROM module_control_events
+     ORDER BY sequence`,
+  );
   let expectedSequence = 1;
   let previousEvent: ControlEventRecord | null = null;
   for (const row of eventRows) {
@@ -6477,14 +6494,13 @@ function verifyEventGraph(
       repositoryError("invalid_state");
     }
   };
-  const registrationRows = database
-    .prepare(
-      `SELECT management_tenant_id, module_id, version, descriptor_digest,
-              evidence_level, production_eligible, evidence_refs_json,
-              registered_by_actor_ref, registered_at
-       FROM module_registrations`,
-    )
-    .iterate() as Iterable<unknown>;
+  const registrationRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, module_id, version, descriptor_digest,
+            evidence_level, production_eligible, evidence_refs_json,
+            registered_by_actor_ref, registered_at
+     FROM module_registrations`,
+  );
   for (const row of registrationRows) {
     const registration = decodeRegistrationRow(row);
     requireOneDomainEvent(
@@ -6492,42 +6508,46 @@ function verifyEventGraph(
       `registration:${registration.moduleId}:${registration.version}:${registration.descriptorDigest}`,
     );
   }
-  const previewRows = database
-    .prepare(PREVIEW_SELECT.replace(
+  const previewRows = iterateRows(
+    database,
+    PREVIEW_SELECT.replace(
       "WHERE management_tenant_id = ? AND preview_ref = ?",
       "",
-    ))
-    .iterate() as Iterable<unknown>;
+    ),
+  );
   for (const row of previewRows) {
     const preview = decodePreviewRow(row);
     requireOneDomainEvent("preview", preview.previewRef);
   }
-  const approvalRows = database
-    .prepare(APPROVAL_SELECT.replace(
+  const approvalRows = iterateRows(
+    database,
+    APPROVAL_SELECT.replace(
       "WHERE management_tenant_id = ? AND approval_id = ?",
       "",
-    ))
-    .iterate() as Iterable<unknown>;
+    ),
+  );
   for (const row of approvalRows) {
     const approval = decodeApprovalRow(row);
     requireOneDomainEvent("approval", approval.approvalId);
   }
-  const releaseRows = database
-    .prepare(RELEASE_SELECT.replace(
+  const releaseRows = iterateRows(
+    database,
+    RELEASE_SELECT.replace(
       "WHERE management_tenant_id = ? AND release_id = ?",
       "",
-    ))
-    .iterate() as Iterable<unknown>;
+    ),
+  );
   for (const row of releaseRows) {
     const release = decodeReleaseRow(row);
     requireOneDomainEvent("release", release.releaseId);
   }
-  const readbackRows = database
-    .prepare(READBACK_SELECT.replace(
+  const readbackRows = iterateRows(
+    database,
+    READBACK_SELECT.replace(
       "WHERE management_tenant_id = ? AND release_id = ?",
       "",
-    ))
-    .iterate() as Iterable<unknown>;
+    ),
+  );
   for (const row of readbackRows) {
     const readback = decodeReadbackRow(row);
     const attempt =
@@ -6547,15 +6567,14 @@ function verifyRepositorySemantics(
   database: DatabaseSync,
   managementTenantId: string,
 ): void {
-  const registrationRows = database
-    .prepare(
-      `SELECT management_tenant_id, module_id, version, descriptor_digest,
-              evidence_level, production_eligible, evidence_refs_json,
-              registered_by_actor_ref, registered_at
-       FROM module_registrations
-       ORDER BY management_tenant_id, module_id, version, descriptor_digest`,
-    )
-    .iterate() as Iterable<unknown>;
+  const registrationRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, module_id, version, descriptor_digest,
+            evidence_level, production_eligible, evidence_refs_json,
+            registered_by_actor_ref, registered_at
+     FROM module_registrations
+     ORDER BY management_tenant_id, module_id, version, descriptor_digest`,
+  );
   for (const row of registrationRows) {
     verifyRecordTenant(
       decodeRegistrationRow(row).managementTenantId,
@@ -6563,14 +6582,13 @@ function verifyRepositorySemantics(
     );
   }
 
-  const eventRows = database
-    .prepare(
-      `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
-              object_ref, status, reason_codes_json, payload_json, occurred_at
-       FROM module_control_events
-       ORDER BY sequence`,
-    )
-    .iterate() as Iterable<unknown>;
+  const eventRows = iterateRows(
+    database,
+    `SELECT sequence, management_tenant_id, event_id, actor_ref, action,
+            object_ref, status, reason_codes_json, payload_json, occurred_at
+     FROM module_control_events
+     ORDER BY sequence`,
+  );
   let expectedSequence = 1;
   for (const row of eventRows) {
     const event = decodeEventRow(row);
@@ -6579,44 +6597,41 @@ function verifyRepositorySemantics(
     expectedSequence += 1;
   }
 
-  const previewRows = database
-    .prepare(
-      `SELECT management_tenant_id, preview_ref, canonical_hash, intent,
-              base_release_id, base_revision, inventory_refs_json,
-              desired_modules_json, diff_json, validation_json, creator_actor_ref,
-              created_at, expires_at, consumed, target_release_id
-       FROM module_previews
-       ORDER BY management_tenant_id, created_at, preview_ref`,
-    )
-    .iterate() as Iterable<unknown>;
+  const previewRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, preview_ref, canonical_hash, intent,
+            base_release_id, base_revision, inventory_refs_json,
+            desired_modules_json, diff_json, validation_json, creator_actor_ref,
+            created_at, expires_at, consumed, target_release_id
+     FROM module_previews
+     ORDER BY management_tenant_id, created_at, preview_ref`,
+  );
   for (const row of previewRows) {
     verifyPreviewSemantics(database, managementTenantId, decodePreviewRow(row));
   }
 
-  const approvalRows = database
-    .prepare(
-      `SELECT management_tenant_id, approval_id, preview_ref, decision,
-              preview_canonical_hash, base_release_id, base_revision,
-              inventory_digest_set_json, expires_at, reason_code,
-              approver_actor_ref, decided_at, consumed
-       FROM module_approvals
-       ORDER BY management_tenant_id, decided_at, approval_id`,
-    )
-    .iterate() as Iterable<unknown>;
+  const approvalRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, approval_id, preview_ref, decision,
+            preview_canonical_hash, base_release_id, base_revision,
+            inventory_digest_set_json, expires_at, reason_code,
+            approver_actor_ref, decided_at, consumed
+     FROM module_approvals
+     ORDER BY management_tenant_id, decided_at, approval_id`,
+  );
   for (const row of approvalRows) {
     verifyApprovalSemantics(database, managementTenantId, decodeApprovalRow(row));
   }
 
-  const releaseRows = database
-    .prepare(
-      `SELECT management_tenant_id, release_id, revision, desired_modules_json,
-              previous_release_id, preview_ref, approval_id, publisher_actor_ref,
-              status, created_at, published_at, readback_ref, reason_codes_json,
-              superseded_by_release_id
-       FROM module_releases
-       ORDER BY management_tenant_id, revision`,
-    )
-    .iterate() as Iterable<unknown>;
+  const releaseRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, release_id, revision, desired_modules_json,
+            previous_release_id, preview_ref, approval_id, publisher_actor_ref,
+            status, created_at, published_at, readback_ref, reason_codes_json,
+            superseded_by_release_id
+     FROM module_releases
+     ORDER BY management_tenant_id, revision`,
+  );
   let previousRelease: ModuleReleaseRecord | null = null;
   let unresolvedCount = 0;
   let activeCount = 0;
@@ -6648,27 +6663,25 @@ function verifyRepositorySemantics(
   if (unresolvedCount > 1 || activeCount > 1) repositoryError("invalid_state");
   if (previousRelease?.status === "superseded") repositoryError("invalid_state");
 
-  const readbackRows = database
-    .prepare(
-      `SELECT management_tenant_id, release_id, attempt_id, readback_ref, revision,
-              applied_release_id, applied_revision, applied_modules_json, status,
-              reason_codes_json, checked_at
-       FROM module_readbacks
-       ORDER BY management_tenant_id, checked_at, release_id`,
-    )
-    .iterate() as Iterable<unknown>;
+  const readbackRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, release_id, attempt_id, readback_ref, revision,
+            applied_release_id, applied_revision, applied_modules_json, status,
+            reason_codes_json, checked_at
+     FROM module_readbacks
+     ORDER BY management_tenant_id, checked_at, release_id`,
+  );
   for (const row of readbackRows) {
     verifyReadbackSemantics(database, managementTenantId, decodeReadbackRow(row));
   }
 
-  const idempotencyRows = database
-    .prepare(
-      `SELECT management_tenant_id, action, idempotency_key, request_hash, actor_ref, status,
-              domain_record_ref, final_result_json, created_at, expires_at
-       FROM module_control_idempotency
-       ORDER BY management_tenant_id, created_at, action, idempotency_key`,
-    )
-    .iterate() as Iterable<unknown>;
+  const idempotencyRows = iterateRows(
+    database,
+    `SELECT management_tenant_id, action, idempotency_key, request_hash, actor_ref, status,
+            domain_record_ref, final_result_json, created_at, expires_at
+     FROM module_control_idempotency
+     ORDER BY management_tenant_id, created_at, action, idempotency_key`,
+  );
   for (const row of idempotencyRows) {
     verifyIdempotencySemantics(database, managementTenantId, decodeIdempotencyRow(row));
   }
@@ -7197,7 +7210,7 @@ function openSqliteControlStoreInternal(
 
   let database: DatabaseSync | undefined;
   try {
-    database = new DatabaseSync(readWriteDatabaseUrl(paths.controlDbPath), {
+    database = new DatabaseSync(readWriteDatabasePath(paths.controlDbPath), {
       allowExtension: false,
       enableDoubleQuotedStringLiterals: false,
     });

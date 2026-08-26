@@ -669,11 +669,10 @@ function rewriteTableSql(
 ): void {
   const database = new DatabaseSync(controlDbPath(applicationRoot));
   try {
-    (
-      database as DatabaseSync & {
-        enableDefensive: (enabled: boolean) => void;
-      }
-    ).enableDefensive(false);
+    const defensiveDatabase = database as DatabaseSync & {
+      enableDefensive?: (enabled: boolean) => void;
+    };
+    defensiveDatabase.enableDefensive?.(false);
     database.exec("PRAGMA writable_schema = ON");
     const row = database
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
