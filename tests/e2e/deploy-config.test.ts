@@ -60,6 +60,36 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
   });
 
+  it("copies every registered Agent source into the image build stage", () => {
+    const dockerfile = read("deploy/Dockerfile");
+    const registry = JSON.parse(read("docs/agent/index.json")) as {
+      readonly standards: readonly { readonly path: string }[];
+      readonly profiles: readonly { readonly path: string }[];
+    };
+    const buildCopies = [...dockerfile.matchAll(/^COPY\s+(?!--from=)(\S+)\s+(\S+)$/gm)].map(
+      (match) => ({
+        source: match[1]!.replace(/^\.\//, "").replace(/\/$/, ""),
+        destination: match[2]!.replace(/^\.\//, "").replace(/\/$/, ""),
+      }),
+    );
+    const registeredPaths = [
+      "docs/agent/index.json",
+      ...registry.standards.map(({ path }) => path),
+      ...registry.profiles.map(({ path }) => path),
+    ];
+
+    for (const registeredPath of registeredPaths) {
+      expect(
+        buildCopies.some(
+          ({ source, destination }) =>
+            source === destination &&
+            (registeredPath === source || registeredPath.startsWith(`${source}/`)),
+        ),
+        `deploy/Dockerfile does not copy registered Agent source: ${registeredPath}`,
+      ).toBe(true);
+    }
+  });
+
   it("wires the production JWKS verifier and durable state provider", () => {
     const start = read("src/logistics_mcp/server/start.ts");
     const riskCustomsRuntime = read("src/logistics_mcp/adapters/customs/riskcustoms-runtime.ts");
