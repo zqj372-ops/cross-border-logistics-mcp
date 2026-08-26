@@ -1,0 +1,343 @@
+const CONTROL_API_ROOT = "/admin/api/v1/control";
+export const CONTROL_SCHEMA_VERSION = "2026-08-22.v1";
+const CONTROL_STATE_KEYS = [
+  "kind",
+  "activation",
+  "inventory_modules",
+  "latest_preview",
+  "latest_approval",
+  "latest_readback",
+  "release_history",
+  "events",
+  "events_truncated",
+];
+const MODULE_REF_KEYS = ["module_id", "version", "descriptor_digest"];
+const INVENTORY_MODULE_KEYS = [
+  "module_id",
+  "version",
+  "risk_level",
+  "descriptor_digest",
+  "evidence_level",
+  "production_eligible",
+  "tool_names",
+  "standard_ids",
+  "registration",
+];
+const ACTIVATION_KEYS = ["state", "release_id", "revision", "active_modules"];
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.+:_-]{0,63}$/;
+const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+const RISK_LEVELS = new Set(["T0", "T1", "T2", "T3"]);
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function exactKeys(value, keys, label) {
+  if (!isRecord(value)) throw new Error(`${label} 必须是对象。`);
+  const expected = new Set(keys);
+  const actual = Object.keys(value);
+  if (actual.some((key) => !expected.has(key)) || keys.some((key) => !Object.hasOwn(value, key))) {
+    throw new Error(`${label} 字段不完整或包含未知字段。`);
+  }
+}
+
+function nonEmptyString(value, label, pattern) {
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} 必须是非空文本。`);
+  if (pattern && !pattern.test(value)) throw new Error(`${label} 格式无效。`);
+  return value;
+}
+
+function positiveInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} 必须是正整数。`);
+  return value;
+}
+
+function nonNegativeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} 必须是非负整数。`);
+  return value;
+}
+
+function validateModuleRef(value, label) {
+  exactKeys(value, MODULE_REF_KEYS, label);
+  nonEmptyString(value.module_id, `${label}.module_id`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.version, `${label}.version`, VERSION_PATTERN);
+  nonEmptyString(value.descriptor_digest, `${label}.descriptor_digest`, DIGEST_PATTERN);
+  return value;
+}
+
+function validateModuleRefs(value, label, allowEmpty = true) {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.length > 64) {
+    throw new Error(`${label} 必须是 0 到 64 项的模块数组。`);
+  }
+  const logicalKeys = new Set();
+  value.forEach((item, index) => {
+    validateModuleRef(item, `${label}[${index}]`);
+    const logicalKey = `${item.module_id}\u0000${item.version}`;
+    if (logicalKeys.has(logicalKey)) throw new Error(`${label} 不得包含重复模块。`);
+    logicalKeys.add(logicalKey);
+  });
+  return value;
+}
+
+function validateActivation(value) {
+  exactKeys(value, ACTIVATION_KEYS, "activation");
+  if (value.state === "inactive") {
+    if (value.release_id !== null || value.revision !== 0) {
+      throw new Error("inactive activation 的 release_id/revision 无效。");
+    }
+    validateModuleRefs(value.active_modules, "activation.active_modules");
+    if (value.active_modules.length !== 0) throw new Error("inactive activation 不得包含 active_modules。");
+    return value;
+  }
+  if (value.state !== "active") throw new Error("activation.state 无效。");
+  nonEmptyString(value.release_id, "activation.release_id", IDENTIFIER_PATTERN);
+  positiveInteger(value.revision, "activation.revision");
+  validateModuleRefs(value.active_modules, "activation.active_modules", false);
+  return value;
+}
+
+function validateRegistration(value, label) {
+  if (value === null) return value;
+  exactKeys(value, ["registered_by_actor_ref", "registered_at"], label);
+  nonEmptyString(value.registered_by_actor_ref, `${label}.registered_by_actor_ref`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.registered_at, `${label}.registered_at`, RFC3339_PATTERN);
+  return value;
+}
+
+function validateInventoryModule(value, index) {
+  const label = `inventory_modules[${index}]`;
+  exactKeys(value, INVENTORY_MODULE_KEYS, label);
+  nonEmptyString(value.module_id, `${label}.module_id`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.version, `${label}.version`, VERSION_PATTERN);
+  if (!RISK_LEVELS.has(value.risk_level)) throw new Error(`${label}.risk_level 无效。`);
+  nonEmptyString(value.descriptor_digest, `${label}.descriptor_digest`, DIGEST_PATTERN);
+  if (value.evidence_level !== "local_build") throw new Error(`${label}.evidence_level 必须是 local_build。`);
+  if (value.production_eligible !== false) throw new Error(`${label}.production_eligible 必须是 false。`);
+  if (!Array.isArray(value.tool_names) || value.tool_names.length > 128 || !value.tool_names.every((item) => typeof item === "string" && item !== "")) {
+    throw new Error(`${label}.tool_names 格式无效。`);
+  }
+  if (!Array.isArray(value.standard_ids) || value.standard_ids.length > 64 || !value.standard_ids.every((item) => typeof item === "string" && item !== "")) {
+    throw new Error(`${label}.standard_ids 格式无效。`);
+  }
+  validateRegistration(value.registration, `${label}.registration`);
+  return value;
+}
+
+function validateOptionalRecord(value, label) {
+  if (value !== null && !isRecord(value)) throw new Error(`${label} 必须是对象或 null。`);
+  return value;
+}
+
+export function validateControlState(value) {
+  exactKeys(value, CONTROL_STATE_KEYS, "control_state");
+  if (value.kind !== "control_state") throw new Error("control_state.kind 无效。");
+  validateActivation(value.activation);
+  if (!Array.isArray(value.inventory_modules) || value.inventory_modules.length > 64) {
+    throw new Error("inventory_modules 必须是 0 到 64 项的数组。");
+  }
+  const inventoryKeys = new Set();
+  value.inventory_modules.forEach((item, index) => {
+    validateInventoryModule(item, index);
+    const key = `${item.module_id}\u0000${item.version}`;
+    if (inventoryKeys.has(key)) throw new Error("inventory_modules 不得包含重复模块。");
+    inventoryKeys.add(key);
+  });
+  validateOptionalRecord(value.latest_preview, "latest_preview");
+  validateOptionalRecord(value.latest_approval, "latest_approval");
+  validateOptionalRecord(value.latest_readback, "latest_readback");
+  if (!Array.isArray(value.release_history) || value.release_history.length > 64) {
+    throw new Error("release_history 必须是有界数组。");
+  }
+  if (!Array.isArray(value.events) || value.events.length > 256 || !value.events.every(isRecord)) {
+    throw new Error("events 必须是有界对象数组。");
+  }
+  if (typeof value.events_truncated !== "boolean") throw new Error("events_truncated 必须是布尔值。");
+  return value;
+}
+
+export function abbreviateDigest(value, visiblePrefix = 13, visibleSuffix = 8) {
+  if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) return "未返回";
+  if (value.length <= visiblePrefix + visibleSuffix + 1) return value;
+  return `${value.slice(0, visiblePrefix)}…${value.slice(-visibleSuffix)}`;
+}
+
+export function redactReference(value, fallback = "未返回") {
+  if (typeof value !== "string" || value.trim() === "") return fallback;
+  return "已记录（具体内容隐藏）";
+}
+
+export function deriveReleaseStages(state) {
+  validateControlState(state);
+  const preview = state.latest_preview;
+  const approval = state.latest_approval;
+  const activation = state.activation;
+  const readback = state.latest_readback;
+  const registeredModules = state.inventory_modules.filter((module) => module.registration !== null);
+  return [
+    {
+      key: "registration",
+      label: "登记制品",
+      status: registeredModules.length === 0
+        ? (state.inventory_modules.length === 0 ? "empty" : "pending")
+        : registeredModules.length === state.inventory_modules.length ? "complete" : "pending",
+    },
+    {
+      key: "preview",
+      label: "生成预览",
+      status: preview === null ? "empty" : preview.consumed === true ? "blocked" : "complete",
+    },
+    {
+      key: "approval",
+      label: "双人审批",
+      status: approval === null
+        ? "empty"
+        : approval.decision === "approve" ? "complete" : approval.decision === "reject" ? "blocked" : "pending",
+    },
+    {
+      key: "publish_readback",
+      label: "发布读回",
+      status: readback?.status === "verified" && activation.state === "active"
+        ? "complete"
+        : readback?.status === "manual_review" || readback?.status === "mismatch" ? "manual_review"
+          : readback?.status === "pending" ? "pending"
+            : readback?.status === "unknown" ? "unavailable" : "empty",
+    },
+  ];
+}
+
+function moduleKey(module) {
+  return `${module.module_id}\u0000${module.version}`;
+}
+
+export function deriveDesiredDraftDiff(currentModules, desiredModules) {
+  validateModuleRefs(currentModules, "current_modules");
+  validateModuleRefs(desiredModules, "desired_modules");
+  const current = new Map(currentModules.map((module) => [moduleKey(module), module]));
+  const desired = new Map(desiredModules.map((module) => [moduleKey(module), module]));
+  return {
+    added: desiredModules.filter((module) => !current.has(moduleKey(module))),
+    removed: currentModules.filter((module) => !desired.has(moduleKey(module))),
+    retained: desiredModules.filter((module) => current.has(moduleKey(module))),
+  };
+}
+
+export function isFixtureIdentityVisible(search = "") {
+  if (typeof search !== "string") return false;
+  return new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).get("fixture") === "1";
+}
+
+export const FIXTURE_IDENTITIES = Object.freeze([
+  Object.freeze({ actor: "local_operator", label: "本地演示申请人", role: "admin", token: "local-fixture-token" }),
+  Object.freeze({ actor: "local_approver", label: "本地演示审批人", role: "admin", token: "local-fixture-approver-token" }),
+]);
+
+export function actionAvailability({ state, draftModules, actorRole, actorRef, creatorActorRef, environment = "local" }) {
+  validateControlState(state);
+  validateModuleRefs(draftModules, "draft_modules");
+  const isAdmin = actorRole === "admin";
+  const preview = state.latest_preview;
+  const approval = state.latest_approval;
+  const readback = state.latest_readback;
+  const localWrite = environment === "local" || environment === "fixture";
+  const distinctApprover = creatorActorRef === undefined || actorRef === undefined || actorRef !== creatorActorRef;
+  const hasPendingRelease = state.release_history.some((release) => release.status === "pending" || release.status === "published_pending_readback" || release.status === "manual_review");
+  const usablePreview = preview !== null && preview.consumed !== true;
+  return {
+    saveDraft: true,
+    register: isAdmin && localWrite,
+    generatePreview: isAdmin && localWrite,
+    submitApproval: isAdmin && localWrite && usablePreview && distinctApprover,
+    publish: isAdmin && localWrite && usablePreview && approval?.decision === "approve" && approval?.consumed !== true,
+    reconcile: isAdmin && localWrite && (readback === null ? hasPendingRelease : readback.status !== "verified"),
+    rollback: isAdmin && localWrite && state.release_history.length > 0,
+  };
+}
+
+export class ControlPlaneError extends Error {
+  constructor(message, { status = "unavailable", reasonCodes = [], data = null } = {}) {
+    super(message);
+    this.name = "ControlPlaneError";
+    this.status = status;
+    this.reasonCodes = Array.isArray(reasonCodes) ? reasonCodes.filter((item) => typeof item === "string") : [];
+    this.data = data;
+  }
+}
+
+function responseData(envelope, fallbackStatus, responseOk = true) {
+  if (!isRecord(envelope)) {
+    throw new ControlPlaneError("控制面返回格式无效。", { status: fallbackStatus });
+  }
+  const status = responseOk && typeof envelope.status === "string" ? envelope.status : fallbackStatus;
+  const reasons = Array.isArray(envelope.reason_codes) ? envelope.reason_codes : [];
+  if (status !== "success") {
+    throw new ControlPlaneError("控制面操作未完成。", {
+      status,
+      reasonCodes: reasons,
+      data: isRecord(envelope.data) ? envelope.data : null,
+    });
+  }
+  return envelope.data;
+}
+
+export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePath = CONTROL_API_ROOT } = {}) {
+  if (typeof fetchImpl !== "function") throw new TypeError("需要提供 fetch 实现。");
+  const root = typeof basePath === "string" && basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
+  let bearerToken = "";
+
+  async function request(path, { method = "GET", body, idempotencyKey } = {}) {
+    const headers = new Headers({ accept: "application/json" });
+    if (bearerToken !== "") headers.set("authorization", `Bearer ${bearerToken}`);
+    if (body !== undefined) {
+      headers.set("content-type", "application/json");
+    }
+    if (idempotencyKey !== undefined) headers.set("idempotency-key", idempotencyKey);
+    let response;
+    try {
+      response = await fetchImpl(`${root}/${path.replace(/^\//, "")}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        credentials: "same-origin",
+      });
+    } catch {
+      throw new ControlPlaneError("控制面请求不可用。", { status: "unavailable" });
+    }
+    let envelope;
+    try {
+      envelope = await response.json();
+    } catch {
+      throw new ControlPlaneError("控制面返回格式无效。", { status: "unavailable" });
+    }
+    return responseData(envelope, response.ok ? "unavailable" : "blocked", response.ok);
+  }
+
+  return Object.freeze({
+    setToken(token) {
+      if (typeof token !== "string" || token.trim() === "") throw new TypeError("token 必须是非空文本。");
+      bearerToken = token;
+    },
+    clearToken() {
+      bearerToken = "";
+    },
+    async getControlState() {
+      return validateControlState(await request("state"));
+    },
+    async registerPackage(payload, idempotencyKey) {
+      return request("packages/register", { method: "POST", body: payload, idempotencyKey });
+    },
+    async createPreview(payload, idempotencyKey) {
+      return request("deployments/preview", { method: "POST", body: payload, idempotencyKey });
+    },
+    async decideApproval(payload, idempotencyKey) {
+      return request("approvals", { method: "POST", body: payload, idempotencyKey });
+    },
+    async publish(payload, idempotencyKey) {
+      return request("deployments/publish", { method: "POST", body: payload, idempotencyKey });
+    },
+    async reconcile(payload, idempotencyKey) {
+      return request("deployments/reconcile", { method: "POST", body: payload, idempotencyKey });
+    },
+  });
+}

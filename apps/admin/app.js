@@ -1,3 +1,17 @@
+import {
+  CONTROL_SCHEMA_VERSION,
+  FIXTURE_IDENTITIES,
+  ControlPlaneError,
+  abbreviateDigest,
+  actionAvailability,
+  createControlPlaneClient,
+  deriveDesiredDraftDiff,
+  deriveReleaseStages,
+  isFixtureIdentityVisible,
+  redactReference,
+  validateControlState,
+} from "./control-plane.js";
+
 const SNAPSHOT_OBJECT_FIELDS = ["tenant", "config", "actor", "health", "approvals"];
 const SNAPSHOT_ARRAY_FIELDS = ["clients", "roles", "tools", "sources", "audit"];
 const SNAPSHOT_FIELD_LABELS = {
@@ -265,9 +279,14 @@ const VIEW_META = {
     description: "先看网关是否在线、哪些依赖可用，以及当前配置为什么还不能发布。",
   },
   clients: {
-    title: "客户端接入",
+    title: "Agent 接入",
     eyebrow: "接入边界",
     description: "管理对话助手、开发助手和企业助手的身份信息；只显示登记状态，不显示原始凭证。",
+  },
+  modules: {
+    title: "模块中心",
+    eyebrow: "模块控制面",
+    description: "登记已部署模块，预览本地草稿，经过审批后发布并核对运行时读回。",
   },
   tools: {
     title: "工具权限",
@@ -306,14 +325,27 @@ const state = isBrowser
       roleFilter: "all",
       localDraft: null,
       architectureSelection: null,
+      controlState: null,
+      controlStateLoading: false,
+      controlStatus: "needs_input",
+      controlError: null,
+      controlActor: null,
+      controlDraftModules: null,
+      controlDraftDirty: false,
+      controlSelection: null,
+      controlNotice: null,
     }
   : null;
+
+const controlClient = isBrowser ? createControlPlaneClient() : null;
 
 const content = isBrowser ? document.querySelector("#content") : null;
 const liveRegion = isBrowser ? document.querySelector("#live-region") : null;
 const main = isBrowser ? document.querySelector("#main-content") : null;
 const dialog = isBrowser ? document.querySelector("#detail-dialog") : null;
+const identityDialog = isBrowser ? document.querySelector("#identity-dialog") : null;
 let dialogTrigger = null;
+let identityDialogTrigger = null;
 
 function getViewFromHash() {
   const candidate = window.location.hash.slice(1);
@@ -684,6 +716,214 @@ function renderAudit(data) {
     <section class="panel" aria-labelledby="audit-rule-title"><div class="card-head"><div><h2 id="audit-rule-title">日志最小化</h2><p>审计关联足够追责，但不把客户内容变成日志副本。</p></div>${statusMarkup("ready", "脱敏摘要")}</div><div class="state-guide"><div class="state-guide-item"><strong>保留</strong><p>租户、操作人、客户端、工具、版本、状态、原因代码和追踪号的脱敏关联。</p></div><div class="state-guide-item"><strong>不保留</strong><p>客户地址、报价明细、税务材料全文、原始聊天和凭证。</p></div><div class="state-guide-item"><strong>写入失败</strong><p>审计或读回失败时转人工复核，不报告假成功。</p></div></div></section>`;
 }
 
+const CONTROL_STATUS_META = {
+  complete: { status: "success", label: "已完成", symbol: "✓" },
+  pending: { status: "needs_input", label: "待确认", symbol: "!" },
+  needs_input: { status: "needs_input", label: "需要输入", symbol: "!" },
+  manual_review: { status: "manual_review", label: "人工复核", symbol: "!" },
+  blocked: { status: "blocked", label: "已阻断", symbol: "!" },
+  unavailable: { status: "unavailable", label: "不可用", symbol: "×" },
+  empty: { status: "empty", label: "待处理", symbol: "—" },
+};
+
+const CONTROL_VALIDATION_LABELS = {
+  desired_modules_valid: "期望模块集合",
+  inventory_modules_valid: "登记模块集合",
+  diff_valid: "差异结构",
+  base_release_valid: "基线版本",
+  release_target_valid: "回滚目标",
+  preview_not_expired: "预览有效期",
+};
+
+function controlStatusMarkup(status, label) {
+  const meta = CONTROL_STATUS_META[status] ?? CONTROL_STATUS_META.empty;
+  return `<span class="status-pill status-${meta.status}"><span class="status-icon" aria-hidden="true">${meta.symbol}</span>${escapeHtml(label ?? meta.label)}</span>`;
+}
+
+function controlModuleKey(module) {
+  return `${module.module_id}\u0000${module.version}`;
+}
+
+function controlModuleRef(module) {
+  return {
+    module_id: module.module_id,
+    version: module.version,
+    descriptor_digest: module.descriptor_digest,
+  };
+}
+
+function controlModuleFromKey(data, moduleId, version) {
+  return data?.inventory_modules?.find((module) => module.module_id === moduleId && module.version === version) ?? null;
+}
+
+function controlDraftModules(data) {
+  if (Array.isArray(state.controlDraftModules)) return state.controlDraftModules;
+  return Array.isArray(data?.activation?.active_modules) ? data.activation.active_modules.map(controlModuleRef) : [];
+}
+
+function controlSelectedModule(data) {
+  const modules = Array.isArray(data?.inventory_modules) ? data.inventory_modules : [];
+  return modules.find((module) => controlModuleKey(module) === state.controlSelection) ?? modules[0] ?? null;
+}
+
+function controlRuntimeState(module, data) {
+  const readback = data?.latest_readback?.status;
+  if (readback === "mismatch") return ["manual_review", "读回不一致"];
+  if (readback === "unknown") return ["unavailable", "读回未知"];
+  if (readback === "pending") return ["pending", "读回待确认"];
+  const active = Array.isArray(data?.activation?.active_modules) && data.activation.active_modules.some((item) => controlModuleKey(item) === controlModuleKey(module));
+  if (readback !== "verified") return [active ? "pending" : "empty", active ? "等待精确读回" : "未激活"];
+  return active ? ["complete", "运行时已读回"] : ["empty", "未激活"];
+}
+
+function controlRegistrationState(module) {
+  return module?.registration === null ? ["pending", "待登记"] : ["complete", "已登记"];
+}
+
+function controlCurrentActorRole() {
+  return state.controlActor?.role ?? "";
+}
+
+function controlActorReference() {
+  return state.controlActor?.actor ?? undefined;
+}
+
+function controlNotice(kind, status, title, detail, label) {
+  state.controlNotice = { kind, status, title, detail, label };
+}
+
+function controlErrorNotice(error, actionLabel) {
+  const status = error instanceof ControlPlaneError && CONTROL_STATUS_META[error.status] ? error.status : "unavailable";
+  const detail = status === "manual_review"
+    ? `${actionLabel}需要人工复核；页面保留服务端状态并重新读取，不把操作显示为成功。`
+    : status === "blocked"
+      ? `${actionLabel}已被服务端阻断；当前没有更新运行时状态。`
+      : `${actionLabel}未完成；当前没有更新运行时状态。`;
+  return { status, detail };
+}
+
+function controlNoticeMarkup() {
+  if (!state.controlNotice) return "";
+  const notice = state.controlNotice;
+  const mapped = CONTROL_STATUS_META[notice.status]?.status ?? "neutral";
+  return `<div class="callout callout-${escapeHtml(notice.kind)}" role="status"><div class="callout-head"><h2>${escapeHtml(notice.title)}</h2><span class="status-pill status-${mapped}">${escapeHtml(notice.label ?? CONTROL_STATUS_META[notice.status]?.label ?? "未返回")}</span></div><p>${escapeHtml(notice.detail)}</p></div>`;
+}
+
+function renderControlIdentityPanel() {
+  const fixture = state.mode === "fixture" && isFixtureIdentityVisible(window.location.search);
+  const actions = fixture
+    ? `<div class="identity-actions"><button class="button button-primary" type="button" data-control-action="fixture-identity" data-identity="local_operator">本地演示申请人</button><button class="button button-secondary" type="button" data-control-action="fixture-identity" data-identity="local_approver">本地演示审批人</button></div><p class="field-help">只有 fixture=1 的本地路径显示演示身份；按钮不显示凭证值。</p>`
+    : `<button class="button button-primary" type="button" data-control-action="open-identity">输入模块作用域身份</button><p class="field-help">身份只保留在本次页面会话的 API client 中；不写入存储、地址栏、页面文本或日志。</p>`;
+  const bound = state.controlActor ? `<p class="bound-identity">当前身份：<strong>${escapeHtml(state.controlActor.label)}</strong>。控制面状态仍需重新读取。</p>` : "";
+  const error = state.controlError ? `<p class="field-help">${escapeHtml(state.controlError)}</p>` : "";
+  return `<section class="panel identity-panel" aria-labelledby="identity-panel-title"><div class="card-head"><div><h2 id="identity-panel-title">绑定控制面身份</h2><p>模块清单、预览和发布状态只接受服务端控制面读回；旧 snapshot 不替代这里的权限边界。</p></div>${controlStatusMarkup(state.controlStatus)}</div>${bound}${error}${actions}</section>`;
+}
+
+function renderControlReleaseRail(data) {
+  let stages = [];
+  try {
+    stages = deriveReleaseStages(data);
+  } catch {
+    stages = [];
+  }
+  return `<section class="panel release-rail-panel" aria-labelledby="release-rail-title"><div class="card-head"><div><h2 id="release-rail-title">发布门槛</h2><p>登记制品 → 生成预览 → 双人审批 → 发布读回</p></div>${data.latest_readback?.status === "verified" ? controlStatusMarkup("complete", "运行时精确读回") : controlStatusMarkup(state.controlStatus)}</div><ol class="release-rail" aria-label="发布阶段">${stages.map((stage) => `<li class="release-rail-item" data-stage-status="${escapeHtml(stage.status)}"><span class="release-rail-marker" aria-hidden="true"></span><div><strong>${escapeHtml(stage.label)}</strong>${controlStatusMarkup(stage.status)}</div></li>`).join("")}</ol></section>`;
+}
+
+function renderControlStatusCards(data) {
+  const inventory = Array.isArray(data.inventory_modules) ? data.inventory_modules : [];
+  const registered = inventory.filter((module) => module.registration !== null).length;
+  const previewPending = data.latest_preview !== null
+    && data.latest_preview?.consumed !== true
+    && data.latest_approval === null;
+  const exactReadback = data.latest_readback?.status === "verified";
+  const active = exactReadback && data.activation?.state === "active" ? data.activation.active_modules.length : 0;
+  const activeLabel = exactReadback && data.activation?.state === "active" ? "运行时已读回" : data.activation?.state === "active" ? "等待精确读回" : "未激活";
+  const activeStatus = exactReadback && data.activation?.state === "active" ? "complete" : data.activation?.state === "active" ? "pending" : "empty";
+  return `<div class="metric-grid control-status-grid" aria-label="模块控制面状态"><article class="metric-card"><div class="metric-top"><span class="metric-label">已登记</span><span class="metric-icon" data-icon="module" aria-hidden="true"></span></div><div class="metric-value">${registered}</div><div class="metric-detail">${controlStatusMarkup(registered === inventory.length && registered > 0 ? "complete" : registered > 0 ? "pending" : "empty", registered > 0 ? "服务端登记记录" : "暂无记录")}</div></article><article class="metric-card"><div class="metric-top"><span class="metric-label">待审批</span><span class="metric-icon" data-icon="approval" aria-hidden="true"></span></div><div class="metric-value">${previewPending ? 1 : 0}</div><div class="metric-detail">${controlStatusMarkup(previewPending ? "pending" : "empty", previewPending ? "等待不同身份审批" : "暂无待审批")}</div></article><article class="metric-card"><div class="metric-top"><span class="metric-label">当前激活</span><span class="metric-icon" data-icon="runtime" aria-hidden="true"></span></div><div class="metric-value">${active}</div><div class="metric-detail">${controlStatusMarkup(activeStatus, activeLabel)}</div></article></div>`;
+}
+
+function renderControlModuleTable(data) {
+  const modules = Array.isArray(data.inventory_modules) ? data.inventory_modules : [];
+  const draft = controlDraftModules(data);
+  if (modules.length === 0) return `<section class="panel" aria-labelledby="module-table-title"><div class="card-head"><div><h2 id="module-table-title">模块清单</h2><p>服务端没有返回部署清单，不根据名称补造模块。</p></div></div>${emptyState("暂无已登记模块", "请先由控制面登记当前部署清单。")}</section>`;
+  return `<section class="panel module-table-panel" aria-labelledby="module-table-title"><div class="card-head"><div><h2 id="module-table-title">模块清单</h2><p>期望启用开关只编辑浏览器草稿；运行时状态只在发布并精确读回后变化。</p></div>${controlStatusMarkup("complete", `${modules.length} 个模块`)}</div><div class="table-scroll module-table-scroll" role="region" aria-label="模块清单表格，可横向滚动" tabindex="0"><table class="data-table module-table"><thead><tr><th scope="col">模块名称</th><th scope="col">版本</th><th scope="col">风险</th><th scope="col">描述摘要</th><th scope="col">登记状态</th><th scope="col">运行时状态</th><th scope="col">期望启用</th></tr></thead><tbody>${modules.map((module) => {
+    const key = controlModuleKey(module);
+    const desired = draft.some((item) => controlModuleKey(item) === key);
+    const selected = key === state.controlSelection;
+    const [registrationStatus, registrationLabel] = controlRegistrationState(module);
+    const [runtimeStatus, runtimeLabel] = controlRuntimeState(module, data);
+    return `<tr class="${selected ? "is-selected" : ""}"><th scope="row"><button class="table-link" type="button" data-control-action="select-module" data-module-id="${escapeHtml(module.module_id)}" data-module-version="${escapeHtml(module.version)}" aria-pressed="${selected}">${escapeHtml(module.module_id)}</button></th><td>${escapeHtml(module.version)}</td><td>${escapeHtml(module.risk_level)}</td><td>${escapeHtml(abbreviateDigest(module.descriptor_digest))}</td><td>${controlStatusMarkup(registrationStatus, registrationLabel)}</td><td>${controlStatusMarkup(runtimeStatus, runtimeLabel)}</td><td><button class="switch" type="button" role="switch" aria-checked="${desired}" aria-label="期望启用 ${escapeHtml(module.module_id)}" data-control-action="toggle-module" data-module-id="${escapeHtml(module.module_id)}" data-module-version="${escapeHtml(module.version)}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>${desired ? "草稿启用" : "草稿停用"}</span></button></td></tr>`;
+  }).join("")}</tbody></table></div></section>`;
+}
+
+function renderControlInspector(data) {
+  const module = controlSelectedModule(data);
+  if (!module) return `<aside class="panel module-inspector" aria-labelledby="module-inspector-title"><div class="card-head"><div><h2 id="module-inspector-title">模块检查器</h2><p>选择模块后显示脱敏登记证据。</p></div></div>${emptyState("未选择模块", "服务端未返回可检查模块。")}</aside>`;
+  const [runtimeStatus, runtimeLabel] = controlRuntimeState(module, data);
+  const registration = module.registration;
+  return `<aside class="panel module-inspector" aria-labelledby="module-inspector-title"><div class="card-head"><div><h2 id="module-inspector-title">模块检查器</h2><p>只显示本地构建证据；运行时读回不是签名，也不是生产资格。</p></div>${controlStatusMarkup(runtimeStatus, runtimeLabel)}</div><dl class="key-value-list"><div class="key-value-row"><dt>模块名称</dt><dd>${escapeHtml(module.module_id)}</dd></div><div class="key-value-row"><dt>版本</dt><dd>${escapeHtml(module.version)}</dd></div><div class="key-value-row"><dt>风险级别</dt><dd>${escapeHtml(module.risk_level)}</dd></div><div class="key-value-row"><dt>证据等级</dt><dd>本地构建</dd></div><div class="key-value-row"><dt>生产资格</dt><dd>${controlStatusMarkup("blocked", "未获生产资格")}</dd></div><div class="key-value-row"><dt>描述摘要</dt><dd>${escapeHtml(abbreviateDigest(module.descriptor_digest))}</dd></div><div class="key-value-row"><dt>登记人</dt><dd>${registration ? escapeHtml(redactReference(registration.registered_by_actor_ref, "已记录（身份隐藏）")) : "未登记"}</dd></div><div class="key-value-row"><dt>登记时间</dt><dd>${registration ? escapeHtml(registration.registered_at) : "未登记"}</dd></div><div class="key-value-row"><dt>工具范围</dt><dd>${module.tool_names.length ? module.tool_names.map((name) => escapeHtml(name)).join("、") : "未返回"}</dd></div><div class="key-value-row"><dt>规范引用</dt><dd>${module.standard_ids.length ? module.standard_ids.map((name) => escapeHtml(name)).join("、") : "未返回"}</dd></div></dl></aside>`;
+}
+
+function renderControlPreview(data) {
+  const draft = controlDraftModules(data);
+  const current = data.activation?.active_modules ?? [];
+  const diff = deriveDesiredDraftDiff(current, draft);
+  const preview = data.latest_preview;
+  const previewStatus = preview === null
+    ? ["empty", "暂无预览"]
+    : preview.consumed === true
+      ? ["blocked", "预览已消费"]
+      : data.latest_approval?.decision === "reject"
+        ? ["blocked", "审批未通过"]
+        : data.latest_approval?.decision === "approve"
+          ? ["complete", "已审批"]
+          : ["pending", "待审批"];
+  const validation = preview && isRecord(preview.validation) ? Object.entries(preview.validation).filter(([, value]) => typeof value === "boolean") : [];
+  const validationMarkup = validation.length
+    ? `<ul class="validation-list" aria-label="预览校验结果">${validation.map(([key, value]) => `<li><span>${escapeHtml(CONTROL_VALIDATION_LABELS[key] ?? "校验项")}</span>${controlStatusMarkup(value ? "complete" : "manual_review", value ? "通过" : "需确认")}</li>`).join("")}</ul>`
+    : `<p class="muted">服务端尚未返回逐项校验；不推断为通过。</p>`;
+  return `<section class="panel control-preview-panel" aria-labelledby="control-preview-title"><div class="card-head"><div><h2 id="control-preview-title">预览差异与校验</h2><p>差异来自运行时读回和浏览器草稿；只有生成预览后才进入服务端审批链。</p></div>${controlStatusMarkup(previewStatus[0], previewStatus[1])}</div><div class="diff-summary"><div><strong>${diff.added.length}</strong><span>新增</span></div><div><strong>${diff.removed.length}</strong><span>移除</span></div><div><strong>${diff.retained.length}</strong><span>保留</span></div></div>${preview ? `<dl class="key-value-list"><div class="key-value-row"><dt>创建人</dt><dd>${escapeHtml(redactReference(preview.creator_actor_ref, "未返回"))}</dd></div><div class="key-value-row"><dt>创建时间</dt><dd>${escapeHtml(preview.created_at ?? "未返回")}</dd></div><div class="key-value-row"><dt>有效期</dt><dd>${escapeHtml(preview.expires_at ?? "未返回")}</dd></div></dl>${validationMarkup}` : `<p class="muted">先保存草稿并生成预览，服务端才会返回校验、创建人和有效期。</p>`}</section>`;
+}
+
+function releaseStatusLabel(status) {
+  if (status === "active" || status === "active_verified") return ["complete", "运行时已读回"];
+  if (status === "manual_review") return ["manual_review", "人工复核"];
+  if (status === "superseded") return ["empty", "已替代"];
+  if (status === "published_pending_readback") return ["pending", "读回待确认"];
+  return ["pending", "待确认"];
+}
+
+function renderControlReleaseTrail(data) {
+  const history = Array.isArray(data.release_history) ? data.release_history : [];
+  const previous = history.find((release) => release.status === "superseded") ?? history[1] ?? null;
+  return `<section class="panel release-trail-panel" aria-labelledby="release-trail-title"><div class="card-head"><div><h2 id="release-trail-title">发布轨迹与回滚目标</h2><p>回滚仍经过预览、双人审批和发布读回，不直接改运行时。</p></div>${controlStatusMarkup(history.length ? "complete" : "empty", history.length ? `${history.length} 条服务端记录` : "暂无记录")}</div>${history.length ? `<ol class="trail-list">${history.slice(0, 8).map((release) => { const [status, label] = releaseStatusLabel(release.status); return `<li><div><strong>${escapeHtml(redactReference(release.release_id, "发布记录"))}</strong><span>${release.revision === undefined ? "修订号未返回" : `修订 ${escapeHtml(String(release.revision))}`}</span></div>${controlStatusMarkup(status, label)}</li>`; }).join("")}</ol><p class="rollback-target">回滚目标：<strong>${previous ? "回滚到上一已读回版本（本地受控环境，标识隐藏）" : "未返回"}</strong></p>` : emptyState("暂无发布轨迹", "服务端没有返回可用的回滚目标。")}</section>`;
+}
+
+function renderControlActions(data) {
+  const draft = controlDraftModules(data);
+  const selected = controlSelectedModule(data);
+  const availability = actionAvailability({
+    state: data,
+    draftModules: draft,
+    actorRole: controlCurrentActorRole(),
+    actorRef: controlActorReference(),
+    creatorActorRef: data.latest_preview?.creator_actor_ref,
+    environment: state.mode,
+  });
+  const disabled = (key, extra = "") => availability[key] ? extra : ` disabled aria-disabled="true" title="当前服务端状态不允许此操作"${extra}`;
+  const registerDisabled = selected?.registration !== null ? " disabled aria-disabled=\"true\" title=\"该模块已登记\"" : disabled("register");
+  return `<section class="panel control-actions-panel" aria-labelledby="control-actions-title"><div class="card-head"><div><h2 id="control-actions-title">本地受控操作</h2><p>保存草稿只留在当前页面；服务端失败或人工复核时保留原状态。</p></div>${controlStatusMarkup(state.controlStatus)}</div><div class="button-row control-action-row"><button class="button button-secondary" type="button" data-control-action="save-draft">保存草稿</button><button class="button button-secondary" type="button" data-control-action="register"${registerDisabled}>登记选中模块</button><button class="button button-secondary" type="button" data-control-action="generate-preview"${disabled("generatePreview")}>生成预览</button><button class="button button-secondary" type="button" data-control-action="submit-approval"${disabled("submitApproval")}>提交审批</button><button class="button button-primary" type="button" data-control-action="publish"${disabled("publish")}>发布并读回</button><button class="button button-secondary" type="button" data-control-action="reconcile"${disabled("reconcile")}>重新读回</button><button class="button button-secondary" type="button" data-control-action="rollback"${disabled("rollback")}>回滚到上一已读回版本（本地受控环境）</button></div></section>`;
+}
+
+function renderModuleCenter(data) {
+  const controlData = state.controlState;
+  return `${pageHeader("modules", `<button class="button button-secondary" type="button" data-control-action="refresh">重新读取</button>`)}
+    <div class="callout callout-warning external-authority-warning" role="alert"><div class="callout-head"><h2>外部权威系统</h2>${controlStatusMarkup("manual_review", "固定提醒")}</div><p>报价、关务与客户数据仍由外部权威系统管理</p></div>
+    ${controlNoticeMarkup()}
+    ${renderControlIdentityPanel()}
+    ${state.controlStateLoading ? `<section class="panel loading-panel" aria-live="polite">${statusMarkup("loading")}<h2>正在读取模块控制面</h2><p>只读取服务端状态；未返回前不显示假激活状态。</p></section>` : controlData ? `${renderControlReleaseRail(controlData)}${renderControlStatusCards(controlData)}<div class="module-workspace">${renderControlModuleTable(controlData)}${renderControlInspector(controlData)}</div><div class="control-detail-grid">${renderControlPreview(controlData)}${renderControlReleaseTrail(controlData)}</div>${renderControlActions(controlData)}` : ""}`;
+}
+
 export function safeOpaqueReference(value, prefix) {
   const reference = snapshotText(value).trim();
   if (reference === "") return "未返回";
@@ -875,6 +1115,7 @@ function renderArchitecture(data) {
 
 function renderView() {
   if (state.loading) return renderLoading();
+  if (state.view === "modules") return renderModuleCenter(state.data);
   if (state.error) return renderError();
   if (!state.data) return renderError();
   switch (state.view) {
@@ -913,9 +1154,13 @@ function updateContext() {
         ? statusMarkup("ready", "正式快照")
         : statusMarkup("unavailable", "未连接");
   configVersion.textContent = versionSummary(data?.config?.current_version);
-  actorName.textContent = toChineseDisplayText(data?.actor?.name, "未认证");
-  actorRole.textContent = data?.actor?.role ? roleLabel(data.actor.role) : "—";
-  footerMode.textContent = isDemoSnapshot() ? "演示数据 · 未连接正式后台" : "正式快照 · 失败闭合";
+  actorName.textContent = state.controlActor?.label ?? toChineseDisplayText(data?.actor?.name, "未认证");
+  actorRole.textContent = state.controlActor?.role ? roleLabel(state.controlActor.role) : data?.actor?.role ? roleLabel(data.actor.role) : "—";
+  footerMode.textContent = state.controlActor && state.mode === "fixture"
+    ? "本地控制面 · 运行时状态以读回为准"
+    : isDemoSnapshot()
+      ? "演示数据 · 未连接正式后台"
+      : "正式快照 · 失败闭合";
 }
 
 function updateNav() {
@@ -1003,10 +1248,250 @@ async function loadSnapshot() {
   render();
 }
 
+function controlIdempotencyKey() {
+  const suffix = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${state.controlActor?.actor ?? "session"}`;
+  return `admin-ui-${suffix}`;
+}
+
+function setControlState(controlState) {
+  state.controlState = validateControlState(controlState);
+  if (!state.controlDraftDirty) {
+    state.controlDraftModules = state.controlState.activation.active_modules.map(controlModuleRef);
+  }
+  if (state.controlSelection === null && state.controlState.inventory_modules.length > 0) {
+    state.controlSelection = controlModuleKey(state.controlState.inventory_modules[0]);
+  }
+}
+
+async function loadControlState({ announce = false, preserveNotice = false } = {}) {
+  if (!controlClient || !state.controlActor) {
+    state.controlStatus = "needs_input";
+    state.controlStateLoading = false;
+    render(announce);
+    return false;
+  }
+  state.controlStateLoading = true;
+  state.controlError = null;
+  render();
+  try {
+    setControlState(await controlClient.getControlState());
+    state.controlStatus = "complete";
+    if (!preserveNotice) state.controlNotice = null;
+    return true;
+  } catch (error) {
+    const failure = controlErrorNotice(error, "读取模块控制面");
+    state.controlStatus = failure.status;
+    state.controlError = failure.detail;
+    return false;
+  } finally {
+    state.controlStateLoading = false;
+    render(announce);
+  }
+}
+
+function openIdentityDialog() {
+  if (!identityDialog) return;
+  identityDialogTrigger = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+  const input = document.querySelector("#identity-token");
+  const error = document.querySelector("#identity-form-error");
+  if (input instanceof HTMLInputElement) input.value = "";
+  if (error instanceof HTMLElement) error.hidden = true;
+  if (typeof identityDialog.showModal === "function") identityDialog.showModal();
+  else identityDialog.setAttribute("open", "");
+  queueMicrotask(() => input?.focus());
+}
+
+function closeIdentityDialog() {
+  if (!identityDialog) return;
+  const input = document.querySelector("#identity-token");
+  const error = document.querySelector("#identity-form-error");
+  if (input instanceof HTMLInputElement) input.value = "";
+  if (error instanceof HTMLElement) error.hidden = true;
+  if (typeof identityDialog.close === "function") identityDialog.close();
+  else identityDialog.removeAttribute("open");
+  const trigger = identityDialogTrigger;
+  identityDialogTrigger = null;
+  queueMicrotask(() => trigger?.focus());
+}
+
+function bindControlIdentity(identity) {
+  if (!controlClient || !identity) return;
+  controlClient.setToken(identity.token);
+  state.controlActor = { actor: identity.actor, label: identity.label, role: identity.role };
+  state.controlStatus = "pending";
+  state.controlError = null;
+  state.controlDraftModules = null;
+  state.controlDraftDirty = false;
+  state.controlNotice = null;
+  closeIdentityDialog();
+  void loadControlState({ announce: true });
+}
+
+function submitControlIdentity() {
+  const input = document.querySelector("#identity-token");
+  if (!(input instanceof HTMLInputElement)) return;
+  const error = document.querySelector("#identity-form-error");
+  const token = input.value;
+  input.value = "";
+  if (token.trim() === "") {
+    if (error instanceof HTMLElement) error.hidden = false;
+    input.focus();
+    return;
+  }
+  if (error instanceof HTMLElement) error.hidden = true;
+  bindControlIdentity({ actor: "session", label: "已绑定控制面身份", role: "admin", token });
+}
+
+async function runControlOperation(label, operation, { resetDraft = false } = {}) {
+  if (state.controlStateLoading || !controlClient) return;
+  state.controlStateLoading = true;
+  state.controlStatus = "pending";
+  controlNotice("info", "pending", `${label}进行中`, "正在等待服务端结果；运行时状态不会提前变化。", "等待服务端");
+  render(true);
+  try {
+    await operation();
+    if (resetDraft) state.controlDraftDirty = false;
+    const readbackOk = await loadControlState({ preserveNotice: true });
+    if (readbackOk) {
+      state.controlStatus = "complete";
+      controlNotice("info", "complete", `${label}已完成`, "已重新读取服务端控制状态；页面只显示读回结果。", "服务端已读回");
+    }
+  } catch (error) {
+    const failure = controlErrorNotice(error, label);
+    state.controlStatus = failure.status;
+    controlNotice("warning", failure.status, `${label}未完成`, failure.detail, CONTROL_STATUS_META[failure.status]?.label ?? "未完成");
+    if (failure.status === "manual_review") await loadControlState({ preserveNotice: true });
+  } finally {
+    state.controlStateLoading = false;
+    render(true);
+  }
+}
+
+async function handleControlAction(target) {
+  const action = target.dataset.controlAction;
+  if (!action) return;
+  if (action === "close-identity") {
+    closeIdentityDialog();
+    return;
+  }
+  if (action === "submit-identity") return;
+  if (action === "open-identity") {
+    openIdentityDialog();
+    return;
+  }
+  if (action === "fixture-identity") {
+    const identity = FIXTURE_IDENTITIES.find((item) => item.actor === target.dataset.identity);
+    if (state.mode === "fixture" && isFixtureIdentityVisible(window.location.search)) bindControlIdentity(identity);
+    return;
+  }
+  if (action === "select-module") {
+    const module = controlModuleFromKey(state.controlState, target.dataset.moduleId, target.dataset.moduleVersion);
+    if (module) {
+      state.controlSelection = controlModuleKey(module);
+      render(true);
+      queueMicrotask(() => target.focus());
+    }
+    return;
+  }
+  if (action === "toggle-module") {
+    const module = controlModuleFromKey(state.controlState, target.dataset.moduleId, target.dataset.moduleVersion);
+    if (!module) return;
+    const draft = controlDraftModules(state.controlState);
+    const key = controlModuleKey(module);
+    state.controlDraftModules = draft.some((item) => controlModuleKey(item) === key)
+      ? draft.filter((item) => controlModuleKey(item) !== key)
+      : [...draft, controlModuleRef(module)];
+    state.controlDraftDirty = true;
+    controlNotice("info", "pending", "草稿已变更", "期望启用只保存在当前浏览器页面；运行时状态未改变。", "未发布");
+    render(true);
+    return;
+  }
+  if (!state.controlState || !state.controlActor) return;
+  switch (action) {
+    case "refresh":
+      await loadControlState({ announce: true });
+      break;
+    case "save-draft":
+      state.controlDraftModules = controlDraftModules(state.controlState).map(controlModuleRef);
+      state.controlDraftDirty = true;
+      controlNotice("info", "complete", "草稿已保存", "草稿只保留在当前浏览器内存，不写入服务器或浏览器存储。", "仅本地草稿");
+      render(true);
+      break;
+    case "register": {
+      const module = controlSelectedModule(state.controlState);
+      if (!module || module.registration !== null) return;
+      await runControlOperation("登记模块", () => controlClient.registerPackage({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        module_id: module.module_id,
+        version: module.version,
+        descriptor_digest: module.descriptor_digest,
+      }, controlIdempotencyKey()));
+      break;
+    }
+    case "generate-preview":
+      await runControlOperation("生成预览", () => controlClient.createPreview({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        intent: "change",
+        desired_modules: controlDraftModules(state.controlState).map(controlModuleRef),
+      }, controlIdempotencyKey()));
+      break;
+    case "submit-approval": {
+      const previewRef = state.controlState.latest_preview?.preview_ref;
+      if (typeof previewRef !== "string") return;
+      await runControlOperation("提交审批", () => controlClient.decideApproval({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        preview_ref: previewRef,
+        decision: "approve",
+        reason_code: "admin_ui_approval",
+      }, controlIdempotencyKey()));
+      break;
+    }
+    case "publish": {
+      const previewRef = state.controlState.latest_preview?.preview_ref;
+      const approvalId = state.controlState.latest_approval?.approval_id;
+      if (typeof previewRef !== "string" || typeof approvalId !== "string") return;
+      await runControlOperation("发布并读回", () => controlClient.publish({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        preview_ref: previewRef,
+        approval_id: approvalId,
+      }, controlIdempotencyKey()), { resetDraft: true });
+      break;
+    }
+    case "reconcile": {
+      const pendingRelease = state.controlState.release_history.find((release) => release.status === "pending" || release.status === "manual_review");
+      const releaseId = pendingRelease?.release_id ?? state.controlState.activation?.release_id;
+      if (typeof releaseId !== "string") return;
+      await runControlOperation("重新读回", () => controlClient.reconcile({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        release_id: releaseId,
+      }, controlIdempotencyKey()));
+      break;
+    }
+    case "rollback": {
+      const target = state.controlState.release_history.find((release) => release.status === "superseded") ?? state.controlState.release_history[1];
+      if (!target || typeof target.release_id !== "string") return;
+      await runControlOperation("生成回滚预览", () => controlClient.createPreview({
+        schema_version: CONTROL_SCHEMA_VERSION,
+        intent: "rollback",
+        target_release_id: target.release_id,
+      }, controlIdempotencyKey()));
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 if (isBrowser) {
 document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target.closest("button, a") : null;
   if (!target) return;
+  if (target.dataset.controlAction) {
+    void handleControlAction(target);
+    return;
+  }
   const view = target.dataset.view;
   if (view) {
     event.preventDefault();
@@ -1065,6 +1550,16 @@ window.addEventListener("hashchange", () => {
 dialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeDialog();
+});
+
+document.querySelector("#identity-form")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitControlIdentity();
+});
+
+identityDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeIdentityDialog();
 });
 
 render();
