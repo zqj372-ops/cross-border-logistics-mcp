@@ -6,6 +6,7 @@ import {
   actionAvailability,
   createControlPlaneClient,
   deriveDesiredDraftDiff,
+  derivePreviewPresentation,
   deriveReleaseStages,
   isFixtureIdentityVisible,
   redactReference,
@@ -869,20 +870,12 @@ function renderControlPreview(data) {
   const current = data.activation?.active_modules ?? [];
   const diff = deriveDesiredDraftDiff(current, draft);
   const preview = data.latest_preview;
-  const previewStatus = preview === null
-    ? ["empty", "暂无预览"]
-    : preview.consumed === true
-      ? ["blocked", "预览已消费"]
-      : data.latest_approval?.decision === "reject"
-        ? ["blocked", "审批未通过"]
-        : data.latest_approval?.decision === "approve"
-          ? ["complete", "已审批"]
-          : ["pending", "待审批"];
+  const previewPresentation = derivePreviewPresentation(data);
   const validation = preview && isRecord(preview.validation) ? Object.entries(preview.validation).filter(([, value]) => typeof value === "boolean") : [];
   const validationMarkup = validation.length
     ? `<ul class="validation-list" aria-label="预览校验结果">${validation.map(([key, value]) => `<li><span>${escapeHtml(CONTROL_VALIDATION_LABELS[key] ?? "校验项")}</span>${controlStatusMarkup(value ? "complete" : "manual_review", value ? "通过" : "需确认")}</li>`).join("")}</ul>`
     : `<p class="muted">服务端尚未返回逐项校验；不推断为通过。</p>`;
-  return `<section class="panel control-preview-panel" aria-labelledby="control-preview-title"><div class="card-head"><div><h2 id="control-preview-title">预览差异与校验</h2><p>差异来自运行时读回和浏览器草稿；只有生成预览后才进入服务端审批链。</p></div>${controlStatusMarkup(previewStatus[0], previewStatus[1])}</div><div class="diff-summary"><div><strong>${diff.added.length}</strong><span>新增</span></div><div><strong>${diff.removed.length}</strong><span>移除</span></div><div><strong>${diff.retained.length}</strong><span>保留</span></div></div>${preview ? `<dl class="key-value-list"><div class="key-value-row"><dt>创建人</dt><dd>${escapeHtml(redactReference(preview.creator_actor_ref, "未返回"))}</dd></div><div class="key-value-row"><dt>创建时间</dt><dd>${escapeHtml(preview.created_at ?? "未返回")}</dd></div><div class="key-value-row"><dt>有效期</dt><dd>${escapeHtml(preview.expires_at ?? "未返回")}</dd></div></dl>${validationMarkup}` : `<p class="muted">先保存草稿并生成预览，服务端才会返回校验、创建人和有效期。</p>`}</section>`;
+  return `<section class="panel control-preview-panel" aria-labelledby="control-preview-title"><div class="card-head"><div><h2 id="control-preview-title">预览差异与校验</h2><p>差异来自运行时读回和浏览器草稿；只有生成预览后才进入服务端审批链。</p></div>${controlStatusMarkup(previewPresentation.status, previewPresentation.label)}</div><div class="diff-summary"><div><strong>${diff.added.length}</strong><span>新增</span></div><div><strong>${diff.removed.length}</strong><span>移除</span></div><div><strong>${diff.retained.length}</strong><span>保留</span></div></div>${preview ? `<dl class="key-value-list"><div class="key-value-row"><dt>创建人</dt><dd>${escapeHtml(redactReference(preview.creator_actor_ref, "未返回"))}</dd></div><div class="key-value-row"><dt>创建时间</dt><dd>${escapeHtml(preview.created_at ?? "未返回")}</dd></div><div class="key-value-row"><dt>有效期</dt><dd>${escapeHtml(preview.expires_at ?? "未返回")}</dd></div></dl>${validationMarkup}` : `<p class="muted">先保存草稿并生成预览，服务端才会返回校验、创建人和有效期。</p>`}</section>`;
 }
 
 function releaseStatusLabel(status) {

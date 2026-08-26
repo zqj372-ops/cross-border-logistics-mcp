@@ -168,9 +168,23 @@ export function redactReference(value, fallback = "未返回") {
   return "已记录（具体内容隐藏）";
 }
 
-export function deriveReleaseStages(state) {
+export function derivePreviewPresentation(state) {
   validateControlState(state);
   const preview = state.latest_preview;
+  if (preview === null) return { status: "empty", label: "暂无预览" };
+  if (preview.consumed === true) {
+    return state.latest_readback?.status === "verified" && state.activation.state === "active"
+      ? { status: "complete", label: "已用于发布" }
+      : { status: "blocked", label: "预览已消费" };
+  }
+  if (state.latest_approval?.decision === "reject") return { status: "blocked", label: "审批未通过" };
+  if (state.latest_approval?.decision === "approve") return { status: "complete", label: "已审批" };
+  return { status: "pending", label: "待审批" };
+}
+
+export function deriveReleaseStages(state) {
+  validateControlState(state);
+  const previewPresentation = derivePreviewPresentation(state);
   const approval = state.latest_approval;
   const activation = state.activation;
   const readback = state.latest_readback;
@@ -186,7 +200,7 @@ export function deriveReleaseStages(state) {
     {
       key: "preview",
       label: "生成预览",
-      status: preview === null ? "empty" : preview.consumed === true ? "blocked" : "complete",
+      status: previewPresentation.status,
     },
     {
       key: "approval",

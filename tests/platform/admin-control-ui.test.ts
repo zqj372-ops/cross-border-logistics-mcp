@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-import { actionAvailability, CONTROL_SCHEMA_VERSION, createControlPlaneClient, deriveDesiredDraftDiff, deriveReleaseStages, isFixtureIdentityVisible, redactReference, validateControlState } from "../../apps/admin/control-plane.js";
+import { actionAvailability, CONTROL_SCHEMA_VERSION, createControlPlaneClient, deriveDesiredDraftDiff, derivePreviewPresentation, deriveReleaseStages, isFixtureIdentityVisible, redactReference, validateControlState } from "../../apps/admin/control-plane.js";
 
 const descriptorDigest = `sha256:${"a".repeat(64)}`;
 
@@ -118,10 +118,31 @@ describe("admin control-plane model boundary", () => {
     expect(diff.retained).toEqual([]);
     expect(deriveReleaseStages(previewState).map((stage: { status: string }) => stage.status)).toEqual([
       "complete",
-      "complete",
+      "pending",
       "empty",
       "empty",
     ]);
+
+    const consumedPublishedState = {
+      ...previewState,
+      latest_preview: { ...previewState.latest_preview, consumed: true },
+      latest_readback: { status: "verified" },
+    };
+    expect(derivePreviewPresentation(consumedPublishedState)).toEqual({
+      status: "complete",
+      label: "已用于发布",
+    });
+    expect(deriveReleaseStages(consumedPublishedState).find((stage: { key: string }) => stage.key === "preview")?.status).toBe("complete");
+
+    const consumedWithoutReadbackState = {
+      ...consumedPublishedState,
+      latest_readback: null,
+    };
+    expect(derivePreviewPresentation(consumedWithoutReadbackState)).toEqual({
+      status: "blocked",
+      label: "预览已消费",
+    });
+    expect(deriveReleaseStages(consumedWithoutReadbackState).find((stage: { key: string }) => stage.key === "preview")?.status).toBe("blocked");
 
     const sameActor = actionAvailability({
       state: previewState,

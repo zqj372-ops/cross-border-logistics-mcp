@@ -97,6 +97,13 @@ export type ReleaseStageStatus =
   | "manual_review"
   | "unavailable";
 
+export type PreviewPresentationStatus = "complete" | "empty" | "pending" | "blocked";
+
+export type PreviewPresentation = Readonly<{
+  status: PreviewPresentationStatus;
+  label: string;
+}>;
+
 export type ReleaseStage = Readonly<{
   key: string;
   label: string;
@@ -137,6 +144,8 @@ export declare function abbreviateDigest(
 ): string;
 
 export declare function redactReference(value: unknown, fallback?: string): string;
+
+export declare function derivePreviewPresentation(state: ControlState): PreviewPresentation;
 
 export declare function deriveReleaseStages(state: ControlState): readonly ReleaseStage[];
 
