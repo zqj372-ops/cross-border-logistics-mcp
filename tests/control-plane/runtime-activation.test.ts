@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { ENVELOPE_STATUSES } from "../../src/logistics_mcp/platform/envelope";
+import type { ExecutionContext } from "../../src/logistics_mcp/platform/context";
 import type {
   ActiveModuleRef,
   ModuleActivationSnapshot,
@@ -13,11 +14,23 @@ import type {
 import { ModuleControlServiceError } from "../../src/logistics_mcp/control-plane/errors";
 import { createFixtureComposition } from "../../src/logistics_mcp/server/composition";
 import {
+  executeRegisteredToolWithResult,
   registerModuleToolDefinitions,
   wrapModuleToolDefinitions,
   type DomainToolOutcome,
   type ToolDefinition,
 } from "../../src/logistics_mcp/server/tool-registry";
+
+const executionContext: ExecutionContext = {
+  tenantId: "tenant_fixture",
+  actorId: "actor_fixture",
+  role: "sales",
+  roles: ["sales"],
+  scopes: ["quote:calculate"],
+  clientId: "client_fixture",
+  sessionId: "session_fixture",
+  expiresAt: Math.floor(Date.now() / 1000) + 300,
+};
 
 function definition(
   handler: ToolDefinition["handler"],
@@ -316,6 +329,40 @@ describe("runtime activation definition wrapper", () => {
     );
 
     await expect(wrapped[0]!.handler!({}, {} as never)).rejects.toBe(fatal);
+    expect(dispatchCalls).toHaveBeenCalledTimes(1);
+    expect(originalHandler).not.toHaveBeenCalled();
+  });
+
+  it("enters the fatal dispatch fence before registered-tool input validation", async () => {
+    const ref = activeRef();
+    const originalHandler = vi.fn(() => unavailableOutcome("handler_called"));
+    const fatal = Object.assign(new Error("fatal"), { code: "fatal" });
+    const dispatchCalls = vi.fn();
+    const dispatch: ControlledDispatchFacade["dispatch"] = () => {
+      dispatchCalls();
+      return Promise.reject(fatal);
+    };
+    const baseDefinition = definition(originalHandler, {
+      moduleId: ref.moduleId,
+      moduleVersion: ref.version,
+    });
+    const wrapped = wrapModuleToolDefinitions(
+      [{
+        ...baseDefinition,
+        inputSchema: z.object({ required: z.string() }).strict(),
+      }],
+      {
+        activation: { snapshot: () => activeSnapshot(ref) },
+        dispatch: { dispatch },
+      },
+    );
+
+    await expect(executeRegisteredToolWithResult(
+      wrapped[0]!,
+      { unexpected: true },
+      executionContext,
+      { requestId: "req_fatal_preflight", auditId: "audit_fatal_preflight" },
+    )).rejects.toBe(fatal);
     expect(dispatchCalls).toHaveBeenCalledTimes(1);
     expect(originalHandler).not.toHaveBeenCalled();
   });

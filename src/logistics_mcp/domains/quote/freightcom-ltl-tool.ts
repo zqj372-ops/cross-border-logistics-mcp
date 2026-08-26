@@ -46,6 +46,23 @@ function containsServerOwnedInput(value: unknown, seen = new Set<object>()): boo
   });
 }
 
+export function preflightFreightcomLtlInput(
+  input: unknown,
+): ModuleToolOutcome | undefined {
+  if (!containsServerOwnedInput(input)) return undefined;
+  return {
+    status: "blocked",
+    data: null,
+    sourceRefs: [],
+    blockers: [{
+      code: "freightcom.server_owned_field_forbidden",
+      message: "Freightcom endpoint, credential, environment, tenant, and actor fields are server-owned.",
+      severity: "error",
+      field: "input",
+    }],
+  };
+}
+
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 const decimalSchema = z.string().regex(/^(0|[1-9][0-9]*)(\.[0-9]+)?$/u);
@@ -338,19 +355,8 @@ function invalidAdapterData(): ModuleToolOutcome {
 
 export function createFreightcomLtlToolHandler(adapter: FreightcomRatePort): ModuleToolHandler {
   return async (input, _context, signal) => {
-    if (containsServerOwnedInput(input)) {
-      return {
-        status: "blocked",
-        data: null,
-        sourceRefs: [],
-        blockers: [{
-          code: "freightcom.server_owned_field_forbidden",
-          message: "Freightcom endpoint, credential, environment, tenant, and actor fields are server-owned.",
-          severity: "error",
-          field: "input",
-        }],
-      };
-    }
+    const preflightOutcome = preflightFreightcomLtlInput(input);
+    if (preflightOutcome !== undefined) return preflightOutcome;
     const parsed = freightcomLtlInputSchema.safeParse(input);
     if (!parsed.success) {
       return {

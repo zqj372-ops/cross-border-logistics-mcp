@@ -3,10 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import type { FreightcomRatePort } from "../../src/logistics_mcp/adapters/ports";
 import {
   createFreightcomLtlToolHandler,
+  freightcomLtlEnvelopeSchema,
   freightcomLtlInputSchema,
   freightcomLtlResultSchema,
+  validateFreightcomLtlOutput,
 } from "../../src/logistics_mcp/domains/quote/freightcom-ltl-tool";
 import type { ExecutionContext } from "../../src/logistics_mcp/platform/context";
+import { ENVELOPE_STATUSES } from "../../src/logistics_mcp/platform/envelope";
+import {
+  executeRegisteredToolWithResult,
+  type ToolDefinition,
+} from "../../src/logistics_mcp/server/tool-registry";
 
 const context: ExecutionContext = {
   tenantId: "tenant_fixture",
@@ -166,6 +173,46 @@ describe("Freightcom LTL MCP tool contract", () => {
       "freightcom.server_owned_field_forbidden",
     ]);
     expect(JSON.stringify(outcome)).not.toContain("nested-forbidden-actor");
+    expect(requestRate).not.toHaveBeenCalled();
+  });
+
+  it("blocks server-owned fields before registered-tool schema validation", async () => {
+    const requestRate = vi.fn();
+    const definition: ToolDefinition = {
+      name: "quote.freightcom_ltl.preview",
+      title: "Freightcom test tool",
+      description: "Freightcom test tool",
+      inputSchemaId: "urn:test:freightcom:input:v1",
+      outputSchemaId: "urn:test:freightcom:output:v1",
+      permission: "quote:calculate",
+      kind: "read",
+      statusMapping: ENVELOPE_STATUSES,
+      handler: createFreightcomLtlToolHandler({ requestRate }),
+      inputSchema: freightcomLtlInputSchema,
+      validateOutput: validateFreightcomLtlOutput,
+      outputSchema: freightcomLtlEnvelopeSchema,
+      moduleId: "freightcom-ltl",
+      moduleVersion: "2026-08-26.v1",
+      riskLevel: "T1",
+      standardRefs: ["module-runtime.v0", "platform.contracts"],
+    };
+
+    const result = await executeRegisteredToolWithResult(
+      definition,
+      { ...input(), token: "forbidden-token" },
+      context,
+      {
+        requestId: "req_freightcom_server_owned",
+        auditId: "audit_freightcom_server_owned",
+      },
+    );
+
+    expect(result.envelope.status).toBe("blocked");
+    expect(result.envelope.blockers).toEqual([expect.objectContaining({
+      code: "freightcom.server_owned_field_forbidden",
+      field: "input",
+    })]);
+    expect(JSON.stringify(result.envelope)).not.toContain("forbidden-token");
     expect(requestRate).not.toHaveBeenCalled();
   });
 

@@ -14,6 +14,7 @@ import {
 import type { ExecutionContext } from "../platform/context";
 import { authorizeTool } from "../platform/rbac";
 import {
+  freightcomLtlToolName,
   getToolPolicy,
   phaseOneToolNames as allowlistedToolNames,
 } from "../platform/rbac";
@@ -34,6 +35,7 @@ import type {
 } from "../control-plane/service";
 import { ModuleControlServiceError } from "../control-plane/errors";
 import type { ModuleCatalogEntry } from "../module-runtime";
+import { preflightFreightcomLtlInput } from "../domains/quote/freightcom-ltl-tool";
 
 export const phaseOneToolNames = allowlistedToolNames;
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
@@ -142,6 +144,13 @@ export interface ToolExecutionResult {
   readonly envelope: ResponseEnvelope;
   readonly idempotencyOutcome: AuditEvent["idempotency_outcome"];
 }
+
+type ModuleExecutionPreflight = () => Promise<DomainToolOutcome | undefined>;
+
+const moduleExecutionPreflights = new WeakMap<
+  ToolDefinition,
+  ModuleExecutionPreflight
+>();
 
 const outputSchemaByTool: Record<PhaseOneToolName, string> = {
   "knowledge.search_curated": "knowledge-search-result.schema.json",
@@ -280,6 +289,52 @@ function unavailableModuleOutcome(
   };
 }
 
+type ModuleDispatchResult<T> =
+  | { readonly kind: "executed"; readonly value: T }
+  | { readonly kind: "inactive"; readonly outcome: DomainToolOutcome };
+
+async function runModuleDispatch<T>(
+  moduleId: string,
+  moduleVersion: string,
+  facades: RuntimeActivationFacades,
+  operation: () => T | Promise<T>,
+): Promise<ModuleDispatchResult<T>> {
+  let inactiveOutcome: DomainToolOutcome | undefined;
+  try {
+    const value = await facades.dispatch.dispatch((snapshot) => {
+      if (snapshot.releaseId === null || snapshot.revision === 0) {
+        inactiveOutcome = unavailableModuleOutcome(
+          "module_policy_not_released",
+          "The module is unavailable until an active verified release exists.",
+        );
+        return null;
+      }
+
+      const activeRef = snapshot.activeModules.find(
+        (ref) => ref.moduleId === moduleId && ref.version === moduleVersion,
+      );
+      if (activeRef === undefined) {
+        inactiveOutcome = unavailableModuleOutcome(
+          "module_disabled_by_release",
+          "The module is disabled by the active release.",
+        );
+        return null;
+      }
+      return activeRef;
+    }, operation);
+    return { kind: "executed", value };
+  } catch (error: unknown) {
+    if (
+      inactiveOutcome !== undefined &&
+      error instanceof ModuleControlServiceError &&
+      error.code === "module_not_active"
+    ) {
+      return { kind: "inactive", outcome: inactiveOutcome };
+    }
+    throw error;
+  }
+}
+
 export function wrapModuleToolDefinitions(
   definitions: readonly ToolDefinition[],
   facades: RuntimeActivationFacades,
@@ -294,45 +349,29 @@ export function wrapModuleToolDefinitions(
     }
 
     const originalHandler = definition.handler;
+    const moduleId = definition.moduleId;
+    const moduleVersion = definition.moduleVersion;
     const handler: DomainToolHandler = async (input, context, signal) => {
-      let inactiveOutcome: DomainToolOutcome | undefined;
-      try {
-        return await facades.dispatch.dispatch((snapshot) => {
-          if (snapshot.releaseId === null || snapshot.revision === 0) {
-            inactiveOutcome = unavailableModuleOutcome(
-              "module_policy_not_released",
-              "The module is unavailable until an active verified release exists.",
-            );
-            return null;
-          }
-
-          const activeRef = snapshot.activeModules.find(
-            (ref) =>
-              ref.moduleId === definition.moduleId &&
-              ref.version === definition.moduleVersion,
-          );
-          if (activeRef === undefined) {
-            inactiveOutcome = unavailableModuleOutcome(
-              "module_disabled_by_release",
-              "The module is disabled by the active release.",
-            );
-            return null;
-          }
-          return activeRef;
-        }, () => originalHandler(input, context, signal));
-      } catch (error: unknown) {
-        if (
-          inactiveOutcome !== undefined &&
-          error instanceof ModuleControlServiceError &&
-          error.code === "module_not_active"
-        ) {
-          return inactiveOutcome;
-        }
-        throw error;
-      }
+      const result = await runModuleDispatch(
+        moduleId,
+        moduleVersion,
+        facades,
+        () => originalHandler(input, context, signal),
+      );
+      return result.kind === "executed" ? result.value : result.outcome;
     };
 
-    return { ...definition, handler };
+    const wrappedDefinition: ToolDefinition = { ...definition, handler };
+    moduleExecutionPreflights.set(wrappedDefinition, async () => {
+      const result = await runModuleDispatch(
+        moduleId,
+        moduleVersion,
+        facades,
+        () => undefined,
+      );
+      return result.kind === "inactive" ? result.outcome : undefined;
+    });
+    return wrappedDefinition;
   });
 }
 
@@ -505,6 +544,35 @@ function validateOutputEnvelope(
   return validated;
 }
 
+function createValidatedToolEnvelope(
+  definition: ToolDefinition,
+  outcome: DomainToolOutcome,
+  metadata: ToolExecutionMetadata,
+): ResponseEnvelope {
+  validateToolOutput(definition, outcome);
+  const envelopeInput: CreateEnvelopeInput = {
+    requestId: metadata.requestId,
+    auditId: metadata.auditId,
+    status: outcome.status,
+    data: outcome.data,
+    ...(outcome.sourceRefs === undefined
+      ? {}
+      : { sourceRefs: outcome.sourceRefs }),
+    ...(outcome.assumptions === undefined
+      ? {}
+      : { assumptions: outcome.assumptions }),
+    ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
+    ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
+    ...(outcome.calculationTrace === undefined
+      ? {}
+      : { calculationTrace: outcome.calculationTrace }),
+    ...(outcome.reviewStatus === undefined
+      ? {}
+      : { reviewStatus: outcome.reviewStatus }),
+  };
+  return validateOutputEnvelope(definition, createEnvelope(envelopeInput));
+}
+
 function validateWriteOutcome(
   request: WriteRequest,
   outcome: DomainToolOutcome,
@@ -580,6 +648,29 @@ export async function executeRegisteredToolWithResult(
   if (definition.inputSchema === undefined || definition.validateOutput === undefined) {
     throw new ToolContractUnavailableError();
   }
+
+  const modulePreflight = moduleExecutionPreflights.get(definition);
+  if (modulePreflight !== undefined) {
+    const preflightOutcome = await modulePreflight();
+    metadata.signal?.throwIfAborted();
+    if (preflightOutcome !== undefined) {
+      return {
+        envelope: createValidatedToolEnvelope(definition, preflightOutcome, metadata),
+        idempotencyOutcome: "not_applicable",
+      };
+    }
+  }
+
+  if (definition.name === freightcomLtlToolName) {
+    const preflightOutcome = preflightFreightcomLtlInput(input);
+    if (preflightOutcome !== undefined) {
+      return {
+        envelope: createValidatedToolEnvelope(definition, preflightOutcome, metadata),
+        idempotencyOutcome: "not_applicable",
+      };
+    }
+  }
+
   if (!definition.inputSchema.safeParse(input).success) {
     throw writeContractError(
       "tool_input.invalid",
@@ -624,35 +715,10 @@ export async function executeRegisteredToolWithResult(
 
   const outcome = await definition.handler(input, context, metadata.signal);
   metadata.signal?.throwIfAborted();
-  validateToolOutput(definition, outcome);
   if (writeRequest !== null) {
     validateWriteOutcome(writeRequest, outcome);
   }
-
-  const envelopeInput: CreateEnvelopeInput = {
-    requestId: metadata.requestId,
-    auditId: metadata.auditId,
-    status: outcome.status,
-    data: outcome.data,
-    ...(outcome.sourceRefs === undefined
-      ? {}
-      : { sourceRefs: outcome.sourceRefs }),
-    ...(outcome.assumptions === undefined
-      ? {}
-      : { assumptions: outcome.assumptions }),
-    ...(outcome.warnings === undefined ? {} : { warnings: outcome.warnings }),
-    ...(outcome.blockers === undefined ? {} : { blockers: outcome.blockers }),
-    ...(outcome.calculationTrace === undefined
-      ? {}
-      : { calculationTrace: outcome.calculationTrace }),
-    ...(outcome.reviewStatus === undefined
-      ? {}
-      : { reviewStatus: outcome.reviewStatus }),
-  };
-  const envelope = validateOutputEnvelope(
-    definition,
-    createEnvelope(envelopeInput),
-  );
+  const envelope = createValidatedToolEnvelope(definition, outcome, metadata);
 
   if (writeRequest !== null && reservation !== undefined) {
     metadata.signal?.throwIfAborted();
