@@ -9,7 +9,8 @@
   "scripts": {
     "build": "node deploy/scripts/build.mjs",
     "start:freightcom-quote": "node --import tsx/esm apps/freightcom-quote/server.mjs",
-    "start:fixture": "npm run build && MCP_DATA_MODE=fixtures MCP_PORT=8080 MCP_ADMIN_UI_ENABLED=true MCP_FIXTURE_TOKEN=local-fixture-token MCP_JWT_ISSUER=https://issuer.example.invalid/ MCP_JWT_AUDIENCE=logistics-mcp-local MCP_ALLOWED_ORIGINS=http://127.0.0.1:8080 MCP_ALLOWED_HOSTS=127.0.0.1:8080 MCP_ALLOWED_OUTBOUND_HOSTS=fixture.example.invalid node dist/src/logistics_mcp/server/start.mjs",
+    "init:control-fixture": "npm run build && node deploy/scripts/init-control-fixture.mjs",
+    "start:fixture": "npm run build && MCP_DATA_MODE=fixtures MCP_PORT=8080 MCP_ADMIN_UI_ENABLED=true MCP_ADMIN_CONTROL_ENABLED=true MCP_INSTANCE_ID=instance_fixture_001 MCP_ADMIN_TENANT_ID=tenant_fixture MCP_FIXTURE_TOKEN=local-fixture-token MCP_FIXTURE_APPROVER_TOKEN=local-fixture-approver-placeholder MCP_JWT_ISSUER=https://issuer.example.invalid/ MCP_JWT_AUDIENCE=logistics-mcp-local MCP_ALLOWED_ORIGINS=http://127.0.0.1:8080 MCP_ALLOWED_HOSTS=127.0.0.1:8080 MCP_ALLOWED_OUTBOUND_HOSTS=fixture.example.invalid node dist/src/logistics_mcp/server/start.mjs",
     "start:production": "npm run build && node dist/src/logistics_mcp/server/start.mjs",
     "test": "vitest run",
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
@@ -26,8 +27,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "admin-lte": "4.3.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
+    "bootstrap": "5.3.8",
     "decimal.js": "10.6.0",
     "jose": "6.2.8",
     "zod": "4.4.3"
