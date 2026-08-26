@@ -8,11 +8,13 @@ import {
   deriveDesiredDraftDiff,
   derivePreviewPresentation,
   deriveReleaseStages,
+  hasExactVerifiedReadback,
   isFixtureIdentityVisible,
   isPreviewUsable,
   redactReference,
   selectReconcileReleaseId,
   selectRollbackReleaseId,
+  shouldRefreshControlStateAfterFailure,
   validateControlState,
 } from "./control-plane.js";
 
@@ -777,7 +779,8 @@ function controlRuntimeState(module, data) {
   if (readback === "unknown") return ["unavailable", "读回未知"];
   if (readback === "pending") return ["pending", "读回待确认"];
   const active = Array.isArray(data?.activation?.active_modules) && data.activation.active_modules.some((item) => controlModuleKey(item) === controlModuleKey(module));
-  if (readback !== "verified") return [active ? "pending" : "empty", active ? "等待精确读回" : "未激活"];
+  if (readback === "verified" && !hasExactVerifiedReadback(data)) return ["manual_review", "读回关联不一致"];
+  if (!hasExactVerifiedReadback(data)) return [active ? "pending" : "empty", active ? "等待精确读回" : "未激活"];
   return active ? ["complete", "运行时已读回"] : ["empty", "未激活"];
 }
 
@@ -831,7 +834,7 @@ function renderControlReleaseRail(data) {
   } catch {
     stages = [];
   }
-  return `<section class="panel release-rail-panel" aria-labelledby="release-rail-title"><div class="card-head"><div><h2 id="release-rail-title">发布门槛</h2><p>登记制品 → 生成预览 → 双人审批 → 发布读回</p></div>${data.latest_readback?.status === "verified" ? controlStatusMarkup("complete", "运行时精确读回") : controlStatusMarkup(state.controlStatus)}</div><ol class="release-rail" aria-label="发布阶段">${stages.map((stage) => `<li class="release-rail-item" data-stage-status="${escapeHtml(stage.status)}"><span class="release-rail-marker" aria-hidden="true"></span><div><strong>${escapeHtml(stage.label)}</strong>${controlStatusMarkup(stage.status)}</div></li>`).join("")}</ol></section>`;
+  return `<section class="panel release-rail-panel" aria-labelledby="release-rail-title"><div class="card-head"><div><h2 id="release-rail-title">发布门槛</h2><p>登记制品 → 生成预览 → 双人审批 → 发布读回</p></div>${hasExactVerifiedReadback(data) ? controlStatusMarkup("complete", "运行时精确读回") : controlStatusMarkup(state.controlStatus)}</div><ol class="release-rail" aria-label="发布阶段">${stages.map((stage) => `<li class="release-rail-item" data-stage-status="${escapeHtml(stage.status)}"><span class="release-rail-marker" aria-hidden="true"></span><div><strong>${escapeHtml(stage.label)}</strong>${controlStatusMarkup(stage.status)}</div></li>`).join("")}</ol></section>`;
 }
 
 function renderControlStatusCards(data) {
@@ -840,7 +843,7 @@ function renderControlStatusCards(data) {
   const previewPending = data.latest_preview !== null
     && data.latest_preview?.consumed !== true
     && data.latest_approval === null;
-  const exactReadback = data.latest_readback?.status === "verified";
+  const exactReadback = hasExactVerifiedReadback(data);
   const active = exactReadback && data.activation?.state === "active" ? data.activation.active_modules.length : 0;
   const activeLabel = exactReadback && data.activation?.state === "active" ? "运行时已读回" : data.activation?.state === "active" ? "等待精确读回" : "未激活";
   const activeStatus = exactReadback && data.activation?.state === "active" ? "complete" : data.activation?.state === "active" ? "pending" : "empty";
@@ -1381,7 +1384,10 @@ async function runControlOperation(label, operation, { resetDraft = false } = {}
     const failure = controlErrorNotice(error, label);
     state.controlStatus = failure.status;
     controlNotice("warning", failure.status, `${label}未完成`, failure.detail, CONTROL_STATUS_META[failure.status]?.label ?? "未完成");
-    if (failure.status === "manual_review") await loadControlState({ preserveNotice: true });
+    if (shouldRefreshControlStateAfterFailure(failure.status)) {
+      const refreshed = await loadControlState({ preserveNotice: true });
+      if (refreshed) state.controlStatus = failure.status;
+    }
   } finally {
     state.controlStateLoading = false;
     render(true);

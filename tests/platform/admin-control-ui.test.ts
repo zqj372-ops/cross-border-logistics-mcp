@@ -8,11 +8,13 @@ import {
   deriveDesiredDraftDiff,
   derivePreviewPresentation,
   deriveReleaseStages,
+  hasExactVerifiedReadback,
   isFixtureIdentityVisible,
   isPreviewUsable,
   redactReference,
   selectReconcileReleaseId,
   selectRollbackReleaseId,
+  shouldRefreshControlStateAfterFailure,
   validateControlState,
 } from "../../apps/admin/control-plane.js";
 
@@ -68,6 +70,34 @@ const validControlState = {
   events: [],
   events_truncated: false,
 } as const;
+
+function successControlEnvelope(data: unknown) {
+  return {
+    schema_version: CONTROL_SCHEMA_VERSION,
+    request_id: "request-admin-ui",
+    trace_id: "trace-admin-ui",
+    audit_id: "audit-admin-ui",
+    status: "success",
+    data,
+    reason_codes: [],
+    readback: {
+      status: "not_applicable",
+      release_id: null,
+      revision: null,
+    },
+  } as const;
+}
+
+function failureControlEnvelope(
+  status: "manual_review" | "blocked" | "unavailable",
+  data: unknown = validControlState,
+) {
+  return {
+    ...successControlEnvelope(data),
+    status,
+    reason_codes: [`control.${status}`],
+  } as const;
+}
 
 type TestModuleRef = Readonly<{
   module_id: string;
@@ -409,10 +439,7 @@ describe("admin control-plane model boundary", () => {
     const client = createControlPlaneClient({
       fetchImpl: (url: RequestInfo | URL, init?: RequestInit) => {
         request = { url: requestUrl(url), init: init ?? {} };
-        return new Response(JSON.stringify({
-          status: "success",
-          data: validControlState,
-        }), {
+        return new Response(JSON.stringify(successControlEnvelope(validControlState)), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -434,6 +461,54 @@ describe("admin control-plane model boundary", () => {
     expect(source).not.toMatch(/\bconsole\.(?:log|error|warn|info|debug)\b/);
     expect(source).not.toMatch(/(?:throw new Error|Promise\.reject)\([^)]*module-scoped-fixture-token/);
     expect(appSource).not.toMatch(/bindControlIdentity\(\{\s*actor:\s*["']session["']/);
+  });
+
+  it("requires a verified readback to match the active release, revision, and module set", () => {
+    const exactState = {
+      ...validControlState,
+      latest_readback: readbackSnapshot("verified"),
+    } as const;
+    expect(hasExactVerifiedReadback(exactState)).toBe(true);
+    expect(deriveReleaseStages(exactState).find((stage: { key: string }) => stage.key === "publish_readback")?.status).toBe("complete");
+    expect(hasExactVerifiedReadback({
+      ...exactState,
+      latest_readback: {
+        ...exactState.latest_readback,
+        reason_codes: ["unexpected_verified_reason"],
+      },
+    })).toBe(false);
+    expect(hasExactVerifiedReadback({
+      ...exactState,
+      activation: { ...exactState.activation, active_modules: [] },
+      latest_readback: { ...exactState.latest_readback, applied_modules: [] },
+    })).toBe(false);
+
+    const mismatchedStates = [
+      {
+        ...exactState,
+        latest_readback: { ...exactState.latest_readback, release_id: "release-other" },
+      },
+      {
+        ...exactState,
+        latest_readback: { ...exactState.latest_readback, revision: 4 },
+      },
+      {
+        ...exactState,
+        latest_readback: {
+          ...exactState.latest_readback,
+          applied_modules: [{
+            module_id: "cargo",
+            version: "2.0.0",
+            descriptor_digest: descriptorDigest,
+          }],
+        },
+      },
+    ] as const;
+    for (const state of mismatchedStates) {
+      expect(hasExactVerifiedReadback(state)).toBe(false);
+      expect(() => validateControlState(state)).toThrow();
+      expect(() => deriveReleaseStages(state)).toThrow();
+    }
   });
 
   it("keeps release gating deterministic and requires a distinct approver", async () => {
@@ -764,11 +839,8 @@ describe("admin control-plane model boundary", () => {
 
     expect(selectReconcileReleaseId({
       ...manualReviewState,
-      latest_readback: {
-        ...readbackSnapshot("verified"),
-        release_id: "release-manual-review",
-        revision: 2,
-      },
+      activation: validControlState.activation,
+      latest_readback: readbackSnapshot("verified"),
     })).toBeNull();
   });
 
@@ -837,7 +909,10 @@ describe("admin control-plane model boundary", () => {
         consumed: true,
         desiredModules: [targetModule],
       }),
-      latest_readback: readbackSnapshot("verified"),
+      latest_readback: {
+        ...readbackSnapshot("verified"),
+        applied_modules: [targetModule],
+      },
     };
 
     expect(deriveReleaseStages(publishedState).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("complete");
@@ -870,8 +945,18 @@ describe("admin control-plane model boundary", () => {
       fetchImpl: (url: RequestInfo | URL, init?: RequestInit) => {
         const path = requestUrl(url);
         requests.push({ url: path, init: init ?? {} });
-        const data = path.endsWith("/state") ? validControlState : {};
-        return new Response(JSON.stringify({ status: "success", data }), {
+        const data = path.endsWith("/state")
+          ? validControlState
+          : path.endsWith("/packages/register")
+            ? { kind: "registration" }
+            : path.endsWith("/deployments/preview")
+              ? { kind: "preview" }
+              : path.endsWith("/approvals")
+                ? { kind: "approval" }
+                : path.endsWith("/deployments/publish")
+                  ? { kind: "release" }
+                  : { kind: "reconciliation" };
+        return new Response(JSON.stringify(successControlEnvelope(data)), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -935,7 +1020,7 @@ describe("admin control-plane model boundary", () => {
     const client = createControlPlaneClient({
       fetchImpl: (_url: RequestInfo | URL, init?: RequestInit) => {
         request = { init: init ?? {} };
-        return new Response(JSON.stringify({ status: "success", data: validControlState }), {
+        return new Response(JSON.stringify(successControlEnvelope(validControlState)), {
           status: 503,
           headers: { "content-type": "application/json" },
         });
@@ -954,11 +1039,9 @@ describe("admin control-plane model boundary", () => {
     [503, "unavailable"],
   ] as const)("preserves a non-success envelope from HTTP %s as %s", async (httpStatus, envelopeStatus) => {
     const client = createControlPlaneClient({
-      fetchImpl: () => Promise.resolve(new Response(JSON.stringify({
-        status: envelopeStatus,
-        reason_codes: [`control.${envelopeStatus}`],
-        data: validControlState,
-      }), {
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(failureControlEnvelope(
+        envelopeStatus,
+      )), {
         status: httpStatus,
         headers: { "content-type": "application/json" },
       })),
@@ -970,6 +1053,45 @@ describe("admin control-plane model boundary", () => {
       reasonCodes: [`control.${envelopeStatus}`],
       data: validControlState,
     });
+  });
+
+  it.each([
+    ["missing envelope metadata", { status: "success", data: validControlState }],
+    ["a version-skewed schema", {
+      ...successControlEnvelope(validControlState),
+      schema_version: "2026-08-23.v2",
+    }],
+    ["an invalid readback branch", {
+      ...successControlEnvelope(validControlState),
+      readback: { status: "verified", release_id: null, revision: null },
+    }],
+    ["an unknown envelope field", {
+      ...successControlEnvelope(validControlState),
+      unexpected: true,
+    }],
+    ["an unknown data branch", successControlEnvelope({ kind: "future_control_data" })],
+  ] as const)("rejects %s before using embedded control data", async (_label, envelope) => {
+    const client = createControlPlaneClient({
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify(envelope), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })),
+    });
+
+    await expect(client.getControlState()).rejects.toMatchObject({
+      name: "ControlPlaneError",
+      status: "unavailable",
+    });
+  });
+
+  it("refreshes control state after manual-review and blocked write outcomes", async () => {
+    expect(shouldRefreshControlStateAfterFailure("manual_review")).toBe(true);
+    expect(shouldRefreshControlStateAfterFailure("blocked")).toBe(true);
+    expect(shouldRefreshControlStateAfterFailure("unavailable")).toBe(false);
+    expect(shouldRefreshControlStateAfterFailure("success")).toBe(false);
+
+    const appSource = await readFile(new URL("../../apps/admin/app.js", import.meta.url), "utf8");
+    expect(appSource).toMatch(/shouldRefreshControlStateAfterFailure\(failure\.status\)[\s\S]*?loadControlState\(\{ preserveNotice: true \}\)/u);
   });
 
   it("wires the module-center shell, identity dialog, and fail-closed interactions", async () => {

@@ -150,6 +150,8 @@ export declare function derivePreviewPresentation(state: ControlState): PreviewP
 
 export declare function deriveReleaseStages(state: ControlState): readonly ReleaseStage[];
 
+export declare function hasExactVerifiedReadback(value: unknown): boolean;
+
 export declare function deriveDesiredDraftDiff(
   currentModules: readonly ControlModuleRef[],
   desiredModules: readonly ControlModuleRef[],
@@ -188,6 +190,8 @@ export declare class ControlPlaneError extends Error {
 
   constructor(message: string, options?: ControlPlaneErrorOptions);
 }
+
+export declare function shouldRefreshControlStateAfterFailure(status: unknown): boolean;
 
 export type FetchImplementation = (
   input: RequestInfo | URL,

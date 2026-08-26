@@ -91,6 +91,46 @@ const EVENT_KEYS = [
   "kind",
   "status",
 ];
+const CONTROL_ENVELOPE_KEYS = [
+  "schema_version",
+  "request_id",
+  "trace_id",
+  "audit_id",
+  "status",
+  "data",
+  "reason_codes",
+  "readback",
+];
+const CONTROL_ENVELOPE_READBACK_KEYS = ["status", "release_id", "revision"];
+const CONTROL_DATA_KEYS = Object.freeze({
+  registration: [
+    "kind",
+    "module_id",
+    "version",
+    "descriptor_digest",
+    "evidence_level",
+    "production_eligible",
+  ],
+  preview: [
+    "kind",
+    "preview_ref",
+    "intent",
+    "base_release_id",
+    "base_revision",
+    "desired_modules",
+    "target_release_id",
+    "expires_at",
+    "canonical_hash",
+    "diff",
+    "validation",
+    "creator_actor_ref",
+    "created_at",
+    "consumed",
+  ],
+  approval: ["kind", "approval_id", "preview_ref", "decision"],
+  release: ["kind", "release_id", "revision", "active_modules"],
+  reconciliation: ["kind", "release_id", "revision", "status"],
+});
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
@@ -142,6 +182,14 @@ function exactKeys(value, keys, label) {
   const actual = Object.keys(value);
   if (actual.some((key) => !expected.has(key)) || keys.some((key) => !Object.hasOwn(value, key))) {
     throw new Error(`${label} 字段不完整或包含未知字段。`);
+  }
+}
+
+function rejectUnknownKeys(value, keys, label) {
+  if (!isRecord(value)) throw new Error(`${label} 必须是对象。`);
+  const allowed = new Set(keys);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error(`${label} 包含未知字段。`);
   }
 }
 
@@ -216,6 +264,34 @@ function validateModuleRefs(value, label, allowEmpty = true) {
     logicalKeys.add(logicalKey);
   });
   return value;
+}
+
+function moduleExactKey(module) {
+  return isRecord(module)
+    && typeof module.module_id === "string"
+    && IDENTIFIER_PATTERN.test(module.module_id)
+    && typeof module.version === "string"
+    && VERSION_PATTERN.test(module.version)
+    && typeof module.descriptor_digest === "string"
+    && DIGEST_PATTERN.test(module.descriptor_digest)
+    ? `${module.module_id}\u0000${module.version}\u0000${module.descriptor_digest}`
+    : null;
+}
+
+function moduleRefSetsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const leftValues = left.map(moduleExactKey);
+  const rightValues = right.map(moduleExactKey);
+  if (leftValues.includes(null) || rightValues.includes(null)) return false;
+  const leftKeys = new Set(leftValues);
+  const rightKeys = new Set(rightValues);
+  const leftLogicalKeys = new Set(leftValues.map((key) => key.slice(0, key.lastIndexOf("\u0000"))));
+  const rightLogicalKeys = new Set(rightValues.map((key) => key.slice(0, key.lastIndexOf("\u0000"))));
+  return leftKeys.size === left.length
+    && rightKeys.size === right.length
+    && leftLogicalKeys.size === left.length
+    && rightLogicalKeys.size === right.length
+    && leftValues.every((key) => rightKeys.has(key));
 }
 
 function validateActivation(value) {
@@ -451,6 +527,27 @@ function validateControlEvent(value, index) {
   return value;
 }
 
+export function hasExactVerifiedReadback(value) {
+  if (!isRecord(value)) return false;
+  const activation = value.activation;
+  const readback = value.latest_readback;
+  return isRecord(activation)
+    && activation.state === "active"
+    && typeof activation.release_id === "string"
+    && IDENTIFIER_PATTERN.test(activation.release_id)
+    && Number.isSafeInteger(activation.revision)
+    && activation.revision > 0
+    && Array.isArray(activation.active_modules)
+    && activation.active_modules.length > 0
+    && isRecord(readback)
+    && readback.status === "verified"
+    && Array.isArray(readback.reason_codes)
+    && readback.reason_codes.length === 0
+    && readback.release_id === activation.release_id
+    && readback.revision === activation.revision
+    && moduleRefSetsEqual(readback.applied_modules, activation.active_modules);
+}
+
 export function validateControlState(value) {
   exactKeys(value, CONTROL_STATE_KEYS, "control_state");
   if (value.kind !== "control_state") throw new Error("control_state.kind 无效。");
@@ -468,6 +565,9 @@ export function validateControlState(value) {
   validateLatestPreview(value.latest_preview);
   validateLatestApproval(value.latest_approval);
   validateLatestReadback(value.latest_readback);
+  if (value.latest_readback?.status === "verified" && !hasExactVerifiedReadback(value)) {
+    throw new Error("verified readback 必须精确对应当前激活版本和模块集合。");
+  }
   if (!Array.isArray(value.release_history) || value.release_history.length > CONTROL_STATE_MAX_RELEASE_HISTORY) {
     throw new Error(`release_history 必须是 0 到 ${CONTROL_STATE_MAX_RELEASE_HISTORY} 项的数组。`);
   }
@@ -533,7 +633,7 @@ export function derivePreviewPresentation(state) {
   const preview = state.latest_preview;
   if (preview === null) return { status: "empty", label: "暂无预览" };
   if (preview.consumed === true) {
-    return state.latest_readback?.status === "verified" && state.activation.state === "active"
+    return hasExactVerifiedReadback(state)
       ? { status: "complete", label: "已用于发布" }
       : { status: "blocked", label: "预览已消费" };
   }
@@ -549,6 +649,7 @@ export function deriveReleaseStages(state) {
   const approval = state.latest_approval;
   const activation = state.activation;
   const readback = state.latest_readback;
+  const exactVerifiedReadback = hasExactVerifiedReadback(state);
   const registrationTargets = state.latest_preview !== null
     ? (Array.isArray(state.latest_preview.desired_modules) ? state.latest_preview.desired_modules : [])
     : activation.state === "active" ? activation.active_modules : state.inventory_modules;
@@ -579,8 +680,9 @@ export function deriveReleaseStages(state) {
     {
       key: "publish_readback",
       label: "发布读回",
-      status: readback?.status === "verified" && activation.state === "active"
+      status: exactVerifiedReadback
         ? "complete"
+        : readback?.status === "verified" ? "manual_review"
         : readback?.status === "manual_review" || readback?.status === "mismatch" ? "manual_review"
           : readback?.status === "pending" ? "pending"
             : readback?.status === "unknown" ? "unavailable" : "empty",
@@ -704,6 +806,10 @@ export class ControlPlaneError extends Error {
   }
 }
 
+export function shouldRefreshControlStateAfterFailure(status) {
+  return status === "manual_review" || status === "blocked";
+}
+
 const CONTROL_ENVELOPE_STATUSES = new Set([
   "success",
   "needs_input",
@@ -712,23 +818,110 @@ const CONTROL_ENVELOPE_STATUSES = new Set([
   "unavailable",
 ]);
 
-function responseData(envelope, fallbackStatus, responseOk = true) {
-  if (!isRecord(envelope)) {
+function validateControlEnvelopeData(value) {
+  if (value === null) return value;
+  if (!isRecord(value) || typeof value.kind !== "string") {
+    throw new Error("control_envelope.data 分支无效。");
+  }
+  if (value.kind === "control_state") return validateControlState(value);
+  const keys = Object.hasOwn(CONTROL_DATA_KEYS, value.kind)
+    ? CONTROL_DATA_KEYS[value.kind]
+    : undefined;
+  if (keys === undefined) throw new Error("control_envelope.data.kind 无效。");
+  rejectUnknownKeys(value, keys, `control_envelope.data.${value.kind}`);
+
+  if (value.kind === "registration") {
+    if (Object.hasOwn(value, "module_id")) nonEmptyString(value.module_id, "control_envelope.data.module_id", IDENTIFIER_PATTERN);
+    if (Object.hasOwn(value, "version")) nonEmptyString(value.version, "control_envelope.data.version", VERSION_PATTERN);
+    if (Object.hasOwn(value, "descriptor_digest")) nonEmptyString(value.descriptor_digest, "control_envelope.data.descriptor_digest", DIGEST_PATTERN);
+    if (Object.hasOwn(value, "evidence_level") && value.evidence_level !== "local_build") throw new Error("control_envelope.data.evidence_level 无效。");
+    if (Object.hasOwn(value, "production_eligible") && value.production_eligible !== false) throw new Error("control_envelope.data.production_eligible 无效。");
+    return value;
+  }
+  if (value.kind === "preview") {
+    if (Object.hasOwn(value, "preview_ref")) nonEmptyString(value.preview_ref, "control_envelope.data.preview_ref", IDENTIFIER_PATTERN);
+    if (Object.hasOwn(value, "intent") && value.intent !== "change" && value.intent !== "rollback") throw new Error("control_envelope.data.intent 无效。");
+    if (Object.hasOwn(value, "base_release_id")) validateNullableIdentifier(value.base_release_id, "control_envelope.data.base_release_id");
+    if (Object.hasOwn(value, "base_revision")) nonNegativeInteger(value.base_revision, "control_envelope.data.base_revision");
+    if (Object.hasOwn(value, "desired_modules")) validateModuleRefs(value.desired_modules, "control_envelope.data.desired_modules");
+    if (Object.hasOwn(value, "target_release_id")) validateNullableIdentifier(value.target_release_id, "control_envelope.data.target_release_id");
+    if (Object.hasOwn(value, "expires_at") && value.expires_at !== null) nonEmptyString(value.expires_at, "control_envelope.data.expires_at", RFC3339_PATTERN);
+    if (Object.hasOwn(value, "canonical_hash")) nonEmptyString(value.canonical_hash, "control_envelope.data.canonical_hash", PREVIEW_CANONICAL_HASH_PATTERN);
+    if (Object.hasOwn(value, "diff")) validatePreviewDiff(value.diff, "control_envelope.data.diff");
+    if (Object.hasOwn(value, "validation")) validatePreviewValidation(value.validation, "control_envelope.data.validation");
+    if (Object.hasOwn(value, "creator_actor_ref")) nonEmptyString(value.creator_actor_ref, "control_envelope.data.creator_actor_ref", IDENTIFIER_PATTERN);
+    if (Object.hasOwn(value, "created_at")) nonEmptyString(value.created_at, "control_envelope.data.created_at", RFC3339_PATTERN);
+    if (Object.hasOwn(value, "consumed")) booleanValue(value.consumed, "control_envelope.data.consumed");
+    return value;
+  }
+  if (value.kind === "approval") {
+    if (Object.hasOwn(value, "approval_id")) nonEmptyString(value.approval_id, "control_envelope.data.approval_id", IDENTIFIER_PATTERN);
+    if (Object.hasOwn(value, "preview_ref")) nonEmptyString(value.preview_ref, "control_envelope.data.preview_ref", IDENTIFIER_PATTERN);
+    if (Object.hasOwn(value, "decision") && value.decision !== "approve" && value.decision !== "reject") throw new Error("control_envelope.data.decision 无效。");
+    return value;
+  }
+  if (value.kind === "release") {
+    if (Object.hasOwn(value, "release_id")) nonEmptyString(value.release_id, "control_envelope.data.release_id", IDENTIFIER_PATTERN);
+    if (Object.hasOwn(value, "revision")) positiveInteger(value.revision, "control_envelope.data.revision");
+    if (Object.hasOwn(value, "active_modules")) validateModuleRefs(value.active_modules, "control_envelope.data.active_modules");
+    return value;
+  }
+  if (Object.hasOwn(value, "release_id")) validateNullableIdentifier(value.release_id, "control_envelope.data.release_id");
+  if (Object.hasOwn(value, "revision") && value.revision !== null) positiveInteger(value.revision, "control_envelope.data.revision");
+  if (Object.hasOwn(value, "status") && !["pending", "verified", "mismatch", "unknown"].includes(value.status)) {
+    throw new Error("control_envelope.data.status 无效。");
+  }
+  return value;
+}
+
+function validateControlEnvelopeReadback(value) {
+  exactKeys(value, CONTROL_ENVELOPE_READBACK_KEYS, "control_envelope.readback");
+  if (value.status === "not_applicable") {
+    if (value.release_id !== null || value.revision !== null) throw new Error("control_envelope.readback not_applicable 分支无效。");
+    return value;
+  }
+  if (!["pending", "verified", "mismatch", "unknown"].includes(value.status)) {
+    throw new Error("control_envelope.readback.status 无效。");
+  }
+  nonEmptyString(value.release_id, "control_envelope.readback.release_id", IDENTIFIER_PATTERN);
+  positiveInteger(value.revision, "control_envelope.readback.revision");
+  return value;
+}
+
+function validateControlEnvelope(value) {
+  exactKeys(value, CONTROL_ENVELOPE_KEYS, "control_envelope");
+  if (value.schema_version !== CONTROL_SCHEMA_VERSION) throw new Error("control_envelope.schema_version 无效。");
+  nonEmptyString(value.request_id, "control_envelope.request_id", IDENTIFIER_PATTERN);
+  nonEmptyString(value.trace_id, "control_envelope.trace_id", IDENTIFIER_PATTERN);
+  nonEmptyString(value.audit_id, "control_envelope.audit_id", IDENTIFIER_PATTERN);
+  if (!CONTROL_ENVELOPE_STATUSES.has(value.status)) throw new Error("control_envelope.status 无效。");
+  validateControlEnvelopeData(value.data);
+  validateReasonCodes(value.reason_codes, "control_envelope.reason_codes");
+  validateControlEnvelopeReadback(value.readback);
+  return value;
+}
+
+function responseData(envelope, fallbackStatus, responseOk = true, expectedKind) {
+  let validatedEnvelope;
+  try {
+    validatedEnvelope = validateControlEnvelope(envelope);
+  } catch {
     throw new ControlPlaneError("控制面返回格式无效。", { status: fallbackStatus });
   }
-  const envelopeStatus = typeof envelope.status === "string" && CONTROL_ENVELOPE_STATUSES.has(envelope.status)
-    ? envelope.status
-    : fallbackStatus;
+  const envelopeStatus = validatedEnvelope.status;
   const status = !responseOk && envelopeStatus === "success" ? fallbackStatus : envelopeStatus;
-  const reasons = Array.isArray(envelope.reason_codes) ? envelope.reason_codes : [];
+  const reasons = validatedEnvelope.reason_codes;
   if (status !== "success") {
     throw new ControlPlaneError("控制面操作未完成。", {
       status,
       reasonCodes: reasons,
-      data: isRecord(envelope.data) ? envelope.data : null,
+      data: validatedEnvelope.data,
     });
   }
-  return envelope.data;
+  if (!isRecord(validatedEnvelope.data) || validatedEnvelope.data.kind !== expectedKind) {
+    throw new ControlPlaneError("控制面返回格式无效。", { status: fallbackStatus });
+  }
+  return validatedEnvelope.data;
 }
 
 export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePath = CONTROL_API_ROOT } = {}) {
@@ -736,7 +929,7 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
   const root = typeof basePath === "string" && basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
   let bearerToken = "";
 
-  async function request(path, { method = "GET", body, idempotencyKey } = {}) {
+  async function request(path, { method = "GET", body, idempotencyKey, expectedKind } = {}) {
     const headers = new Headers({ accept: "application/json" });
     if (bearerToken !== "") headers.set("authorization", `Bearer ${bearerToken}`);
     if (body !== undefined) {
@@ -760,7 +953,12 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
     } catch {
       throw new ControlPlaneError("控制面返回格式无效。", { status: "unavailable" });
     }
-    return responseData(envelope, response.ok ? "unavailable" : "blocked", response.ok);
+    return responseData(
+      envelope,
+      response.ok ? "unavailable" : "blocked",
+      response.ok,
+      expectedKind,
+    );
   }
 
   return Object.freeze({
@@ -772,22 +970,47 @@ export function createControlPlaneClient({ fetchImpl = globalThis.fetch, basePat
       bearerToken = "";
     },
     async getControlState() {
-      return validateControlState(await request("state"));
+      return request("state", { expectedKind: "control_state" });
     },
     async registerPackage(payload, idempotencyKey) {
-      return request("packages/register", { method: "POST", body: payload, idempotencyKey });
+      return request("packages/register", {
+        method: "POST",
+        body: payload,
+        idempotencyKey,
+        expectedKind: "registration",
+      });
     },
     async createPreview(payload, idempotencyKey) {
-      return request("deployments/preview", { method: "POST", body: payload, idempotencyKey });
+      return request("deployments/preview", {
+        method: "POST",
+        body: payload,
+        idempotencyKey,
+        expectedKind: "preview",
+      });
     },
     async decideApproval(payload, idempotencyKey) {
-      return request("approvals", { method: "POST", body: payload, idempotencyKey });
+      return request("approvals", {
+        method: "POST",
+        body: payload,
+        idempotencyKey,
+        expectedKind: "approval",
+      });
     },
     async publish(payload, idempotencyKey) {
-      return request("deployments/publish", { method: "POST", body: payload, idempotencyKey });
+      return request("deployments/publish", {
+        method: "POST",
+        body: payload,
+        idempotencyKey,
+        expectedKind: "release",
+      });
     },
     async reconcile(payload, idempotencyKey) {
-      return request("deployments/reconcile", { method: "POST", body: payload, idempotencyKey });
+      return request("deployments/reconcile", {
+        method: "POST",
+        body: payload,
+        idempotencyKey,
+        expectedKind: "reconciliation",
+      });
     },
   });
 }
