@@ -11,6 +11,7 @@ import {
   CONTROL_STATE_MAX_MODULES,
   deploymentPreviewRequestSchema,
   publishRequestSchema,
+  reconcileRequestSchema,
   registerPackageRequestSchema,
   type ApprovalRequest,
   type ControlEnvelope,
@@ -40,6 +41,7 @@ import {
   type CreatePreviewRequestMetadata,
   type DecideApprovalRequestMetadata,
   type DeepReadonly,
+  type DomainCommittedModuleControlIdempotencyRecord,
   type ModuleControlRepository,
   type ModuleControlReadbackAttemptRepository,
   type ModuleControlRef,
@@ -50,6 +52,7 @@ import {
   type ModuleReleaseRecord,
   type PublishReleaseRequestMetadata,
   type ReadbackAttemptRecord,
+  type ReadbackAttemptObservation,
   type ReadbackFinalizationResult,
   type RegisterModuleRequestMetadata,
 } from "./repository";
@@ -173,6 +176,7 @@ const PUBLISH_REQUEST_KEYS = [
   "preview_ref",
   "approval_id",
 ] as const;
+const RECONCILE_REQUEST_KEYS = ["schema_version", "release_id"] as const;
 
 const PREVIEW_POLICY_VERSION = "writable-module-control-plane-v1" as const;
 const PREVIEW_CHANGE_KEYS = [
@@ -386,6 +390,13 @@ function parsePublishRequest(value: unknown): PublishRequest | null {
   const snapshot = snapshotExactRecord(value, PUBLISH_REQUEST_KEYS);
   if (snapshot === null) return null;
   const parsed = publishRequestSchema.safeParse(snapshot);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseReconcileRequest(value: unknown): ReconcileRequest | null {
+  const snapshot = snapshotExactRecord(value, RECONCILE_REQUEST_KEYS);
+  if (snapshot === null) return null;
+  const parsed = reconcileRequestSchema.safeParse(snapshot);
   return parsed.success ? parsed.data : null;
 }
 
@@ -744,9 +755,6 @@ function publishedReleaseMatchesEnvelope(
     readback.readbackRef !== release.readbackRef ||
     readback.releaseId !== release.releaseId ||
     readback.revision !== release.revision ||
-    readback.appliedReleaseId !== release.releaseId ||
-    readback.appliedRevision !== release.revision ||
-    !moduleRefSetsEqual(readback.appliedModules, release.desiredModules) ||
     data?.kind !== "release" ||
     data.release_id !== release.releaseId ||
     data.revision !== release.revision ||
@@ -763,6 +771,9 @@ function publishedReleaseMatchesEnvelope(
       release.reasonCodes.length === 0 &&
       release.supersededByReleaseId === null &&
       readback.status === "verified" &&
+      readback.appliedReleaseId === release.releaseId &&
+      readback.appliedRevision === release.revision &&
+      moduleRefSetsEqual(readback.appliedModules, release.desiredModules) &&
       readback.reasonCodes.length === 0 &&
       envelope.status === "success" &&
       envelope.reason_codes.length === 0 &&
@@ -781,9 +792,60 @@ function publishedReleaseMatchesEnvelope(
   return false;
 }
 
-function claimedAttemptMatchesPublish(
+function reconciledReleaseMatchesEnvelope(
+  release: DeepReadonly<ModuleReleaseRecord>,
+  readback: DeepReadonly<ModuleReadbackRecord> | null,
+  envelope: DeepFrozen<ControlEnvelope>,
+  request: ReconcileRequest,
+  managementTenantId: string,
+): boolean {
+  const data = envelope.data;
+  if (
+    release.managementTenantId !== managementTenantId ||
+    release.releaseId !== request.release_id ||
+    release.publishedAt === null ||
+    readback === null ||
+    readback.managementTenantId !== managementTenantId ||
+    readback.readbackRef !== release.readbackRef ||
+    readback.releaseId !== release.releaseId ||
+    readback.revision !== release.revision ||
+    data?.kind !== "reconciliation" ||
+    data.release_id !== release.releaseId ||
+    data.revision !== release.revision ||
+    data.status !== readback.status ||
+    envelope.readback.status !== readback.status ||
+    envelope.readback.release_id !== release.releaseId ||
+    envelope.readback.revision !== release.revision
+  ) {
+    return false;
+  }
+  if (release.status === "active_verified") {
+    return (
+      readback.status === "verified" &&
+      readback.appliedReleaseId === release.releaseId &&
+      readback.appliedRevision === release.revision &&
+      moduleRefSetsEqual(readback.appliedModules, release.desiredModules) &&
+      readback.reasonCodes.length === 0 &&
+      release.reasonCodes.length === 0 &&
+      envelope.status === "success" &&
+      envelope.reason_codes.length === 0
+    );
+  }
+  if (release.status === "manual_review") {
+    return (
+      (readback.status === "mismatch" || readback.status === "unknown") &&
+      stringArraysEqual(readback.reasonCodes, release.reasonCodes) &&
+      envelope.status === "manual_review" &&
+      stringArraysEqual(envelope.reason_codes, release.reasonCodes)
+    );
+  }
+  return false;
+}
+
+function claimedAttemptMatches(
   attempt: DeepReadonly<ReadbackAttemptRecord>,
   input: {
+    readonly action: "deployments.publish" | "deployments.reconcile";
     readonly managementTenantId: string;
     readonly attemptId: string;
     readonly idempotencyKey: string;
@@ -802,7 +864,7 @@ function claimedAttemptMatchesPublish(
   return (
     attempt.managementTenantId === input.managementTenantId &&
     attempt.attemptId === input.attemptId &&
-    attempt.action === "deployments.publish" &&
+    attempt.action === input.action &&
     attempt.idempotencyKey === input.idempotencyKey &&
     attempt.requestHash === input.requestHash &&
     attempt.actorRef === input.actorRef &&
@@ -998,6 +1060,30 @@ function authorizationFailure(
   }
   if (!context.roles.includes("admin")) {
     return "admin_role_missing";
+  }
+  if (!context.scopes.includes("platform:admin")) {
+    return "platform_admin_scope_required";
+  }
+  if (context.tenantId !== managementTenantId) {
+    return "management_tenant_mismatch";
+  }
+  return null;
+}
+
+function reconcileAuthorizationFailure(
+  context: unknown,
+  managementTenantId: string,
+): ModuleControlServiceErrorCode | null {
+  if (!isTrustedExecutionContext(context)) {
+    return "execution_context_untrusted";
+  }
+  if (context.role !== "admin" && context.role !== "operator") {
+    return "admin_role_required";
+  }
+  if (!context.roles.includes(context.role)) {
+    return context.role === "admin"
+      ? "admin_role_missing"
+      : "admin_role_required";
   }
   if (!context.scopes.includes("platform:admin")) {
     return "platform_admin_scope_required";
@@ -1424,26 +1510,6 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         persisted.finalResult.envelope,
       );
     });
-  }
-
-  async #unimplementedWrite(
-    action: ControlProducerAction,
-    context: ExecutionContext,
-    metaInput: WriteMeta,
-  ): Promise<DeepFrozen<ControlEnvelope>> {
-    const meta = parseWriteMeta(metaInput);
-    const failure = authorizationFailure(context, this.#managementTenantId);
-    if (failure !== null) {
-      return this.#terminalWriteEnvelope(action, meta, "blocked", failure);
-    }
-    return this.#runtime.coordinator.withMutation(() =>
-      Promise.resolve(this.#terminalWriteEnvelope(
-        action,
-        meta,
-        "unavailable",
-        "service_phase_not_implemented",
-      )),
-    );
   }
 
   async createDeploymentPreview(
@@ -2454,6 +2520,345 @@ class ModuleControlServiceImplementation implements ModuleControlService {
     });
   }
 
+  async #resumeDomainCommittedPublish(
+    context: ExecutionContext,
+    request: PublishRequest,
+    meta: WriteMeta,
+    existing: DeepReadonly<DomainCommittedModuleControlIdempotencyRecord>,
+    attemptRepository: ModuleControlRepository &
+      ModuleControlReadbackAttemptRepository,
+  ): Promise<DeepFrozen<ControlEnvelope>> {
+    let release;
+    let preview;
+    let approval;
+    try {
+      [release, preview, approval] = await Promise.all([
+        this.#repository.getRelease({
+          managementTenantId: this.#managementTenantId,
+          releaseId: existing.domainRecordRef,
+        }),
+        this.#repository.getPreview({
+          managementTenantId: this.#managementTenantId,
+          previewRef: request.preview_ref,
+        }),
+        this.#repository.getApproval({
+          managementTenantId: this.#managementTenantId,
+          approvalId: request.approval_id,
+        }),
+      ]);
+    } catch (error: unknown) {
+      return this.#runtime.coordinator.tripFatal(error);
+    }
+    if (
+      release === null ||
+      preview === null ||
+      approval === null ||
+      release.managementTenantId !== this.#managementTenantId ||
+      release.releaseId !== existing.domainRecordRef ||
+      release.status !== "published_pending_readback" ||
+      release.readbackRef !== null ||
+      release.reasonCodes.length !== 0 ||
+      release.supersededByReleaseId !== null ||
+      release.previewRef !== request.preview_ref ||
+      release.approvalId !== request.approval_id ||
+      release.publisherActorRef !== context.actorId ||
+      release.createdAt !== existing.createdAt ||
+      release.publishedAt !== null ||
+      release.revision !== preview.baseRevision + 1 ||
+      release.previousReleaseId !== preview.baseReleaseId ||
+      !moduleRefSetsEqual(release.desiredModules, preview.desiredModules) ||
+      !persistedPreviewIsStructurallyValidForApproval(
+        preview,
+        this.#managementTenantId,
+        request.preview_ref,
+      ) ||
+      preview.consumed !== true ||
+      approval.managementTenantId !== this.#managementTenantId ||
+      approval.approvalId !== request.approval_id ||
+      approval.previewRef !== preview.previewRef ||
+      approval.previewCanonicalHash !== preview.canonicalHash ||
+      approval.baseReleaseId !== preview.baseReleaseId ||
+      approval.baseRevision !== preview.baseRevision ||
+      approval.expiresAt !== preview.expiresAt ||
+      approval.decision !== "approve" ||
+      approval.consumed !== true ||
+      approval.approverActorRef === preview.creatorActorRef ||
+      !stringArraysEqual(
+        approval.inventoryDigestSet,
+        approvalInventoryDigestSet(preview.inventoryRefs),
+      )
+    ) {
+      return this.#runtime.coordinator.tripFatal(
+        new ModuleControlServiceError("state_output_invalid"),
+      );
+    }
+
+    let priorAttempts;
+    try {
+      priorAttempts = await attemptRepository.getReadbackAttemptHistory({
+        managementTenantId: this.#managementTenantId,
+        releaseId: release.releaseId,
+        revision: release.revision,
+      });
+    } catch (error: unknown) {
+      return this.#runtime.coordinator.tripFatal(error);
+    }
+    if (priorAttempts.length !== 0) {
+      return this.#runtime.coordinator.tripFatal(
+        new ModuleControlServiceError("state_output_invalid"),
+      );
+    }
+
+    let checkedAt: string;
+    let attemptId: string;
+    let readbackRef: string;
+    try {
+      checkedAt = this.#clock();
+      attemptId = this.#idGenerator();
+      readbackRef = this.#idGenerator();
+      if (
+        parseRfc3339Instant(checkedAt) === null ||
+        !IDENTIFIER_PATTERN.test(attemptId) ||
+        !IDENTIFIER_PATTERN.test(readbackRef)
+      ) {
+        throw new TypeError("Invalid resumed publish clock or identifier.");
+      }
+    } catch (error: unknown) {
+      return this.#runtime.coordinator.tripFatal(error);
+    }
+
+    const desiredModules = sortedModuleRefs(release.desiredModules);
+    let stage: ReturnType<ActivationAuthorityDriver["stageCandidate"]> | null =
+      null;
+    try {
+      stage = this.#runtime.privateDriver.stageCandidate({
+        releaseId: release.releaseId,
+        revision: release.revision,
+        activeModules: desiredModules,
+      });
+      const claim = await attemptRepository.claimReadbackAttempt({
+        metadata: {
+          managementTenantId: this.#managementTenantId,
+          actorRef: context.actorId,
+          action: "deployments.publish",
+          idempotencyKey: meta.idempotencyKey,
+          requestHash: meta.requestHash,
+          requestId: meta.requestId,
+          traceId: meta.traceId,
+          auditId: meta.auditId,
+        },
+        attemptId,
+        readbackRef,
+        releaseId: release.releaseId,
+        revision: release.revision,
+        desiredModules,
+        ownerBootId: this.#runtime.ownerBootId,
+        claimedAt: checkedAt,
+      });
+      if (
+        claim.disposition !== "created" ||
+        !claimedAttemptMatches(claim.attempt, {
+          action: "deployments.publish",
+          managementTenantId: this.#managementTenantId,
+          attemptId,
+          idempotencyKey: meta.idempotencyKey,
+          requestHash: meta.requestHash,
+          actorRef: context.actorId,
+          requestId: meta.requestId,
+          traceId: meta.traceId,
+          auditId: meta.auditId,
+          releaseId: release.releaseId,
+          revision: release.revision,
+          desiredModules,
+          readbackRef,
+          claimedAt: checkedAt,
+        })
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+
+      let observed: ModuleActivationSnapshot | null;
+      try {
+        observed = this.#runtime.privateDriver.candidateSnapshot(stage);
+      } catch {
+        observed = null;
+      }
+      let proof: ReturnType<ActivationAuthorityDriver["verifyCandidate"]> | null =
+        null;
+      let observation: ReadbackAttemptObservation;
+      if (
+        observed !== null &&
+        observed.releaseId === release.releaseId &&
+        observed.revision === release.revision &&
+        moduleRefSetsEqual(observed.activeModules, desiredModules)
+      ) {
+        proof = this.#runtime.privateDriver.verifyCandidate(stage, {
+          status: "verified",
+          releaseId: observed.releaseId,
+          revision: observed.revision,
+          activeModules: observed.activeModules,
+        });
+        observation = {
+          status: "verified",
+          appliedReleaseId: release.releaseId,
+          appliedRevision: release.revision,
+          appliedModules: desiredModules,
+          reasonCodes: [],
+          checkedAt,
+        };
+      } else if (observed !== null) {
+        observation = {
+          status: "mismatch",
+          appliedReleaseId: observed.releaseId,
+          appliedRevision: observed.revision,
+          appliedModules: observed.activeModules,
+          reasonCodes: ["runtime_readback_mismatch"],
+          checkedAt,
+        };
+      } else {
+        observation = {
+          status: "unknown",
+          appliedReleaseId: null,
+          appliedRevision: null,
+          appliedModules: [],
+          reasonCodes: ["runtime_readback_unknown"],
+          checkedAt,
+        };
+      }
+      const finalEnvelope = this.#assertWriteEnvelope(
+        "deployments.publish",
+        {
+          schema_version: request.schema_version,
+          request_id: meta.requestId,
+          trace_id: meta.traceId,
+          audit_id: meta.auditId,
+          status:
+            observation.status === "verified" ? "success" : "manual_review",
+          data: {
+            kind: "release",
+            release_id: release.releaseId,
+            revision: release.revision,
+            active_modules: desiredModules.map(hashModuleRef),
+          },
+          reason_codes: observation.reasonCodes,
+          readback: {
+            status: observation.status,
+            release_id: release.releaseId,
+            revision: release.revision,
+          },
+        },
+      );
+      const finalResult: ControlFinalResult = {
+        domainRecordRef: release.releaseId,
+        envelope: finalEnvelope as unknown as ControlEnvelope,
+      };
+      const finalization = await attemptRepository.finalizeReadbackAndComplete({
+        attemptId,
+        ownerCapability: claim.ownerCapability,
+        observation,
+        finalResult,
+        finalizedAt: checkedAt,
+      });
+      if (
+        finalization.disposition !== "finalized" ||
+        finalization.replayed !== false ||
+        finalization.idempotency.managementTenantId !==
+          this.#managementTenantId ||
+        finalization.idempotency.action !== "deployments.publish" ||
+        finalization.idempotency.idempotencyKey !== meta.idempotencyKey ||
+        finalization.idempotency.requestHash !== meta.requestHash ||
+        finalization.idempotency.actorRef !== context.actorId ||
+        finalization.idempotency.status !== "completed" ||
+        finalization.idempotency.domainRecordRef !== release.releaseId ||
+        finalization.idempotency.createdAt !== existing.createdAt ||
+        !isDeepStrictEqual(finalization.idempotency.finalResult, finalResult) ||
+        !isDeepStrictEqual(finalization.finalResult, finalResult) ||
+        finalization.attempt.action !== "deployments.publish" ||
+        finalization.attempt.attemptId !== attemptId ||
+        finalization.attempt.phase !== "finalized" ||
+        finalization.attempt.terminalStatus !== observation.status ||
+        finalization.reconciliationEvent.action !== "deployments.publish" ||
+        finalization.reconciliationEvent.status !== observation.status ||
+        finalization.completionEvent.action !== "deployments.publish" ||
+        finalization.completionEvent.status !== "completed"
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+      const persistedEnvelope = this.#assertWriteEnvelope(
+        "deployments.publish",
+        finalization.idempotency.finalResult.envelope,
+      );
+      if (
+        !isDeepStrictEqual(persistedEnvelope, finalEnvelope) ||
+        !publishedReleaseMatchesEnvelope(
+          finalization.release,
+          finalization.readback,
+          persistedEnvelope,
+          request,
+          this.#managementTenantId,
+          context.actorId,
+        )
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+      let persistedIdempotency;
+      let persistedRelease;
+      let persistedReadback;
+      try {
+        [persistedIdempotency, persistedRelease, persistedReadback] =
+          await Promise.all([
+            this.#repository.getIdempotency({
+              managementTenantId: this.#managementTenantId,
+              action: "deployments.publish",
+              idempotencyKey: meta.idempotencyKey,
+            }),
+            this.#repository.getRelease({
+              managementTenantId: this.#managementTenantId,
+              releaseId: release.releaseId,
+            }),
+            this.#repository.getReadback({
+              managementTenantId: this.#managementTenantId,
+              releaseId: release.releaseId,
+            }),
+          ]);
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+      if (
+        !isDeepStrictEqual(persistedIdempotency, finalization.idempotency) ||
+        !isDeepStrictEqual(persistedRelease, finalization.release) ||
+        !isDeepStrictEqual(persistedReadback, finalization.readback)
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+      if (proof === null) {
+        this.#runtime.privateDriver.abortCandidate(stage);
+      } else {
+        this.#runtime.privateDriver.commitCandidate(proof);
+      }
+      stage = null;
+      return persistedEnvelope;
+    } catch (error: unknown) {
+      if (stage !== null) {
+        try {
+          this.#runtime.privateDriver.abortCandidate(stage);
+        } catch {
+          // The fatal readiness fence below is authoritative if cleanup fails.
+        }
+      }
+      if (error instanceof RuntimeMutationFatalError) throw error;
+      return this.#runtime.coordinator.tripFatal(error);
+    }
+  }
+
   async publish(
     context: ExecutionContext,
     requestInput: PublishRequest,
@@ -2537,8 +2942,32 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         }
         if (
           existingIdempotency.actorRef !== context.actorId ||
+          existingIdempotency.domainRecordRef === null
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        if (existingIdempotency.status === "domain_committed") {
+          if (
+            existingIdempotency.finalResult !== null ||
+            !hasReadbackAttemptRepository(this.#repository)
+          ) {
+            return this.#runtime.coordinator.tripFatal(
+              new ModuleControlServiceError("state_output_invalid"),
+            );
+          }
+          return this.#resumeDomainCommittedPublish(
+            context,
+            request,
+            meta,
+            existingIdempotency,
+            this.#repository,
+          );
+        }
+        if (
           existingIdempotency.status !== "completed" ||
-          existingIdempotency.domainRecordRef === null ||
           existingIdempotency.finalResult === null ||
           existingIdempotency.finalResult.domainRecordRef !==
             existingIdempotency.domainRecordRef
@@ -3037,7 +3466,8 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         });
         if (
           claim.disposition !== "created" ||
-          !claimedAttemptMatchesPublish(claim.attempt, {
+          !claimedAttemptMatches(claim.attempt, {
+            action: "deployments.publish",
             managementTenantId: this.#managementTenantId,
             attemptId,
             idempotencyKey: meta.idempotencyKey,
@@ -3058,30 +3488,73 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           );
         }
 
-        const observed = this.#runtime.privateDriver.candidateSnapshot(stage);
-        const proof = this.#runtime.privateDriver.verifyCandidate(stage, {
-          status: "verified",
-          releaseId: observed.releaseId,
-          revision: observed.revision,
-          activeModules: observed.activeModules,
-        });
-        const successEnvelope = this.#assertWriteEnvelope(
+        let observed: ModuleActivationSnapshot | null;
+        try {
+          observed = this.#runtime.privateDriver.candidateSnapshot(stage);
+        } catch {
+          observed = null;
+        }
+        let proof: ReturnType<
+          ActivationAuthorityDriver["verifyCandidate"]
+        > | null = null;
+        let observation: ReadbackAttemptObservation;
+        if (
+          observed !== null &&
+          observed.releaseId === releaseId &&
+          observed.revision === revision &&
+          moduleRefSetsEqual(observed.activeModules, desiredModules)
+        ) {
+          proof = this.#runtime.privateDriver.verifyCandidate(stage, {
+            status: "verified",
+            releaseId: observed.releaseId,
+            revision: observed.revision,
+            activeModules: observed.activeModules,
+          });
+          observation = {
+            status: "verified",
+            appliedReleaseId: releaseId,
+            appliedRevision: revision,
+            appliedModules: desiredModules,
+            reasonCodes: [],
+            checkedAt: createdAt,
+          };
+        } else if (observed !== null) {
+          observation = {
+            status: "mismatch",
+            appliedReleaseId: observed.releaseId,
+            appliedRevision: observed.revision,
+            appliedModules: observed.activeModules,
+            reasonCodes: ["runtime_readback_mismatch"],
+            checkedAt: createdAt,
+          };
+        } else {
+          observation = {
+            status: "unknown",
+            appliedReleaseId: null,
+            appliedRevision: null,
+            appliedModules: [],
+            reasonCodes: ["runtime_readback_unknown"],
+            checkedAt: createdAt,
+          };
+        }
+        const finalEnvelope = this.#assertWriteEnvelope(
           "deployments.publish",
           {
             schema_version: request.schema_version,
             request_id: meta.requestId,
             trace_id: meta.traceId,
             audit_id: meta.auditId,
-            status: "success",
+            status:
+              observation.status === "verified" ? "success" : "manual_review",
             data: {
               kind: "release",
               release_id: releaseId,
               revision,
               active_modules: desiredModules.map(hashModuleRef),
             },
-            reason_codes: [],
+            reason_codes: observation.reasonCodes,
             readback: {
-              status: "verified",
+              status: observation.status,
               release_id: releaseId,
               revision,
             },
@@ -3089,43 +3562,48 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         );
         const finalResult: ControlFinalResult = {
           domainRecordRef: releaseId,
-          envelope: successEnvelope as unknown as ControlEnvelope,
+          envelope: finalEnvelope as unknown as ControlEnvelope,
         };
         const finalization: ReadbackFinalizationResult =
           await attemptRepository.finalizeReadbackAndComplete({
             attemptId,
             ownerCapability: claim.ownerCapability,
-            observation: {
-              status: "verified",
-              appliedReleaseId: releaseId,
-              appliedRevision: revision,
-              appliedModules: desiredModules,
-              reasonCodes: [],
-              checkedAt: createdAt,
-            },
+            observation,
             finalResult,
             finalizedAt: createdAt,
           });
 
-        const expectedReadback = {
+        const expectedReadback: ModuleReadbackRecord = {
           managementTenantId: this.#managementTenantId,
           readbackRef,
           releaseId,
           attemptId,
           revision,
-          appliedReleaseId: releaseId,
-          appliedRevision: revision,
-          appliedModules: desiredModules,
-          status: "verified",
-          reasonCodes: [],
+          appliedReleaseId: observation.appliedReleaseId,
+          appliedRevision: observation.appliedRevision,
+          appliedModules: observation.appliedModules,
+          status: observation.status,
+          reasonCodes: observation.reasonCodes,
           checkedAt: createdAt,
-        };
-        const expectedRelease = {
-          ...record,
-          publishedAt: createdAt,
-          status: "active_verified",
-          readbackRef,
-        };
+        } as ModuleReadbackRecord;
+        const expectedRelease: ModuleReleaseRecord =
+          observation.status === "verified"
+            ? {
+                ...record,
+                publishedAt: createdAt,
+                status: "active_verified",
+                readbackRef,
+              }
+            : {
+                ...record,
+                publishedAt: createdAt,
+                status: "manual_review",
+                readbackRef,
+                reasonCodes: observation.reasonCodes as readonly [
+                  string,
+                  ...string[],
+                ],
+              };
         const finalizedAttempt = finalization.attempt;
         if (
           finalization.disposition !== "finalized" ||
@@ -3148,14 +3626,17 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           finalizedAttempt.releaseId !== releaseId ||
           finalizedAttempt.revision !== revision ||
           finalizedAttempt.readbackRef !== readbackRef ||
-          finalizedAttempt.terminalStatus !== "verified" ||
-          finalizedAttempt.appliedReleaseId !== releaseId ||
-          finalizedAttempt.appliedRevision !== revision ||
+          finalizedAttempt.terminalStatus !== observation.status ||
+          finalizedAttempt.appliedReleaseId !== observation.appliedReleaseId ||
+          finalizedAttempt.appliedRevision !== observation.appliedRevision ||
           !moduleRefSetsEqual(
             finalizedAttempt.appliedModules,
-            desiredModules,
+            observation.appliedModules,
           ) ||
-          finalizedAttempt.reasonCodes.length !== 0 ||
+          !stringArraysEqual(
+            finalizedAttempt.reasonCodes,
+            observation.reasonCodes,
+          ) ||
           finalizedAttempt.checkedAt !== createdAt ||
           finalizedAttempt.finalizedAt !== createdAt ||
           finalizedAttempt.finalizedByActorRef !== context.actorId ||
@@ -3169,14 +3650,17 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           finalization.reconciliationEvent.action !== "deployments.publish" ||
           finalization.reconciliationEvent.objectRef !== releaseId ||
           finalization.reconciliationEvent.kind !== "reconciliation" ||
-          finalization.reconciliationEvent.status !== "verified" ||
-          finalization.reconciliationEvent.reasonCodes.length !== 0 ||
+          finalization.reconciliationEvent.status !== observation.status ||
+          !stringArraysEqual(
+            finalization.reconciliationEvent.reasonCodes,
+            observation.reasonCodes,
+          ) ||
           !isDeepStrictEqual(finalization.reconciliationEvent.detail, {
             kind: "reconciliation",
             releaseId,
             revision,
             readbackRef,
-            status: "verified",
+            status: observation.status,
           }) ||
           finalization.reconciliationEvent.occurredAt !== createdAt ||
           finalization.completionEvent.managementTenantId !==
@@ -3253,6 +3737,31 @@ class ModuleControlServiceImplementation implements ModuleControlService {
         const matchingHistory = persistedState.releaseHistory.filter(
           (entry) => entry.release.releaseId === releaseId,
         );
+        const activeStateMatches =
+          observation.status === "verified"
+            ? isDeepStrictEqual(
+                persistedState.activeRelease,
+                finalization.release,
+              ) &&
+              persistedState.activeRevision === revision &&
+              moduleRefSetsEqual(persistedState.activeModules, desiredModules)
+            : isDeepStrictEqual(persistedState.activeRelease, state.activeRelease) &&
+              persistedState.activeRevision === state.activeRevision &&
+              moduleRefSetsEqual(
+                persistedState.activeModules,
+                state.activeModules,
+              );
+        const previousReleaseMatches =
+          record.previousReleaseId === null
+            ? persistedPreviousRelease === null
+            : observation.status === "verified"
+              ? persistedPreviousRelease !== null &&
+                persistedPreviousRelease.status === "superseded" &&
+                persistedPreviousRelease.supersededByReleaseId === releaseId
+              : isDeepStrictEqual(
+                  persistedPreviousRelease,
+                  exactActiveRelease,
+                );
         if (
           !isDeepStrictEqual(
             persistedFinalIdempotency,
@@ -3268,20 +3777,14 @@ class ModuleControlServiceImplementation implements ModuleControlService {
             consumed: true,
           }) ||
           persistedState.managementTenantId !== this.#managementTenantId ||
-          !isDeepStrictEqual(persistedState.activeRelease, finalization.release) ||
-          persistedState.activeRevision !== revision ||
-          !moduleRefSetsEqual(persistedState.activeModules, desiredModules) ||
+          !activeStateMatches ||
           !isDeepStrictEqual(persistedState.latestReadback, finalization.readback) ||
           matchingHistory.length !== 1 ||
           !isDeepStrictEqual(matchingHistory[0]!.release, finalization.release) ||
           matchingHistory[0]!.intent !== preview.intent ||
           matchingHistory[0]!.rollbackTargetReleaseId !==
             (preview.intent === "rollback" ? preview.targetReleaseId : null) ||
-          (record.previousReleaseId === null
-            ? persistedPreviousRelease !== null
-            : persistedPreviousRelease === null ||
-              persistedPreviousRelease.status !== "superseded" ||
-              persistedPreviousRelease.supersededByReleaseId !== releaseId)
+          !previousReleaseMatches
         ) {
           return this.#runtime.coordinator.tripFatal(
             new ModuleControlServiceError("state_output_invalid"),
@@ -3293,7 +3796,7 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           finalization.idempotency.finalResult.envelope,
         );
         if (
-          !isDeepStrictEqual(persistedEnvelope, successEnvelope) ||
+          !isDeepStrictEqual(persistedEnvelope, finalEnvelope) ||
           !publishedReleaseMatchesEnvelope(
             finalization.release,
             finalization.readback,
@@ -3308,7 +3811,11 @@ class ModuleControlServiceImplementation implements ModuleControlService {
           );
         }
 
-        this.#runtime.privateDriver.commitCandidate(proof);
+        if (proof === null) {
+          this.#runtime.privateDriver.abortCandidate(stage);
+        } else {
+          this.#runtime.privateDriver.commitCandidate(proof);
+        }
         stage = null;
         return persistedEnvelope;
       } catch (error: unknown) {
@@ -3327,12 +3834,556 @@ class ModuleControlServiceImplementation implements ModuleControlService {
 
   async reconcile(
     context: ExecutionContext,
-    request: ReconcileRequest,
-    meta: WriteMeta,
+    requestInput: ReconcileRequest,
+    metaInput: WriteMeta,
   ): Promise<DeepFrozen<ControlEnvelope>> {
     this.#assertRuntimeHealthy();
-    void request;
-    return this.#unimplementedWrite("deployments.reconcile", context, meta);
+    const meta = parseWriteMeta(metaInput);
+    const failure = reconcileAuthorizationFailure(
+      context,
+      this.#managementTenantId,
+    );
+    if (failure !== null) {
+      return this.#terminalWriteEnvelope(
+        "deployments.reconcile",
+        meta,
+        "blocked",
+        failure,
+      );
+    }
+
+    return this.#runtime.coordinator.withMutation(async () => {
+      const request = parseReconcileRequest(requestInput);
+      if (request === null) {
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "blocked",
+          "reconcile_request_invalid",
+        );
+      }
+      let expectedRequestHash: string;
+      try {
+        expectedRequestHash = canonicalControlHash({
+          domain: "request",
+          schemaVersion: request.schema_version,
+          payload: {
+            action: "deployments.reconcile",
+            management_tenant_id: this.#managementTenantId,
+            actor_ref: context.actorId,
+            request,
+          },
+        }).hash;
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+      if (expectedRequestHash !== meta.requestHash) {
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "blocked",
+          "request_hash_mismatch",
+        );
+      }
+
+      let existingIdempotency;
+      try {
+        existingIdempotency = await this.#repository.getIdempotency({
+          managementTenantId: this.#managementTenantId,
+          action: "deployments.reconcile",
+          idempotencyKey: meta.idempotencyKey,
+        });
+      } catch (error: unknown) {
+        if (
+          error instanceof ModuleControlRepositoryError &&
+          error.code !== "closed"
+        ) {
+          return this.#runtime.coordinator.tripFatal(error);
+        }
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "unavailable",
+          "repository_unavailable",
+        );
+      }
+
+      if (existingIdempotency !== null) {
+        if (
+          existingIdempotency.managementTenantId !== this.#managementTenantId ||
+          existingIdempotency.action !== "deployments.reconcile" ||
+          existingIdempotency.idempotencyKey !== meta.idempotencyKey
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        if (existingIdempotency.requestHash !== meta.requestHash) {
+          return this.#terminalWriteEnvelope(
+            "deployments.reconcile",
+            meta,
+            "blocked",
+            "idempotency_conflict",
+          );
+        }
+        if (
+          existingIdempotency.actorRef !== context.actorId ||
+          existingIdempotency.status !== "completed" ||
+          existingIdempotency.domainRecordRef !== request.release_id ||
+          existingIdempotency.finalResult === null ||
+          existingIdempotency.finalResult.domainRecordRef !== request.release_id
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        let release;
+        let readback;
+        try {
+          [release, readback] = await Promise.all([
+            this.#repository.getRelease({
+              managementTenantId: this.#managementTenantId,
+              releaseId: request.release_id,
+            }),
+            this.#repository.getReadback({
+              managementTenantId: this.#managementTenantId,
+              releaseId: request.release_id,
+            }),
+          ]);
+        } catch (error: unknown) {
+          return this.#runtime.coordinator.tripFatal(error);
+        }
+        if (release === null) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        const replayEnvelope = this.#assertWriteEnvelope(
+          "deployments.reconcile",
+          existingIdempotency.finalResult.envelope,
+        );
+        if (
+          !reconciledReleaseMatchesEnvelope(
+            release,
+            readback,
+            replayEnvelope,
+            request,
+            this.#managementTenantId,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        return replayEnvelope;
+      }
+
+      if (!hasReadbackAttemptRepository(this.#repository)) {
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "unavailable",
+          "repository_unavailable",
+        );
+      }
+      const attemptRepository = this.#repository;
+      let release;
+      let newestUnresolved;
+      let priorReadback;
+      try {
+        [release, newestUnresolved, priorReadback] = await Promise.all([
+          this.#repository.getRelease({
+            managementTenantId: this.#managementTenantId,
+            releaseId: request.release_id,
+          }),
+          this.#repository.getNewestUnresolvedRelease(),
+          this.#repository.getReadback({
+            managementTenantId: this.#managementTenantId,
+            releaseId: request.release_id,
+          }),
+        ]);
+      } catch (error: unknown) {
+        if (
+          error instanceof ModuleControlRepositoryError &&
+          error.code !== "closed"
+        ) {
+          return this.#runtime.coordinator.tripFatal(error);
+        }
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "unavailable",
+          "repository_unavailable",
+        );
+      }
+      if (release === null) {
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "blocked",
+          "reconcile_release_not_found",
+        );
+      }
+      if (
+        release.managementTenantId !== this.#managementTenantId ||
+        newestUnresolved === null ||
+        newestUnresolved.managementTenantId !== this.#managementTenantId
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+      if (release.status !== "manual_review") {
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "blocked",
+          "reconcile_release_not_manual_review",
+        );
+      }
+      if (
+        newestUnresolved.releaseId !== release.releaseId ||
+        newestUnresolved.revision !== release.revision
+      ) {
+        return this.#terminalWriteEnvelope(
+          "deployments.reconcile",
+          meta,
+          "blocked",
+          "reconcile_release_not_newest_unresolved",
+        );
+      }
+      if (
+        priorReadback === null ||
+        (priorReadback.status !== "mismatch" &&
+          priorReadback.status !== "unknown") ||
+        priorReadback.managementTenantId !== this.#managementTenantId ||
+        priorReadback.releaseId !== release.releaseId ||
+        priorReadback.revision !== release.revision ||
+        priorReadback.readbackRef !== release.readbackRef ||
+        !stringArraysEqual(priorReadback.reasonCodes, release.reasonCodes) ||
+        release.desiredModules.length === 0
+      ) {
+        return this.#runtime.coordinator.tripFatal(
+          new ModuleControlServiceError("state_output_invalid"),
+        );
+      }
+
+      let checkedAt: string;
+      let attemptId: string;
+      let readbackRef: string;
+      try {
+        checkedAt = this.#clock();
+        attemptId = this.#idGenerator();
+        readbackRef = this.#idGenerator();
+        if (
+          parseRfc3339Instant(checkedAt) === null ||
+          !IDENTIFIER_PATTERN.test(attemptId) ||
+          !IDENTIFIER_PATTERN.test(readbackRef)
+        ) {
+          throw new TypeError("Invalid reconciliation clock or identifier.");
+        }
+      } catch (error: unknown) {
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+
+      const desiredModules = sortedModuleRefs(release.desiredModules);
+      let stage: ReturnType<ActivationAuthorityDriver["stageCandidate"]> | null =
+        null;
+      try {
+        stage = this.#runtime.privateDriver.stageCandidate({
+          releaseId: release.releaseId,
+          revision: release.revision,
+          activeModules: desiredModules,
+        });
+        const claim = await attemptRepository.claimReadbackAttempt({
+          metadata: {
+            managementTenantId: this.#managementTenantId,
+            actorRef: context.actorId,
+            action: "deployments.reconcile",
+            idempotencyKey: meta.idempotencyKey,
+            requestHash: meta.requestHash,
+            requestId: meta.requestId,
+            traceId: meta.traceId,
+            auditId: meta.auditId,
+          },
+          attemptId,
+          readbackRef,
+          releaseId: release.releaseId,
+          revision: release.revision,
+          desiredModules,
+          ownerBootId: this.#runtime.ownerBootId,
+          claimedAt: checkedAt,
+        });
+        if (
+          claim.disposition !== "created" ||
+          !claimedAttemptMatches(claim.attempt, {
+            action: "deployments.reconcile",
+            managementTenantId: this.#managementTenantId,
+            attemptId,
+            idempotencyKey: meta.idempotencyKey,
+            requestHash: meta.requestHash,
+            actorRef: context.actorId,
+            requestId: meta.requestId,
+            traceId: meta.traceId,
+            auditId: meta.auditId,
+            releaseId: release.releaseId,
+            revision: release.revision,
+            desiredModules,
+            readbackRef,
+            claimedAt: checkedAt,
+          })
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        let observed: ModuleActivationSnapshot | null;
+        try {
+          observed = this.#runtime.privateDriver.candidateSnapshot(stage);
+        } catch {
+          observed = null;
+        }
+        let proof: ReturnType<
+          ActivationAuthorityDriver["verifyCandidate"]
+        > | null = null;
+        let observation: ReadbackAttemptObservation;
+        if (
+          observed !== null &&
+          observed.releaseId === release.releaseId &&
+          observed.revision === release.revision &&
+          moduleRefSetsEqual(observed.activeModules, desiredModules)
+        ) {
+          proof = this.#runtime.privateDriver.verifyCandidate(stage, {
+            status: "verified",
+            releaseId: observed.releaseId,
+            revision: observed.revision,
+            activeModules: observed.activeModules,
+          });
+          observation = {
+            status: "verified",
+            appliedReleaseId: release.releaseId,
+            appliedRevision: release.revision,
+            appliedModules: desiredModules,
+            reasonCodes: [],
+            checkedAt,
+          };
+        } else if (observed !== null) {
+          observation = {
+            status: "mismatch",
+            appliedReleaseId: observed.releaseId,
+            appliedRevision: observed.revision,
+            appliedModules: observed.activeModules,
+            reasonCodes: ["runtime_readback_mismatch"],
+            checkedAt,
+          };
+        } else {
+          observation = {
+            status: "unknown",
+            appliedReleaseId: null,
+            appliedRevision: null,
+            appliedModules: [],
+            reasonCodes: ["runtime_readback_unknown"],
+            checkedAt,
+          };
+        }
+        const finalEnvelope = this.#assertWriteEnvelope(
+          "deployments.reconcile",
+          {
+            schema_version: request.schema_version,
+            request_id: meta.requestId,
+            trace_id: meta.traceId,
+            audit_id: meta.auditId,
+            status:
+              observation.status === "verified" ? "success" : "manual_review",
+            data: {
+              kind: "reconciliation",
+              release_id: release.releaseId,
+              revision: release.revision,
+              status: observation.status,
+            },
+            reason_codes: observation.reasonCodes,
+            readback: {
+              status: observation.status,
+              release_id: release.releaseId,
+              revision: release.revision,
+            },
+          },
+        );
+        const finalResult: ControlFinalResult = {
+          domainRecordRef: release.releaseId,
+          envelope: finalEnvelope as unknown as ControlEnvelope,
+        };
+        const finalization = await attemptRepository.finalizeReadbackAndComplete({
+          attemptId,
+          ownerCapability: claim.ownerCapability,
+          observation,
+          finalResult,
+          finalizedAt: checkedAt,
+        });
+        const expectedReadback: ModuleReadbackRecord = {
+          managementTenantId: this.#managementTenantId,
+          readbackRef,
+          releaseId: release.releaseId,
+          attemptId,
+          revision: release.revision,
+          appliedReleaseId: observation.appliedReleaseId,
+          appliedRevision: observation.appliedRevision,
+          appliedModules: observation.appliedModules,
+          status: observation.status,
+          reasonCodes: observation.reasonCodes,
+          checkedAt,
+        } as ModuleReadbackRecord;
+        const expectedRelease: ModuleReleaseRecord =
+          observation.status === "verified"
+            ? {
+                ...release,
+                status: "active_verified",
+                readbackRef,
+                reasonCodes: [],
+                supersededByReleaseId: null,
+              }
+            : {
+                ...release,
+                status: "manual_review",
+                readbackRef,
+                reasonCodes: observation.reasonCodes as readonly [
+                  string,
+                  ...string[],
+                ],
+                supersededByReleaseId: null,
+              };
+        if (
+          finalization.disposition !== "finalized" ||
+          finalization.replayed !== false ||
+          !isDeepStrictEqual(finalization.readback, expectedReadback) ||
+          !isDeepStrictEqual(finalization.release, expectedRelease) ||
+          finalization.idempotency.managementTenantId !==
+            this.#managementTenantId ||
+          finalization.idempotency.action !== "deployments.reconcile" ||
+          finalization.idempotency.idempotencyKey !== meta.idempotencyKey ||
+          finalization.idempotency.requestHash !== meta.requestHash ||
+          finalization.idempotency.actorRef !== context.actorId ||
+          finalization.idempotency.status !== "completed" ||
+          finalization.idempotency.domainRecordRef !== release.releaseId ||
+          !isDeepStrictEqual(finalization.idempotency.finalResult, finalResult) ||
+          !isDeepStrictEqual(finalization.finalResult, finalResult) ||
+          finalization.attempt.phase !== "finalized" ||
+          finalization.attempt.action !== "deployments.reconcile" ||
+          finalization.attempt.attemptId !== attemptId ||
+          finalization.attempt.releaseId !== release.releaseId ||
+          finalization.attempt.revision !== release.revision ||
+          finalization.attempt.terminalStatus !== observation.status ||
+          !isDeepStrictEqual(
+            finalization.attempt.appliedModules,
+            observation.appliedModules,
+          ) ||
+          !stringArraysEqual(
+            finalization.attempt.reasonCodes,
+            observation.reasonCodes,
+          ) ||
+          finalization.reconciliationEvent.action !== "deployments.reconcile" ||
+          finalization.reconciliationEvent.objectRef !== release.releaseId ||
+          finalization.reconciliationEvent.status !== observation.status ||
+          finalization.completionEvent.action !== "deployments.reconcile" ||
+          finalization.completionEvent.status !== "completed"
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+
+        let persistedIdempotency;
+        let persistedRelease;
+        let persistedReadback;
+        let persistedState;
+        try {
+          [
+            persistedIdempotency,
+            persistedRelease,
+            persistedReadback,
+            persistedState,
+          ] = await Promise.all([
+            this.#repository.getIdempotency({
+              managementTenantId: this.#managementTenantId,
+              action: "deployments.reconcile",
+              idempotencyKey: meta.idempotencyKey,
+            }),
+            this.#repository.getRelease({
+              managementTenantId: this.#managementTenantId,
+              releaseId: release.releaseId,
+            }),
+            this.#repository.getReadback({
+              managementTenantId: this.#managementTenantId,
+              releaseId: release.releaseId,
+            }),
+            this.#repository.getControlState(),
+          ]);
+        } catch (error: unknown) {
+          return this.#runtime.coordinator.tripFatal(error);
+        }
+        const matchingHistory = persistedState.releaseHistory.filter(
+          (entry) => entry.release.releaseId === release.releaseId,
+        );
+        if (
+          !isDeepStrictEqual(persistedIdempotency, finalization.idempotency) ||
+          !isDeepStrictEqual(persistedRelease, finalization.release) ||
+          !isDeepStrictEqual(persistedReadback, finalization.readback) ||
+          !isDeepStrictEqual(persistedState.latestReadback, finalization.readback) ||
+          matchingHistory.length !== 1 ||
+          !isDeepStrictEqual(matchingHistory[0]!.release, finalization.release) ||
+          (observation.status === "verified" &&
+            (!isDeepStrictEqual(
+              persistedState.activeRelease,
+              finalization.release,
+            ) ||
+              persistedState.activeRevision !== release.revision ||
+              !moduleRefSetsEqual(
+                persistedState.activeModules,
+                desiredModules,
+              )))
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        const persistedEnvelope = this.#assertWriteEnvelope(
+          "deployments.reconcile",
+          finalization.idempotency.finalResult.envelope,
+        );
+        if (
+          !isDeepStrictEqual(persistedEnvelope, finalEnvelope) ||
+          !reconciledReleaseMatchesEnvelope(
+            finalization.release,
+            finalization.readback,
+            persistedEnvelope,
+            request,
+            this.#managementTenantId,
+          )
+        ) {
+          return this.#runtime.coordinator.tripFatal(
+            new ModuleControlServiceError("state_output_invalid"),
+          );
+        }
+        if (proof === null) {
+          this.#runtime.privateDriver.abortCandidate(stage);
+        } else {
+          this.#runtime.privateDriver.commitCandidate(proof);
+        }
+        stage = null;
+        return persistedEnvelope;
+      } catch (error: unknown) {
+        if (stage !== null) {
+          try {
+            this.#runtime.privateDriver.abortCandidate(stage);
+          } catch {
+            // The fatal readiness fence below is authoritative if cleanup fails.
+          }
+        }
+        if (error instanceof RuntimeMutationFatalError) throw error;
+        return this.#runtime.coordinator.tripFatal(error);
+      }
+    });
   }
 
   async getState(context: ExecutionContext): Promise<DeepFrozen<ControlEnvelope>> {

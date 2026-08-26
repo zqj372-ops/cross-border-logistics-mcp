@@ -44,6 +44,9 @@ import {
 const activationGateTestState = vi.hoisted(() => ({
   snapshotOverride: null as ModuleActivationSnapshot | null,
   snapshotCalls: 0,
+  candidateSnapshotOverride: null as ModuleActivationSnapshot | null,
+  candidateSnapshotError: null as Error | null,
+  candidateSnapshotCalls: 0,
 }));
 
 vi.mock(
@@ -59,9 +62,6 @@ vi.mock(
         inventory: Parameters<typeof original.createActivationGate>[0],
       ) {
         const gate = original.createActivationGate(inventory);
-        const snapshotOverride = activationGateTestState.snapshotOverride;
-        if (snapshotOverride === null) return gate;
-
         const readFacade = Object.freeze({
           snapshot: () => {
             activationGateTestState.snapshotCalls += 1;
@@ -84,9 +84,35 @@ vi.mock(
             );
           },
         });
+        const privateDriver = Object.freeze({
+          stageCandidate: (
+            candidate: Parameters<typeof gate.privateDriver.stageCandidate>[0],
+          ) => gate.privateDriver.stageCandidate(candidate),
+          candidateSnapshot: (
+            handle: Parameters<typeof gate.privateDriver.candidateSnapshot>[0],
+          ) => {
+            activationGateTestState.candidateSnapshotCalls += 1;
+            if (activationGateTestState.candidateSnapshotError !== null) {
+              throw activationGateTestState.candidateSnapshotError;
+            }
+            return (
+              activationGateTestState.candidateSnapshotOverride ??
+              gate.privateDriver.candidateSnapshot(handle)
+            );
+          },
+          verifyCandidate: (
+            ...args: Parameters<typeof gate.privateDriver.verifyCandidate>
+          ) => gate.privateDriver.verifyCandidate(...args),
+          commitCandidate: (
+            proof: Parameters<typeof gate.privateDriver.commitCandidate>[0],
+          ) => gate.privateDriver.commitCandidate(proof),
+          abortCandidate: (
+            handle: Parameters<typeof gate.privateDriver.abortCandidate>[0],
+          ) => gate.privateDriver.abortCandidate(handle),
+        });
         return Object.freeze({
           readFacade,
-          privateDriver: gate.privateDriver,
+          privateDriver,
           recoveryDriver: gate.recoveryDriver,
         });
       },
@@ -97,6 +123,9 @@ vi.mock(
 afterEach(() => {
   activationGateTestState.snapshotOverride = null;
   activationGateTestState.snapshotCalls = 0;
+  activationGateTestState.candidateSnapshotOverride = null;
+  activationGateTestState.candidateSnapshotError = null;
+  activationGateTestState.candidateSnapshotCalls = 0;
 });
 
 const MANAGEMENT_TENANT_ID = "tenant_demo";
@@ -168,8 +197,8 @@ function adminContext(
   overrides: Partial<{
     tenantId: string;
     actorId: string;
-    actorRole: "admin" | "sales";
-    roles: readonly ["admin"] | readonly ["sales", "admin"];
+    actorRole: "admin" | "sales" | "operator";
+    roles: readonly ("admin" | "sales" | "operator")[];
     scopes: readonly string[];
   }> = {},
 ): ExecutionContext {
@@ -337,6 +366,21 @@ function fakeAssembly(options: {
   };
 }
 
+function additionalAssembly(
+  repository: FakeModuleControlRepository,
+  ownerBootId: string,
+  generatedIds: readonly string[],
+) {
+  const idGenerator = vi.fn<() => string>();
+  for (const id of generatedIds) idGenerator.mockReturnValueOnce(id);
+  return fakeAssembly({
+    repository,
+    ownerBootId,
+    idGenerator,
+    clock: vi.fn(() => "2026-08-25T02:00:00Z"),
+  });
+}
+
 function approvalMeta(
   request: ApprovalRequest,
   overrides: Partial<WriteMeta> = {},
@@ -396,6 +440,37 @@ function publishRequest(
     schema_version: ADMIN_CONTROL_SCHEMA_VERSION,
     preview_ref: previewRef,
     approval_id: approvalId,
+    ...overrides,
+  };
+}
+
+function reconcileRequest(releaseId: string): ReconcileRequest {
+  return {
+    schema_version: ADMIN_CONTROL_SCHEMA_VERSION,
+    release_id: releaseId,
+  };
+}
+
+function reconcileMeta(
+  request: ReconcileRequest,
+  overrides: Partial<WriteMeta> = {},
+  actorRef = "actor_reconciler",
+): WriteMeta {
+  return {
+    idempotencyKey: "idem_reconcile_service_001",
+    requestHash: canonicalControlHash({
+      domain: "request",
+      schemaVersion: request.schema_version,
+      payload: {
+        action: "deployments.reconcile",
+        management_tenant_id: MANAGEMENT_TENANT_ID,
+        actor_ref: actorRef,
+        request,
+      },
+    }).hash as WriteMeta["requestHash"],
+    requestId: "request_reconcile_service_001",
+    traceId: "trace_reconcile_service_001",
+    auditId: "audit_reconcile_service_001",
     ...overrides,
   };
 }
@@ -686,6 +761,61 @@ async function publishApprovedPreview(
     prepared.meta,
   );
   return { ...prepared, result };
+}
+
+async function manualReviewPublishFixture(
+  observation: "mismatch" | "unknown",
+) {
+  const suffix = `manual_${observation}`;
+  const releaseId = `release_${suffix}`;
+  const runtime = await registeredPublishRuntime(
+    [
+      `preview_${suffix}`,
+      `approval_${suffix}`,
+      releaseId,
+      `attempt_publish_${suffix}`,
+      `readback_publish_${suffix}`,
+      `attempt_reconcile_${suffix}`,
+      `readback_reconcile_${suffix}`,
+    ],
+    `boot_${suffix}`,
+  );
+  const prepared = await createApprovedPublish(
+    runtime,
+    changePreviewRequest(),
+    suffix,
+  );
+  if (observation === "mismatch") {
+    activationGateTestState.candidateSnapshotOverride = {
+      releaseId: "unexpected_runtime_release",
+      revision: 1,
+      activeModules: [],
+    };
+  } else {
+    activationGateTestState.candidateSnapshotError = new Error(
+      "trusted readback uncertain",
+    );
+  }
+  const publishRelease = vi.spyOn(runtime.repository, "publishRelease");
+  const claimReadbackAttempt = vi.spyOn(
+    runtime.repository,
+    "claimReadbackAttempt",
+  );
+  const published = await runtime.assembly.service.publish(
+    adminContext({ actorId: prepared.publisherActorRef }),
+    prepared.publish,
+    prepared.meta,
+  );
+  activationGateTestState.candidateSnapshotOverride = null;
+  activationGateTestState.candidateSnapshotError = null;
+  return {
+    ...runtime,
+    ...prepared,
+    claimReadbackAttempt,
+    published,
+    publishRelease,
+    releaseId,
+  };
 }
 
 async function legacyPublishedRecords(
@@ -3072,6 +3202,374 @@ describe("ModuleControlService slice A", () => {
       },
     );
 
+  });
+
+  describe("publish Batch D", () => {
+
+    it.each([
+      "published_pending_readback",
+      "manual_review",
+    ] as const)("blocks a new publish key behind newest unresolved %s", async (status) => {
+      const fixture = await firstActivationPublishFixture();
+      const unresolved = controlRelease({
+        releaseId: `unresolved_${status}`,
+        revision: 1,
+        status,
+      });
+      vi.spyOn(
+        fixture.repository,
+        "getNewestUnresolvedRelease",
+      ).mockResolvedValue(unresolved);
+      const publishRelease = vi.spyOn(fixture.repository, "publishRelease");
+
+      const result = await fixture.assembly.service.publish(
+        adminContext({ actorId: "actor_publisher" }),
+        fixture.request,
+        publishMeta(fixture.request),
+      );
+
+      expect(result).toMatchObject({
+        status: "blocked",
+        reason_codes: ["unresolved_release_exists"],
+      });
+      expect(publishRelease).not.toHaveBeenCalled();
+      expect(activationGateTestState.candidateSnapshotCalls).toBe(0);
+    });
+
+    it("replays completed success and conflicts on the same key with a different valid request hash", async () => {
+      const fixture = await firstActivationPublishFixture();
+      const publishRelease = vi.spyOn(fixture.repository, "publishRelease");
+      const claim = vi.spyOn(fixture.repository, "claimReadbackAttempt");
+      const context = adminContext({ actorId: "actor_publisher" });
+      const meta = publishMeta(fixture.request);
+      const first = await fixture.assembly.service.publish(
+        context,
+        fixture.request,
+        meta,
+      );
+      const adapterCalls = activationGateTestState.candidateSnapshotCalls;
+
+      const replay = await fixture.assembly.service.publish(
+        context,
+        fixture.request,
+        meta,
+      );
+      const differentRequest = publishRequest(
+        fixture.request.preview_ref,
+        "approval_different_valid",
+      );
+      const conflict = await fixture.assembly.service.publish(
+        context,
+        differentRequest,
+        publishMeta(
+          differentRequest,
+          {
+            idempotencyKey: meta.idempotencyKey,
+            requestId: "request_publish_conflict",
+            traceId: "trace_publish_conflict",
+            auditId: "audit_publish_conflict",
+          },
+          "actor_publisher",
+        ),
+      );
+
+      expect(JSON.stringify(replay)).toBe(JSON.stringify(first));
+      expect(conflict).toMatchObject({
+        status: "blocked",
+        reason_codes: ["idempotency_conflict"],
+      });
+      expect(publishRelease).toHaveBeenCalledTimes(1);
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(activationGateTestState.candidateSnapshotCalls).toBe(adapterCalls);
+      expect((await fixture.repository.getControlState()).releaseHistory).toHaveLength(1);
+    });
+
+    it("resumes the fixed domain_committed pending release without creating a second release", async () => {
+      const ownerBootId = "boot_publish_resume";
+      const runtime = await registeredPublishRuntime(
+        [
+          "preview_publish_resume",
+          "approval_publish_resume",
+          "release_publish_resume",
+          "attempt_publish_interrupted",
+          "readback_publish_interrupted",
+        ],
+        ownerBootId,
+      );
+      const prepared = await createApprovedPublish(
+        runtime,
+        changePreviewRequest(),
+        "publish_resume",
+      );
+      const publishRelease = vi.spyOn(runtime.repository, "publishRelease");
+      const claim = vi.spyOn(runtime.repository, "claimReadbackAttempt");
+      runtime.repository.queueReadbackAttemptFailure(
+        "claimReadbackAttempt",
+        "method_entry",
+        "closed",
+      );
+      await expect(
+        runtime.assembly.service.publish(
+          adminContext({ actorId: prepared.publisherActorRef }),
+          prepared.publish,
+          prepared.meta,
+        ),
+      ).rejects.toBeInstanceOf(RuntimeMutationFatalError);
+      expect((await runtime.repository.listUnfinishedReadbackAttempts())).toHaveLength(0);
+
+      const resumed = additionalAssembly(
+        runtime.repository,
+        ownerBootId,
+        ["attempt_publish_resumed", "readback_publish_resumed"],
+      );
+      const result = await resumed.assembly.service.publish(
+        adminContext({ actorId: prepared.publisherActorRef }),
+        prepared.publish,
+        prepared.meta,
+      );
+
+      expect(result).toMatchObject({
+        status: "success",
+        data: { release_id: "release_publish_resume", revision: 1 },
+        readback: {
+          status: "verified",
+          release_id: "release_publish_resume",
+          revision: 1,
+        },
+      });
+      expect(publishRelease).toHaveBeenCalledTimes(1);
+      expect(claim).toHaveBeenCalledTimes(2);
+      expect((await runtime.repository.getControlState()).releaseHistory).toHaveLength(1);
+    });
+
+    it("treats an existing current-boot publish claim as fatal without another adapter call", async () => {
+      const ownerBootId = "boot_publish_existing_claim";
+      const runtime = await registeredPublishRuntime(
+        [
+          "preview_publish_existing_claim",
+          "approval_publish_existing_claim",
+          "release_publish_existing_claim",
+          "attempt_publish_existing_claim",
+          "readback_publish_existing_claim",
+        ],
+        ownerBootId,
+      );
+      const prepared = await createApprovedPublish(
+        runtime,
+        changePreviewRequest(),
+        "publish_existing_claim",
+      );
+      const publishRelease = vi.spyOn(runtime.repository, "publishRelease");
+      const claim = vi.spyOn(runtime.repository, "claimReadbackAttempt");
+      runtime.repository.queueReadbackAttemptFailure(
+        "finalizeReadbackAndComplete",
+        "method_entry",
+        "closed",
+      );
+      await expect(
+        runtime.assembly.service.publish(
+          adminContext({ actorId: prepared.publisherActorRef }),
+          prepared.publish,
+          prepared.meta,
+        ),
+      ).rejects.toBeInstanceOf(RuntimeMutationFatalError);
+      const adapterCalls = activationGateTestState.candidateSnapshotCalls;
+      expect((await runtime.repository.listUnfinishedReadbackAttempts())).toHaveLength(1);
+
+      const restarted = additionalAssembly(
+        runtime.repository,
+        ownerBootId,
+        ["attempt_must_not_be_used", "readback_must_not_be_used"],
+      );
+      await expect(
+        restarted.assembly.service.publish(
+          adminContext({ actorId: prepared.publisherActorRef }),
+          prepared.publish,
+          prepared.meta,
+        ),
+      ).rejects.toBeInstanceOf(RuntimeMutationFatalError);
+      expect(publishRelease).toHaveBeenCalledTimes(1);
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(activationGateTestState.candidateSnapshotCalls).toBe(adapterCalls);
+    });
+
+    it("serializes concurrent same-key callers into one publish and one persisted replay", async () => {
+      const fixture = await firstActivationPublishFixture();
+      const originalPublish = fixture.repository.publishRelease.bind(
+        fixture.repository,
+      );
+      let markReleaseWritten!: () => void;
+      let allowOwner!: () => void;
+      const releaseWritten = new Promise<void>((resolve) => {
+        markReleaseWritten = resolve;
+      });
+      const ownerMayContinue = new Promise<void>((resolve) => {
+        allowOwner = resolve;
+      });
+      const publishRelease = vi
+        .spyOn(fixture.repository, "publishRelease")
+        .mockImplementation(async (write) => {
+          const result = await originalPublish(write);
+          markReleaseWritten();
+          await ownerMayContinue;
+          return result;
+        });
+      const claim = vi.spyOn(fixture.repository, "claimReadbackAttempt");
+      const context = adminContext({ actorId: "actor_publisher" });
+      const meta = publishMeta(fixture.request);
+
+      const owner = fixture.assembly.service.publish(
+        context,
+        fixture.request,
+        meta,
+      );
+      await releaseWritten;
+      const waiter = fixture.assembly.service.publish(
+        context,
+        fixture.request,
+        meta,
+      );
+      allowOwner();
+      const [ownerResult, waiterResult] = await Promise.all([owner, waiter]);
+
+      expect(waiterResult).toEqual(ownerResult);
+      expect(publishRelease).toHaveBeenCalledTimes(1);
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(activationGateTestState.candidateSnapshotCalls).toBe(1);
+      expect((await fixture.repository.getControlState()).releaseHistory).toHaveLength(1);
+    });
+
+    it("blocks missing preview, rejected approval, stale base, and inventory drift before the domain write", async () => {
+      const missingPreview = await firstActivationPublishFixture();
+      vi.spyOn(missingPreview.repository, "getPreview").mockResolvedValueOnce(null);
+      const missingWrite = vi.spyOn(missingPreview.repository, "publishRelease");
+      await expect(
+        missingPreview.assembly.service.publish(
+          adminContext({ actorId: "actor_publisher" }),
+          missingPreview.request,
+          publishMeta(missingPreview.request),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["preview_not_found"],
+      });
+      expect(missingWrite).not.toHaveBeenCalled();
+
+      const rejected = await firstActivationPublishFixture();
+      const persistedApproval = await rejected.repository.getApproval({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        approvalId: rejected.request.approval_id,
+      });
+      if (persistedApproval === null) throw new Error("Expected approval fixture.");
+      vi.spyOn(rejected.repository, "getApproval").mockResolvedValueOnce({
+        ...persistedApproval,
+        decision: "reject",
+        reasonCode: "rejected_policy",
+      });
+      const rejectedWrite = vi.spyOn(rejected.repository, "publishRelease");
+      await expect(
+        rejected.assembly.service.publish(
+          adminContext({ actorId: "actor_publisher" }),
+          rejected.request,
+          publishMeta(rejected.request),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["approval_not_approved"],
+      });
+      expect(rejectedWrite).not.toHaveBeenCalled();
+
+      const inventoryDrift = await firstActivationPublishFixture();
+      const persistedPreview = await inventoryDrift.repository.getPreview({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        previewRef: inventoryDrift.request.preview_ref,
+      });
+      const driftApproval = await inventoryDrift.repository.getApproval({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        approvalId: inventoryDrift.request.approval_id,
+      });
+      if (persistedPreview === null || driftApproval === null) {
+        throw new Error("Expected publish drift fixtures.");
+      }
+      const driftDigest = `sha256:${"e".repeat(64)}` as const;
+      const driftPreview = rehashPreviewRecord({
+        ...persistedPreview,
+        inventoryRefs: [{ ...controlModuleRef(), descriptorDigest: driftDigest }],
+      });
+      vi.spyOn(inventoryDrift.repository, "getPreview").mockResolvedValueOnce(
+        driftPreview,
+      );
+      vi.spyOn(inventoryDrift.repository, "getApproval").mockResolvedValueOnce({
+        ...driftApproval,
+        previewCanonicalHash: driftPreview.canonicalHash,
+        inventoryDigestSet: [driftDigest],
+      });
+      const driftWrite = vi.spyOn(inventoryDrift.repository, "publishRelease");
+      await expect(
+        inventoryDrift.assembly.service.publish(
+          adminContext({ actorId: "actor_publisher" }),
+          inventoryDrift.request,
+          publishMeta(inventoryDrift.request),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["inventory_drift"],
+      });
+      expect(driftWrite).not.toHaveBeenCalled();
+
+      const staleBase = await firstActivationPublishFixture();
+      const activeRelease = controlRelease({
+        releaseId: "active_after_preview",
+        revision: 1,
+        status: "active_verified",
+      });
+      const activeReadback = verifiedReadback(activeRelease);
+      const originalState = await staleBase.repository.getControlState();
+      const currentState: ModuleControlState = {
+        ...originalState,
+        activeRelease,
+        activeRevision: 1,
+        activeModules: activeRelease.desiredModules,
+        latestReadback: activeReadback,
+        releaseHistory: [{
+          release: activeRelease,
+          intent: "change",
+          rollbackTargetReleaseId: null,
+        }],
+      };
+      activationGateTestState.snapshotOverride = {
+        releaseId: activeRelease.releaseId,
+        revision: activeRelease.revision,
+        activeModules: activeRelease.desiredModules,
+      };
+      vi.spyOn(staleBase.repository, "getControlState").mockResolvedValue(
+        currentState,
+      );
+      vi.spyOn(staleBase.repository, "getActiveRelease").mockResolvedValue(
+        activeRelease,
+      );
+      vi.spyOn(staleBase.repository, "getReadback").mockResolvedValue(
+        activeReadback,
+      );
+      const staleWrite = vi.spyOn(staleBase.repository, "publishRelease");
+      await expect(
+        staleBase.assembly.service.publish(
+          adminContext({ actorId: "actor_publisher" }),
+          staleBase.request,
+          publishMeta(staleBase.request),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["preview_base_stale"],
+      });
+      activationGateTestState.snapshotOverride = null;
+      expect(staleWrite).not.toHaveBeenCalled();
+    });
+
+  });
+
+  describe("createDeploymentPreview change", () => {
+
     it.each([
       "published_pending_readback",
       "manual_review",
@@ -4661,6 +5159,80 @@ describe("ModuleControlService slice A", () => {
       });
     });
 
+    it.each([
+      ["mismatch", "mismatch", "runtime_readback_mismatch"],
+      ["unknown", "unknown", "runtime_readback_unknown"],
+    ] as const)(
+      "durably finalizes %s as manual_review and replays the same key without another adapter call",
+      async (observation, readbackStatus, reasonCode) => {
+        const fixture = await manualReviewPublishFixture(observation);
+
+        expect(fixture.published).toMatchObject({
+          status: "manual_review",
+          data: {
+            kind: "release",
+            release_id: fixture.releaseId,
+            revision: 1,
+          },
+          reason_codes: [reasonCode],
+          readback: {
+            status: readbackStatus,
+            release_id: fixture.releaseId,
+            revision: 1,
+          },
+        });
+        expect(fixture.assembly.activation.snapshot()).toEqual({
+          releaseId: null,
+          revision: 0,
+          activeModules: [],
+        });
+        await expect(
+          fixture.repository.getRelease({
+            managementTenantId: MANAGEMENT_TENANT_ID,
+            releaseId: fixture.releaseId,
+          }),
+        ).resolves.toMatchObject({
+          status: "manual_review",
+          reasonCodes: [reasonCode],
+        });
+        await expect(
+          fixture.repository.getReadback({
+            managementTenantId: MANAGEMENT_TENANT_ID,
+            releaseId: fixture.releaseId,
+          }),
+        ).resolves.toMatchObject({
+          status: readbackStatus,
+          reasonCodes: [reasonCode],
+        });
+
+        const adapterCalls = activationGateTestState.candidateSnapshotCalls;
+        const releaseWrites = fixture.publishRelease.mock.calls.length;
+        const attemptClaims = fixture.claimReadbackAttempt.mock.calls.length;
+        activationGateTestState.candidateSnapshotError = new Error(
+          "replay must not read runtime",
+        );
+        const replay = await fixture.assembly.service.publish(
+          adminContext({ actorId: fixture.publisherActorRef }),
+          fixture.publish,
+          fixture.meta,
+        );
+        activationGateTestState.candidateSnapshotError = null;
+
+        expect(JSON.stringify(replay)).toBe(JSON.stringify(fixture.published));
+        expect(replay).toEqual(fixture.published);
+        expect(activationGateTestState.candidateSnapshotCalls).toBe(
+          adapterCalls,
+        );
+        expect(fixture.publishRelease).toHaveBeenCalledTimes(releaseWrites);
+        expect(fixture.claimReadbackAttempt).toHaveBeenCalledTimes(
+          attemptClaims,
+        );
+        expect(
+          (await fixture.repository.getControlState()).releaseHistory,
+        ).toHaveLength(1);
+      },
+    );
+
     it("publishes an exact R2 over active R1 and supersedes R1 before committing the R2 gate", async () => {
       const firstRuntime = await registeredPublishRuntime([
         "preview_chain_R1",
@@ -4872,6 +5444,375 @@ describe("ModuleControlService slice A", () => {
         releaseId: "R3",
         revision: 3,
       });
+    });
+  });
+
+  describe("reconcile", () => {
+    it("reconciles the newest manual_review release in place with a new exact attempt", async () => {
+      const fixture = await manualReviewPublishFixture("mismatch");
+      const before = await fixture.repository.getControlState();
+      const request = reconcileRequest(fixture.releaseId);
+      const meta = reconcileMeta(request);
+
+      const result = await fixture.assembly.service.reconcile(
+        adminContext({ actorId: "actor_reconciler" }),
+        request,
+        meta,
+      );
+
+      expect(result).toMatchObject({
+        status: "success",
+        data: {
+          kind: "reconciliation",
+          release_id: fixture.releaseId,
+          revision: 1,
+          status: "verified",
+        },
+        reason_codes: [],
+        readback: {
+          status: "verified",
+          release_id: fixture.releaseId,
+          revision: 1,
+        },
+      });
+      expect(fixture.assembly.activation.snapshot()).toEqual({
+        releaseId: fixture.releaseId,
+        revision: 1,
+        activeModules: [controlModuleRef()],
+      });
+      const after = await fixture.repository.getControlState();
+      expect(after.releaseHistory).toHaveLength(before.releaseHistory.length);
+      expect(after.activeRelease).toMatchObject({
+        releaseId: fixture.releaseId,
+        revision: 1,
+        status: "active_verified",
+      });
+      expect(fixture.publishRelease).toHaveBeenCalledTimes(1);
+      const attempts = await fixture.repository.getReadbackAttemptHistory({
+        managementTenantId: MANAGEMENT_TENANT_ID,
+        releaseId: fixture.releaseId,
+        revision: 1,
+      });
+      expect(attempts).toHaveLength(2);
+      const attemptsByAction = new Map(
+        attempts.map((attempt) => [attempt.action, attempt]),
+      );
+      expect(attemptsByAction.get("deployments.publish")).toMatchObject({
+        phase: "finalized",
+        terminalStatus: "mismatch",
+      });
+      expect(attemptsByAction.get("deployments.reconcile")).toMatchObject({
+        phase: "finalized",
+        terminalStatus: "verified",
+      });
+    });
+
+    it("allows an authorized operator and blocks an unauthorized active role or tenant", async () => {
+      const operatorFixture = await manualReviewPublishFixture("mismatch");
+      const operatorRequest = reconcileRequest(operatorFixture.releaseId);
+      await expect(
+        operatorFixture.assembly.service.reconcile(
+          adminContext({
+            actorId: "actor_operator",
+            actorRole: "operator",
+            roles: ["operator"],
+          }),
+          operatorRequest,
+          reconcileMeta(operatorRequest, {}, "actor_operator"),
+        ),
+      ).resolves.toMatchObject({ status: "success" });
+
+      const deniedFixture = await manualReviewPublishFixture("mismatch");
+      const deniedRequest = reconcileRequest(deniedFixture.releaseId);
+      const callsBefore = deniedFixture.repository.calls.length;
+      await expect(
+        deniedFixture.assembly.service.reconcile(
+          adminContext({
+            actorId: "actor_sales",
+            actorRole: "sales",
+            roles: ["sales", "admin"],
+          }),
+          deniedRequest,
+          reconcileMeta(deniedRequest, {}, "actor_sales"),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["admin_role_required"],
+      });
+      await expect(
+        deniedFixture.assembly.service.reconcile(
+          adminContext({ tenantId: "tenant_other" }),
+          deniedRequest,
+          reconcileMeta(deniedRequest, {}, "actor_admin"),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["management_tenant_mismatch"],
+      });
+      expect(deniedFixture.repository.calls).toHaveLength(callsBefore);
+    });
+
+    it.each([
+      "active_verified",
+      "superseded",
+      "published_pending_readback",
+    ] as const)("blocks a %s reconcile target", async (status) => {
+      const fixture = await manualReviewPublishFixture("mismatch");
+      const replacement = controlRelease({
+        releaseId: fixture.releaseId,
+        revision: 1,
+        status,
+        ...(status === "superseded"
+          ? { supersededByReleaseId: "newer_release" }
+          : {}),
+      });
+      vi.spyOn(fixture.repository, "getRelease").mockResolvedValueOnce(
+        replacement,
+      );
+      const request = reconcileRequest(fixture.releaseId);
+      const claims = fixture.claimReadbackAttempt.mock.calls.length;
+
+      const result = await fixture.assembly.service.reconcile(
+        adminContext({ actorId: "actor_reconciler" }),
+        request,
+        reconcileMeta(request),
+      );
+
+      expect(result).toMatchObject({
+        status: "blocked",
+        reason_codes: ["reconcile_release_not_manual_review"],
+      });
+      expect(fixture.claimReadbackAttempt).toHaveBeenCalledTimes(claims);
+    });
+
+    it("blocks a manual_review release that is not the newest unresolved target", async () => {
+      const fixture = await manualReviewPublishFixture("mismatch");
+      vi.spyOn(
+        fixture.repository,
+        "getNewestUnresolvedRelease",
+      ).mockResolvedValue(
+        controlRelease({
+          releaseId: "newer_manual_release",
+          revision: 2,
+          status: "manual_review",
+        }),
+      );
+      const request = reconcileRequest(fixture.releaseId);
+      const claims = fixture.claimReadbackAttempt.mock.calls.length;
+
+      await expect(
+        fixture.assembly.service.reconcile(
+          adminContext({ actorId: "actor_reconciler" }),
+          request,
+          reconcileMeta(request),
+        ),
+      ).resolves.toMatchObject({
+        status: "blocked",
+        reason_codes: ["reconcile_release_not_newest_unresolved"],
+      });
+      expect(fixture.claimReadbackAttempt).toHaveBeenCalledTimes(claims);
+    });
+
+    it("replays the same reconcile hash and conflicts on a different valid target without another attempt", async () => {
+      const fixture = await manualReviewPublishFixture("mismatch");
+      const request = reconcileRequest(fixture.releaseId);
+      const meta = reconcileMeta(request);
+      const context = adminContext({ actorId: "actor_reconciler" });
+      const first = await fixture.assembly.service.reconcile(
+        context,
+        request,
+        meta,
+      );
+      const adapterCalls = activationGateTestState.candidateSnapshotCalls;
+      const claimCalls = fixture.claimReadbackAttempt.mock.calls.length;
+
+      const replay = await fixture.assembly.service.reconcile(
+        context,
+        request,
+        meta,
+      );
+      const differentRequest = reconcileRequest("different_release_valid");
+      const conflict = await fixture.assembly.service.reconcile(
+        context,
+        differentRequest,
+        reconcileMeta(
+          differentRequest,
+          {
+            idempotencyKey: meta.idempotencyKey,
+            requestId: "request_reconcile_conflict",
+            traceId: "trace_reconcile_conflict",
+            auditId: "audit_reconcile_conflict",
+          },
+        ),
+      );
+
+      expect(JSON.stringify(replay)).toBe(JSON.stringify(first));
+      expect(conflict).toMatchObject({
+        status: "blocked",
+        reason_codes: ["idempotency_conflict"],
+      });
+      expect(fixture.claimReadbackAttempt).toHaveBeenCalledTimes(claimCalls);
+      expect(activationGateTestState.candidateSnapshotCalls).toBe(adapterCalls);
+      expect((await fixture.repository.getControlState()).releaseHistory).toHaveLength(1);
+    });
+
+    it.each([
+      ["mismatch", "runtime_readback_mismatch"],
+      ["unknown", "runtime_readback_unknown"],
+    ] as const)(
+      "keeps reconcile %s durable manual_review while preserving the publish attempt",
+      async (status, reasonCode) => {
+        const fixture = await manualReviewPublishFixture("mismatch");
+        if (status === "mismatch") {
+          activationGateTestState.candidateSnapshotOverride = {
+            releaseId: "still_not_applied",
+            revision: 1,
+            activeModules: [],
+          };
+        } else {
+          activationGateTestState.candidateSnapshotError = new Error(
+            "reconcile readback uncertain",
+          );
+        }
+        const request = reconcileRequest(fixture.releaseId);
+        const result = await fixture.assembly.service.reconcile(
+          adminContext({ actorId: "actor_reconciler" }),
+          request,
+          reconcileMeta(request),
+        );
+        activationGateTestState.candidateSnapshotOverride = null;
+        activationGateTestState.candidateSnapshotError = null;
+
+        expect(result).toMatchObject({
+          status: "manual_review",
+          reason_codes: [reasonCode],
+          data: {
+            kind: "reconciliation",
+            release_id: fixture.releaseId,
+            revision: 1,
+            status,
+          },
+          readback: { status, release_id: fixture.releaseId, revision: 1 },
+        });
+        expect(fixture.assembly.activation.snapshot()).toEqual({
+          releaseId: null,
+          revision: 0,
+          activeModules: [],
+        });
+        const state = await fixture.repository.getControlState();
+        expect(state.releaseHistory).toHaveLength(1);
+        expect(state.releaseHistory[0]?.release).toMatchObject({
+          releaseId: fixture.releaseId,
+          status: "manual_review",
+          reasonCodes: [reasonCode],
+        });
+        const attempts = await fixture.repository.getReadbackAttemptHistory({
+          managementTenantId: MANAGEMENT_TENANT_ID,
+          releaseId: fixture.releaseId,
+          revision: 1,
+        });
+        expect(attempts).toHaveLength(2);
+        expect(
+          attempts.some(
+            (attempt) =>
+              attempt.action === "deployments.publish" &&
+              attempt.terminalStatus === "mismatch",
+          ),
+        ).toBe(true);
+        expect(
+          attempts.some(
+            (attempt) =>
+              attempt.action === "deployments.reconcile" &&
+              attempt.terminalStatus === status,
+          ),
+        ).toBe(true);
+      },
+    );
+  });
+
+  describe("publish and reconcile failure closure", () => {
+    it("returns unavailable for dependency failure before a publish domain write", async () => {
+      const fixture = await firstActivationPublishFixture();
+      fixture.repository.queueFailure(
+        "getNewestUnresolvedRelease",
+        "closed",
+      );
+      const publishRelease = vi.spyOn(fixture.repository, "publishRelease");
+
+      await expect(
+        fixture.assembly.service.publish(
+          adminContext({ actorId: "actor_publisher" }),
+          fixture.request,
+          publishMeta(fixture.request),
+        ),
+      ).resolves.toMatchObject({
+        status: "unavailable",
+        reason_codes: ["repository_unavailable"],
+      });
+      expect(publishRelease).not.toHaveBeenCalled();
+      expect(activationGateTestState.candidateSnapshotCalls).toBe(0);
+    });
+
+    it("returns unavailable for dependency failure before a reconcile claim", async () => {
+      const fixture = await manualReviewPublishFixture("mismatch");
+      fixture.repository.queueFailure("getRelease", "closed");
+      const claims = fixture.claimReadbackAttempt.mock.calls.length;
+      const request = reconcileRequest(fixture.releaseId);
+
+      await expect(
+        fixture.assembly.service.reconcile(
+          adminContext({ actorId: "actor_reconciler" }),
+          request,
+          reconcileMeta(request),
+        ),
+      ).resolves.toMatchObject({
+        status: "unavailable",
+        reason_codes: ["repository_unavailable"],
+      });
+      expect(fixture.claimReadbackAttempt).toHaveBeenCalledTimes(claims);
+    });
+
+    it("trips the fatal readiness fence when publish finalization fails after the durable claim", async () => {
+      const fixture = await firstActivationPublishFixture();
+      fixture.repository.queueReadbackAttemptFailure(
+        "finalizeReadbackAndComplete",
+        "method_entry",
+        "closed",
+      );
+
+      await expect(
+        fixture.assembly.service.publish(
+          adminContext({ actorId: "actor_publisher" }),
+          fixture.request,
+          publishMeta(fixture.request),
+        ),
+      ).rejects.toBeInstanceOf(RuntimeMutationFatalError);
+      await expect(
+        fixture.assembly.service.getState(adminContext()),
+      ).rejects.toMatchObject({ code: "fatal" });
+      expect((await fixture.repository.listUnfinishedReadbackAttempts())).toHaveLength(1);
+    });
+
+    it("trips the fatal readiness fence when reconcile finalization fails after the durable claim", async () => {
+      const fixture = await manualReviewPublishFixture("mismatch");
+      fixture.repository.queueReadbackAttemptFailure(
+        "finalizeReadbackAndComplete",
+        "method_entry",
+        "closed",
+      );
+      const request = reconcileRequest(fixture.releaseId);
+
+      await expect(
+        fixture.assembly.service.reconcile(
+          adminContext({ actorId: "actor_reconciler" }),
+          request,
+          reconcileMeta(request),
+        ),
+      ).rejects.toBeInstanceOf(RuntimeMutationFatalError);
+      await expect(
+        fixture.assembly.service.getState(adminContext()),
+      ).rejects.toMatchObject({ code: "fatal" });
+      expect((await fixture.repository.listUnfinishedReadbackAttempts())).toHaveLength(1);
     });
   });
 
@@ -5233,51 +6174,6 @@ describe("ModuleControlService slice A", () => {
       ]);
     });
 
-    it("returns a producer-validated unavailable envelope for reconcile while it remains unimplemented", async () => {
-      const getControlState = vi.fn(() => Promise.resolve(emptyState()));
-      const repository = repositoryStub({ getControlState });
-      const clock = vi.fn(() => "2026-08-25T01:00:00Z");
-      const idGenerator = vi.fn(() => "unused_generated_id");
-      const assembly = createModuleControlRuntimeAssembly({
-        inventory,
-        repository,
-        managementTenantId: MANAGEMENT_TENANT_ID,
-        previewTtlSeconds: 900,
-        clock,
-        idGenerator,
-      });
-      const context = adminContext();
-      const meta = placeholderMeta();
-      const reconcileRequest: ReconcileRequest = {
-        schema_version: ADMIN_CONTROL_SCHEMA_VERSION,
-        release_id: "release_placeholder_001",
-      };
-
-      const result = await assembly.service.reconcile(
-        context,
-        reconcileRequest,
-        meta,
-      );
-
-      expect(result).toEqual({
-        schema_version: ADMIN_CONTROL_SCHEMA_VERSION,
-        request_id: meta.requestId,
-        trace_id: meta.traceId,
-        audit_id: meta.auditId,
-        status: "unavailable",
-        data: null,
-        reason_codes: ["service_phase_not_implemented"],
-        readback: {
-          status: "not_applicable",
-          release_id: null,
-          revision: null,
-        },
-      });
-      expect(Object.isFrozen(result)).toBe(true);
-      expect(clock).not.toHaveBeenCalled();
-      expect(idGenerator).not.toHaveBeenCalled();
-      expect(getControlState).not.toHaveBeenCalled();
-    });
   });
 
   it("keeps internal authority imports and raw factories out of production surfaces", () => {
