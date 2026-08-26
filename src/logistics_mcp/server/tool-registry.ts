@@ -28,6 +28,10 @@ import type {
   IdempotencyRepository,
 } from "../platform/repositories";
 import type { ZodType } from "zod";
+import type {
+  ActivationReadFacade,
+  ControlledDispatchFacade,
+} from "../control-plane/service";
 import type { ModuleCatalogEntry } from "../module-runtime";
 
 export const phaseOneToolNames = allowlistedToolNames;
@@ -118,6 +122,11 @@ export interface ToolDefinition {
   readonly moduleVersion?: string;
   readonly riskLevel?: "T0" | "T1" | "T2" | "T3";
   readonly standardRefs?: readonly string[];
+}
+
+export interface RuntimeActivationFacades {
+  readonly activation: ActivationReadFacade;
+  readonly dispatch: ControlledDispatchFacade;
 }
 
 export interface ToolExecutionMetadata {
@@ -246,6 +255,68 @@ export function registerModuleToolDefinitions(
     riskLevel: entry.riskLevel,
     standardRefs: entry.standardRefs,
   }));
+}
+
+function unavailableModuleOutcome(
+  code: "module_policy_not_released" | "module_disabled_by_release",
+  message: string,
+): DomainToolOutcome {
+  return {
+    status: "unavailable",
+    data: null,
+    blockers: [
+      {
+        code,
+        message,
+        severity: "error",
+        field: null,
+      },
+    ],
+  };
+}
+
+export function wrapModuleToolDefinitions(
+  definitions: readonly ToolDefinition[],
+  facades: RuntimeActivationFacades,
+): readonly ToolDefinition[] {
+  return definitions.map((definition) => {
+    if (
+      definition.moduleId === undefined ||
+      definition.moduleVersion === undefined ||
+      definition.handler === undefined
+    ) {
+      return definition;
+    }
+
+    const originalHandler = definition.handler;
+    const handler: DomainToolHandler = (input, context, signal) => {
+      const snapshot = facades.activation.snapshot();
+      if (snapshot.releaseId === null || snapshot.revision === 0) {
+        return unavailableModuleOutcome(
+          "module_policy_not_released",
+          "The module is unavailable until an active verified release exists.",
+        );
+      }
+
+      const activeRef = snapshot.activeModules.find(
+        (ref) =>
+          ref.moduleId === definition.moduleId &&
+          ref.version === definition.moduleVersion,
+      );
+      if (activeRef === undefined) {
+        return unavailableModuleOutcome(
+          "module_disabled_by_release",
+          "The module is disabled by the active release.",
+        );
+      }
+
+      return facades.dispatch.dispatch(activeRef, () =>
+        originalHandler(input, context, signal),
+      );
+    };
+
+    return { ...definition, handler };
+  });
 }
 
 interface WriteRequest {

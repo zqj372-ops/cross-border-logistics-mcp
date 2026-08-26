@@ -27,10 +27,16 @@ import {
 import {
   registerPhaseOneTools,
   registerModuleToolDefinitions,
+  wrapModuleToolDefinitions,
   type ToolContractMap,
   type ToolDefinition,
   type ToolHandlerMap,
+  type RuntimeActivationFacades,
 } from "./tool-registry";
+import type {
+  ActivationReadFacade,
+  ControlledDispatchFacade,
+} from "../control-plane/service";
 import {
   CapabilityRegistry,
   ModuleHost,
@@ -114,6 +120,8 @@ export interface GatewayCompositionOptions {
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly agentAccessRuntime?: AgentAccessRuntime;
+  readonly activation?: ActivationReadFacade;
+  readonly dispatch?: ControlledDispatchFacade;
 }
 
 export interface FixtureCompositionOptions extends GatewayCompositionOptions {
@@ -189,6 +197,7 @@ interface CompositionTools {
 function compositionTools(
   adapters: FixtureAdapters,
   configuredAgentAccessRuntime?: AgentAccessRuntime,
+  runtimeActivation?: RuntimeActivationFacades,
 ): CompositionTools {
   const bundle = createPhase1Bundle(adapters);
   const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
@@ -289,7 +298,29 @@ function compositionTools(
     ),
     ...registerModuleToolDefinitions(moduleHost.catalog.list()),
   ];
-  return { bundle, handlers, contracts, definitions, moduleHost, agentAccessRuntime };
+  return {
+    bundle,
+    handlers,
+    contracts,
+    definitions:
+      runtimeActivation === undefined
+        ? definitions
+        : wrapModuleToolDefinitions(definitions, runtimeActivation),
+    moduleHost,
+    agentAccessRuntime,
+  };
+}
+
+function runtimeActivationFacades(
+  options: GatewayCompositionOptions,
+): RuntimeActivationFacades | undefined {
+  if (options.activation === undefined || options.dispatch === undefined) {
+    return undefined;
+  }
+  return {
+    activation: options.activation,
+    dispatch: options.dispatch,
+  };
 }
 
 function buildComposition(
@@ -370,7 +401,11 @@ export function createFixtureComposition(
       ? {}
       : { customsFixture: options.customsFixture },
   );
-  const tools = compositionTools(adapters, options.agentAccessRuntime);
+  const tools = compositionTools(
+    adapters,
+    options.agentAccessRuntime,
+    runtimeActivationFacades(options),
+  );
   const handler = createMcpHttpHandler({
     allowedOrigins: options.allowedOrigins ?? ["https://client.example.invalid"],
     allowedHosts: options.allowedHosts ?? ["mcp.example.invalid"],
@@ -449,7 +484,11 @@ export function createProductionComposition(
         },
     review: new ManualTaskAdapter(),
   };
-  const tools = compositionTools(adapters, options.agentAccessRuntime);
+  const tools = compositionTools(
+    adapters,
+    options.agentAccessRuntime,
+    runtimeActivationFacades(options),
+  );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
   const validSessionOwner =
