@@ -10,6 +10,7 @@ import {
   createModuleControlRuntimeAssembly,
   type ActivationReadFacade,
   type ControlledDispatchFacade,
+  type ModuleControlService,
 } from "../control-plane/service";
 import type { TrustedModuleInventory } from "../control-plane/types";
 import {
@@ -530,6 +531,34 @@ interface RuntimeResources {
   readonly adminControlApi?: AdminControlApiHandler;
 }
 
+function rejectProductionAdminControlCall(): Promise<never> {
+  return Promise.reject(new Error("Production Admin control is disabled."));
+}
+
+const PRODUCTION_DISABLED_ADMIN_CONTROL_SERVICE: ModuleControlService =
+  Object.freeze({
+    getState: rejectProductionAdminControlCall,
+    registerPackage: rejectProductionAdminControlCall,
+    createDeploymentPreview: rejectProductionAdminControlCall,
+    decideApproval: rejectProductionAdminControlCall,
+    publish: rejectProductionAdminControlCall,
+    reconcile: rejectProductionAdminControlCall,
+  });
+
+function createProductionAdminControlApi(): AdminControlApiHandler {
+  return createAdminControlApiHandler({
+    dataMode: "production",
+    service: PRODUCTION_DISABLED_ADMIN_CONTROL_SERVICE,
+    authenticate: rejectProductionAdminControlCall,
+    managementTenantId: "production_admin_control_disabled",
+    allowedOrigins: splitSetting("MCP_ALLOWED_ORIGINS", ""),
+    allowedHosts: splitSetting("MCP_ALLOWED_HOSTS", ""),
+    allowLoopbackHttp: true,
+    maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
+    clock: () => new Date().toISOString(),
+  });
+}
+
 async function createManagedFixtureRuntime(
   applicationRoot: string,
 ): Promise<RuntimeResources & { readonly controlStore: SqliteControlStore }> {
@@ -858,7 +887,10 @@ export async function startRuntime(
   try {
     resources = mode === "fixtures"
       ? await createManagedFixtureRuntime(applicationRoot)
-      : { composition: makeComposition() };
+      : {
+          composition: makeComposition(),
+          adminControlApi: createProductionAdminControlApi(),
+        };
     server = createRuntimeServer(resources.composition, {
       applicationRoot,
       ...(resources.adminControlApi === undefined
