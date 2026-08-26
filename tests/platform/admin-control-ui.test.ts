@@ -61,6 +61,154 @@ const validControlState = {
   events_truncated: false,
 } as const;
 
+type TestModuleRef = Readonly<{
+  module_id: string;
+  version: string;
+  descriptor_digest: string;
+}>;
+
+function previewSnapshot({
+  previewRef = "preview-1",
+  desiredModules = validControlState.activation.active_modules,
+  creatorActorRef = "actor-1",
+  consumed = false,
+}: Readonly<{
+  previewRef?: string;
+  desiredModules?: readonly TestModuleRef[];
+  creatorActorRef?: string;
+  consumed?: boolean;
+}> = {}) {
+  return {
+    preview_ref: previewRef,
+    canonical_hash: `mcp-control-hash/v1/preview/sha256:${"b".repeat(64)}`,
+    base_release_id: "release-1",
+    base_revision: 3,
+    desired_modules: desiredModules,
+    diff: {
+      added: [],
+      removed: [],
+      retained: desiredModules,
+    },
+    validation: {
+      base_matches: true,
+      desired_modules_valid: true,
+      inventory_matches: true,
+      minimum_active_modules: true,
+      reason_codes: [],
+    },
+    creator_actor_ref: creatorActorRef,
+    created_at: "2026-08-26T00:00:00Z",
+    expires_at: "2026-08-26T00:05:00Z",
+    consumed,
+    intent: "change",
+  } as const;
+}
+
+function approvalSnapshot(decision: "approve" | "reject") {
+  return {
+    approval_id: "approval-1",
+    preview_ref: "preview-1",
+    decision,
+    reason_code: "admin_ui_approval",
+    approver_actor_ref: "actor-2",
+    decided_at: "2026-08-26T00:01:00Z",
+    consumed: false,
+  } as const;
+}
+
+function readbackSnapshot(status: "pending" | "verified" | "mismatch" | "unknown") {
+  const base = {
+    release_id: "release-1",
+    revision: 3,
+    readback_ref: "readback-1",
+    applied_modules: validControlState.activation.active_modules,
+    checked_at: "2026-08-26T00:02:00Z",
+  } as const;
+  if (status === "pending") {
+    return { ...base, status, observed_activation: null, reason_codes: [] } as const;
+  }
+  if (status === "verified") {
+    return { ...base, status, reason_codes: [] } as const;
+  }
+  return {
+    ...base,
+    status,
+    observed_activation: {
+      release_id: "release-1",
+      revision: 3,
+    },
+    reason_codes: ["readback_not_verified"],
+  } as const;
+}
+
+type ReleaseStatus =
+  | "published_pending_readback"
+  | "manual_review"
+  | "active_verified"
+  | "superseded";
+
+function releaseSummary({
+  releaseId,
+  revision,
+  status,
+  desiredModules = validControlState.activation.active_modules,
+}: Readonly<{
+  releaseId: string;
+  revision: number;
+  status: ReleaseStatus;
+  desiredModules?: readonly TestModuleRef[];
+}>) {
+  const base = {
+    release_id: releaseId,
+    revision,
+    desired_modules: desiredModules,
+    previous_release_id: revision > 1 ? `release-${revision - 1}` : null,
+    preview_ref: `preview-${revision}`,
+    approval_id: `approval-${revision}`,
+    publisher_actor_ref: "actor-1",
+    created_at: "2026-08-26T00:00:00Z",
+    intent: "change",
+  } as const;
+  if (status === "published_pending_readback") {
+    return {
+      ...base,
+      status,
+      published_at: null,
+      readback_ref: null,
+      reason_codes: [],
+      superseded_by_release_id: null,
+    } as const;
+  }
+  if (status === "manual_review") {
+    return {
+      ...base,
+      status,
+      published_at: "2026-08-26T00:01:00Z",
+      readback_ref: `readback-${revision}`,
+      reason_codes: ["manual_review_required"],
+      superseded_by_release_id: null,
+    } as const;
+  }
+  if (status === "active_verified") {
+    return {
+      ...base,
+      status,
+      published_at: "2026-08-26T00:01:00Z",
+      readback_ref: `readback-${revision}`,
+      reason_codes: [],
+      superseded_by_release_id: null,
+    } as const;
+  }
+  return {
+    ...base,
+    status,
+    published_at: "2026-08-26T00:01:00Z",
+    readback_ref: `readback-${revision}`,
+    reason_codes: [],
+    superseded_by_release_id: `release-${revision + 1}`,
+  } as const;
+}
+
 describe("admin control-plane model boundary", () => {
   it("validates the closed control-state snapshot and rejects production claims", () => {
     expect(validateControlState(validControlState)).toEqual(validControlState);
@@ -79,6 +227,116 @@ describe("admin control-plane model boundary", () => {
         production_eligible: true,
       }],
     })).toThrow();
+  });
+
+  it("accepts authoritative RFC 3339 offsets and rejects invalid calendar instants", () => {
+    const offsetState = {
+      ...validControlState,
+      inventory_modules: [{
+        ...validControlState.inventory_modules[0],
+        registration: {
+          ...validControlState.inventory_modules[0].registration,
+          registered_at: "2026-08-22T08:00:00+08:00",
+        },
+      }],
+    };
+    expect(validateControlState(offsetState)).toEqual(offsetState);
+    expect(() => validateControlState({
+      ...offsetState,
+      inventory_modules: [{
+        ...offsetState.inventory_modules[0],
+        registration: {
+          ...offsetState.inventory_modules[0]!.registration,
+          registered_at: "2026-02-31T08:00:00+08:00",
+        },
+      }],
+    })).toThrow();
+  });
+
+  it("rejects incomplete closed control-state branches before action gating", () => {
+    for (const malformedState of [
+      { ...validControlState, latest_preview: {} },
+      { ...validControlState, latest_approval: { decision: "approve", consumed: false } },
+      { ...validControlState, latest_readback: { status: "verified" } },
+      { ...validControlState, release_history: [{}] },
+      { ...validControlState, events: [{}] },
+    ]) {
+      expect(() => validateControlState(malformedState)).toThrow();
+    }
+  });
+
+  it("accepts every structurally valid discriminated control-state branch", () => {
+    const rollbackPreview = {
+      ...previewSnapshot(),
+      intent: "rollback",
+      target_release_id: "release-2",
+    } as const;
+    for (const latestPreview of [previewSnapshot(), rollbackPreview]) {
+      expect(() => validateControlState({
+        ...validControlState,
+        latest_preview: latestPreview,
+      })).not.toThrow();
+    }
+
+    for (const latestApproval of [approvalSnapshot("approve"), approvalSnapshot("reject")]) {
+      expect(() => validateControlState({
+        ...validControlState,
+        latest_approval: latestApproval,
+      })).not.toThrow();
+    }
+
+    for (const status of ["pending", "verified", "mismatch", "unknown"] as const) {
+      expect(() => validateControlState({
+        ...validControlState,
+        latest_readback: readbackSnapshot(status),
+      })).not.toThrow();
+    }
+
+    const releases = ([
+      "published_pending_readback",
+      "manual_review",
+      "active_verified",
+      "superseded",
+    ] as const).map((status, index) => releaseSummary({
+      releaseId: `release-${index + 1}`,
+      revision: index + 1,
+      status,
+    }));
+    const rollbackRelease = {
+      ...releaseSummary({
+        releaseId: "release-5",
+        revision: 5,
+        status: "active_verified",
+      }),
+      intent: "rollback",
+      rollback_target_release_id: "release-2",
+    } as const;
+    expect(() => validateControlState({
+      ...validControlState,
+      release_history: [...releases, rollbackRelease],
+    })).not.toThrow();
+
+    const eventBase = (sequence: number) => ({
+      sequence,
+      event_id: `event-${sequence}`,
+      actor_ref: "actor-1",
+      object_ref: `object-${sequence}`,
+      reason_codes: sequence === 1 ? ["recorded", "recorded"] : [],
+      occurred_at: "2026-08-26T08:00:00+08:00",
+    });
+    const events = [
+      { ...eventBase(1), action: "packages.register", kind: "registration", status: "registered" },
+      { ...eventBase(2), action: "deployments.preview", kind: "preview", status: "previewed" },
+      { ...eventBase(3), action: "approvals.decide", kind: "approval", status: "approved" },
+      { ...eventBase(4), action: "deployments.publish", kind: "release", status: "active_verified" },
+      { ...eventBase(5), action: "deployments.publish", kind: "reconciliation", status: "verified" },
+      { ...eventBase(6), action: "deployments.reconcile", kind: "reconciliation", status: "unknown" },
+      { ...eventBase(7), action: "packages.register", kind: "idempotency", status: "completed" },
+    ];
+    expect(() => validateControlState({
+      ...validControlState,
+      events,
+    })).not.toThrow();
   });
 
   it("accepts the authoritative version grammar and full release-history window", () => {
@@ -119,8 +377,9 @@ describe("admin control-plane model boundary", () => {
       )),
     })).toThrow();
 
-    const releaseHistory = Array.from({ length: 128 }, (_, index) => ({
-      release_id: `release-${index + 1}`,
+    const releaseHistory = Array.from({ length: 128 }, (_, index) => releaseSummary({
+      releaseId: `release-${index + 1}`,
+      revision: index + 1,
       status: "superseded",
     }));
     expect(() => validateControlState({
@@ -129,7 +388,11 @@ describe("admin control-plane model boundary", () => {
     })).not.toThrow();
     expect(() => validateControlState({
       ...validControlState,
-      release_history: [...releaseHistory, { release_id: "release-129", status: "superseded" }],
+      release_history: [...releaseHistory, releaseSummary({
+        releaseId: "release-129",
+        revision: 129,
+        status: "superseded",
+      })],
     })).toThrow();
   });
 
@@ -166,13 +429,12 @@ describe("admin control-plane model boundary", () => {
   it("keeps release gating deterministic and requires a distinct approver", () => {
     const previewState = {
       ...validControlState,
-      latest_preview: {
-        preview_ref: "preview-1",
-        creator_actor_ref: "actor-1",
-        consumed: false,
-        desired_modules: validControlState.activation.active_modules,
-      },
-      release_history: [{ status: "manual_review", release_id: "release-0" }],
+      latest_preview: previewSnapshot(),
+      release_history: [releaseSummary({
+        releaseId: "release-2",
+        revision: 2,
+        status: "manual_review",
+      })],
     };
     const diff = deriveDesiredDraftDiff(
       validControlState.activation.active_modules,
@@ -191,7 +453,7 @@ describe("admin control-plane model boundary", () => {
     const consumedPublishedState = {
       ...previewState,
       latest_preview: { ...previewState.latest_preview, consumed: true },
-      latest_readback: { status: "verified" },
+      latest_readback: readbackSnapshot("verified"),
     };
     expect(derivePreviewPresentation(consumedPublishedState)).toEqual({
       status: "complete",
@@ -233,7 +495,7 @@ describe("admin control-plane model boundary", () => {
 
     const rejectedState = {
       ...previewState,
-      latest_approval: { decision: "reject" },
+      latest_approval: approvalSnapshot("reject"),
     };
     expect(deriveReleaseStages(rejectedState).find((stage: { key: string }) => stage.key === "approval")?.status).toBe("blocked");
     expect(actionAvailability({
@@ -247,7 +509,7 @@ describe("admin control-plane model boundary", () => {
 
     const pendingReadbackState = {
       ...validControlState,
-      latest_readback: { status: "pending" },
+      latest_readback: readbackSnapshot("pending"),
     };
     expect(deriveReleaseStages(pendingReadbackState).find((stage: { key: string }) => stage.key === "publish_readback")?.status).toBe("pending");
     expect(deriveReleaseStages({
@@ -265,10 +527,11 @@ describe("admin control-plane model boundary", () => {
         revision: 0,
         active_modules: [],
       },
-      release_history: [{
+      release_history: [releaseSummary({
         status: "published_pending_readback",
-        release_id: "release-pending-readback",
-      }],
+        releaseId: "release-pending-readback",
+        revision: 1,
+      })],
     } as const;
 
     expect(selectReconcileReleaseId(initialPublishedState)).toBe("release-pending-readback");
@@ -277,11 +540,11 @@ describe("admin control-plane model boundary", () => {
   it("enables rollback only when the handler has an older eligible target", () => {
     const singleReleaseState = {
       ...validControlState,
-      release_history: [{
+      release_history: [releaseSummary({
         status: "active_verified",
-        release_id: "release-3",
+        releaseId: "release-3",
         revision: 3,
-      }],
+      })],
     };
     expect(selectRollbackReleaseId(singleReleaseState)).toBeNull();
     expect(actionAvailability({
@@ -295,11 +558,11 @@ describe("admin control-plane model boundary", () => {
       ...singleReleaseState,
       release_history: [
         singleReleaseState.release_history[0]!,
-        {
+        releaseSummary({
           status: "superseded",
-          release_id: "release-2",
+          releaseId: "release-2",
           revision: 2,
-        },
+        }),
       ],
     };
     expect(selectRollbackReleaseId(rollbackReadyState)).toBe("release-2");
@@ -334,12 +597,12 @@ describe("admin control-plane model boundary", () => {
         active_modules: [targetModule],
       },
       inventory_modules: inventoryModules,
-      latest_preview: {
-        preview_ref: "preview-freightcom-ltl",
+      latest_preview: previewSnapshot({
+        previewRef: "preview-freightcom-ltl",
         consumed: true,
-        desired_modules: [targetModule],
-      },
-      latest_readback: { status: "verified" },
+        desiredModules: [targetModule],
+      }),
+      latest_readback: readbackSnapshot("verified"),
     };
 
     expect(deriveReleaseStages(publishedState).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("complete");

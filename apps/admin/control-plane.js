@@ -24,12 +24,89 @@ const INVENTORY_MODULE_KEYS = [
   "registration",
 ];
 const ACTIVATION_KEYS = ["state", "release_id", "revision", "active_modules"];
+const PREVIEW_BASE_KEYS = [
+  "preview_ref",
+  "canonical_hash",
+  "base_release_id",
+  "base_revision",
+  "desired_modules",
+  "diff",
+  "validation",
+  "creator_actor_ref",
+  "created_at",
+  "expires_at",
+  "consumed",
+  "intent",
+];
+const PREVIEW_DIFF_KEYS = ["added", "removed", "retained"];
+const PREVIEW_VALIDATION_KEYS = [
+  "base_matches",
+  "desired_modules_valid",
+  "inventory_matches",
+  "minimum_active_modules",
+  "reason_codes",
+];
+const APPROVAL_KEYS = [
+  "approval_id",
+  "preview_ref",
+  "reason_code",
+  "approver_actor_ref",
+  "decided_at",
+  "decision",
+  "consumed",
+];
+const READBACK_BASE_KEYS = [
+  "release_id",
+  "revision",
+  "readback_ref",
+  "applied_modules",
+  "checked_at",
+  "status",
+  "reason_codes",
+];
+const RELEASE_BASE_KEYS = [
+  "release_id",
+  "revision",
+  "desired_modules",
+  "previous_release_id",
+  "preview_ref",
+  "approval_id",
+  "publisher_actor_ref",
+  "created_at",
+  "intent",
+  "status",
+  "published_at",
+  "readback_ref",
+  "reason_codes",
+  "superseded_by_release_id",
+];
+const EVENT_KEYS = [
+  "sequence",
+  "event_id",
+  "actor_ref",
+  "object_ref",
+  "reason_codes",
+  "occurred_at",
+  "action",
+  "kind",
+  "status",
+];
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/;
-const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+const RFC3339_PATTERN = /^(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:[.][0-9]{1,9})?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$/;
+const PREVIEW_CANONICAL_HASH_PATTERN = /^mcp-control-hash\/v1\/preview\/sha256:[a-f0-9]{64}$/;
 const RISK_LEVELS = new Set(["T0", "T1", "T2", "T3"]);
 const CONTROL_STATE_MAX_RELEASE_HISTORY = 128;
+const CONTROL_STATE_MAX_EVENTS = 256;
+const CONTROL_STATE_MAX_REASON_CODES = 32;
+const CONTROL_EVENT_ACTIONS = new Set([
+  "packages.register",
+  "deployments.preview",
+  "approvals.decide",
+  "deployments.publish",
+  "deployments.reconcile",
+]);
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -57,6 +134,41 @@ function positiveInteger(value, label) {
 
 function nonNegativeInteger(value, label) {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} 必须是非负整数。`);
+  return value;
+}
+
+function booleanValue(value, label) {
+  if (typeof value !== "boolean") throw new Error(`${label} 必须是布尔值。`);
+  return value;
+}
+
+function validateNullableIdentifier(value, label) {
+  if (value === null) return value;
+  return nonEmptyString(value, label, IDENTIFIER_PATTERN);
+}
+
+function validateIdentifierArray(value, label, maximumItems) {
+  if (!Array.isArray(value) || value.length > maximumItems) {
+    throw new Error(`${label} 必须是 0 到 ${maximumItems} 项的数组。`);
+  }
+  const seen = new Set();
+  value.forEach((item, index) => {
+    nonEmptyString(item, `${label}[${index}]`, IDENTIFIER_PATTERN);
+    if (seen.has(item)) throw new Error(`${label} 不得包含重复项。`);
+    seen.add(item);
+  });
+  return value;
+}
+
+function validateReasonCodes(value, label, mode = "any") {
+  if (!Array.isArray(value) || value.length > CONTROL_STATE_MAX_REASON_CODES) {
+    throw new Error(`${label} 必须是 0 到 ${CONTROL_STATE_MAX_REASON_CODES} 项的数组。`);
+  }
+  value.forEach((item, index) => {
+    nonEmptyString(item, `${label}[${index}]`, IDENTIFIER_PATTERN);
+  });
+  if (mode === "empty" && value.length !== 0) throw new Error(`${label} 必须为空数组。`);
+  if (mode === "nonempty" && value.length === 0) throw new Error(`${label} 不得为空。`);
   return value;
 }
 
@@ -116,18 +228,202 @@ function validateInventoryModule(value, index) {
   nonEmptyString(value.descriptor_digest, `${label}.descriptor_digest`, DIGEST_PATTERN);
   if (value.evidence_level !== "local_build") throw new Error(`${label}.evidence_level 必须是 local_build。`);
   if (value.production_eligible !== false) throw new Error(`${label}.production_eligible 必须是 false。`);
-  if (!Array.isArray(value.tool_names) || value.tool_names.length > 128 || !value.tool_names.every((item) => typeof item === "string" && item !== "")) {
-    throw new Error(`${label}.tool_names 格式无效。`);
-  }
-  if (!Array.isArray(value.standard_ids) || value.standard_ids.length > 64 || !value.standard_ids.every((item) => typeof item === "string" && item !== "")) {
-    throw new Error(`${label}.standard_ids 格式无效。`);
-  }
+  validateIdentifierArray(value.tool_names, `${label}.tool_names`, 128);
+  validateIdentifierArray(value.standard_ids, `${label}.standard_ids`, 64);
   validateRegistration(value.registration, `${label}.registration`);
   return value;
 }
 
-function validateOptionalRecord(value, label) {
-  if (value !== null && !isRecord(value)) throw new Error(`${label} 必须是对象或 null。`);
+function validatePreviewDiff(value, label) {
+  exactKeys(value, PREVIEW_DIFF_KEYS, label);
+  validateModuleRefs(value.added, `${label}.added`);
+  validateModuleRefs(value.removed, `${label}.removed`);
+  validateModuleRefs(value.retained, `${label}.retained`);
+  return value;
+}
+
+function validatePreviewValidation(value, label) {
+  exactKeys(value, PREVIEW_VALIDATION_KEYS, label);
+  booleanValue(value.base_matches, `${label}.base_matches`);
+  booleanValue(value.desired_modules_valid, `${label}.desired_modules_valid`);
+  booleanValue(value.inventory_matches, `${label}.inventory_matches`);
+  booleanValue(value.minimum_active_modules, `${label}.minimum_active_modules`);
+  validateReasonCodes(value.reason_codes, `${label}.reason_codes`);
+  return value;
+}
+
+function validateLatestPreview(value) {
+  if (value === null) return value;
+  if (!isRecord(value)) throw new Error("latest_preview 必须是对象或 null。");
+  if (value.intent !== "change" && value.intent !== "rollback") {
+    throw new Error("latest_preview.intent 无效。");
+  }
+  exactKeys(
+    value,
+    value.intent === "rollback" ? [...PREVIEW_BASE_KEYS, "target_release_id"] : PREVIEW_BASE_KEYS,
+    "latest_preview",
+  );
+  nonEmptyString(value.preview_ref, "latest_preview.preview_ref", IDENTIFIER_PATTERN);
+  nonEmptyString(value.canonical_hash, "latest_preview.canonical_hash", PREVIEW_CANONICAL_HASH_PATTERN);
+  validateNullableIdentifier(value.base_release_id, "latest_preview.base_release_id");
+  nonNegativeInteger(value.base_revision, "latest_preview.base_revision");
+  validateModuleRefs(value.desired_modules, "latest_preview.desired_modules", false);
+  validatePreviewDiff(value.diff, "latest_preview.diff");
+  validatePreviewValidation(value.validation, "latest_preview.validation");
+  nonEmptyString(value.creator_actor_ref, "latest_preview.creator_actor_ref", IDENTIFIER_PATTERN);
+  nonEmptyString(value.created_at, "latest_preview.created_at", RFC3339_PATTERN);
+  nonEmptyString(value.expires_at, "latest_preview.expires_at", RFC3339_PATTERN);
+  booleanValue(value.consumed, "latest_preview.consumed");
+  if (value.intent === "rollback") {
+    nonEmptyString(value.target_release_id, "latest_preview.target_release_id", IDENTIFIER_PATTERN);
+  }
+  return value;
+}
+
+function validateLatestApproval(value) {
+  if (value === null) return value;
+  exactKeys(value, APPROVAL_KEYS, "latest_approval");
+  nonEmptyString(value.approval_id, "latest_approval.approval_id", IDENTIFIER_PATTERN);
+  nonEmptyString(value.preview_ref, "latest_approval.preview_ref", IDENTIFIER_PATTERN);
+  nonEmptyString(value.reason_code, "latest_approval.reason_code", IDENTIFIER_PATTERN);
+  nonEmptyString(value.approver_actor_ref, "latest_approval.approver_actor_ref", IDENTIFIER_PATTERN);
+  nonEmptyString(value.decided_at, "latest_approval.decided_at", RFC3339_PATTERN);
+  if (value.decision !== "approve" && value.decision !== "reject") {
+    throw new Error("latest_approval.decision 无效。");
+  }
+  booleanValue(value.consumed, "latest_approval.consumed");
+  if (value.decision === "reject" && value.consumed !== false) {
+    throw new Error("reject approval 不得标记为已消费。");
+  }
+  return value;
+}
+
+function validateObservedActivation(value, label) {
+  exactKeys(value, ["release_id", "revision"], label);
+  if (value.release_id === null || value.revision === null) {
+    if (value.release_id !== null || value.revision !== null) {
+      throw new Error(`${label} 必须同时返回 null 或完整激活标识。`);
+    }
+    return value;
+  }
+  nonEmptyString(value.release_id, `${label}.release_id`, IDENTIFIER_PATTERN);
+  positiveInteger(value.revision, `${label}.revision`);
+  return value;
+}
+
+function validateLatestReadback(value) {
+  if (value === null) return value;
+  if (!isRecord(value)) throw new Error("latest_readback 必须是对象或 null。");
+  const observedStatuses = new Set(["pending", "mismatch", "unknown"]);
+  if (!["pending", "verified", "mismatch", "unknown"].includes(value.status)) {
+    throw new Error("latest_readback.status 无效。");
+  }
+  exactKeys(
+    value,
+    observedStatuses.has(value.status) ? [...READBACK_BASE_KEYS, "observed_activation"] : READBACK_BASE_KEYS,
+    "latest_readback",
+  );
+  nonEmptyString(value.release_id, "latest_readback.release_id", IDENTIFIER_PATTERN);
+  positiveInteger(value.revision, "latest_readback.revision");
+  nonEmptyString(value.readback_ref, "latest_readback.readback_ref", IDENTIFIER_PATTERN);
+  validateModuleRefs(value.applied_modules, "latest_readback.applied_modules", value.status !== "verified");
+  nonEmptyString(value.checked_at, "latest_readback.checked_at", RFC3339_PATTERN);
+  if (value.status === "pending") {
+    if (value.observed_activation !== null) throw new Error("pending readback 不得带 observed_activation。");
+    validateReasonCodes(value.reason_codes, "latest_readback.reason_codes", "empty");
+  } else if (value.status === "verified") {
+    validateReasonCodes(value.reason_codes, "latest_readback.reason_codes", "empty");
+  } else {
+    validateObservedActivation(value.observed_activation, "latest_readback.observed_activation");
+    validateReasonCodes(value.reason_codes, "latest_readback.reason_codes", "nonempty");
+  }
+  return value;
+}
+
+function validateReleaseSummary(value, index) {
+  const label = `release_history[${index}]`;
+  if (!isRecord(value)) throw new Error(`${label} 必须是对象。`);
+  if (value.intent !== "change" && value.intent !== "rollback") {
+    throw new Error(`${label}.intent 无效。`);
+  }
+  exactKeys(
+    value,
+    value.intent === "rollback" ? [...RELEASE_BASE_KEYS, "rollback_target_release_id"] : RELEASE_BASE_KEYS,
+    label,
+  );
+  nonEmptyString(value.release_id, `${label}.release_id`, IDENTIFIER_PATTERN);
+  positiveInteger(value.revision, `${label}.revision`);
+  validateModuleRefs(value.desired_modules, `${label}.desired_modules`, false);
+  validateNullableIdentifier(value.previous_release_id, `${label}.previous_release_id`);
+  nonEmptyString(value.preview_ref, `${label}.preview_ref`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.approval_id, `${label}.approval_id`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.publisher_actor_ref, `${label}.publisher_actor_ref`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.created_at, `${label}.created_at`, RFC3339_PATTERN);
+  if (value.intent === "rollback") {
+    nonEmptyString(value.rollback_target_release_id, `${label}.rollback_target_release_id`, IDENTIFIER_PATTERN);
+  }
+  if (value.status === "published_pending_readback") {
+    if (value.published_at !== null) nonEmptyString(value.published_at, `${label}.published_at`, RFC3339_PATTERN);
+    if (value.readback_ref !== null || value.superseded_by_release_id !== null) {
+      throw new Error(`${label} 的待读回字段无效。`);
+    }
+    validateReasonCodes(value.reason_codes, `${label}.reason_codes`, "empty");
+  } else if (value.status === "manual_review") {
+    nonEmptyString(value.published_at, `${label}.published_at`, RFC3339_PATTERN);
+    nonEmptyString(value.readback_ref, `${label}.readback_ref`, IDENTIFIER_PATTERN);
+    if (value.superseded_by_release_id !== null) throw new Error(`${label}.superseded_by_release_id 必须为 null。`);
+    validateReasonCodes(value.reason_codes, `${label}.reason_codes`, "nonempty");
+  } else if (value.status === "active_verified") {
+    nonEmptyString(value.published_at, `${label}.published_at`, RFC3339_PATTERN);
+    nonEmptyString(value.readback_ref, `${label}.readback_ref`, IDENTIFIER_PATTERN);
+    if (value.superseded_by_release_id !== null) throw new Error(`${label}.superseded_by_release_id 必须为 null。`);
+    validateReasonCodes(value.reason_codes, `${label}.reason_codes`, "empty");
+  } else if (value.status === "superseded") {
+    nonEmptyString(value.published_at, `${label}.published_at`, RFC3339_PATTERN);
+    nonEmptyString(value.readback_ref, `${label}.readback_ref`, IDENTIFIER_PATTERN);
+    nonEmptyString(value.superseded_by_release_id, `${label}.superseded_by_release_id`, IDENTIFIER_PATTERN);
+    validateReasonCodes(value.reason_codes, `${label}.reason_codes`, "empty");
+  } else {
+    throw new Error(`${label}.status 无效。`);
+  }
+  return value;
+}
+
+function validateControlEvent(value, index) {
+  const label = `events[${index}]`;
+  exactKeys(value, EVENT_KEYS, label);
+  positiveInteger(value.sequence, `${label}.sequence`);
+  nonEmptyString(value.event_id, `${label}.event_id`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.actor_ref, `${label}.actor_ref`, IDENTIFIER_PATTERN);
+  nonEmptyString(value.object_ref, `${label}.object_ref`, IDENTIFIER_PATTERN);
+  validateReasonCodes(value.reason_codes, `${label}.reason_codes`);
+  nonEmptyString(value.occurred_at, `${label}.occurred_at`, RFC3339_PATTERN);
+  const validCombination = (
+    value.kind === "registration"
+      && value.action === "packages.register"
+      && value.status === "registered"
+  ) || (
+    value.kind === "preview"
+      && value.action === "deployments.preview"
+      && value.status === "previewed"
+  ) || (
+    value.kind === "approval"
+      && value.action === "approvals.decide"
+      && (value.status === "approved" || value.status === "rejected")
+  ) || (
+    value.kind === "release"
+      && value.action === "deployments.publish"
+      && ["published_pending_readback", "manual_review", "active_verified", "superseded"].includes(value.status)
+  ) || (
+    value.kind === "reconciliation"
+      && (value.action === "deployments.publish" || value.action === "deployments.reconcile")
+      && ["pending", "verified", "mismatch", "unknown"].includes(value.status)
+  ) || (
+    value.kind === "idempotency"
+      && CONTROL_EVENT_ACTIONS.has(value.action)
+      && ["reserved", "domain_committed", "completed"].includes(value.status)
+  );
+  if (!validCombination) throw new Error(`${label} 的 action/kind/status 组合无效。`);
   return value;
 }
 
@@ -145,15 +441,17 @@ export function validateControlState(value) {
     if (inventoryKeys.has(key)) throw new Error("inventory_modules 不得包含重复模块。");
     inventoryKeys.add(key);
   });
-  validateOptionalRecord(value.latest_preview, "latest_preview");
-  validateOptionalRecord(value.latest_approval, "latest_approval");
-  validateOptionalRecord(value.latest_readback, "latest_readback");
+  validateLatestPreview(value.latest_preview);
+  validateLatestApproval(value.latest_approval);
+  validateLatestReadback(value.latest_readback);
   if (!Array.isArray(value.release_history) || value.release_history.length > CONTROL_STATE_MAX_RELEASE_HISTORY) {
     throw new Error(`release_history 必须是 0 到 ${CONTROL_STATE_MAX_RELEASE_HISTORY} 项的数组。`);
   }
-  if (!Array.isArray(value.events) || value.events.length > 256 || !value.events.every(isRecord)) {
-    throw new Error("events 必须是有界对象数组。");
+  value.release_history.forEach((release, index) => validateReleaseSummary(release, index));
+  if (!Array.isArray(value.events) || value.events.length > CONTROL_STATE_MAX_EVENTS) {
+    throw new Error(`events 必须是 0 到 ${CONTROL_STATE_MAX_EVENTS} 项的数组。`);
   }
+  value.events.forEach((event, index) => validateControlEvent(event, index));
   if (typeof value.events_truncated !== "boolean") throw new Error("events_truncated 必须是布尔值。");
   return value;
 }
