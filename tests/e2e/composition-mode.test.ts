@@ -979,7 +979,12 @@ describe("gateway composition modes", () => {
     });
     try {
       expect(composition.dataMode).toBe("production");
-      expect(composition.definitions).toHaveLength(10);
+      expect(composition.definitions).toHaveLength(11);
+      expect(
+        composition.definitions.find(
+          (definition) => definition.name === "quote.freightcom_ltl.preview",
+        )?.handler,
+      ).toBeTypeOf("function");
       expect(composition.adapters.quote).not.toBe(composition.adapters.status);
 
       const context = parseExecutionContext(securityClaims);

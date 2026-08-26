@@ -41,14 +41,15 @@ flowchart LR
 
 | 能力 | 当前状态 | 可调用边界 | 下一门禁 / 证据 |
 | --- | --- | --- | --- |
-| Admin control-plane | control contracts、inventory/hash、SQLite identity marker、activation gate、register/preview/approval 与 UI/API 模型可见；完整 publish/reconcile、startup 接线和真实 HTTP exact readback 仍待并行最终回读 | 仅本地受控 fixture/loopback；生产 `POST /admin/api/v1/control/**` 固定 `blocked` | 显式 initializer/root、identity/tenant/schema/permission/lock continuity、不同 actor approval、publish 后 exact readback 和独立证据 |
-| cargo.calculate / container.plan_summary | 本地确定性计算；返回单位、规则/数据版本、假设、warnings、blockers 和 trace | 可在 fixture/local composition 验证；container 是理论/可解释摘要，不是 3D 装柜承诺 | 继续保持契约、单位和重量证据约束 |
-| quote.canada_final_mile.calculate | adapter 已实现并通过 fake HTTP/local 组合验证，但生产合同未获资格 | 生产路径保持 unavailable / fail-closed；不返回可发送报价 | 完成生产 API 合同、发布快照、staging 和 readback 验收 |
-| customs.ca.search | 已有 status→query 和失败闭合；main 尚未注入生产组合 | 缺 M2M 认证合同、ready gate 或非测试 release 时不可用 | 服务 JWT、tenant mapping、M2M 限流/审计、非测试 staging 证据 |
-| customs.ca.estimate | 尚无已核验生产 API 合同 | 固定 unavailable，不拼造税额 | 独立 estimate API、认证、版本和失败映射合同 |
-| quote.save_draft / review.create_task | 生产写源未获资格 | 必须 preview → approval → commit → readback；当前不可生产写入 | 同一幂等键、审批、写后读回和目标系统合同 |
-| PDF / 文档 | 未注册 | 不调用、不写入 | OpenAPI、认证、输入/输出、副作用和读回合同 |
-| system.agent_context.get | Agent Standard Access v0 的只读上下文工具 | 仅返回注册表 allowlist 内的 profile/module/resource 上下文 | Standard Pack、profile、资源和 adapter 校验 |
+| Admin control-plane | **已本地验证（fixture HTTP）**：register → preview → 不同 actor approval → publish → activation `active_verified` 与 exact readback；同一 application root 重启后恢复已读回状态；prior-boot 未完成 attempt 在 listen 前收敛为 `unknown/manual_review`，未决 release 仍使启动 fail-closed | 仅本地受控 fixture/loopback；control POST 的 fixture 流程可走 `/packages/register`、`/deployments/preview`、`/approvals`、`/deployments/publish`、`/deployments/reconcile`；生产所有管理 POST 固定 HTTP 403 | 生产身份、多实例、制品签名/attestation、Deployment Evidence 和生产资格仍未上线；未决 release 只能由 operator reconcile，不把本地 readback 当生产证明 |
+| cargo.calculate / container.plan_summary | **已本地验证**：本地确定性计算，返回单位、规则/数据版本、假设、warnings、blockers 和 trace | 可在 fixture/local composition 验证；container 是理论/可解释摘要，不是 3D 装柜承诺 | 继续保持契约、单位和重量证据约束 |
+| quote.canada_final_mile.calculate | **已本地验证（fake HTTP/local）**，但生产合同未获资格 | 生产路径保持 `unavailable` / fail-closed；不返回可发送报价 | 完成生产 API 合同、发布快照、staging 和 readback 验收 |
+| customs.ca.search | **已本地验证** status→query 和失败闭合；RiskCustoms 生产组合仍未获资格 | 缺 M2M 认证合同、`ready` gate 或非测试 release 时不可用；`ready=false`/测试数据保持 `unavailable` 或 `manual_review` | 服务 JWT、tenant mapping、M2M 限流/审计、非测试 staging 证据 |
+| customs.ca.estimate | **生产未上线**；尚无已核验生产 API 合同 | 固定 `unavailable`，不拼造税额 | 独立 estimate API、认证、版本和失败映射合同 |
+| quote.freightcom_ltl.preview | **fixture/manual_review**：T1 静态模块已登记，固定测试 host 的 POST `/rate` → GET `/rate/{request_id}` 轮询和 Schema/状态边界已有本地/fake HTTP 验证；完成结果固定 `manual_review`、`sendable=false`、`bookable=false`、`authoritative=false` | 仅显式测试开关下的 fixture/测试路径；不做 FX、不保存、不发送、不订舱；生产 Freightcom adapter 代码级禁用 | 测试凭证/真实外部调用的独立证据、正式生产合同、发布与 readiness 仍未完成；测试结果不能成为正式报价 |
+| quote.save_draft / review.create_task | **生产未上线**；生产写源未获资格 | 必须 preview → approval → commit → readback；当前不可生产写入 | 同一幂等键、审批、写后读回和目标系统合同 |
+| PDF / 文档 | **未注册 / 生产未上线** | 不调用、不写入 | OpenAPI、认证、输入/输出、副作用和读回合同 |
+| system.agent_context.get | **已本地验证** Agent Standard Access v0 的只读上下文工具 | 仅返回注册表 allowlist 内的 profile/module/resource 上下文 | Standard Pack、profile、资源和 adapter 校验 |
 
 > 代码存在、fixture 通过或计划已写入，不等于生产资格通过。
 
@@ -93,7 +94,7 @@ marker     = <state_dir>/control-identity.json
 
 control DB、marker、root、`instance_id`、`management_tenant_id`、schema、permission 和 single-process SQLite lock 任一漂移，都在 listen/写入前 fail closed。发布流程固定为 preview → 不同 actor approval → publish → exact readback；`active_verified` 只是 runtime exact readback，不是 artifact signature 或 production qualification。未闭合的 pending/readback 必须进入 `manual_review`/`unavailable`，并由 operator-only reconcile 处理。
 
-本地 Admin 页面只展示脱敏状态，回滚用语固定为“回滚到上一已读回版本（本地受控环境）”。fixture identity 只允许 loopback local。浏览器 password/token 只在内存中短暂存在，不进 URL、storage、cookie、日志或审计；生产 Admin POST 固定 blocked，不能靠环境变量打开。
+本地 Admin 页面只展示脱敏状态，回滚用语固定为“回滚到上一已读回版本（本地受控环境）”。fixture identity 只允许 loopback local。浏览器 password/token 只在内存中短暂存在，不进 URL、storage、cookie、日志或审计；生产 Admin POST 固定返回 HTTP 403 与 `status=blocked`，不能靠环境变量打开。
 
 ## Agent 调用适配
 
@@ -118,11 +119,11 @@ flowchart TB
 
 三个模板都指向 runtime-caller profile、固定资源 URI 和 allowlisted tools。客户端不能提交 tenant/actor 身份、上游 token、任意 URL、密码或 secret；写工具仍需审批。
 
-当前 Agent 注册表包含 8 个标准、5 个 profile、3 个可信模块和 5 个固定 MCP resources。机器入口是 [docs/agent/index.json](docs/agent/index.json)，上下文工具是 system.agent_context.get。
+当前 Agent 注册表包含 11 个标准、5 个 profile、4 个可信模块和 5 个固定 MCP resources。机器入口是 [docs/agent/index.json](docs/agent/index.json)；构建产物为 `dist/standards/agent-standard-pack.json`，运行时只读取该 pack；上下文工具是 `system.agent_context.get`。
 
 ## 工具与契约
 
-当前 Phase 1 有九个业务工具，另有一个 Agent 上下文工具：
+当前 Phase 1 保持九个业务工具，另有一个 T1 测试预览工具和一个 Agent 上下文工具：
 
 | 类别 | 工具 |
 | --- | --- |
@@ -131,6 +132,7 @@ flowchart TB
 | 关务 | customs.ca.search、customs.ca.estimate |
 | 状态与知识 | system.get_data_status、knowledge.search_curated |
 | 人工复核 | review.create_task |
+| Freightcom 测试报价 | quote.freightcom_ltl.preview |
 | Agent 上下文 | system.agent_context.get |
 
 必须先读：
@@ -156,11 +158,15 @@ flowchart TB
 
 ~~~bash
 npm ci
+npm run validate:schemas
+npm run validate:agent-standards
+npm run validate:agent-adapters
+npm run build
 npm run init:control-fixture
 npm run start:fixture
 ~~~
 
-`npm run init:control-fixture` 是一次显式的本地 control-state 初始化；必须先成功执行，startup 不会隐式创建或修复 control DB/marker。`start:fixture` 随后构建真实编译产物，再以 fixture 模式启动本地服务。另开一个终端执行：
+`docs/agent/index.json` 是 Agent 标准的机器入口；`validate:agent-standards` 校验它及 allowlist，`validate:agent-adapters` 校验三份客户端模板和固定资源，`build` 生成真实 runtime bundle 与 `dist/standards/agent-standard-pack.json`。`npm run init:control-fixture` 本身也会先调用 `npm run build`，随后显式初始化 control state；必须先成功执行，startup 不会隐式创建或修复 control DB/marker。`start:fixture` 再以 fixture 模式启动本地服务。若只演示 Freightcom 测试模块，可用 `npm run start:freightcom-test-mcp` 替代 `start:fixture`；该路径仍只产生人工复核结果，不具生产资格。另开一个终端执行：
 
 ~~~bash
 npm run verify:runtime
@@ -171,7 +177,8 @@ npm run verify:runtime
 | 地址 | 用途 | 边界 |
 | --- | --- | --- |
 | http://127.0.0.1:8080/admin/ | 中文脱敏 Admin 快照/本地控制面入口 | 只展示当前进程的 fixture/运行时信息；回滚文案为“回滚到上一已读回版本（本地受控环境）”，不代表生产控制台 |
-| http://127.0.0.1:8080/admin/api/v1/control/state | control state read-only endpoint（若当前 assembly 已接线） | loopback fixture；完整写链路与 exact readback 仍待最终回读 |
+| http://127.0.0.1:8080/admin/api/v1/control/state | control state read-only endpoint | loopback fixture；可读回 inventory、activation、preview/approval、release history 和 exact readback |
+| `/admin/api/v1/control/packages/register` 等 control POST | fixture-only 的登记、preview、审批、publish/reconcile API | fixture 可验证写后读回；生产对应管理 POST 固定 HTTP 403，不连接生产 |
 | http://127.0.0.1:8080/mcp | MCP Streamable HTTP 入口 | 本地假 token 为 local-fixture-token |
 | http://127.0.0.1:8080/readyz | readiness 观察 | fixture 模式保持 503/fixture_mode_not_production_ready，这是预期结果 |
 
@@ -224,7 +231,7 @@ tests/                platform、module-runtime、agent-context、domains、adap
 - Admin 浏览器 password/token 只在内存中短暂存在，不写 URL、local/session storage、cookie、持久化 DOM、服务日志或 audit event。
 - ready=false 的 RiskCustoms 结果只能进入 unavailable 或 manual_review；AI 不得把候选补成 confirmed，也不得补造税率。
 - 报价和关务数据的权威仍在既有系统；MCP 不在本地建立价格、Zone、关税或客户记录主表。
-- 组合测试通过不等于生产 API 获准启用；生产资格还需要真实合同、认证、tenant mapping、版本/发布证据、staging 读回和安全发布门禁。
+- 组合测试通过不等于生产 API 获准启用；生产资格还需要真实合同、认证、tenant mapping、版本/发布证据、staging 读回和安全发布门禁。控制面 fixture 的 `active_verified` 只表示当前本地 runtime exact readback；它不是制品签名、生产授权或业务 API readiness。
 
 ## 深入阅读
 
@@ -258,6 +265,6 @@ tests/                platform、module-runtime、agent-context、domains、adap
 - customs.ca.estimate 没有已核验生产 API 合同，不在本地拼造税额。
 - PDF/文档工具未注册；没有完整 API、副作用和写后读回合同前不启用。
 - quote.save_draft 和 review.create_task 的生产写源仍需要审批、幂等和读回合同；不会发送、发布、订舱或覆盖既有记录。
-- Admin control-plane 的 publish/reconcile、startup initializer/store/API 完整接线和真实 HTTP exact readback 仍需并行完成后重新回读；在此之前生产 Admin POST 固定 blocked，不能把本地 fixture 当作上线。
+- Admin control-plane 的 fixture HTTP publish/approval/activation、exact readback、同 root 重启恢复和 prior-boot interruption 的 fail-closed 收敛已有测试证据；未决 release 仍不能自动恢复为 active，生产 Admin POST 固定 HTTP 403，控制面也未取得生产资格。
 
 任何能力从 pending/disabled/unavailable 进入生产，都必须沿现有 RFC、契约、runbook 和发布门禁完成验证，而不是只更新 README。

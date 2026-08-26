@@ -103,7 +103,7 @@ const agentStandardPackSchema = z
   })
   .strict();
 
-const runtimeCallerModuleIds = ["cargo", "container"] as const;
+const runtimeCallerModuleIds = ["cargo", "container", "freightcom-ltl"] as const;
 
 const runtimeCallerEntitlements = Object.freeze({
   standardIds: Object.freeze([
@@ -142,6 +142,11 @@ const runtimeCallerModuleEntitlements = Object.freeze({
     riskLevel: "T0",
     standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
     toolNames: Object.freeze(["container.plan_summary"]),
+  }),
+  "freightcom-ltl": Object.freeze({
+    riskLevel: "T1",
+    standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+    toolNames: Object.freeze(["quote.freightcom_ltl.preview"]),
   }),
 });
 

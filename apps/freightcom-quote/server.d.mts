@@ -13,6 +13,7 @@ export function createQuoteApiHandler(options: {
   readonly tokenConfigured: boolean;
   readonly baseUrl: string;
   readonly requestHandles?: Map<string, number>;
+  readonly postalLookup?: (postal: string) => Promise<Record<string, unknown>>;
 }): (request: Request) => Promise<Response>;
 
 export function createQuoteServer(options?: Record<string, unknown>): {

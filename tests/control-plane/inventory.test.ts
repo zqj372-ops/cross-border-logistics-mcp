@@ -11,6 +11,7 @@ import {
 import {
   CapabilityRegistry,
   ModuleHost,
+  normalizeCapabilityRequirement,
 } from "../../src/logistics_mcp/module-runtime";
 import type { ModuleDefinition } from "../../src/logistics_mcp/module-runtime";
 import {
@@ -344,8 +345,12 @@ describe("module deployment inventory", () => {
       version: manifest.version,
       riskLevel: manifest.risk_level,
       lifecycle: manifest.lifecycle,
-      requiredCapabilities: [...manifest.required_capabilities],
-      optionalCapabilities: [...manifest.optional_capabilities],
+      requiredCapabilities: manifest.required_capabilities.map(
+        (requirement) => normalizeCapabilityRequirement(requirement).name,
+      ),
+      optionalCapabilities: manifest.optional_capabilities.map(
+        (requirement) => normalizeCapabilityRequirement(requirement).name,
+      ),
       standardRefs: [...manifest.standard_ids],
     }];
     const evidence = [localEvidence(manifest.module_id)];

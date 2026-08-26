@@ -20,7 +20,8 @@ export const phaseOneToolNames = Object.freeze([
 
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
 export const agentContextToolName = "system.agent_context.get" as const;
-type KnownToolName = PhaseOneToolName | typeof agentContextToolName;
+export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName;
 
 type ToolPolicy = {
   readonly permission: string;
@@ -70,6 +71,7 @@ const toolPolicies: Readonly<Record<KnownToolName, ToolPolicy>> = Object.freeze(
   "cargo.calculate": freezePolicy("quote:calculate", "read", readRoles),
   "container.plan_summary": freezePolicy("container:calculate", "read", readRoles),
   "quote.canada_final_mile.calculate": freezePolicy("quote:calculate", "read", readRoles),
+  [freightcomLtlToolName]: freezePolicy("quote:calculate", "read", readRoles),
   "customs.ca.search": freezePolicy("tariff:read", "read", readRoles),
   "customs.ca.estimate": freezePolicy("tariff:estimate", "read", readRoles),
   "quote.save_draft": freezePolicy("quote:draft_write", "write", draftRoles),

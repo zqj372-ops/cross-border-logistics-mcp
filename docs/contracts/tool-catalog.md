@@ -23,6 +23,7 @@
 | `customs.ca.estimate` | 预留进口税估算工具；当前无已核验生产 API 合同 | 读/试算 | `tariff:estimate` | 固定 `unavailable`，不拼造税额 | 正式报关结论、补造税率/SIMA |
 | `quote.save_draft` | 保存经授权报价系统的报价草稿 | 写（窄） | `quote:draft_write` | 当前固定 `unavailable`；只有生产草稿 API 合同、审批和写后读回齐全后才可启用 | 发布、发送、覆盖历史报价、改价格/Zone |
 | `review.create_task` | 创建一个人工复核任务 | 写（窄） | `review:create_task` | 任务字段、原因码、opaque context、读回可确认 | 自动解决复核、自动上线规则 |
+| `quote.freightcom_ltl.preview` | Freightcom 测试环境 pallet LTL 报价预览 | 外部只读（T1） | `quote:calculate` | 固定测试 host、闭合 Schema、POST 后有界轮询、源币种与无 FX 展示证据 | 生产报价、保存、发送、订舱、汇率换算、客户端凭证或 URL 注入 |
 
 ## 逐项契约
 
@@ -181,6 +182,40 @@ v2 不接受公开 `tenant_id` 或 `cargo.billing_pallets`。`explicit_pallet_co
 - `manual_review`：API 响应冲突、上游来源/版本证据不完整或需要供应商确认；不输出可发送总价。
 - `blocked`：试图改价、发布、发送或覆盖 API 结果。
 - `unavailable`：现有报价系统或权威规则适配器不可用；不回退到地图/聊天/公开参考价。
+
+### `quote.freightcom_ltl.preview` v1（测试环境）
+
+**版本：** `freightcom-ltl-rate-request@2026-08-26.v1`
+
+这是收窄的 Freightcom pallet LTL 测试询价工具。输入必须提供文档要求的 origin、destination、
+expected ship date 和实体 `pallets[]`；`packaging_type` 固定为 `pallet`，`pallet_type` 固定为
+`ltl`。工具不接受 Token、Base URL、tenant、actor 或任意 provider body 扩展字段。
+
+`display_policy` 固定为 `usd_numeric_relabel_test_only`。上游源金额原样保留在 `total`；
+`display_total` 使用相同数字和 USD 标签，并明确 `conversion_method=none_numeric_relabel`。
+这不是 FX 换算，不能写回内部价格、草稿、财务或订舱系统。
+
+**输出版本：** `freightcom-ltl-rate-result@2026-08-26.v1`
+
+输出包括 provider、API version、test/fixture environment、轮询状态、rate candidates、source refs
+和金额 trace。每个 rate 可包含承运商、服务、源总价、测试显示总价和运输时效。所有完成结果固定：
+
+```text
+status: manual_review
+sendable: false
+bookable: false
+authoritative: false
+currency_display_policy.conversion_applied: false
+```
+
+**边界：**
+
+- `billing_pallets` 不能映射到 `pallets[]`；调用者必须提供已经确认的实体托盘；
+- `POST /rate` 创建临时 rate lookup，因此 MCP annotation 为 `idempotentHint=false`；
+- fixture/test 成功不代表生产可用；production adapter 固定禁用；
+- 自然语言提取和实体自动打托等待 `quote.ltl.prepare` 的正式上游合同，不在本版伪造；
+- 缺字段为 `needs_input`，测试完成为 `manual_review`，认证/网络/Schema/轮询故障为
+  `blocked|unavailable`。
 
 ### `customs.ca.search`
 

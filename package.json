@@ -8,9 +8,12 @@
   },
   "scripts": {
     "build": "node deploy/scripts/build.mjs",
+    "build:freightcom-keychain-helper": "node apps/freightcom-credential/build-helper.mjs",
     "start:freightcom-quote": "node --import tsx/esm apps/freightcom-quote/server.mjs",
+    "credential:freightcom-test": "npm run build:freightcom-keychain-helper && node apps/freightcom-credential/server.mjs",
     "init:control-fixture": "npm run build && node deploy/scripts/init-control-fixture.mjs",
     "start:fixture": "npm run build && MCP_DATA_MODE=fixtures MCP_PORT=8080 MCP_ADMIN_UI_ENABLED=true MCP_ADMIN_CONTROL_ENABLED=true MCP_INSTANCE_ID=instance_fixture_001 MCP_ADMIN_TENANT_ID=tenant_fixture MCP_FIXTURE_TOKEN=local-fixture-token MCP_FIXTURE_APPROVER_TOKEN=local-fixture-approver-token MCP_JWT_ISSUER=https://issuer.example.invalid/ MCP_JWT_AUDIENCE=logistics-mcp-local MCP_ALLOWED_ORIGINS=http://127.0.0.1:8080 MCP_ALLOWED_HOSTS=127.0.0.1:8080 MCP_ALLOWED_OUTBOUND_HOSTS=fixture.example.invalid node dist/src/logistics_mcp/server/start.mjs",
+    "start:freightcom-test-mcp": "npm run build:freightcom-keychain-helper && npm run build && MCP_DATA_MODE=fixtures MCP_FREIGHTCOM_TEST_ENABLED=true MCP_PORT=8080 MCP_ADMIN_UI_ENABLED=true MCP_ADMIN_CONTROL_ENABLED=true MCP_INSTANCE_ID=instance_fixture_001 MCP_ADMIN_TENANT_ID=tenant_fixture MCP_FIXTURE_TOKEN=local-fixture-token MCP_FIXTURE_APPROVER_TOKEN=local-fixture-approver-token MCP_JWT_ISSUER=https://issuer.example.invalid/ MCP_JWT_AUDIENCE=logistics-mcp-local MCP_ALLOWED_ORIGINS=http://127.0.0.1:8080 MCP_ALLOWED_HOSTS=127.0.0.1:8080 MCP_ALLOWED_OUTBOUND_HOSTS=customer-external-api.ssd-test.freightcom.com node dist/src/logistics_mcp/server/start.mjs",
     "start:production": "npm run build && node dist/src/logistics_mcp/server/start.mjs",
     "test": "vitest run",
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",

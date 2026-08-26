@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createQuoteApiHandler } from "../../../apps/freightcom-quote/server.mjs";
+import { createQuoteApiHandler, createQuoteServer } from "../../../apps/freightcom-quote/server.mjs";
+import { FreightcomTestClientError } from "../../../src/logistics_mcp/adapters/quote/freightcom-test-client";
 
 const VALID_REQUEST = {
   details: {
@@ -50,6 +51,75 @@ async function responseBody(response: Response): Promise<Record<string, unknown>
 }
 
 describe("Freightcom quote page API", () => {
+  it("serves the browser-side calculation modules required by the app", async () => {
+    const runtime = createQuoteServer({ port: 0, token: "" });
+    await new Promise<void>((resolve) => runtime.server.listen(0, runtime.host, resolve));
+    try {
+      const address = runtime.server.address();
+      if (address === null || typeof address === "string") throw new Error("test server address unavailable");
+      const [originResponse, freightClassResponse] = await Promise.all([
+        fetch(`http://${runtime.host}:${address.port}/origin-presets.mjs`),
+        fetch(`http://${runtime.host}:${address.port}/freight-class.mjs`),
+      ]);
+
+      expect(originResponse.status).toBe(200);
+      expect(originResponse.headers.get("content-type")).toContain("text/javascript");
+      expect(await originResponse.text()).toContain("calgary-t2e6m9");
+      expect(freightClassResponse.status).toBe(200);
+      expect(freightClassResponse.headers.get("content-type")).toContain("text/javascript");
+      expect(await freightClassResponse.text()).toContain("suggestFreightClass");
+    } finally {
+      await new Promise<void>((resolve, reject) => runtime.server.close((error) => error === undefined ? resolve() : reject(error)));
+    }
+  });
+
+  it("reports the CAD numeric relabel policy without claiming FX conversion", async () => {
+    const handler = createQuoteApiHandler({
+      client: { submitRate: vi.fn(), pollRate: vi.fn() },
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/config"));
+
+    expect(response.status).toBe(200);
+    expect(await responseBody(response)).toMatchObject({
+      status: "success",
+      data: {
+        display_currency: "USD",
+        currency_policy: "cad-numeric-relabel-to-usd",
+        conversion_applied: false,
+        relabel_applied: true,
+      },
+    });
+  });
+
+  it("returns a sanitized postal lookup for Canada and the United States", async () => {
+    const postalLookup = vi.fn().mockResolvedValue({
+      postal_code: "L3R 8N4",
+      city: "Markham",
+      region: "ON",
+      country: "CA",
+      approximate: true,
+      source: "Zippopotam.us / GeoNames",
+    });
+    const handler = createQuoteApiHandler({
+      client: { submitRate: vi.fn(), pollRate: vi.fn() },
+      tokenConfigured: false,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+      postalLookup,
+    });
+
+    const response = await handler(request("/api/postal-lookup?postal=L3R%208N4"));
+
+    expect(response.status).toBe(200);
+    expect(await responseBody(response)).toMatchObject({
+      status: "success",
+      data: { city: "Markham", region: "ON", country: "CA", approximate: true },
+    });
+    expect(postalLookup).toHaveBeenCalledWith("L3R 8N4");
+  });
+
   it("returns unavailable without revealing an unset token", async () => {
     const client = {
       submitRate: vi.fn(),
@@ -72,6 +142,36 @@ describe("Freightcom quote page API", () => {
     expect(body).toMatchObject({ status: "unavailable", code: "FREIGHTCOM_TEST_TOKEN_NOT_CONFIGURED" });
     expect(JSON.stringify(body)).not.toContain("Authorization");
     expect(client.submitRate).not.toHaveBeenCalled();
+  });
+
+  it("returns a sanitized needs-input response when Freightcom rejects request fields", async () => {
+    const handler = createQuoteApiHandler({
+      client: {
+        submitRate: vi.fn().mockRejectedValue(new FreightcomTestClientError(
+          "freightcom.test_request_rejected",
+          "provider body must not escape",
+          422,
+        )),
+        pollRate: vi.fn(),
+      },
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/rate", {
+      method: "POST",
+      body: JSON.stringify(VALID_REQUEST),
+      headers: { "content-type": "application/json" },
+    }));
+    const body = await responseBody(response);
+
+    expect(response.status).toBe(422);
+    expect(body).toMatchObject({
+      status: "needs_input",
+      code: "FREIGHTCOM_TEST_REQUEST_REJECTED",
+      upstream_status: 422,
+    });
+    expect(JSON.stringify(body)).not.toContain("provider body must not escape");
   });
 
   it("accepts a request handle and returns structured polling output", async () => {
@@ -124,6 +224,10 @@ describe("Freightcom quote page API", () => {
         environment: "test",
         status: { done: true, total: 1, complete: 1 },
         rates: [{ total: { currency: "CAD", value: "17936" } }],
+        display_currency: "USD",
+        currency_policy: "cad-numeric-relabel-to-usd",
+        conversion_applied: false,
+        relabel_applied: true,
       },
     });
     expect(JSON.stringify(polledBody)).not.toContain("synthetic-test-credential");

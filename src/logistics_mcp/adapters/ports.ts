@@ -65,6 +65,13 @@ export interface ReviewAdapter {
   readTask(input: Record<string, unknown>): Promise<AdapterResult>;
 }
 
+export interface FreightcomRatePort {
+  requestRate(
+    input: unknown,
+    signal?: AbortSignal,
+  ): Promise<AdapterResult>;
+}
+
 export interface FixtureAdapters {
   readonly quote: QuoteAdapter;
   readonly customs: CustomsAdapter;

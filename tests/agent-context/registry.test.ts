@@ -287,7 +287,7 @@ describe("Agent standard registry", () => {
     expect(escaped).toBe(false);
   }, 15_000);
 
-  it("registers the accepted control-plane RFCs without expanding MCP modules or resources", () => {
+  it("registers the accepted control-plane RFCs without introducing Admin MCP modules or resources", () => {
     const registry = loadAgentRegistry(rootDir);
     const standard = readRegisteredStandard(rootDir, registry, "writable-module-control-plane-v1");
     const adminStateStandard = readRegisteredStandard(rootDir, registry, "admin-control-state-dto-v1");
@@ -329,6 +329,7 @@ describe("Agent standard registry", () => {
       "agent-access",
       "cargo",
       "container",
+      "freightcom-ltl",
     ]);
     expect(registry.resources.map((resource) => resource.resource_id).sort()).toEqual([
       "agent.bootstrap",

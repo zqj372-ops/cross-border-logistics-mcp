@@ -133,7 +133,11 @@ describe("Agent context resolver", () => {
     }
     expect(result.source_refs.some((source) => source.source_id === "standard:writable-module-control-plane-v1:2026-08-22.v1")).toBe(false);
     expect(result.source_refs.some((source) => source.source_id === adminControlStateSourceRef)).toBe(false);
-    expect(result.modules.map((module) => module.module_id).sort()).toEqual(["cargo", "container"]);
+    expect(result.modules.map((module) => module.module_id).sort()).toEqual([
+      "cargo",
+      "container",
+      "freightcom-ltl",
+    ]);
   });
 
   it("rejects a forged broadened pack before it can project control-plane rules", () => {

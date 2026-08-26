@@ -13,4 +13,6 @@
 
 报价 v1 的 `quote-result.schema.json`、旧 `envelope.schema.json` 与历史示例继续保留。报价 v2 使用独立的 `quote-request-v2.schema.json`、`quote-result-v2.schema.json` 和 `quote-envelope-v2.schema.json`；v2 data 只接受 `ready=true`、`test_data=false` 的 active manifest，`valid_from`/`valid_to` 是必需非空 Date；v2 输出的 release hash 必须由 adapter 校验与 snapshot hash 相等，ready=false 不进入 quote data。旧 envelope `$id` 不引用 v2。
 
+`quote.freightcom_ltl.preview` 的输入和输出由模块 Zod 合同生成 Draft 2020-12 Schema。输入只允许已确认的 pallet LTL 字段和测试显示策略；输出保留 Freightcom 源币种，并把相同数字 USD 明确标记为 `none_numeric_relabel`，固定不可发送、不可订舱且不具权威。
+
 `CargoLine` 的三种重量证据 `unit_weight`、`piece_weights`、`line_total_weight` 通过 `oneOf` 互斥；三者都缺失时 Schema 允许承载不完整输入，但工具必须返回 `needs_input` 或 `manual_review`，不能计算出可信金额。

@@ -672,7 +672,7 @@ function registerMcpTools(
         annotations: {
           readOnlyHint: definition.kind === "read",
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: definition.idempotentHint ?? true,
           openWorldHint: !CLOSED_WORLD_TOOLS.has(definition.name),
         },
       },

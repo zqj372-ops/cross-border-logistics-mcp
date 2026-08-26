@@ -358,7 +358,7 @@ export type FreightcomRatePollResponse = z.infer<typeof freightcomRatePollRespon
 export interface FreightcomRateData extends Record<string, unknown> {
   readonly provider: "freightcom";
   readonly api_version: typeof FREIGHTCOM_API_VERSION;
-  readonly environment: "fixture";
+  readonly environment: "fixture" | "test";
   readonly request_id: string;
   readonly status: FreightcomRatePollResponse["status"];
   readonly rates: FreightcomRatePollResponse["rates"];
@@ -375,7 +375,7 @@ export type FreightcomRateSleep = (
 ) => Promise<void>;
 
 export interface FreightcomRateAdapterOptions {
-  readonly mode: "fixtures" | "production";
+  readonly mode: "fixtures" | "test" | "production";
   readonly baseUrl: string;
   readonly allowedHosts: readonly string[];
   readonly fetchImpl?: FetchImplementation;
@@ -470,12 +470,15 @@ function sourceRef(
   requestId: string,
   response: FreightcomRatePollResponse,
   retrievedAt: string,
+  environment: "fixture" | "test",
 ): SourceRef {
   return {
-    source_id: `src:freightcom:rate:${requestId}`,
-    source_type: "fixture",
+    source_id: `src:freightcom:${environment}:${requestId}`,
+    source_type: environment === "fixture" ? "fixture" : "opaque_reference",
     system: "Freightcom Customer API",
-    locator: `fixture://freightcom/rate/${requestId}`,
+    locator: environment === "fixture"
+      ? `fixture://freightcom/rate/${requestId}`
+      : `opaque://freightcom/test/rate/${requestId}`,
     version: `freightcom-api@${FREIGHTCOM_API_VERSION}`,
     retrieved_at: retrievedAt,
     authority: "opaque",
@@ -518,8 +521,8 @@ export class FreightcomRateAdapter {
     this.client = createFetchJsonClient({
       baseUrl: options.baseUrl,
       allowedHosts: options.allowedHosts,
-      enabled: options.mode === "fixtures",
-      fetchImpl: options.fetchImpl ?? (() => Promise.reject(new Error("Fixture fetch is not configured."))),
+      enabled: options.mode !== "production",
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       ...(options.maxResponseBytes === undefined ? {} : { maxResponseBytes: options.maxResponseBytes }),
     });
@@ -529,10 +532,10 @@ export class FreightcomRateAdapter {
     input: unknown,
     signal?: AbortSignal,
   ): Promise<AdapterResult<FreightcomRateData>> {
-    if (this.mode !== "fixtures") {
+    if (this.mode === "production") {
       return unavailable(
         "freightcom.production_disabled",
-        "Real Freightcom calls remain disabled until the test endpoint and authorization contract are verified.",
+        "Freightcom production calls are disabled; only the explicitly enabled test environment may be used.",
       ) as AdapterResult<FreightcomRateData>;
     }
     if (signal?.aborted) {
@@ -545,7 +548,7 @@ export class FreightcomRateAdapter {
     if (!parsedInput.success) {
       return needsInput(
         "freightcom.request_invalid",
-        "The Freightcom fixture rate request does not satisfy the narrowed pallet-rate contract.",
+        "The Freightcom rate request does not satisfy the narrowed pallet-rate contract.",
         "input",
       ) as AdapterResult<FreightcomRateData>;
     }
@@ -613,13 +616,19 @@ export class FreightcomRateAdapter {
       }
       if (parsedPoll.data.status.done) {
         const retrievedAt = this.clock().toISOString();
-        const ref = sourceRef(acceptedBody.data.request_id, parsedPoll.data, retrievedAt);
+        const environment = this.mode === "test" ? "test" : "fixture";
+        const ref = sourceRef(
+          acceptedBody.data.request_id,
+          parsedPoll.data,
+          retrievedAt,
+          environment,
+        );
         return {
           status: "manual_review",
           data: {
             provider: "freightcom",
             api_version: FREIGHTCOM_API_VERSION,
-            environment: "fixture",
+            environment,
             request_id: acceptedBody.data.request_id,
             status: parsedPoll.data.status,
             rates: parsedPoll.data.rates,
@@ -628,15 +637,19 @@ export class FreightcomRateAdapter {
           sourceRefs: [ref],
           warnings: [
             notice(
-              "freightcom.fixture_only",
-              "The Freightcom response came from an isolated fixture and is not an authoritative rate.",
+              environment === "fixture" ? "freightcom.fixture_only" : "freightcom.test_only",
+              environment === "fixture"
+                ? "The Freightcom response came from an isolated fixture and is not an authoritative rate."
+                : "The Freightcom response came from the test environment and is not an authoritative production rate.",
               "warning",
             ),
           ],
           blockers: [
             notice(
-              "freightcom.fixture_data",
-              "Fixture data cannot be promoted to an MCP quote success result.",
+              environment === "fixture" ? "freightcom.fixture_data" : "freightcom.test_data",
+              environment === "fixture"
+                ? "Fixture data cannot be promoted to an MCP quote success result."
+                : "Test-environment data cannot be promoted to an MCP quote success result.",
             ),
             notice(
               "freightcom.release_evidence_missing",
@@ -660,4 +673,51 @@ export class FreightcomRateAdapter {
       "The Freightcom rate request did not reach done=true within the bounded polling window.",
     ) as AdapterResult<FreightcomRateData>;
   }
+}
+
+export function createFreightcomFixtureRateAdapter(): FreightcomRateAdapter {
+  return new FreightcomRateAdapter({
+    mode: "fixtures",
+    baseUrl: "https://fixture.example.invalid",
+    allowedHosts: ["fixture.example.invalid"],
+    headerProvider: () => ({ Authorization: "fixture-authorization" }),
+    fetchImpl: (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      if (url.endsWith("/rate") && init?.method === "POST") {
+        return Promise.resolve(new Response(
+          JSON.stringify({ request_id: "rate-fixture-mcp-001" }),
+          { status: 202, headers: { "content-type": "application/json" } },
+        ));
+      }
+      if (url.endsWith("/rate/rate-fixture-mcp-001") && init?.method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({
+          status: { done: true, total: 1, complete: 1 },
+          rates: [{
+            carrier_name: "Fixture Carrier",
+            service_name: "Fixture LTL",
+            service_id: "fixture.ltl",
+            valid_until: { year: 2026, month: 8, day: 31 },
+            total: { currency: "CAD", value: "17936" },
+            base: { currency: "CAD", value: "15000" },
+            surcharges: [{
+              type: "fuel",
+              amount: { currency: "CAD", value: "2936" },
+            }],
+            taxes: [],
+            transit_time_days: 2,
+            transit_time_not_available: false,
+            paperless: false,
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      return Promise.resolve(new Response("", { status: 404 }));
+    },
+    maxPollAttempts: 1,
+    pollDelayMs: 0,
+    clock: () => new Date("2026-08-25T00:00:00.000Z"),
+  });
 }

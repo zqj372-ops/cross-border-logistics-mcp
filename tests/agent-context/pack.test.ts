@@ -161,9 +161,9 @@ describe("Agent standard pack", () => {
     const serialized = serializeAgentStandardPack(pack);
 
     expect(pack.standards).toHaveLength(11);
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(116_598);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(116_998);
     expect(sha256(serialized)).toBe(
-      "sha256:b3d186e9c36ff62798eb156eb536cf4e42d9853f5e4c44229e0c676cf9be0478",
+      "sha256:18df36011c286380431594c89da1fe67e3e0560e777bc1837e93ad040fb5bc67",
     );
   });
 
@@ -260,7 +260,12 @@ describe("Agent standard pack", () => {
         "utf8",
       ),
     });
-    expect(first.modules.map((module) => module.module_id).sort()).toEqual(["agent-access", "cargo", "container"]);
+    expect(first.modules.map((module) => module.module_id).sort()).toEqual([
+      "agent-access",
+      "cargo",
+      "container",
+      "freightcom-ltl",
+    ]);
 
     const outputDir = mkdtempSync(resolve(physicalTmpDir, "agent-pack-"));
     const outputPath = resolve(outputDir, "agent-standard-pack.json");
@@ -350,6 +355,30 @@ describe("Agent standard pack", () => {
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
+  });
+
+  it("accepts the Freightcom T1 caller entitlement but rejects a self-consistent allowlist broaden", () => {
+    const valid = buildAgentStandardPack(rootDir);
+    expect(valid.modules.find((module) => module.module_id === "freightcom-ltl")).toEqual({
+      module_id: "freightcom-ltl",
+      version: "2026-08-26.v1",
+      risk_level: "T1",
+      standard_ids: ["module-runtime.v0", "platform.contracts"],
+      tool_names: ["quote.freightcom_ltl.preview"],
+    });
+
+    const broadened = mutableClone(valid);
+    const runtimeCaller = broadened.profiles.find(
+      (profile) => profile.profile_id === "runtime-caller",
+    );
+    if (runtimeCaller === undefined) throw new Error("Expected runtime-caller fixture.");
+    runtimeCaller.allowed_module_ids.push("agent-access");
+
+    expect(() => validateAndFreezeAgentStandardPack(broadened)).toThrowError(
+      expect.objectContaining({
+        code: "pack.runtime_caller_entitlement_mismatch",
+      }),
+    );
   });
 
   it("enforces canonical resources, relative workstream paths, and production safety scanning", () => {

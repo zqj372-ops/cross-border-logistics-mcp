@@ -79,6 +79,17 @@ function mapHttpError(error: unknown): FreightcomTestClientError {
       error.status,
     );
   }
+  if (
+    error instanceof HttpAdapterError &&
+    error.status !== undefined &&
+    [400, 409, 422].includes(error.status)
+  ) {
+    return new FreightcomTestClientError(
+      "freightcom.test_request_rejected",
+      "The Freightcom test endpoint rejected one or more request fields.",
+      error.status,
+    );
+  }
   if (error instanceof HttpAdapterError && error.code === "upstream_aborted") {
     return new FreightcomTestClientError(
       "freightcom.test_request_aborted",

@@ -1,4 +1,6 @@
 import { buildFreightcomRequest, formatDisplayMoney } from "./form-model.mjs";
+import { suggestFreightClass } from "./freight-class.mjs";
+import { findOriginAddressPreset, ORIGIN_ADDRESS_PRESETS } from "./origin-presets.mjs";
 
 const form = document.querySelector("#quote-form");
 const palletList = document.querySelector("#pallet-list");
@@ -19,7 +21,11 @@ const progressRequestId = document.querySelector("#progress-request-id");
 const resultsTableBody = document.querySelector("#results-table-body");
 const evidenceJson = document.querySelector("#evidence-json");
 const evidenceSource = document.querySelector("#evidence-source");
+const originAddressPreset = document.querySelector("#origin-address-preset");
+const originAddressSummary = document.querySelector("#origin-address-summary");
 
+const postalTimers = new Map();
+const postalResolvedKeys = new Map();
 let pollGeneration = 0;
 let palletSequence = 0;
 
@@ -28,29 +34,57 @@ function elementValue(name) {
   return element && "value" in element ? element.value : "";
 }
 
-function elementChecked(name) {
+function setElementValue(name, value) {
   const element = form.elements.namedItem(name);
-  return Boolean(element && "checked" in element && element.checked);
+  if (element && "value" in element) element.value = value;
+}
+
+function initializeOriginAddressPresets() {
+  for (const preset of ORIGIN_ADDRESS_PRESETS) {
+    const option = document.createElement("option");
+    option.value = preset.id;
+    option.textContent = `${preset.label}, ${preset.city}, ${preset.region} ${preset.postal_code}, Canada`;
+    originAddressPreset.append(option);
+  }
+}
+
+function applyOriginAddressPreset() {
+  const preset = findOriginAddressPreset(elementValue("origin.addressPreset"));
+  for (const field of ["address_line_1", "city", "region", "country", "postal_code"]) {
+    setElementValue(`origin.${field}`, preset?.[field] ?? "");
+  }
+  if (preset === null) {
+    originAddressSummary.textContent = "请选择 Calgary 或 Markham 发货地址";
+    originAddressSummary.classList.remove("is-selected");
+    return false;
+  }
+  originAddressSummary.textContent = `${preset.address_line_1}, ${preset.city}, ${preset.region} ${preset.postal_code}, Canada`;
+  originAddressSummary.classList.add("is-selected");
+  setLive(`已选择 ${preset.label} 发货地址`);
+  return true;
+}
+
+function currentLocalDate() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function initializeDefaults() {
+  const expectedShipDate = form.elements.namedItem("expectedShipDate");
+  if (expectedShipDate && "value" in expectedShipDate) expectedShipDate.value = currentLocalDate();
 }
 
 function readAddress(prefix) {
   return {
-    name: elementValue(`${prefix}.name`),
     address_line_1: elementValue(`${prefix}.address_line_1`),
-    address_line_2: elementValue(`${prefix}.address_line_2`),
-    unit_number: elementValue(`${prefix}.unit_number`),
     city: elementValue(`${prefix}.city`),
     region: elementValue(`${prefix}.region`),
     country: elementValue(`${prefix}.country`),
     postal_code: elementValue(`${prefix}.postal_code`),
-    residential: elementChecked(`${prefix}.residential`),
-    tailgate_required: elementChecked(`${prefix}.tailgate_required`),
-    instructions: elementValue(`${prefix}.instructions`),
-    contact_name: elementValue(`${prefix}.contact_name`),
-    phone_number: elementValue(`${prefix}.phone_number`),
-    phone_extension: elementValue(`${prefix}.phone_extension`),
-    email_addresses: elementValue(`${prefix}.email_addresses`),
-    receives_email_updates: elementChecked(`${prefix}.receives_email_updates`),
+    locationType: elementValue(`${prefix}.locationType`),
   };
 }
 
@@ -65,16 +99,13 @@ function readPalletRow(row) {
     dimensionUnit: value("dimensionUnit"),
     description: value("description"),
     freightClass: value("freightClass"),
-    nmfc: value("nmfc"),
-    contentsType: value("contentsType"),
-    numPieces: value("numPieces"),
   };
 }
 
 function readForm() {
   return {
-    services: elementValue("services"),
-    excludedServices: elementValue("excludedServices"),
+    services: "",
+    excludedServices: "",
     expectedShipDate: elementValue("expectedShipDate"),
     origin: readAddress("origin"),
     destination: {
@@ -84,43 +115,9 @@ function readForm() {
       signatureRequirement: elementValue("destination.signatureRequirement"),
     },
     pallet: {
-      hasStackablePallets: elementChecked("pallet.hasStackablePallets"),
-      dangerousGoods: elementValue("pallet.dangerousGoods"),
-      dangerousGoodsDetails: {
-        packaging_group: elementValue("pallet.dg.packaging_group"),
-        goods_class: elementValue("pallet.dg.goods_class"),
-        description: elementValue("pallet.dg.description"),
-        united_nations_number: elementValue("pallet.dg.united_nations_number"),
-        emergency_contact_name: elementValue("pallet.dg.emergency_contact_name"),
-        emergency_contact_number: elementValue("pallet.dg.emergency_contact_number"),
-        emergency_contact_extension: elementValue("pallet.dg.emergency_contact_extension"),
-      },
-      limitedAccessDeliveryType: elementValue("pallet.limitedAccessDeliveryType"),
-      limitedAccessDeliveryOtherName: elementValue("pallet.limitedAccessDeliveryOtherName"),
-      inBond: elementChecked("pallet.inBond"),
-      inBondType: elementValue("pallet.inBondType"),
-      inBondName: elementValue("pallet.inBondName"),
-      inBondAddress: elementValue("pallet.inBondAddress"),
-      inBondContactMethod: elementValue("pallet.inBondContactMethod"),
-      inBondContactEmail: elementValue("pallet.inBondContactEmail"),
-      inBondContactPhone: elementValue("pallet.inBondContactPhone"),
-      inBondContactExtension: elementValue("pallet.inBondContactExtension"),
-      appointmentDelivery: elementChecked("pallet.appointmentDelivery"),
-      protectFromFreeze: elementChecked("pallet.protectFromFreeze"),
-      thresholdPickup: elementChecked("pallet.thresholdPickup"),
-      thresholdDelivery: elementChecked("pallet.thresholdDelivery"),
-      amazonOrFbaDelivery: elementChecked("pallet.amazonOrFbaDelivery"),
-      fbaNumber: elementValue("pallet.fbaNumber"),
-      orderId: elementValue("pallet.orderId"),
       pallets: [...palletList.querySelectorAll(".pallet-row")].map(readPalletRow),
     },
-    advanced: {
-      insuranceType: elementValue("advanced.insuranceType"),
-      insuranceValue: elementValue("advanced.insuranceValue"),
-      insuranceCurrency: elementValue("advanced.insuranceCurrency"),
-      referenceCodes: elementValue("advanced.referenceCodes"),
-      shipmentClassification: elementValue("advanced.shipmentClassification"),
-    },
+    advanced: {},
   };
 }
 
@@ -158,24 +155,103 @@ function showErrors(errors) {
   setLive(`有 ${errors.length} 个字段需要补充`);
 }
 
-function updateConditionals() {
-  const dangerousGoods = elementValue("pallet.dangerousGoods");
-  document.querySelector("#dangerous-goods-block").hidden = dangerousGoods === "";
-  document.querySelector("#in-bond-block").hidden = !elementChecked("pallet.inBond");
-  document.querySelector("#amazon-fba-block").hidden = !elementChecked("pallet.amazonOrFbaDelivery");
+function postalInput(prefix) {
+  return document.querySelector(`[data-postal-input="${prefix}"]`);
 }
 
-function palletRowTemplate(index) {
-  return `<article class="pallet-row" data-pallet-index="${index}">
-    <div class="pallet-row-head"><div><span class="pallet-index">${String(index + 1).padStart(2, "0")}</span><strong>Pallet ${index + 1}</strong></div><button class="icon-button remove-pallet" type="button" aria-label="删除 pallet ${index + 1}" ${index === 0 ? "disabled" : ""}>×</button></div>
+function postalStatus(prefix) {
+  return document.querySelector(`[data-postal-status="${prefix}"]`);
+}
+
+function locationField(prefix, field) {
+  return document.querySelector(`[data-location-field="${prefix}.${field}"]`);
+}
+
+function postalKey(value) {
+  return String(value ?? "").trim().toUpperCase().replaceAll(" ", "");
+}
+
+function isCompletePostal(value) {
+  const compact = postalKey(value);
+  return /^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/u.test(compact)
+    || /^\d{5}(?:-\d{4})?$/u.test(compact);
+}
+
+function setPostalStatus(prefix, message, tone = "neutral") {
+  const status = postalStatus(prefix);
+  status.textContent = message;
+  status.className = `postal-status postal-${tone}`;
+}
+
+function clearLocation(prefix) {
+  postalResolvedKeys.delete(prefix);
+  for (const field of ["city", "region", "country"]) locationField(prefix, field).value = "";
+}
+
+async function parseResponse(response) {
+  try {
+    return await response.json();
+  } catch {
+    return { status: "unavailable", code: "INVALID_PAGE_RESPONSE", message: "页面接口返回了无法读取的响应。" };
+  }
+}
+
+async function lookupPostal(prefix, options = {}) {
+  const input = postalInput(prefix);
+  const rawPostal = input.value;
+  const requestKey = postalKey(rawPostal);
+  if (!isCompletePostal(rawPostal)) {
+    clearLocation(prefix);
+    setPostalStatus(prefix, rawPostal.trim() === "" ? "等待输入邮编" : "请输入完整的加拿大邮编或美国 ZIP Code", rawPostal.trim() === "" ? "neutral" : "error");
+    return options.required !== true;
+  }
+  if (postalResolvedKeys.get(prefix) === requestKey) return true;
+  setPostalStatus(prefix, "正在识别邮编…", "loading");
+  try {
+    const response = await fetch(`/api/postal-lookup?postal=${encodeURIComponent(rawPostal)}`, {
+      headers: { accept: "application/json" },
+    });
+    const body = await parseResponse(response);
+    if (postalKey(input.value) !== requestKey) return false;
+    if (!response.ok || body.status !== "success") {
+      clearLocation(prefix);
+      setPostalStatus(prefix, body.message ?? "无法识别该邮编。", "error");
+      return false;
+    }
+    input.value = body.data.postal_code;
+    locationField(prefix, "city").value = body.data.city;
+    locationField(prefix, "region").value = body.data.region;
+    locationField(prefix, "country").value = body.data.country;
+    postalResolvedKeys.set(prefix, postalKey(body.data.postal_code));
+    const location = `${body.data.city}, ${body.data.region}, ${body.data.country}`;
+    setPostalStatus(prefix, body.data.approximate === true ? `已按加拿大 FSA 自动识别：${location} · 请核对` : `已自动识别：${location}`, "success");
+    return true;
+  } catch {
+    if (postalKey(input.value) !== requestKey) return false;
+    clearLocation(prefix);
+    setPostalStatus(prefix, "邮编自动识别服务暂时不可用。", "error");
+    return false;
+  }
+}
+
+function schedulePostalLookup(prefix) {
+  const existing = postalTimers.get(prefix);
+  if (existing !== undefined) window.clearTimeout(existing);
+  clearLocation(prefix);
+  const value = postalInput(prefix).value;
+  setPostalStatus(prefix, value.trim() === "" ? "等待输入邮编" : "继续输入，完成后自动识别", "neutral");
+  if (!isCompletePostal(value)) return;
+  postalTimers.set(prefix, window.setTimeout(() => void lookupPostal(prefix), 350));
+}
+
+function palletRowTemplate(index, sequence) {
+  return `<article class="pallet-row" data-pallet-id="${sequence}">
+    <div class="pallet-row-head"><div><span class="pallet-index">${String(index + 1).padStart(2, "0")}</span><strong>托盘 ${index + 1}</strong></div><button class="icon-button remove-pallet" type="button" aria-label="删除托盘 ${index + 1}" ${index === 0 ? "disabled" : ""}>×</button></div>
     <div class="field-grid field-grid-4 pallet-line-grid">
-      <label class="field field-span-2"><span>weight <em>*</em></span><div class="input-with-unit"><input data-name="weightValue" type="number" min="0.01" step="any" placeholder="100" /><select data-name="weightUnit" aria-label="weight unit"><option value="lb">lb</option><option value="kg">kg</option><option value="g">g</option><option value="oz">oz</option></select></div></label>
-      <label class="field field-span-2"><span>dimensions L × W × H <em>*</em></span><div class="dimensions-input"><input data-name="length" type="number" min="0.01" step="any" placeholder="48" /><input data-name="width" type="number" min="0.01" step="any" placeholder="40" /><input data-name="height" type="number" min="0.01" step="any" placeholder="52" /><select data-name="dimensionUnit" aria-label="dimension unit"><option value="in">in</option><option value="cm">cm</option><option value="ft">ft</option><option value="mm">mm</option><option value="m">m</option></select></div></label>
-      <label class="field field-span-2"><span>description <em>*</em></span><input data-name="description" type="text" placeholder="Industrial parts" /></label>
-      <label class="field"><span>freight_class <em>*</em></span><input data-name="freightClass" type="text" placeholder="70" /></label>
-      <label class="field"><span>num_pieces</span><input data-name="numPieces" type="number" min="1" step="1" placeholder="1" /></label>
-      <label class="field"><span>nmfc</span><input data-name="nmfc" type="text" /></label>
-      <label class="field"><span>contents_type</span><input data-name="contentsType" type="text" placeholder="machinery" /></label>
+      <label class="field field-span-2"><span>重量 <em>*</em></span><div class="input-with-unit"><input data-name="weightValue" type="number" min="0.01" step="any" placeholder="100" required /><select data-name="weightUnit" aria-label="重量单位"><option value="kg" selected>kg</option><option value="lb">lb</option><option value="g">g</option><option value="oz">oz</option></select></div></label>
+      <label class="field field-span-2"><span>尺寸：长 × 宽 × 高 <em>*</em></span><div class="dimensions-input"><input data-name="length" type="number" min="0.01" step="any" placeholder="120" required /><input data-name="width" type="number" min="0.01" step="any" placeholder="100" aria-label="宽度" required /><input data-name="height" type="number" min="0.01" step="any" placeholder="130" aria-label="高度" required /><select data-name="dimensionUnit" aria-label="尺寸单位"><option value="cm" selected>cm</option><option value="in">in</option><option value="ft">ft</option><option value="mm">mm</option><option value="m">m</option></select></div></label>
+      <label class="field field-span-2"><span>货物描述 <em>*</em></span><input data-name="description" type="text" placeholder="例如：工业零件" required /></label>
+      <label class="field field-span-2"><span>货运等级（自动） <em>*</em></span><input data-name="freightClass" type="text" inputmode="decimal" placeholder="输入重量和尺寸后自动计算" aria-describedby="freight-class-status-${sequence}" required /><small class="freight-class-status" id="freight-class-status-${sequence}">输入重量和尺寸后自动计算；特殊商品请核对 NMFC</small></label>
     </div>
   </article>`;
 }
@@ -183,17 +259,42 @@ function palletRowTemplate(index) {
 function refreshPalletRows() {
   [...palletList.querySelectorAll(".pallet-row")].forEach((row, index) => {
     row.querySelector(".pallet-index").textContent = String(index + 1).padStart(2, "0");
-    row.querySelector(".pallet-row-head strong").textContent = `Pallet ${index + 1}`;
+    row.querySelector(".pallet-row-head strong").textContent = `托盘 ${index + 1}`;
     const remove = row.querySelector(".remove-pallet");
     remove.disabled = index === 0;
-    remove.setAttribute("aria-label", `删除 pallet ${index + 1}`);
+    remove.setAttribute("aria-label", `删除托盘 ${index + 1}`);
   });
 }
 
+function updatePalletFreightClass(row) {
+  const value = (name) => row.querySelector(`[data-name="${name}"]`)?.value ?? "";
+  const result = suggestFreightClass({
+    weightValue: value("weightValue"),
+    weightUnit: value("weightUnit"),
+    length: value("length"),
+    width: value("width"),
+    height: value("height"),
+    dimensionUnit: value("dimensionUnit"),
+  });
+  const freightClass = row.querySelector('[data-name="freightClass"]');
+  const status = row.querySelector(".freight-class-status");
+  if (result === null) {
+    freightClass.value = "";
+    status.textContent = "输入重量和尺寸后自动计算；特殊商品请核对 NMFC";
+    status.classList.remove("is-calculated");
+    return;
+  }
+  freightClass.value = result.suggestedClass;
+  status.textContent = `密度 ${result.densityPcf} lb/ft³ · NMFTA 2025 密度建议；特殊商品请核对 NMFC`;
+  status.classList.add("is-calculated");
+}
+
 function addPalletRow() {
+  const index = palletList.querySelectorAll(".pallet-row").length;
   palletSequence += 1;
-  palletList.insertAdjacentHTML("beforeend", palletRowTemplate(palletSequence));
+  palletList.insertAdjacentHTML("beforeend", palletRowTemplate(index, palletSequence));
   refreshPalletRows();
+  updatePalletFreightClass(palletList.lastElementChild);
 }
 
 function resetResults() {
@@ -203,43 +304,39 @@ function resetResults() {
   resultsCard.hidden = true;
   setResultStatus("待查询", "neutral");
   progressBar.style.width = "0%";
-  evidenceJson.textContent = "尚未收到 provider 响应。";
+  evidenceJson.textContent = "尚未收到承运商响应。";
   evidenceSource.textContent = "—";
 }
 
 function formatMoney(money) {
   const display = formatDisplayMoney(money);
-  return `<strong class="money">${escapeHtml(display.displayCurrency)} ${escapeHtml(display.amount)}</strong><small class="source-currency">source: ${escapeHtml(display.sourceCurrency)}</small>`;
-}
-
-function formatChargeList(items) {
-  if (!Array.isArray(items) || items.length === 0) return "—";
-  return items.map((item) => `${escapeHtml(item.type ?? "charge")}: ${formatDisplayMoney(item.amount).displayCurrency} ${formatDisplayMoney(item.amount).amount}`).join("<br />");
+  if (!display.available) {
+    return `<span class="missing-value">暂不支持该来源币种</span><small class="source-currency">来源币种：${escapeHtml(display.sourceCurrency)}</small>`;
+  }
+  const sourceNote = display.relabelApplied
+    ? `来源币种：${display.sourceCurrency} · 数字原样改标 USD（未换算）`
+    : `来源币种：${display.sourceCurrency}`;
+  return `<strong class="money">${escapeHtml(display.displayCurrency)} ${escapeHtml(display.amount)}</strong><small class="source-currency">${escapeHtml(sourceNote)}</small>`;
 }
 
 function renderRates(data) {
   const rates = Array.isArray(data.rates) ? data.rates : [];
   document.querySelector("#rate-count").textContent = String(rates.length);
-  resultsTableBody.innerHTML = rates.map((rate, index) => {
-    const carrier = rate.carrier_name ?? "Unknown carrier";
-    const service = rate.service_name ?? rate.service_id ?? "Unknown service";
-    const transit = rate.transit_time_not_available === true ? "N/A" : rate.transit_time_days === undefined ? "—" : `${rate.transit_time_days} days`;
+  resultsTableBody.innerHTML = rates.map((rate) => {
+    const carrier = rate.carrier_name ?? "未知承运商";
+    const service = rate.service_name ?? rate.service_id ?? "未知服务";
+    const transit = rate.transit_time_not_available === true ? "不可用" : rate.transit_time_days === undefined ? "—" : `${rate.transit_time_days} 天`;
     return `<tr>
       <td><div class="carrier-cell"><span class="carrier-mark">${escapeHtml(carrier.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(carrier)}</strong><small>${escapeHtml(service)}</small></div></div></td>
-      <td>${rate.total === undefined ? "<span class='missing-value'>manual review</span>" : formatMoney(rate.total)}</td>
-      <td>${rate.base === undefined ? "—" : formatMoney(rate.base)}</td>
-      <td class="charge-cell">${formatChargeList([...(Array.isArray(rate.surcharges) ? rate.surcharges : []), ...(Array.isArray(rate.taxes) ? rate.taxes : [])])}</td>
+      <td>${rate.total === undefined ? "<span class='missing-value'>需要人工复核</span>" : formatMoney(rate.total)}</td>
       <td>${escapeHtml(transit)}</td>
-      <td><span class="row-status">TEST · review</span></td>
     </tr>`;
   }).join("");
-  if (rates.length === 0) {
-    resultsTableBody.innerHTML = `<tr><td colspan="6" class="no-rates">provider 尚未返回可比较的 rate，保持 manual_review。</td></tr>`;
-  }
+  if (rates.length === 0) resultsTableBody.innerHTML = `<tr><td colspan="3" class="no-rates">承运商尚未返回可比较报价，保持人工复核状态。</td></tr>`;
   resultsCard.hidden = false;
   emptyState.hidden = true;
   document.querySelector("#completed-at").textContent = data.retrieved_at ? new Date(data.retrieved_at).toLocaleString("zh-CN", { hour12: false }) : "—";
-  evidenceSource.textContent = data.source_refs?.[0]?.source_id ?? "opaque source";
+  evidenceSource.textContent = data.source_refs?.[0]?.source_id ?? "不透明来源引用";
   evidenceJson.textContent = JSON.stringify({
     environment: data.environment,
     request_id: data.request_id,
@@ -247,10 +344,11 @@ function renderRates(data) {
     rates: data.rates,
     source_refs: data.source_refs,
     display_currency: data.display_currency,
+    currency_policy: data.currency_policy,
     conversion_applied: data.conversion_applied,
   }, null, 2);
   setResultStatus("人工复核", "warning");
-  setLive(`收到 ${rates.length} 条 Freightcom 测试报价，状态为人工复核`);
+  setLive(`收到 ${rates.length} 条 Freightcom 测试报价，结果需要人工复核`);
 }
 
 function renderProgress(data) {
@@ -261,17 +359,9 @@ function renderProgress(data) {
   progressTotal.textContent = total === 0 ? "—" : String(total);
   progressPercent.textContent = `${percent}%`;
   progressBar.style.width = `${percent}%`;
-  progressLabel.textContent = data.status?.done === true ? "Rates ready · provider response validated" : "正在读取 Freightcom provider rates…";
-  progressPhase.textContent = data.status?.done === true ? "GET /rate/{request_id} complete" : "GET /rate/{request_id} polling";
+  progressLabel.textContent = data.status?.done === true ? "报价已返回，响应结构已校验" : "正在读取 Freightcom 承运商报价…";
+  progressPhase.textContent = data.status?.done === true ? "GET /rate/{request_id} 已完成" : "GET /rate/{request_id} 轮询中";
   setResultStatus(data.status?.done === true ? "已返回" : "轮询中", data.status?.done === true ? "warning" : "info");
-}
-
-async function parseResponse(response) {
-  try {
-    return await response.json();
-  } catch {
-    return { status: "unavailable", code: "INVALID_PAGE_RESPONSE", message: "页面 API 返回了无法读取的响应。" };
-  }
 }
 
 async function poll(pollUrl, requestId, generation) {
@@ -297,22 +387,37 @@ async function poll(pollUrl, requestId, generation) {
 async function submitQuote(event) {
   event.preventDefault();
   clearErrors();
-  const model = readForm();
-  const mapped = buildFreightcomRequest(model);
+  submitButton.disabled = true;
+  submitButton.querySelector("span:last-child").textContent = "正在核对地址…";
+  if (!applyOriginAddressPreset()) {
+    showErrors([{ field: "origin.addressPreset", message: "请选择 Calgary 或 Markham 发货地址。" }]);
+    submitButton.disabled = false;
+    submitButton.querySelector("span:last-child").textContent = "获取测试报价";
+    return;
+  }
+  const destinationPostalReady = await lookupPostal("destination", { required: true });
+  if (destinationPostalReady !== true) {
+    showErrors([{ field: "destination.postal_code", message: "请先输入并识别有效的加拿大或美国收货邮编。" }]);
+    submitButton.disabled = false;
+    submitButton.querySelector("span:last-child").textContent = "获取测试报价";
+    return;
+  }
+  const mapped = buildFreightcomRequest(readForm());
   if (mapped.errors.length > 0 || mapped.request === null) {
     showErrors(mapped.errors);
+    submitButton.disabled = false;
+    submitButton.querySelector("span:last-child").textContent = "获取测试报价";
     return;
   }
   pollGeneration += 1;
   const generation = pollGeneration;
-  submitButton.disabled = true;
   submitButton.querySelector("span:last-child").textContent = "正在提交…";
   emptyState.hidden = true;
   resultsCard.hidden = true;
   progressCard.hidden = false;
   setResultStatus("提交中", "info");
-  progressRequestId.textContent = "pending";
-  progressLabel.textContent = "正在 POST /rate…";
+  progressRequestId.textContent = "等待接收";
+  progressLabel.textContent = "正在提交 POST /rate…";
   progressPhase.textContent = "POST /rate";
   setLive("正在提交 Freightcom 测试询价");
   try {
@@ -352,25 +457,35 @@ async function loadConfig() {
     if (!response.ok || body.status !== "success") throw new Error("config_unavailable");
     document.querySelector("#api-endpoint").textContent = body.data.endpoint;
     document.querySelector("#api-dot").classList.toggle("is-off", body.data.token_configured !== true);
-    document.querySelector("#api-environment").textContent = body.data.token_configured === true ? "TEST · READY" : "TEST · TOKEN NEEDED";
+    document.querySelector("#api-environment").textContent = body.data.token_configured === true ? "测试 · 就绪" : "测试 · 需要令牌";
   } catch {
     document.querySelector("#api-endpoint").textContent = "页面服务不可用";
     document.querySelector("#api-dot").classList.add("is-off");
-    document.querySelector("#api-environment").textContent = "TEST · OFFLINE";
+    document.querySelector("#api-environment").textContent = "测试 · 离线";
   }
 }
 
+originAddressPreset.addEventListener("change", applyOriginAddressPreset);
+postalInput("destination").addEventListener("input", () => schedulePostalLookup("destination"));
+postalInput("destination").addEventListener("blur", () => void lookupPostal("destination"));
 form.addEventListener("submit", (event) => void submitQuote(event));
 document.querySelector("#add-pallet").addEventListener("click", addPalletRow);
-document.querySelector("#dangerous-goods").addEventListener("change", updateConditionals);
-document.querySelector("#in-bond").addEventListener("change", updateConditionals);
-document.querySelector("#amazon-fba").addEventListener("change", updateConditionals);
 palletList.addEventListener("click", (event) => {
   const button = event.target.closest(".remove-pallet");
   if (!button || button.disabled) return;
   button.closest(".pallet-row")?.remove();
   refreshPalletRows();
 });
+const freightClassInputs = new Set(["weightValue", "weightUnit", "length", "width", "height", "dimensionUnit"]);
+function updateFreightClassFromEvent(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+  if (!freightClassInputs.has(target.dataset.name)) return;
+  const row = target.closest(".pallet-row");
+  if (row !== null) updatePalletFreightClass(row);
+}
+palletList.addEventListener("input", updateFreightClassFromEvent);
+palletList.addEventListener("change", updateFreightClassFromEvent);
 document.querySelector("#stop-polling").addEventListener("click", () => {
   pollGeneration += 1;
   progressCard.hidden = true;
@@ -380,14 +495,21 @@ document.querySelector("#stop-polling").addEventListener("click", () => {
 });
 document.querySelector("#reset-form").addEventListener("click", () => {
   form.reset();
+  initializeDefaults();
+  applyOriginAddressPreset();
+  const destinationTimer = postalTimers.get("destination");
+  if (destinationTimer !== undefined) window.clearTimeout(destinationTimer);
+  clearLocation("destination");
+  setPostalStatus("destination", "等待输入邮编");
   palletList.innerHTML = "";
   palletSequence = 0;
   addPalletRow();
-  updateConditionals();
   clearErrors();
   resetResults();
 });
 
+initializeDefaults();
+initializeOriginAddressPresets();
+applyOriginAddressPreset();
 addPalletRow();
-updateConditionals();
 void loadConfig();

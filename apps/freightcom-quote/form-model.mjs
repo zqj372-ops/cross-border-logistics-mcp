@@ -57,6 +57,28 @@ function emailList(value, field, errors) {
   return values;
 }
 
+function locationFlags(values, prefix, errors) {
+  const locationType = text(values?.locationType);
+  if (locationType === "") {
+    return {
+      ...(values?.residential === undefined ? {} : { residential: Boolean(values.residential) }),
+      ...(values?.tailgate_required === undefined ? {} : { tailgate_required: Boolean(values.tailgate_required) }),
+    };
+  }
+  const mappings = {
+    "commercial-no-tailgate": { residential: false, tailgate_required: false },
+    "commercial-tailgate": { residential: false, tailgate_required: true },
+    "residential-no-tailgate": { residential: true, tailgate_required: false },
+    "residential-tailgate": { residential: true, tailgate_required: true },
+  };
+  const mapped = mappings[locationType];
+  if (mapped === undefined) {
+    error(errors, `${prefix}.locationType`, "请选择有效的地点类型。");
+    return {};
+  }
+  return mapped;
+}
+
 function parseDate(value, field, errors) {
   const raw = text(value);
   const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(raw);
@@ -109,6 +131,7 @@ function buildEstablishment(values, prefix, errors, destination = false) {
   const phone = optionalText(values?.phone_number);
   const phoneExtension = optionalText(values?.phone_extension);
   const emailAddresses = emailList(values?.email_addresses, `${prefix}.email_addresses`, errors);
+  const access = locationFlags(values, prefix, errors);
   const establishment = {
     ...(optionalText(values?.name) === undefined ? {} : { name: optionalText(values?.name) }),
     address: {
@@ -120,8 +143,7 @@ function buildEstablishment(values, prefix, errors, destination = false) {
       ...(country === null ? {} : { country }),
       postal_code: postalCode,
     },
-    ...(values?.residential === undefined ? {} : { residential: Boolean(values.residential) }),
-    ...(values?.tailgate_required === undefined ? {} : { tailgate_required: Boolean(values.tailgate_required) }),
+    ...access,
     ...(optionalText(values?.instructions) === undefined ? {} : { instructions: optionalText(values?.instructions) }),
     ...(optionalText(values?.contact_name) === undefined ? {} : { contact_name: optionalText(values?.contact_name) }),
     ...(phone === undefined ? {} : { phone_number: { number: phone, ...(phoneExtension === undefined ? {} : { extension: phoneExtension }) } }),
@@ -353,12 +375,16 @@ export function buildFreightcomRequest(values) {
 
 export function formatDisplayMoney(money) {
   const value = String(money?.value ?? "");
-  if (!/^\d+$/u.test(value)) {
+  const sourceCurrency = text(money?.currency).toUpperCase() || "unknown";
+  const relabelApplied = sourceCurrency === "CAD";
+  if (!/^\d+$/u.test(value) || !["CAD", "USD"].includes(sourceCurrency)) {
     return {
       amount: "—",
       displayCurrency: "USD",
-      sourceCurrency: text(money?.currency) || "unknown",
+      sourceCurrency,
       conversionApplied: false,
+      relabelApplied: false,
+      available: false,
     };
   }
   const normalized = value.padStart(3, "0");
@@ -366,7 +392,9 @@ export function formatDisplayMoney(money) {
   return {
     amount,
     displayCurrency: "USD",
-    sourceCurrency: text(money?.currency) || "unknown",
+    sourceCurrency,
     conversionApplied: false,
+    relabelApplied,
+    available: true,
   };
 }

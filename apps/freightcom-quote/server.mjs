@@ -9,6 +9,7 @@ import {
   createFreightcomTestRateClient,
 } from "../../src/logistics_mcp/adapters/quote/freightcom-test-client.ts";
 import { freightcomRateRequestSchema } from "../../src/logistics_mcp/adapters/quote/freightcom-rate-adapter.ts";
+import { PostalLookupError, createPostalLookup } from "./postal-lookup.mjs";
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 56570;
@@ -20,7 +21,9 @@ const STATIC_ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
+  ["/freight-class.mjs", ["freight-class.mjs", "text/javascript; charset=utf-8"]],
   ["/form-model.mjs", ["form-model.mjs", "text/javascript; charset=utf-8"]],
+  ["/origin-presets.mjs", ["origin-presets.mjs", "text/javascript; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
 ]);
 
@@ -67,6 +70,14 @@ function errorResponse(error) {
       message: "Freightcom 测试环境拒绝了服务端配置的认证。",
     });
   }
+  if (error.code === "freightcom.test_request_rejected") {
+    return json(422, {
+      status: "needs_input",
+      code: "FREIGHTCOM_TEST_REQUEST_REJECTED",
+      message: "Freightcom 测试环境拒绝了询价字段，请核对地址、货物描述、重量、尺寸和货运等级。",
+      upstream_status: error.status,
+    });
+  }
   if (error.code === "freightcom.test_poll_response_invalid") {
     return json(502, {
       status: "manual_review",
@@ -100,6 +111,21 @@ function validationResponse(parsed) {
   });
 }
 
+function postalLookupErrorResponse(error) {
+  if (error instanceof PostalLookupError) {
+    return json(error.status, {
+      status: error.status === 422 ? "needs_input" : error.status === 404 ? "blocked" : "unavailable",
+      code: error.code,
+      message: error.message,
+    });
+  }
+  return json(503, {
+    status: "unavailable",
+    code: "POSTAL_LOOKUP_UNAVAILABLE",
+    message: "邮编自动识别服务暂时不可用。",
+  });
+}
+
 function cleanupHandles(handles, now = Date.now()) {
   for (const [requestId, expiresAt] of handles.entries()) {
     if (expiresAt <= now) handles.delete(requestId);
@@ -129,11 +155,22 @@ export function createQuoteApiHandler(options) {
   const handles = options.requestHandles ?? new Map();
   const baseUrl = options.baseUrl;
   const client = options.client;
+  const postalLookup = options.postalLookup ?? createPostalLookup();
 
   return async function quoteApiHandler(request) {
     const url = new URL(request.url);
     const path = url.pathname;
     cleanupHandles(handles);
+
+    if (path === "/api/postal-lookup") {
+      if (request.method !== "GET") return json(405, { status: "blocked", code: "METHOD_NOT_ALLOWED" });
+      try {
+        const location = await postalLookup(url.searchParams.get("postal") ?? "");
+        return json(200, { status: "success", data: location });
+      } catch (error) {
+        return postalLookupErrorResponse(error);
+      }
+    }
 
     if (path === "/api/freightcom-test/config") {
       if (request.method !== "GET") return json(405, { status: "blocked", code: "METHOD_NOT_ALLOWED" });
@@ -145,7 +182,9 @@ export function createQuoteApiHandler(options) {
           endpoint: endpoint.origin,
           token_configured: options.tokenConfigured === true,
           display_currency: "USD",
+          currency_policy: "cad-numeric-relabel-to-usd",
           conversion_applied: false,
+          relabel_applied: true,
         },
       });
     }
@@ -207,7 +246,9 @@ export function createQuoteApiHandler(options) {
             retrieved_at: result.retrievedAt,
             source_refs: sourceRefs(result),
             display_currency: "USD",
+            currency_policy: "cad-numeric-relabel-to-usd",
             conversion_applied: false,
+            relabel_applied: true,
           },
           ...(done ? {
             warnings: [{
@@ -311,6 +352,7 @@ export function createQuoteServer(options = {}) {
     tokenConfigured,
     baseUrl: endpoint.baseUrl,
     ...(options.requestHandles === undefined ? {} : { requestHandles: options.requestHandles }),
+    ...(options.postalLookup === undefined ? {} : { postalLookup: options.postalLookup }),
   });
   const port = options.port ?? Number.parseInt(process.env.FREIGHTCOM_QUOTE_PORT ?? String(DEFAULT_PORT), 10);
   const host = options.host ?? "127.0.0.1";
