@@ -367,6 +367,59 @@ describe("runtime activation definition wrapper", () => {
     expect(originalHandler).not.toHaveBeenCalled();
   });
 
+  it("keeps registered-tool input validation inside one dispatch section", async () => {
+    const ref = activeRef();
+    const originalHandler = vi.fn(() => unavailableOutcome("handler_called"));
+    const dispatchCalls = vi.fn();
+    let inDispatchSection = false;
+    let validationRanInsideDispatch = false;
+    const dispatch: ControlledDispatchFacade["dispatch"] = async (
+      route,
+      operation,
+    ) => {
+      dispatchCalls();
+      const activeModule = typeof route === "function"
+        ? route(activeSnapshot(ref))
+        : route;
+      if (activeModule === null) {
+        throw new ModuleControlServiceError("module_not_active");
+      }
+      inDispatchSection = true;
+      try {
+        return await operation();
+      } finally {
+        inDispatchSection = false;
+      }
+    };
+    const baseDefinition = definition(originalHandler, {
+      moduleId: ref.moduleId,
+      moduleVersion: ref.version,
+    });
+    const wrapped = wrapModuleToolDefinitions(
+      [{
+        ...baseDefinition,
+        inputSchema: z.unknown().refine(() => {
+          validationRanInsideDispatch = inDispatchSection;
+          return false;
+        }),
+      }],
+      {
+        activation: { snapshot: () => activeSnapshot(ref) },
+        dispatch: { dispatch },
+      },
+    );
+
+    await expect(executeRegisteredToolWithResult(
+      wrapped[0]!,
+      { unexpected: true },
+      executionContext,
+      { requestId: "req_guarded_validation", auditId: "audit_guarded_validation" },
+    )).rejects.toMatchObject({ code: "tool_input.invalid" });
+    expect(validationRanInsideDispatch).toBe(true);
+    expect(dispatchCalls).toHaveBeenCalledTimes(1);
+    expect(originalHandler).not.toHaveBeenCalled();
+  });
+
   it("preserves every definition metadata field while keeping the module visible", () => {
     const original = definition(() => unavailableOutcome("original_handler"), {
       moduleId: "cargo",

@@ -1,3 +1,5 @@
+import { request as httpRequest } from "node:http";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createQuoteApiHandler, createQuoteServer } from "../../../apps/freightcom-quote/server.mjs";
@@ -55,6 +57,35 @@ async function responseBody(response: Response): Promise<Record<string, unknown>
   return await response.json() as Record<string, unknown>;
 }
 
+async function rawServerRequest(
+  port: number,
+  hostHeader: string,
+): Promise<{
+  readonly status: number | undefined;
+  readonly contentType: string | undefined;
+  readonly body: string;
+}> {
+  return await new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: "127.0.0.1",
+      port,
+      path: "/api/freightcom-test/config",
+      method: "GET",
+      headers: { host: hostHeader },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => resolve({
+        status: response.statusCode,
+        contentType: response.headers["content-type"],
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 describe("Freightcom quote page API", () => {
   it("serves the browser-side calculation modules required by the app", async () => {
     const runtime = createQuoteServer({ port: 0, token: "" });
@@ -81,6 +112,31 @@ describe("Freightcom quote page API", () => {
       await new Promise<void>((resolve, reject) => runtime.server.close((error) => error === undefined ? resolve() : reject(error)));
     }
   });
+
+  it.each(["%", "127.0.0.1:bad"])(
+    "returns a blocked JSON envelope for malformed Host %s",
+    async (hostHeader) => {
+      const runtime = createQuoteServer({ port: 0, token: "" });
+      await new Promise<void>((resolve) => runtime.server.listen(0, runtime.host, resolve));
+      try {
+        const address = runtime.server.address();
+        if (address === null || typeof address === "string") {
+          throw new Error("test server address unavailable");
+        }
+
+        const response = await rawServerRequest(address.port, hostHeader);
+
+        expect(response.status).toBe(400);
+        expect(response.contentType).toContain("application/json");
+        expect(JSON.parse(response.body)).toMatchObject({
+          status: "blocked",
+          code: "REQUEST_URL_INVALID",
+        });
+      } finally {
+        await new Promise<void>((resolve, reject) => runtime.server.close((error) => error === undefined ? resolve() : reject(error)));
+      }
+    },
+  );
 
   it("reports the CAD numeric relabel policy without claiming FX conversion", async () => {
     const handler = createQuoteApiHandler({

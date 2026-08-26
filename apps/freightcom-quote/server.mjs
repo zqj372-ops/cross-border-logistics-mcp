@@ -364,6 +364,23 @@ async function writeResponse(response, nodeResponse) {
   nodeResponse.end(Buffer.from(await response.arrayBuffer()));
 }
 
+function writeUnexpectedServerResponse(response) {
+  if (response.writableEnded) return;
+  if (response.headersSent) {
+    response.end();
+    return;
+  }
+  response.statusCode = 503;
+  for (const [name, value] of Object.entries(JSON_HEADERS)) {
+    response.setHeader(name, value);
+  }
+  response.end(JSON.stringify({
+    status: "unavailable",
+    code: "LOCAL_SERVER_UNAVAILABLE",
+    message: "本地测试页服务暂时不可用。",
+  }));
+}
+
 function testEndpointConfig() {
   const baseUrl = (process.env.FREIGHTCOM_TEST_API_BASE_URL ?? DEFAULT_FREIGHTCOM_TEST_BASE_URL).trim();
   const parsed = new URL(baseUrl);
@@ -415,14 +432,23 @@ export function createQuoteServer(options = {}) {
           await writeResponse(json(413, { status: "blocked", code: "REQUEST_BODY_TOO_LARGE" }), response);
           return;
         }
-        await writeResponse(await apiHandler(await nodeRequest(request, body)), response);
+        let apiRequest;
+        try {
+          apiRequest = await nodeRequest(request, body);
+        } catch {
+          await writeResponse(json(400, {
+            status: "blocked",
+            code: "REQUEST_URL_INVALID",
+            message: "请求地址或 Host 头无效。",
+          }), response);
+          return;
+        }
+        await writeResponse(await apiHandler(apiRequest), response);
         return;
       }
       const asset = await staticResponse(path);
       await writeResponse(asset ?? json(404, { status: "blocked", code: "ROUTE_NOT_FOUND" }), response);
-    })().catch(() => {
-      if (!response.headersSent) response.end();
-    });
+    })().catch(() => writeUnexpectedServerResponse(response));
   });
   return { server, port, host, endpoint: endpoint.baseUrl, tokenConfigured };
 }
