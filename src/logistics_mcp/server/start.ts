@@ -64,6 +64,7 @@ import {
 } from "../adapters/quote/freightcom-rate-adapter";
 import { DEFAULT_FREIGHTCOM_TEST_BASE_URL } from "../adapters/quote/freightcom-test-client";
 import type { FreightcomRatePort } from "../adapters/ports";
+import { createRiskCustomsApiAdapterFromEnvironment } from "../adapters/customs/riskcustoms-runtime";
 
 export { initializeSqliteControlState } from "../control-plane/sqlite-control-store";
 
@@ -1179,10 +1180,13 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
           jwksUrl,
           allowedHosts: outboundHosts,
         });
+  const riskCustoms = createRiskCustomsApiAdapterFromEnvironment();
   return createProductionComposition({
     dataMode: "production",
     ...common,
-    adapterSource: createProductionApiAdapterSource(),
+    adapterSource: createProductionApiAdapterSource(
+      riskCustoms === undefined ? {} : { customs: riskCustoms },
+    ),
     ...(store === undefined
       ? {}
       : {

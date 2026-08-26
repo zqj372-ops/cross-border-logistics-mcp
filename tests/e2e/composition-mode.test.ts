@@ -117,6 +117,7 @@ const RISK_CUSTOMS_IDENTITY = {
   serviceVersion: "riskcustoms-service.fixture-1",
   publishedAt: "2026-08-11T00:00:00.000Z",
   supportedOperations: ["status", "query"],
+  ruleDate: API_DATE,
   releaseIds: ["release-ca-1"],
   snapshotHash: "a".repeat(64),
   releaseHash: "b".repeat(64),
@@ -870,7 +871,7 @@ describe("gateway composition modes", () => {
       jurisdiction: "CA",
       candidates: [{ hs_code: "345678", classification_status: "confirmed" }],
     });
-    expect(result.sourceRefs).toHaveLength(2);
+    expect(result.sourceRefs).toHaveLength(3);
     expect(authorizationProvider).toHaveBeenCalledTimes(2);
     expect(authorizationProvider).toHaveBeenNthCalledWith(1, context, expect.any(AbortSignal));
     expect(authorizationProvider).toHaveBeenNthCalledWith(2, context, expect.any(AbortSignal));

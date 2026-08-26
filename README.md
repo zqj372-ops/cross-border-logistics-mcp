@@ -44,7 +44,7 @@ flowchart LR
 | Admin control-plane | **已本地验证（fixture HTTP）**：register → preview → 不同 actor approval → publish → activation `active_verified` 与 exact readback；同一 application root 重启后恢复已读回状态；prior-boot 未完成 attempt 在 listen 前收敛为 `unknown/manual_review`，未决 release 仍使启动 fail-closed | 仅本地受控 fixture/loopback；control POST 的 fixture 流程可走 `/packages/register`、`/deployments/preview`、`/approvals`、`/deployments/publish`、`/deployments/reconcile`；生产所有管理 POST 固定 HTTP 403 | 生产身份、多实例、制品签名/attestation、Deployment Evidence 和生产资格仍未上线；未决 release 只能由 operator reconcile，不把本地 readback 当生产证明 |
 | cargo.calculate / container.plan_summary | **已本地验证**：本地确定性计算，返回单位、规则/数据版本、假设、warnings、blockers 和 trace | 可在 fixture/local composition 验证；container 是理论/可解释摘要，不是 3D 装柜承诺 | 继续保持契约、单位和重量证据约束 |
 | quote.canada_final_mile.calculate | **已本地验证（fake HTTP/local）**，但生产合同未获资格 | 生产路径保持 `unavailable` / fail-closed；不返回可发送报价 | 完成生产 API 合同、发布快照、staging 和 readback 验收 |
-| customs.ca.search | **已本地验证** status→query 和失败闭合；RiskCustoms 生产组合仍未获资格 | 缺 M2M 认证合同、`ready` gate 或非测试 release 时不可用；`ready=false`/测试数据保持 `unavailable` 或 `manual_review` | 服务 JWT、tenant mapping、M2M 限流/审计、非测试 staging 证据 |
+| customs.ca.search | **已本地验证（fake HTTP/local）**：M2M status→query、服务端有界 secret-file、双 host allowlist、本地 tenant 精确白名单和发布身份失败闭合；生产工厂默认 disabled，仍未获生产资格 | 只有显式启用且 endpoint、专用/全局 host allowlist、tenant allowlist、secret 文件全部有效时才装配；`ready=false`、测试数据或发布身份冲突保持 `unavailable` / `manual_review` | 上游 Draft 候选合入、真实 endpoint/Bearer 与 token-to-tenant mapping、非测试 release、staging status→query 与脱敏工具读回 |
 | customs.ca.estimate | **生产未上线**；尚无已核验生产 API 合同 | 固定 `unavailable`，不拼造税额 | 独立 estimate API、认证、版本和失败映射合同 |
 | quote.freightcom_ltl.preview | **fixture/manual_review**：T1 静态模块已登记，固定测试 host 的 POST `/rate` → GET `/rate/{request_id}` 轮询和 Schema/状态边界已有本地/fake HTTP 验证；完成结果固定 `manual_review`、`sendable=false`、`bookable=false`、`authoritative=false` | 仅显式测试开关下的 fixture/测试路径；不做 FX、不保存、不发送、不订舱；生产 Freightcom adapter 代码级禁用 | 测试凭证/真实外部调用的独立证据、正式生产合同、发布与 readiness 仍未完成；测试结果不能成为正式报价 |
 | quote.save_draft / review.create_task | **生产未上线**；生产写源未获资格 | 必须 preview → approval → commit → readback；当前不可生产写入 | 同一幂等键、审批、写后读回和目标系统合同 |
@@ -224,6 +224,7 @@ tests/                platform、module-runtime、agent-context、domains、adap
 ## 安全与生产边界
 
 - 生产运行时由服务端注入 tenant/actor 和上游身份映射；客户端不能提交 token、base URL、密码或跨租户上下文。
+- RiskCustoms M2M 凭据只允许由部署系统挂载的有界普通 secret 文件提供；专用 host、全局出站 allowlist 与本地 tenant 精确白名单必须同时通过，默认不启用，也不回退到浏览器 Cookie、Turnstile 或匿名查询；本地 tenant 白名单不替代上游授权映射。
 - control-plane 的 application root、control DB、marker、management tenant、schema 和 single-process lock 必须通过显式 initializer/兼容门建立并连续核对；startup 不隐式 create/repair。
 - 发布/回滚只操作已挂载模块的 activation policy；回滚通过新 revision 恢复上一份已读回 profile，不修改 target release 或事件历史。pre-control-plane image 不是 managed rollback target。
 - 出站 URL 必须经过服务端 allowlist；不允许客户端选择任意上游地址、凭据 URL、重定向绕过或私有网络目标。
@@ -261,7 +262,7 @@ tests/                platform、module-runtime、agent-context、domains、adap
 以下不是 README 遗漏，而是当前边界：
 
 - quote 生产调用保持关闭，未将本地 Zone/价格/规则或地图/聊天参考价当作权威。
-- RiskCustoms 生产 M2M 认证、tenant mapping、非测试 release 和 staging 证据未完成前，不注入生产组合。
+- RiskCustoms 生产 M2M 工厂虽已接入，但默认 disabled；在真实认证、tenant mapping、非测试 release 和 staging 读回完成前，部署配置必须保持关闭，不能把本地/fake HTTP 证据写成生产联通。
 - customs.ca.estimate 没有已核验生产 API 合同，不在本地拼造税额。
 - PDF/文档工具未注册；没有完整 API、副作用和写后读回合同前不启用。
 - quote.save_draft 和 review.create_task 的生产写源仍需要审批、幂等和读回合同；不会发送、发布、订舱或覆盖既有记录。
