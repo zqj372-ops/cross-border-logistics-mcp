@@ -551,6 +551,21 @@ function mapError(error: unknown): AdapterResult {
   );
 }
 
+function mapSubmitError(error: unknown): AdapterResult {
+  if (
+    error instanceof HttpAdapterError &&
+    error.status !== undefined &&
+    [400, 409, 422].includes(error.status)
+  ) {
+    return needsInput(
+      "freightcom.test_request_rejected",
+      "The Freightcom test endpoint rejected one or more request fields.",
+      "input",
+    );
+  }
+  return mapError(error);
+}
+
 export class FreightcomRateAdapter {
   private readonly mode: FreightcomRateAdapterOptions["mode"];
   private readonly client: ReturnType<typeof createFetchJsonClient>;
@@ -635,7 +650,7 @@ export class FreightcomRateAdapter {
         [202],
       );
     } catch (error: unknown) {
-      return mapError(error) as AdapterResult<FreightcomRateData>;
+      return mapSubmitError(error) as AdapterResult<FreightcomRateData>;
     }
     if (!isAllowedStatusResponse(accepted) || accepted.status !== 202) {
       return unavailable(

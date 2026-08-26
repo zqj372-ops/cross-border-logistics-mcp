@@ -149,6 +149,26 @@ describe("Freightcom rate adapter", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it.each([400, 409, 422])(
+    "maps a provider POST /rate field rejection with HTTP %s to sanitized needs_input",
+    async (status) => {
+      const fetchImpl = vi.fn<FetchImplementation>(() => Promise.resolve(new Response(
+        JSON.stringify({ message: "private provider field detail" }),
+        { status },
+      )));
+
+      const result = await adapter(fetchImpl).requestRate(rateRequest());
+
+      expect(result.status).toBe("needs_input");
+      expect(result.blockers).toEqual([expect.objectContaining({
+        code: "freightcom.test_request_rejected",
+        field: "input",
+      })]);
+      expect(JSON.stringify(result)).not.toContain("private provider field detail");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("runs fixture POST /rate then GET /rate/{request_id} and keeps fixture data at manual review", async () => {
     const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
     const fetchImpl = vi.fn<FetchImplementation>((input, init) => {
