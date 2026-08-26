@@ -43,7 +43,12 @@ const VALID_REQUEST = {
 };
 
 function request(path: string, init: RequestInit = {}): Request {
-  return new Request(`http://127.0.0.1:56570${path}`, init);
+  const target = new URL(path, "http://127.0.0.1:56570");
+  const headers = new Headers(init.headers);
+  if ((init.method ?? "GET").toUpperCase() === "POST" && !headers.has("origin")) {
+    headers.set("origin", target.origin);
+  }
+  return new Request(target, { ...init, headers });
 }
 
 async function responseBody(response: Response): Promise<Record<string, unknown>> {
@@ -141,6 +146,60 @@ describe("Freightcom quote page API", () => {
     expect(response.status).toBe(503);
     expect(body).toMatchObject({ status: "unavailable", code: "FREIGHTCOM_TEST_TOKEN_NOT_CONFIGURED" });
     expect(JSON.stringify(body)).not.toContain("Authorization");
+    expect(client.submitRate).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-origin browser writes before parsing or submitting a rate", async () => {
+    const client = {
+      submitRate: vi.fn(),
+      pollRate: vi.fn(),
+    };
+    const handler = createQuoteApiHandler({
+      client,
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/rate", {
+      method: "POST",
+      body: JSON.stringify(VALID_REQUEST),
+      headers: {
+        "content-type": "text/plain",
+        origin: "https://malicious.example",
+        "sec-fetch-site": "cross-site",
+      },
+    }));
+
+    expect(response.status).toBe(403);
+    expect(await responseBody(response)).toMatchObject({
+      status: "blocked",
+      code: "CROSS_ORIGIN_REQUEST_BLOCKED",
+    });
+    expect(client.submitRate).not.toHaveBeenCalled();
+  });
+
+  it("requires JSON content type for same-origin rate writes", async () => {
+    const client = {
+      submitRate: vi.fn(),
+      pollRate: vi.fn(),
+    };
+    const handler = createQuoteApiHandler({
+      client,
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/rate", {
+      method: "POST",
+      body: JSON.stringify(VALID_REQUEST),
+      headers: { "content-type": "text/plain" },
+    }));
+
+    expect(response.status).toBe(415);
+    expect(await responseBody(response)).toMatchObject({
+      status: "blocked",
+      code: "JSON_CONTENT_TYPE_REQUIRED",
+    });
     expect(client.submitRate).not.toHaveBeenCalled();
   });
 

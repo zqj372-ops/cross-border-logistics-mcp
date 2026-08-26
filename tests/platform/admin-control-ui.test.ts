@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
-import { actionAvailability, CONTROL_SCHEMA_VERSION, createControlPlaneClient, deriveDesiredDraftDiff, derivePreviewPresentation, deriveReleaseStages, isFixtureIdentityVisible, redactReference, validateControlState } from "../../apps/admin/control-plane.js";
+import { actionAvailability, CONTROL_SCHEMA_VERSION, createControlPlaneClient, deriveDesiredDraftDiff, derivePreviewPresentation, deriveReleaseStages, isFixtureIdentityVisible, redactReference, selectReconcileReleaseId, validateControlState } from "../../apps/admin/control-plane.js";
 
 const descriptorDigest = `sha256:${"a".repeat(64)}`;
 
@@ -190,6 +190,24 @@ describe("admin control-plane model boundary", () => {
       ...validControlState,
       inventory_modules: [{ ...validControlState.inventory_modules[0], registration: null }],
     }).find((stage: { key: string }) => stage.key === "registration")?.status).toBe("pending");
+  });
+
+  it("selects the unresolved published release for reconciliation", () => {
+    const initialPublishedState = {
+      ...validControlState,
+      activation: {
+        state: "inactive",
+        release_id: null,
+        revision: 0,
+        active_modules: [],
+      },
+      release_history: [{
+        status: "published_pending_readback",
+        release_id: "release-pending-readback",
+      }],
+    } as const;
+
+    expect(selectReconcileReleaseId(initialPublishedState)).toBe("release-pending-readback");
   });
 
   it("derives registration from exact release targets instead of unrelated inventory", () => {

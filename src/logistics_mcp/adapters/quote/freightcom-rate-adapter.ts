@@ -54,13 +54,30 @@ const establishmentSchema = z
   })
   .strict();
 
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return leapYear ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
 const dateSchema = z
   .object({
     year: z.number().int().min(1).max(9999),
     month: z.number().int().min(1).max(12),
     day: z.number().int().min(1).max(31),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.day > daysInMonth(value.year, value.month)) {
+      context.addIssue({
+        code: "custom",
+        message: "Expected ship date is not a valid calendar date.",
+        path: ["day"],
+      });
+    }
+  });
 
 const timeOfDaySchema = z
   .object({

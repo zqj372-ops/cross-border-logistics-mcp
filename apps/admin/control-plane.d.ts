@@ -154,6 +154,8 @@ export declare function deriveDesiredDraftDiff(
   desiredModules: readonly ControlModuleRef[],
 ): DesiredDraftDiff;
 
+export declare function selectReconcileReleaseId(state: ControlState): string | null;
+
 export declare function isFixtureIdentityVisible(search?: unknown): boolean;
 
 export type FixtureIdentity = Readonly<{

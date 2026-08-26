@@ -259,6 +259,24 @@ export const FIXTURE_IDENTITIES = Object.freeze([
   Object.freeze({ actor: "local_approver", label: "本地演示审批人", role: "admin", token: "local-fixture-approver-token" }),
 ]);
 
+const RECONCILABLE_RELEASE_STATUSES = new Set([
+  "pending",
+  "published_pending_readback",
+  "manual_review",
+]);
+
+export function selectReconcileReleaseId(state) {
+  validateControlState(state);
+  for (const release of state.release_history) {
+    if (RECONCILABLE_RELEASE_STATUSES.has(release.status)) {
+      return typeof release.release_id === "string" && IDENTIFIER_PATTERN.test(release.release_id)
+        ? release.release_id
+        : null;
+    }
+  }
+  return state.activation.state === "active" ? state.activation.release_id : null;
+}
+
 export function actionAvailability({ state, draftModules, actorRole, actorRef, creatorActorRef, environment = "local" }) {
   validateControlState(state);
   validateModuleRefs(draftModules, "draft_modules");
@@ -269,6 +287,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   const localWrite = environment === "local" || environment === "fixture";
   const distinctApprover = creatorActorRef === undefined || actorRef === undefined || actorRef !== creatorActorRef;
   const hasPendingRelease = state.release_history.some((release) => release.status === "pending" || release.status === "published_pending_readback" || release.status === "manual_review");
+  const reconcileReleaseId = selectReconcileReleaseId(state);
   const usablePreview = preview !== null && preview.consumed !== true;
   return {
     saveDraft: true,
@@ -276,7 +295,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
     generatePreview: isAdmin && localWrite,
     submitApproval: isAdmin && localWrite && usablePreview && distinctApprover,
     publish: isAdmin && localWrite && usablePreview && approval?.decision === "approve" && approval?.consumed !== true,
-    reconcile: isAdmin && localWrite && (readback === null ? hasPendingRelease : readback.status !== "verified"),
+    reconcile: isAdmin && localWrite && reconcileReleaseId !== null && (readback === null ? hasPendingRelease : readback.status !== "verified"),
     rollback: isAdmin && localWrite && state.release_history.length > 0,
   };
 }

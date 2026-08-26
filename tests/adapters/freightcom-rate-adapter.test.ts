@@ -135,6 +135,20 @@ describe("Freightcom rate adapter", () => {
     }).success).toBe(false);
   });
 
+  it("rejects impossible calendar dates before any provider request", async () => {
+    const impossibleDate = structuredClone(rateRequest()) as {
+      details: { expected_ship_date: { year: number; month: number; day: number } };
+    };
+    impossibleDate.details.expected_ship_date = { year: 2026, month: 2, day: 31 };
+    const fetchImpl = vi.fn<FetchImplementation>();
+
+    const result = await adapter(fetchImpl).requestRate(impossibleDate);
+
+    expect(result.status).toBe("needs_input");
+    expect(result.blockers?.map((item) => item.code)).toContain("freightcom.request_invalid");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("runs fixture POST /rate then GET /rate/{request_id} and keeps fixture data at manual review", async () => {
     const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
     const fetchImpl = vi.fn<FetchImplementation>((input, init) => {

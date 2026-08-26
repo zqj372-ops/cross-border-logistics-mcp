@@ -16,6 +16,7 @@ const DEFAULT_PORT = 56570;
 const MAX_BODY_BYTES = 96 * 1024;
 const REQUEST_HANDLE_TTL_MS = 15 * 60 * 1000;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const LOOPBACK_WORKBENCH_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 const STATIC_ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
@@ -42,6 +43,41 @@ function json(status, body) {
     status,
     headers: JSON_HEADERS,
   });
+}
+
+function rateWriteBoundaryResponse(request, url) {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  let originUrl;
+  try {
+    originUrl = origin === null ? null : new URL(origin);
+  } catch {
+    originUrl = null;
+  }
+  if (
+    !LOOPBACK_WORKBENCH_HOSTS.has(url.hostname) ||
+    originUrl === null ||
+    originUrl.origin !== url.origin ||
+    (fetchSite !== null && fetchSite !== "same-origin")
+  ) {
+    return json(403, {
+      status: "blocked",
+      code: "CROSS_ORIGIN_REQUEST_BLOCKED",
+      message: "测试询价只接受本地页面发起的同源请求。",
+    });
+  }
+  const mediaType = (request.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (mediaType !== "application/json") {
+    return json(415, {
+      status: "blocked",
+      code: "JSON_CONTENT_TYPE_REQUIRED",
+      message: "测试询价只接受 application/json 请求。",
+    });
+  }
+  return null;
 }
 
 function sourceRefs(data) {
@@ -191,6 +227,8 @@ export function createQuoteApiHandler(options) {
 
     if (path === "/api/freightcom-test/rate") {
       if (request.method !== "POST") return json(405, { status: "blocked", code: "METHOD_NOT_ALLOWED" });
+      const boundaryFailure = rateWriteBoundaryResponse(request, url);
+      if (boundaryFailure !== null) return boundaryFailure;
       if (options.tokenConfigured !== true) {
         return json(503, {
           status: "unavailable",

@@ -10,6 +10,7 @@ import {
   deriveReleaseStages,
   isFixtureIdentityVisible,
   redactReference,
+  selectReconcileReleaseId,
   validateControlState,
 } from "./control-plane.js";
 
@@ -1453,9 +1454,8 @@ async function handleControlAction(target) {
       break;
     }
     case "reconcile": {
-      const pendingRelease = state.controlState.release_history.find((release) => release.status === "pending" || release.status === "manual_review");
-      const releaseId = pendingRelease?.release_id ?? state.controlState.activation?.release_id;
-      if (typeof releaseId !== "string") return;
+      const releaseId = selectReconcileReleaseId(state.controlState);
+      if (releaseId === null) return;
       await runControlOperation("重新读回", () => controlClient.reconcile({
         schema_version: CONTROL_SCHEMA_VERSION,
         release_id: releaseId,
