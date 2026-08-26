@@ -9,6 +9,7 @@ import {
   derivePreviewPresentation,
   deriveReleaseStages,
   isFixtureIdentityVisible,
+  isPreviewUsable,
   redactReference,
   selectReconcileReleaseId,
   selectRollbackReleaseId,
@@ -349,6 +350,7 @@ const dialog = isBrowser ? document.querySelector("#detail-dialog") : null;
 const identityDialog = isBrowser ? document.querySelector("#identity-dialog") : null;
 let dialogTrigger = null;
 let identityDialogTrigger = null;
+let previewExpiryTimer = null;
 
 function getViewFromHash() {
   const candidate = window.location.hash.slice(1);
@@ -1177,6 +1179,21 @@ function render(announce = false) {
   content.setAttribute("aria-busy", String(state.loading));
   document.querySelector("#app").dataset.state = state.loading ? "loading" : state.error ? "unavailable" : "ready";
   if (announce) liveRegion.textContent = `${VIEW_META[state.view].title}已打开`;
+  schedulePreviewExpiryRender();
+}
+
+function schedulePreviewExpiryRender() {
+  if (previewExpiryTimer !== null) {
+    window.clearTimeout(previewExpiryTimer);
+    previewExpiryTimer = null;
+  }
+  const preview = state.view === "modules" ? state.controlState?.latest_preview : null;
+  if (!isPreviewUsable(preview)) return;
+  const delayMs = Date.parse(preview.expires_at) - Date.now() + 1;
+  previewExpiryTimer = window.setTimeout(() => {
+    previewExpiryTimer = null;
+    render(true);
+  }, Math.min(delayMs, 2_147_483_647));
 }
 
 function focusMain() {
@@ -1453,9 +1470,12 @@ async function handleControlAction(target) {
       const preview = state.controlState.latest_preview;
       if (
         preview === null
-        || preview.consumed !== false
+        || !isPreviewUsable(preview)
         || state.controlState.latest_approval?.preview_ref === preview.preview_ref
-      ) return;
+      ) {
+        render(true);
+        return;
+      }
       await runControlOperation("提交审批", () => controlClient.decideApproval({
         schema_version: CONTROL_SCHEMA_VERSION,
         preview_ref: preview.preview_ref,
@@ -1470,11 +1490,14 @@ async function handleControlAction(target) {
       if (
         preview === null
         || approval === null
-        || preview.consumed !== false
+        || !isPreviewUsable(preview)
         || approval.consumed !== false
         || approval.decision !== "approve"
         || approval.preview_ref !== preview.preview_ref
-      ) return;
+      ) {
+        render(true);
+        return;
+      }
       await runControlOperation("发布并读回", () => controlClient.publish({
         schema_version: CONTROL_SCHEMA_VERSION,
         preview_ref: preview.preview_ref,

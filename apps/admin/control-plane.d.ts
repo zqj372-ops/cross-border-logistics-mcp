@@ -123,6 +123,7 @@ export type ActionAvailabilityInput = Readonly<{
   actorRef?: string;
   creatorActorRef?: string;
   environment?: string;
+  nowMs?: number;
 }>;
 
 export type ActionAvailability = Readonly<{
@@ -157,6 +158,11 @@ export declare function deriveDesiredDraftDiff(
 export declare function selectReconcileReleaseId(state: ControlState): string | null;
 
 export declare function selectRollbackReleaseId(state: ControlState): string | null;
+
+export declare function isPreviewUsable(
+  preview: ControlRecord | null,
+  nowMs?: number,
+): boolean;
 
 export declare function isFixtureIdentityVisible(search?: unknown): boolean;
 

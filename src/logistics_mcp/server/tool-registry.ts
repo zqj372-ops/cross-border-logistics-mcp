@@ -549,7 +549,6 @@ function createValidatedToolEnvelope(
   outcome: DomainToolOutcome,
   metadata: ToolExecutionMetadata,
 ): ResponseEnvelope {
-  validateToolOutput(definition, outcome);
   const envelopeInput: CreateEnvelopeInput = {
     requestId: metadata.requestId,
     auditId: metadata.auditId,
@@ -654,6 +653,7 @@ export async function executeRegisteredToolWithResult(
     const preflightOutcome = await modulePreflight();
     metadata.signal?.throwIfAborted();
     if (preflightOutcome !== undefined) {
+      validateToolOutput(definition, preflightOutcome);
       return {
         envelope: createValidatedToolEnvelope(definition, preflightOutcome, metadata),
         idempotencyOutcome: "not_applicable",
@@ -664,6 +664,7 @@ export async function executeRegisteredToolWithResult(
   if (definition.name === freightcomLtlToolName) {
     const preflightOutcome = preflightFreightcomLtlInput(input);
     if (preflightOutcome !== undefined) {
+      validateToolOutput(definition, preflightOutcome);
       return {
         envelope: createValidatedToolEnvelope(definition, preflightOutcome, metadata),
         idempotencyOutcome: "not_applicable",
@@ -715,6 +716,7 @@ export async function executeRegisteredToolWithResult(
 
   const outcome = await definition.handler(input, context, metadata.signal);
   metadata.signal?.throwIfAborted();
+  validateToolOutput(definition, outcome);
   if (writeRequest !== null) {
     validateWriteOutcome(writeRequest, outcome);
   }

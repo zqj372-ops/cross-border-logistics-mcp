@@ -9,6 +9,7 @@ import {
   derivePreviewPresentation,
   deriveReleaseStages,
   isFixtureIdentityVisible,
+  isPreviewUsable,
   redactReference,
   selectReconcileReleaseId,
   selectRollbackReleaseId,
@@ -16,6 +17,13 @@ import {
 } from "../../apps/admin/control-plane.js";
 
 const descriptorDigest = `sha256:${"a".repeat(64)}`;
+const PREVIEW_ACTIVE_NOW_MS = Date.parse("2026-08-26T00:02:00Z");
+
+function availabilityAtPreviewTime(
+  input: Omit<Parameters<typeof actionAvailability>[0], "nowMs">,
+) {
+  return actionAvailability({ ...input, nowMs: PREVIEW_ACTIVE_NOW_MS });
+}
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -428,7 +436,7 @@ describe("admin control-plane model boundary", () => {
     expect(appSource).not.toMatch(/bindControlIdentity\(\{\s*actor:\s*["']session["']/);
   });
 
-  it("keeps release gating deterministic and requires a distinct approver", () => {
+  it("keeps release gating deterministic and requires a distinct approver", async () => {
     const previewState = {
       ...validControlState,
       latest_preview: previewSnapshot(),
@@ -473,7 +481,7 @@ describe("admin control-plane model boundary", () => {
     });
     expect(deriveReleaseStages(consumedWithoutReadbackState).find((stage: { key: string }) => stage.key === "preview")?.status).toBe("blocked");
 
-    const sameActor = actionAvailability({
+    const sameActor = availabilityAtPreviewTime({
       state: previewState,
       draftModules: [],
       actorRole: "admin",
@@ -485,7 +493,7 @@ describe("admin control-plane model boundary", () => {
     expect(sameActor.generatePreview).toBe(false);
     expect(sameActor.reconcile).toBe(true);
 
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: previewState,
       draftModules: validControlState.activation.active_modules,
       actorRole: "admin",
@@ -494,7 +502,7 @@ describe("admin control-plane model boundary", () => {
       environment: "fixture",
     }).generatePreview).toBe(true);
 
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: {
         ...previewState,
         inventory_modules: previewState.inventory_modules.map((module) => ({
@@ -509,7 +517,7 @@ describe("admin control-plane model boundary", () => {
       environment: "fixture",
     }).generatePreview).toBe(false);
 
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: previewState,
       draftModules: [{
         module_id: "unknown-module",
@@ -522,7 +530,7 @@ describe("admin control-plane model boundary", () => {
       environment: "fixture",
     }).generatePreview).toBe(false);
 
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: previewState,
       draftModules: [],
       actorRole: "admin",
@@ -530,7 +538,7 @@ describe("admin control-plane model boundary", () => {
       environment: "local",
     }).submitApproval).toBe(false);
 
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: previewState,
       draftModules: [],
       actorRole: "admin",
@@ -538,7 +546,7 @@ describe("admin control-plane model boundary", () => {
       environment: "local",
     }).submitApproval).toBe(false);
 
-    const distinctActor = actionAvailability({
+    const distinctActor = availabilityAtPreviewTime({
       state: previewState,
       draftModules: [],
       actorRole: "admin",
@@ -554,7 +562,7 @@ describe("admin control-plane model boundary", () => {
       latest_approval: approvalSnapshot("reject"),
     };
     expect(deriveReleaseStages(rejectedState).find((stage: { key: string }) => stage.key === "approval")?.status).toBe("blocked");
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: rejectedState,
       draftModules: [],
       actorRole: "admin",
@@ -570,7 +578,7 @@ describe("admin control-plane model boundary", () => {
       ...previewState,
       latest_approval: approvalSnapshot("approve"),
     };
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: approvedState,
       draftModules: [],
       actorRole: "admin",
@@ -589,7 +597,7 @@ describe("admin control-plane model boundary", () => {
       label: "待审批",
     });
     expect(deriveReleaseStages(crossLinkedApprovalState).find((stage: { key: string }) => stage.key === "approval")?.status).toBe("manual_review");
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: crossLinkedApprovalState,
       draftModules: [],
       actorRole: "admin",
@@ -597,6 +605,29 @@ describe("admin control-plane model boundary", () => {
       creatorActorRef: "actor-1",
       environment: "fixture",
     }).publish).toBe(false);
+
+    const expiredApprovedState = {
+      ...previewState,
+      latest_approval: approvalSnapshot("approve"),
+    };
+    const expiryMs = Date.parse(expiredApprovedState.latest_preview.expires_at);
+    expect(isPreviewUsable(expiredApprovedState.latest_preview, expiryMs - 1)).toBe(true);
+    expect(isPreviewUsable(expiredApprovedState.latest_preview, expiryMs)).toBe(false);
+    const expiredActions = actionAvailability({
+      state: expiredApprovedState,
+      draftModules: [],
+      actorRole: "admin",
+      actorRef: "actor-2",
+      creatorActorRef: "actor-1",
+      environment: "fixture",
+      nowMs: expiryMs,
+    });
+    expect(expiredActions.submitApproval).toBe(false);
+    expect(expiredActions.publish).toBe(false);
+
+    const appSource = await readFile(new URL("../../apps/admin/app.js", import.meta.url), "utf8");
+    expect(appSource).toMatch(/case "submit-approval":[\s\S]*?!isPreviewUsable\(preview\)/u);
+    expect(appSource).toMatch(/case "publish":[\s\S]*?!isPreviewUsable\(preview\)/u);
 
     const pendingReadbackState = {
       ...validControlState,
@@ -638,7 +669,7 @@ describe("admin control-plane model boundary", () => {
       })],
     };
     expect(selectRollbackReleaseId(singleReleaseState)).toBeNull();
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: singleReleaseState,
       draftModules: [],
       actorRole: "admin",
@@ -657,7 +688,7 @@ describe("admin control-plane model boundary", () => {
       ],
     };
     expect(selectRollbackReleaseId(rollbackReadyState)).toBe("release-2");
-    expect(actionAvailability({
+    expect(availabilityAtPreviewTime({
       state: rollbackReadyState,
       draftModules: [],
       actorRole: "admin",

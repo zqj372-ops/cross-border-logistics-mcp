@@ -33,6 +33,42 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function loopbackRequestOrigin(request) {
+  const host = request.headers.host ?? "";
+  try {
+    const parsed = new URL(`http://${host}`);
+    if (
+      parsed.hostname !== "127.0.0.1"
+      || parsed.username !== ""
+      || parsed.password !== ""
+      || parsed.pathname !== "/"
+      || parsed.search !== ""
+      || parsed.hash !== ""
+    ) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function requestSecurityFailure(request) {
+  const expectedOrigin = loopbackRequestOrigin(request);
+  if (expectedOrigin === null) return "host_rejected";
+
+  const suppliedOrigin = request.headers.origin;
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (
+    (suppliedOrigin !== undefined && suppliedOrigin !== expectedOrigin)
+    || (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none")
+    || (request.method === "POST" && suppliedOrigin !== expectedOrigin)
+  ) {
+    return "origin_rejected";
+  }
+  return null;
+}
+
 async function readBody(request) {
   const chunks = [];
   let size = 0;
@@ -119,6 +155,11 @@ export function createCredentialServer(options = {}) {
   const storeCredential = options.storeCredential ?? ((token) => storeKeychainCredential(token, options));
   let stored = false;
   const server = createServer(async (request, response) => {
+    const securityFailure = requestSecurityFailure(request);
+    if (securityFailure !== null) {
+      json(response, 403, { stored: false, reason: securityFailure });
+      return;
+    }
     const path = (request.url ?? "/").split("?", 1)[0];
     if (request.method === "GET" && path === "/") {
       html(response, 200, page(nonce));
@@ -130,17 +171,6 @@ export function createCredentialServer(options = {}) {
     }
     if (request.method !== "POST" || path !== "/save") {
       json(response, 404, { stored: false, reason: "route_not_found" });
-      return;
-    }
-    const host = request.headers.host ?? "";
-    let loopbackHost = false;
-    try {
-      loopbackHost = new URL(`http://${host}`).hostname === "127.0.0.1";
-    } catch {
-      loopbackHost = false;
-    }
-    if (!loopbackHost) {
-      json(response, 403, { stored: false, reason: "host_rejected" });
       return;
     }
     try {

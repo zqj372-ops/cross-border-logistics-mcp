@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createCredentialServer } from "../../../apps/freightcom-credential/server.mjs";
@@ -19,7 +20,30 @@ async function start(storeCredential = vi.fn(() => Promise.resolve())) {
   });
   const address = created.server.address();
   if (address === null || typeof address === "string") throw new Error("missing address");
-  return { ...created, storeCredential, baseUrl: `http://127.0.0.1:${address.port}` };
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  return { ...created, storeCredential, baseUrl, origin: baseUrl };
+}
+
+async function rawGet(url: string, headers: Record<string, string>) {
+  const target = new URL(url);
+  return new Promise<{ readonly status: number; readonly body: string }>((resolve, reject) => {
+    const request = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: "GET",
+      headers,
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => resolve({
+        status: response.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.once("error", reject);
+    request.end();
+  });
 }
 
 describe("Freightcom browser credential entry", () => {
@@ -49,7 +73,10 @@ describe("Freightcom browser credential entry", () => {
     const harness = await start();
     const response = await fetch(`${harness.baseUrl}/save`, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        origin: harness.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
       body: new URLSearchParams({ nonce: "wrong", token: "synthetic-browser-token-123" }),
     });
 
@@ -64,11 +91,49 @@ describe("Freightcom browser credential entry", () => {
 
     const response = await fetch(`${harness.baseUrl}/save`, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        origin: harness.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
       body: new URLSearchParams({ nonce, token: "synthetic-browser-token-123" }),
     });
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ stored: false, reason: "keychain_update_failed" });
+  });
+
+  it("rejects non-loopback hosts and cross-origin reads before exposing the nonce", async () => {
+    const harness = await start();
+    const rebound = await rawGet(`${harness.baseUrl}/`, { host: "attacker.example" });
+    const reboundBody = rebound.body;
+    expect(rebound.status).toBe(403);
+    expect(reboundBody).not.toContain('name="nonce"');
+
+    const crossOrigin = await fetch(`${harness.baseUrl}/`, {
+      headers: { origin: "https://attacker.example" },
+    });
+    const crossOriginBody = await crossOrigin.text();
+    expect(crossOrigin.status).toBe(403);
+    expect(crossOriginBody).not.toContain('name="nonce"');
+    expect(harness.storeCredential).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-origin save even when the nonce and token are valid", async () => {
+    const harness = await start();
+    const body = await (await fetch(`${harness.baseUrl}/`)).text();
+    const nonce = body.match(/name="nonce" value="([a-f0-9]+)"/u)?.[1] ?? "";
+
+    const response = await fetch(`${harness.baseUrl}/save`, {
+      method: "POST",
+      headers: {
+        origin: "https://attacker.example",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ nonce, token: "synthetic-browser-token-123" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ stored: false, reason: "origin_rejected" });
+    expect(harness.storeCredential).not.toHaveBeenCalled();
   });
 });

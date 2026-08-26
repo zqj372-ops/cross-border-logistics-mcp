@@ -480,6 +480,19 @@ function approvalMatchesPreview(preview, approval) {
     && preview.preview_ref === approval.preview_ref;
 }
 
+export function isPreviewUsable(preview, nowMs = Date.now()) {
+  if (
+    !isRecord(preview)
+    || preview.consumed !== false
+    || typeof preview.expires_at !== "string"
+    || !Number.isFinite(nowMs)
+  ) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(preview.expires_at);
+  return Number.isFinite(expiresAtMs) && nowMs < expiresAtMs;
+}
+
 export function derivePreviewPresentation(state) {
   validateControlState(state);
   const preview = state.latest_preview;
@@ -609,7 +622,7 @@ export function selectRollbackReleaseId(state) {
   return null;
 }
 
-export function actionAvailability({ state, draftModules, actorRole, actorRef, creatorActorRef, environment = "local" }) {
+export function actionAvailability({ state, draftModules, actorRole, actorRef, creatorActorRef, environment = "local", nowMs = Date.now() }) {
   validateControlState(state);
   validateModuleRefs(draftModules, "draft_modules");
   const isAdmin = actorRole === "admin";
@@ -625,7 +638,7 @@ export function actionAvailability({ state, draftModules, actorRole, actorRef, c
   const hasPendingRelease = state.release_history.some((release) => release.status === "pending" || release.status === "published_pending_readback" || release.status === "manual_review");
   const reconcileReleaseId = selectReconcileReleaseId(state);
   const rollbackReleaseId = selectRollbackReleaseId(state);
-  const usablePreview = preview !== null && preview.consumed === false;
+  const usablePreview = isPreviewUsable(preview, nowMs);
   const publishableApproval = approvalMatchesPreview(preview, approval)
     && approval.decision === "approve"
     && approval.consumed === false;
