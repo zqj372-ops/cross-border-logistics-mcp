@@ -33,7 +33,7 @@ const VALID_REQUEST = {
       pallets: [{
         measurements: {
           weight: { unit: "lb", value: "100" },
-          cuboid: { unit: "in", l: 48, w: 40, h: 52 },
+          cuboid: { unit: "in", l: "48", w: "40", h: "52" },
         },
         description: "Industrial parts",
         freight_class: "70",
@@ -307,5 +307,24 @@ describe("Freightcom quote page API", () => {
 
     expect(response.status).toBe(404);
     expect(await responseBody(response)).toMatchObject({ status: "blocked", code: "FREIGHTCOM_REQUEST_HANDLE_UNKNOWN" });
+  });
+
+  it("returns a blocked JSON response for a malformed encoded request handle", async () => {
+    const client = { submitRate: vi.fn(), pollRate: vi.fn() };
+    const handler = createQuoteApiHandler({
+      client,
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/rate/%"));
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await responseBody(response)).toMatchObject({
+      status: "blocked",
+      code: "FREIGHTCOM_REQUEST_HANDLE_UNKNOWN",
+    });
+    expect(client.pollRate).not.toHaveBeenCalled();
   });
 });

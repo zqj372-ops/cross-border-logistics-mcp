@@ -196,9 +196,9 @@ function buildPallet(values, errors) {
   const palletRequests = pallets.map((item, index) => {
     const prefix = `pallet.pallets.${index}`;
     const weight = positiveDecimalString(item?.weightValue, `${prefix}.weightValue`, errors);
-    const length = positiveNumber(item?.length, `${prefix}.length`, errors);
-    const width = positiveNumber(item?.width, `${prefix}.width`, errors);
-    const height = positiveNumber(item?.height, `${prefix}.height`, errors);
+    const length = positiveDecimalString(item?.length, `${prefix}.length`, errors);
+    const width = positiveDecimalString(item?.width, `${prefix}.width`, errors);
+    const height = positiveDecimalString(item?.height, `${prefix}.height`, errors);
     const numPieces = text(item?.numPieces) === "" ? undefined : positiveInteger(item.numPieces, `${prefix}.numPieces`, errors);
     const description = text(item?.description);
     const freightClass = text(item?.freightClass);

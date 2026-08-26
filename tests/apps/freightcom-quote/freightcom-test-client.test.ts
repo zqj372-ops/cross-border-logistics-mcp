@@ -36,7 +36,7 @@ const REQUEST = {
       pallets: [{
         measurements: {
           weight: { unit: "lb", value: "100" },
-          cuboid: { unit: "in", l: 48, w: 40, h: 52 },
+          cuboid: { unit: "in", l: "48", w: "40", h: "52" },
         },
         description: "Industrial parts",
         freight_class: "70",
@@ -86,11 +86,22 @@ describe("Freightcom test-only rate client", () => {
     expect(JSON.parse(submittedBody)).toMatchObject({
       details: {
         packaging_properties: {
-          pallets: [{ measurements: { weight: { unit: "lb", value: 100 } } }],
+          pallets: [{
+            measurements: {
+              weight: { unit: "lb", value: 100 },
+              cuboid: { unit: "in", l: 48, w: 40, h: 52 },
+            },
+          }],
         },
       },
     });
     expect(REQUEST.details.packaging_properties.pallets[0]?.measurements.weight.value).toBe("100");
+    expect(REQUEST.details.packaging_properties.pallets[0]?.measurements.cuboid).toEqual({
+      unit: "in",
+      l: "48",
+      w: "40",
+      h: "52",
+    });
     expect(JSON.stringify(polled)).not.toContain("synthetic-test-credential");
   });
 

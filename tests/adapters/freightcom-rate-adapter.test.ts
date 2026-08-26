@@ -7,6 +7,7 @@ import {
   FreightcomRateAdapter,
   freightcomRateRequestSchema,
   freightcomRatePollResponseSchema,
+  toFreightcomProviderRateRequest,
   type FreightcomRateAdapterOptions,
 } from "../../src/logistics_mcp/adapters/quote/freightcom-rate-adapter";
 import type { FetchImplementation } from "../../src/logistics_mcp/adapters/http-client";
@@ -52,7 +53,7 @@ function rateRequest(): Record<string, unknown> {
           {
             measurements: {
               weight: { unit: "lb", value: "100.125" },
-              cuboid: { unit: "ft", l: 4, w: 4, h: 4 },
+              cuboid: { unit: "ft", l: "4.125", w: "4", h: "4" },
             },
             description: "Fixture freight",
             freight_class: "70",
@@ -130,9 +131,44 @@ describe("Freightcom rate adapter", () => {
     };
     numericWeight.details.packaging_properties.pallets[0]!.measurements.weight.value = 100.125;
     expect(freightcomRateRequestSchema.safeParse(numericWeight).success).toBe(false);
+    const numericDimension = structuredClone(rateRequest()) as {
+      details: { packaging_properties: { pallets: Array<{ measurements: { cuboid: { l: unknown } } }> } };
+    };
+    numericDimension.details.packaging_properties.pallets[0]!.measurements.cuboid.l = 4.125;
+    expect(freightcomRateRequestSchema.safeParse(numericDimension).success).toBe(false);
     expect(freightcomRateRequestSchema.safeParse({
       details: { packaging_type: "pallet" },
     }).success).toBe(false);
+  });
+
+  it("converts decimal-string measurements only at the provider boundary", () => {
+    const request = freightcomRateRequestSchema.parse(rateRequest());
+    const providerRequest = toFreightcomProviderRateRequest(request);
+
+    expect(providerRequest).toMatchObject({
+      details: {
+        packaging_properties: {
+          pallets: [{
+            measurements: {
+              weight: { value: 100.125 },
+              cuboid: { l: 4.125, w: 4, h: 4 },
+            },
+          }],
+        },
+      },
+    });
+    expect(request).toMatchObject({
+      details: {
+        packaging_properties: {
+          pallets: [{
+            measurements: {
+              weight: { value: "100.125" },
+              cuboid: { l: "4.125", w: "4", h: "4" },
+            },
+          }],
+        },
+      },
+    });
   });
 
   it("rejects impossible calendar dates before any provider request", async () => {

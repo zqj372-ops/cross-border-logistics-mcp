@@ -55,7 +55,7 @@ function input(): Record<string, unknown> {
         pallets: [{
           measurements: {
             weight: { unit: "lb", value: "100" },
-            cuboid: { unit: "in", l: 48, w: 40, h: 48 },
+            cuboid: { unit: "in", l: "48", w: "40", h: "48" },
           },
           description: "Test freight",
           freight_class: "70",

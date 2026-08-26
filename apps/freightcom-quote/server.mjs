@@ -264,7 +264,16 @@ export function createQuoteApiHandler(options) {
     const match = /^\/api\/freightcom-test\/rate\/([^/]+)$/u.exec(path);
     if (match !== null) {
       if (request.method !== "GET") return json(405, { status: "blocked", code: "METHOD_NOT_ALLOWED" });
-      const requestId = decodeURIComponent(match[1]);
+      let requestId;
+      try {
+        requestId = decodeURIComponent(match[1]);
+      } catch {
+        return json(404, {
+          status: "blocked",
+          code: "FREIGHTCOM_REQUEST_HANDLE_UNKNOWN",
+          message: "请求标识未由当前测试页面签发或已过期。",
+        });
+      }
       if (!REQUEST_ID_PATTERN.test(requestId) || !handles.has(requestId)) {
         return json(404, {
           status: "blocked",

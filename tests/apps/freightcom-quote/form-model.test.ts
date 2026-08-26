@@ -79,7 +79,7 @@ function validForm(): QuoteFormValues {
         {
           weightValue: "100",
           weightUnit: "lb",
-          length: "48",
+          length: "48.125",
           width: "40",
           height: "52",
           dimensionUnit: "in",
@@ -117,6 +117,7 @@ describe("Freightcom quote form model", () => {
           pallets: [{
             measurements: {
               weight: { unit: "lb", value: "100" },
+              cuboid: { unit: "in", l: "48.125", w: "40", h: "52" },
             },
           }],
           dangerous_goods: "fully-regulated",

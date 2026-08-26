@@ -101,7 +101,7 @@ const positiveDecimalStringSchema = z
   .refine((value) => {
     const providerValue = Number(value);
     return Number.isFinite(providerValue) && providerValue > 0;
-  }, "Weight must be representable by the Freightcom provider number field.");
+  }, "Measurement must be representable by the Freightcom provider number field.");
 
 const weightSchema = z
   .object({
@@ -113,9 +113,9 @@ const weightSchema = z
 const cuboidSchema = z
   .object({
     unit: z.enum(["mm", "cm", "m", "in", "ft"]),
-    l: z.number().finite().positive(),
-    w: z.number().finite().positive(),
-    h: z.number().finite().positive(),
+    l: positiveDecimalStringSchema,
+    w: positiveDecimalStringSchema,
+    h: positiveDecimalStringSchema,
   })
   .strict();
 
@@ -396,6 +396,12 @@ export function toFreightcomProviderRateRequest(request: FreightcomRateRequest):
             weight: {
               ...pallet.measurements.weight,
               value: Number(pallet.measurements.weight.value),
+            },
+            cuboid: {
+              ...pallet.measurements.cuboid,
+              l: Number(pallet.measurements.cuboid.l),
+              w: Number(pallet.measurements.cuboid.w),
+              h: Number(pallet.measurements.cuboid.h),
             },
           },
         })),
