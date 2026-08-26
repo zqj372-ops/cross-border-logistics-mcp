@@ -100,6 +100,20 @@ function errorResponse(error) {
       message: "LTL pallet 请求字段未通过校验。",
     });
   }
+  if (error.code === "freightcom.test_request_invalid_json") {
+    return json(400, {
+      status: "needs_input",
+      code: "FREIGHTCOM_TEST_REQUEST_INVALID_JSON",
+      message: "请求正文不是有效的 JSON。",
+    });
+  }
+  if (error.code === "freightcom.test_request_body_too_large") {
+    return json(413, {
+      status: "blocked",
+      code: "REQUEST_BODY_TOO_LARGE",
+      message: "请求正文超出大小限制。",
+    });
+  }
   if (error.code === "freightcom.test_auth_failed") {
     return json(502, {
       status: "unavailable",

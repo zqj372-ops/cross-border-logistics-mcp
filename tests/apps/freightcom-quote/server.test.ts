@@ -263,6 +263,56 @@ describe("Freightcom quote page API", () => {
     expect(client.submitRate).not.toHaveBeenCalled();
   });
 
+  it("classifies malformed JSON as a correctable body error", async () => {
+    const client = {
+      submitRate: vi.fn(),
+      pollRate: vi.fn(),
+    };
+    const handler = createQuoteApiHandler({
+      client,
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/rate", {
+      method: "POST",
+      body: "{malformed",
+      headers: { "content-type": "application/json" },
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await responseBody(response)).toMatchObject({
+      status: "needs_input",
+      code: "FREIGHTCOM_TEST_REQUEST_INVALID_JSON",
+    });
+    expect(client.submitRate).not.toHaveBeenCalled();
+  });
+
+  it("preserves the request-body-too-large classification in the API handler", async () => {
+    const client = {
+      submitRate: vi.fn(),
+      pollRate: vi.fn(),
+    };
+    const handler = createQuoteApiHandler({
+      client,
+      tokenConfigured: true,
+      baseUrl: "https://customer-external-api.ssd-test.freightcom.com",
+    });
+
+    const response = await handler(request("/api/freightcom-test/rate", {
+      method: "POST",
+      body: JSON.stringify({ payload: "x".repeat(96 * 1024) }),
+      headers: { "content-type": "application/json" },
+    }));
+
+    expect(response.status).toBe(413);
+    expect(await responseBody(response)).toMatchObject({
+      status: "blocked",
+      code: "REQUEST_BODY_TOO_LARGE",
+    });
+    expect(client.submitRate).not.toHaveBeenCalled();
+  });
+
   it("returns a sanitized needs-input response when Freightcom rejects request fields", async () => {
     const handler = createQuoteApiHandler({
       client: {

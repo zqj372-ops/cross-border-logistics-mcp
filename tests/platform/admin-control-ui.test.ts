@@ -693,6 +693,17 @@ describe("admin control-plane model boundary", () => {
     }).publish).toBe(false);
   });
 
+  it("compares preview expiry without truncating sub-millisecond precision", () => {
+    const precisePreview = {
+      ...previewSnapshot(),
+      expires_at: "2026-08-26T00:02:00.123000001Z",
+    };
+    const truncatedExpiryMs = Date.parse("2026-08-26T00:02:00.123Z");
+
+    expect(isPreviewUsable(precisePreview, truncatedExpiryMs)).toBe(true);
+    expect(isPreviewUsable(precisePreview, truncatedExpiryMs + 1)).toBe(false);
+  });
+
   it("selects the unresolved published release for reconciliation", () => {
     const initialPublishedState = {
       ...validControlState,
