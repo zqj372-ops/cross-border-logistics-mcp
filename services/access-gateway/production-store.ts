@@ -403,7 +403,6 @@ function gatewayClient(value: TenantStoreClientRecord): ClientRecord {
 function gatewayCredential(
   value: TenantStoredCredentialRecord,
   acknowledgedAt: string | null,
-  pepperVersion: string,
 ): StoredCredentialRecord {
   const toolNames = tenantApiKeyToolNamesForScopes(value.scopes);
   return Object.freeze({
@@ -422,7 +421,7 @@ function gatewayCredential(
     secretLastFour: value.secretLastFour,
     secretSalt: value.secretSalt,
     secretHash: value.secretHash,
-    pepperVersion,
+    pepperVersion: value.pepperVersion,
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
     lastUsedAt: value.lastUsedAt,
@@ -522,22 +521,16 @@ function gatewayOperation(event: TenantAccessEventRecord): OperationRecord {
 
 export interface TenantAccessGatewayRepositoryOptions {
   readonly store: SqliteTenantAccessStore;
-  readonly pepperVersion: string;
   readonly nowSeconds?: () => number;
 }
 
 export class TenantAccessGatewayRepository implements CredentialRepository, RevocationRepository {
   readonly kind = "production" as const;
   readonly #store: SqliteTenantAccessStore;
-  readonly #pepperVersion: string;
   readonly #nowSeconds: () => number;
 
   constructor(options: TenantAccessGatewayRepositoryOptions) {
-    if (!identifier(options.pepperVersion)) {
-      throw new TypeError("Gateway pepper version is invalid.");
-    }
     this.#store = options.store;
-    this.#pepperVersion = options.pepperVersion;
     this.#nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1_000));
   }
 
@@ -550,7 +543,6 @@ export class TenantAccessGatewayRepository implements CredentialRepository, Revo
       credential: gatewayCredential(
         found.credential,
         found.deliveryAcknowledgedAt,
-        this.#pepperVersion,
       ),
     });
   }
@@ -573,7 +565,6 @@ export class TenantAccessGatewayRepository implements CredentialRepository, Revo
       const stored = gatewayCredential(
         credential,
         state.deliveryAcknowledgements[credential.credentialId] ?? null,
-        this.#pepperVersion,
       );
       return publicCredential(stored, status, callerStatus, this.#nowSeconds());
     });

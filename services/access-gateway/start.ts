@@ -56,6 +56,7 @@ export interface GatewaySecretPaths {
   readonly jwtSigningKeyPath: string;
   readonly jwtKeyHistoryPath: string;
   readonly credentialPepperPath: string;
+  readonly credentialPepperHistoryPath: string;
 }
 
 export function gatewaySecretPaths(applicationRoot: string): GatewaySecretPaths {
@@ -65,6 +66,7 @@ export function gatewaySecretPaths(applicationRoot: string): GatewaySecretPaths 
     jwtSigningKeyPath: join(secretsDir, "jwt-signing-key.pem"),
     jwtKeyHistoryPath: join(secretsDir, "jwt-key-history.json"),
     credentialPepperPath: join(secretsDir, "credential-pepper.bin"),
+    credentialPepperHistoryPath: join(secretsDir, "credential-pepper-history.json"),
   });
 }
 
@@ -268,6 +270,39 @@ export interface AccessGatewayStartHandle {
   readonly port: number;
 }
 
+export function evaluateAccessGatewayReadiness(input: Readonly<{
+  tenantStoreReady: boolean;
+  operationStoreReady: boolean;
+  signingKeyCount: number;
+  adminConfigured: boolean;
+  adminReady: boolean;
+}>): Readonly<{
+  httpStatus: 200 | 503;
+  status: "manual_review" | "unavailable";
+  operationalReady: boolean;
+  blockers: readonly string[];
+}> {
+  const adminDependencyReady = !input.adminConfigured || input.adminReady;
+  const operationalReady = input.tenantStoreReady &&
+    input.operationStoreReady &&
+    input.signingKeyCount >= 1 &&
+    input.signingKeyCount <= 2 &&
+    adminDependencyReady;
+  const idpBlockers = input.adminConfigured
+    ? input.adminReady ? [] : ["enterprise_idp_unavailable"]
+    : ["enterprise_idp_unconfigured"];
+  return Object.freeze({
+    httpStatus: operationalReady ? 200 : 503,
+    status: operationalReady ? "manual_review" : "unavailable",
+    operationalReady,
+    blockers: Object.freeze([
+      ...idpBlockers,
+      "kms_signer_unconfigured",
+      "managed_database_unconfigured",
+    ]),
+  });
+}
+
 export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   if (requiredSetting("ACCESS_GATEWAY_PROFILE") !== PROFILE) {
     throw new Error(`ACCESS_GATEWAY_PROFILE must be ${PROFILE}.`);
@@ -278,6 +313,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   const issuer = requiredSetting("ACCESS_GATEWAY_JWT_ISSUER");
   const audience = requiredSetting("ACCESS_GATEWAY_JWT_AUDIENCE");
   const pepperVersion = requiredSetting("ACCESS_GATEWAY_PEPPER_VERSION");
+  const legacyPepperVersion = process.env.ACCESS_GATEWAY_LEGACY_PEPPER_VERSION?.trim() || undefined;
   const allowedHosts = listSetting("ACCESS_GATEWAY_ALLOWED_HOSTS");
   const allowedOrigins = listSetting("ACCESS_GATEWAY_ALLOWED_ORIGINS");
   const trustedProxyAddresses = listSetting("ACCESS_GATEWAY_TRUSTED_PROXY_ADDRESSES");
@@ -297,6 +333,8 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
     secrets.jwtKeyHistoryPath;
   const pepperPath = process.env.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
     secrets.credentialPepperPath;
+  const pepperHistoryPath = process.env.ACCESS_GATEWAY_PEPPER_HISTORY_PATH?.trim() ||
+    secrets.credentialPepperHistoryPath;
   const jwtTtlSeconds = positiveIntegerSetting("ACCESS_GATEWAY_JWT_TTL_SECONDS", 300, 900);
   const keyRetentionSeconds = positiveIntegerSetting(
     "ACCESS_GATEWAY_JWT_KEY_RETENTION_SECONDS",
@@ -308,7 +346,14 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   }
   const clock = new SystemGatewayClock();
   const randomSource = new SystemGatewayRandomSource();
-  const pepper = new FileSecretPepperProvider({ pepperPath, pepperVersion });
+  const pepper = new FileSecretPepperProvider({
+    pepperPath,
+    pepperVersion,
+    historyPath: pepperHistoryPath,
+  });
+  if (legacyPepperVersion !== undefined && !pepper.supportsPepperVersion(legacyPepperVersion)) {
+    throw new Error("Legacy credential pepper material is unavailable.");
+  }
   const signer = new FileJwtSigningProvider({
     privateKeyPath,
     historyPath: keyHistoryPath,
@@ -319,7 +364,17 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
     applicationRoot,
     instanceId,
     managementTenantId,
+    ...(legacyPepperVersion === undefined
+      ? {}
+      : { legacyCredentialPepperVersion: legacyPepperVersion }),
   });
+  const unsupportedPepperVersion = (await tenantStore.getState()).credentials.find(
+    (credential) => !pepper.supportsPepperVersion(credential.pepperVersion),
+  )?.pepperVersion;
+  if (unsupportedPepperVersion !== undefined) {
+    await tenantStore.close();
+    throw new Error("Stored credential pepper material is unavailable.");
+  }
   const operations = new SqliteGatewayOperationalStore({
     applicationRoot,
     instanceId,
@@ -327,20 +382,20 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   });
   const credentials = new TenantAccessGatewayRepository({
     store: tenantStore,
-    pepperVersion,
     nowSeconds: () => clock.nowSeconds(),
   });
   const admin = adminProviderFromEnvironment(managementTenantId);
   const tenantAccessService = new TenantAccessService(tenantStore, {
     credentialSecretProvider: {
+      pepperVersion: pepper.pepperVersion,
       hash: (secret, salt) => pepper.hashCredentialSecret({
         secret,
         salt,
         pepperVersion: pepper.pepperVersion,
       }),
-      verify: (secret, salt, expectedHash) => pepper.verifyCredentialSecret({
+      verify: (secret, salt, expectedHash, storedPepperVersion) => pepper.verifyCredentialSecret({
         secret,
-        material: { salt, expectedHash, pepperVersion: pepper.pepperVersion },
+        material: { salt, expectedHash, pepperVersion: storedPepperVersion },
       }),
     },
   });
@@ -413,23 +468,24 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
         signer.getJwks(),
         admin.provider.health(),
       ]).then(([tenantHealth, operationHealth, jwks, adminHealth]) => {
-        const operationalReady = tenantHealth.ready && operationHealth.ready &&
-          jwks.keys.length >= 1 && jwks.keys.length <= 2;
-        sendJson(response, operationalReady ? 200 : 503, {
-          status: operationalReady ? "manual_review" : "unavailable",
+        const readiness = evaluateAccessGatewayReadiness({
+          tenantStoreReady: tenantHealth.ready,
+          operationStoreReady: operationHealth.ready,
+          signingKeyCount: jwks.keys.length,
+          adminConfigured: admin.configured,
+          adminReady: adminHealth.ready,
+        });
+        sendJson(response, readiness.httpStatus, {
+          status: readiness.status,
           data: {
             service: "access-gateway",
             profile: PROFILE,
-            operational_ready: operationalReady,
+            operational_ready: readiness.operationalReady,
             admin_idp_ready: adminHealth.ready,
             production_eligible: false,
             audit_count: operationHealth.auditCount,
           },
-          blockers: [
-            ...(admin.configured && adminHealth.ready ? [] : ["enterprise_idp_unconfigured"]),
-            "kms_signer_unconfigured",
-            "managed_database_unconfigured",
-          ],
+          blockers: readiness.blockers,
         });
       }).catch(() => sendJson(response, 503, {
         status: "unavailable",

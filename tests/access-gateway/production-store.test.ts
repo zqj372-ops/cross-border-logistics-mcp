@@ -51,11 +51,13 @@ describe("production gateway SQLite providers", () => {
   it("persists redacted credentials, audit and shared rate reservations", async () => {
     const applicationRoot = root();
     const pepperPath = join(applicationRoot, "pepper");
+    const pepperHistoryPath = join(applicationRoot, "pepper-history.json");
     const { writeFileSync } = await import("node:fs");
     writeFileSync(pepperPath, Buffer.alloc(48, 0x4d), { mode: 0o400 });
     const pepper = new FileSecretPepperProvider({
       pepperPath,
       pepperVersion: "pepper-2026-08-v1",
+      historyPath: pepperHistoryPath,
     });
     await initializeSqliteTenantAccessState({
       applicationRoot,
@@ -84,14 +86,15 @@ describe("production gateway SQLite providers", () => {
       secretGenerator: () => "A".repeat(43),
       saltGenerator: () => new Uint8Array(16).fill(3),
       credentialSecretProvider: {
+        pepperVersion: pepper.pepperVersion,
         hash: (secret, salt) => pepper.hashCredentialSecret({
           secret,
           salt,
           pepperVersion: pepper.pepperVersion,
         }),
-        verify: (secret, salt, expectedHash) => pepper.verifyCredentialSecret({
+        verify: (secret, salt, expectedHash, pepperVersion) => pepper.verifyCredentialSecret({
           secret,
-          material: { salt, expectedHash, pepperVersion: pepper.pepperVersion },
+          material: { salt, expectedHash, pepperVersion },
         }),
       },
     });
@@ -115,7 +118,6 @@ describe("production gateway SQLite providers", () => {
 
     const credentials = new TenantAccessGatewayRepository({
       store: tenantStore,
-      pepperVersion: pepper.pepperVersion,
       nowSeconds: () => 1_800_000_000,
     });
     const record = await credentials.findForExchange(issued.data.credential.credential_id);
@@ -128,6 +130,9 @@ describe("production gateway SQLite providers", () => {
         pepperVersion: "pepper-2026-08-v1",
       },
     });
+    expect((await tenantStore.getState()).credentials[0]?.pepperVersion).toBe(
+      "pepper-2026-08-v1",
+    );
     expect(JSON.stringify(await credentials.listState())).not.toMatch(/secretHash|secretSalt/u);
     await expect(credentials.markUsed(
       issued.data.credential.credential_id,

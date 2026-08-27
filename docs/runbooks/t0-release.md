@@ -59,6 +59,14 @@ Freightcom、订舱、文档和任何业务写操作必须未注册、未初始�
    - 任一非 T0 工具不可见且调用返回稳定失败，不触发 adapter 或网络。
 5. readiness、目录或 Agent Pack 不一致时，由 Edge 摘流并判定 NO-GO。
 
+仓库提供的 `smoke:t0-deployment` 和 `load:t0-deployment` 会创建合成 tenant/credential，属于
+明确的 staging 写操作。执行者必须额外设置对应的 `DEPLOYMENT_*_ENVIRONMENT=staging` 和既有
+确认短语；脚本会先回读目标 `/access/v1/readyz`，仅在目标同时报告
+`profile=single-node-candidate`、`operational_ready=true`、`production_eligible=false` 时才打开
+本地 Gateway SQLite。任何 production eligibility、profile 漂移、readiness 非 200 或无法核验
+都必须在写入前失败闭合。smoke 必须真实执行 `cargo.calculate` 和
+`container.plan_summary` 的代表性成功向量，不能用固定状态代替调用结果。
+
 以上实际响应、时间戳、request/audit ID 和证据链接：`[待实际执行]`。
 
 ## 5. 身份、租户、Key 和短 JWT 验收
@@ -73,6 +81,14 @@ Freightcom、订舱、文档和任何业务写操作必须未注册、未初始�
 - 跨 tenant/client/session、错误 issuer/audience、过期/未来 token 全部拒绝；
 - Gateway 审计落盘失败时不签 token，MCP 审计失败时工具不返回 success；
 - MCP 入口拒绝长期 API Key。
+
+credential 必须持久化签发时的 pepper version。候选环境轮换前先备份并确认本地受保护 pepper
+history 已建立，再以全新 bytes 和全新 version 启动；旧、新 Key 都要完成 exchange 回读。禁止
+用新版本重新标记旧 hash、复用版本名或在仍有 credential 引用时删除验证材料。该候选 keyring
+不等同于生产 KMS，正式生产仍以 Secret Manager/KMS 和集中吊销回执为准。
+旧 v1/v2 SQLite 首次迁移到 v3 时还必须显式设置旧 credential 实际使用的
+`ACCESS_GATEWAY_LEGACY_PEPPER_VERSION`，并先证明 keyring 中存在该版本；禁止把 current version
+当作迁移默认值。迁移、备份和旧 Key exchange 回读完成后才可移除该临时参数。
 
 证据：`[待实际执行]`。
 

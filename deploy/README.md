@@ -47,6 +47,17 @@ SQLite 只用于当前单实例 T0 Runtime 的平台状态，不是 Unified Acce
 tenant/client/Key 权威库。多实例、共享 Gateway DB、KMS、IdP 和集中审计仍必须由目标环境
 提供并完成独立恢复/故障验证。
 
+当前单节点 Gateway 候选会把每个 credential 的 pepper 版本写入受保护的 SQLite 状态，并在
+同一持久卷的 `.secrets/credential-pepper-history.json` 中保留对应验证材料。轮换时必须同时更换
+pepper bytes 和递增 `ACCESS_GATEWAY_PEPPER_VERSION`；禁止复用版本名，也不得在仍有 credential
+引用时删除历史版本。该本地 keyring 只解决候选环境的轮换连续性，不替代 KMS/Secret Manager，
+因此不会改变 `production_eligible=false`。
+
+从 v1/v2 SQLite 首次迁移到 v3 时，必须临时显式提供
+`ACCESS_GATEWAY_LEGACY_PEPPER_VERSION`，其值必须是旧 credential 实际使用的版本，且对应材料
+必须已存在于 keyring。迁移不会用新的 current version 猜测或重新标记旧 hash；任一条件不满足
+就拒绝启动。完成迁移、备份和旧 Key exchange 回读后，该迁移参数才可移除。
+
 ## health 与 readiness
 
 - `GET /healthz` 只证明 Node 进程能响应；不用于 Compose 流量门禁。
@@ -89,6 +100,11 @@ bash deploy/scripts/check-release.sh --fixture-only
 这些命令不启动容器、不访问真实 URL、不推送镜像，也不证明生产完成。发布候选还必须绑定
 当前 Git SHA、镜像 digest、配置版本，并在目标 staging 完成短 JWT、3 工具、5 资源、
 tenant 隔离、审计、备份恢复、目标负载、告警和前一镜像回滚演练。
+
+仓库内 smoke/load runner 会创建并随后停用合成 tenant/Key，所以只能在候选 staging 执行。
+除原有确认短语外，还必须分别显式设置 `DEPLOYMENT_SMOKE_ENVIRONMENT=staging` 或
+`DEPLOYMENT_LOAD_ENVIRONMENT=staging`；runner 会在打开权威 SQLite 前回读目标 `/readyz`，只有
+`profile=single-node-candidate`、`operational_ready=true` 且 `production_eligible=false` 才继续。
 
 在真实企业 IdP、TLS/Edge、KMS/Secret Manager、Unified Access Gateway、集中吊销和上述
 演练没有回执前，状态固定为“待适配验证 / NO-GO”。

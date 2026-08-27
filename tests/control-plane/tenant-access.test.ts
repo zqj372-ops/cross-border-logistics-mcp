@@ -174,7 +174,7 @@ describe("Tenant Access SQLite store and service", () => {
     })).toThrow(TenantAccessError);
   });
 
-  it("migrates an existing v1 credential store to authoritative v2 clients", async () => {
+  it("migrates an existing v1 credential store through v3 with explicit pepper provenance", async () => {
     const root = applicationRoot();
     const canonicalRoot = realpathSync(root);
     const paths = tenantAccessPaths(canonicalRoot);
@@ -281,10 +281,24 @@ describe("Tenant Access SQLite store and service", () => {
     }, null, 2)}\n`, { mode: 0o400 });
     chmodSync(paths.markerPath, 0o400);
 
+    expect(() => new SqliteTenantAccessStore({
+      applicationRoot: root,
+      instanceId: "instance_fixture_001",
+      managementTenantId: "tenant_management",
+    })).toThrow(TenantAccessError);
+    const unchanged = new DatabaseSync(paths.databasePath, {
+      allowExtension: false,
+      enableDoubleQuotedStringLiterals: false,
+    });
+    expect(unchanged.prepare("SELECT schema_version FROM access_meta WHERE singleton = 1").get())
+      .toEqual({ schema_version: 1 });
+    unchanged.close();
+
     const migrated = new SqliteTenantAccessStore({
       applicationRoot: root,
       instanceId: "instance_fixture_001",
       managementTenantId: "tenant_management",
+      legacyCredentialPepperVersion: "pepper-legacy-v1",
     });
     stores.push(migrated);
     const migratedState = await migrated.getState();
@@ -304,7 +318,8 @@ describe("Tenant Access SQLite store and service", () => {
       eventId: "event_tenant_legacy",
       clientId: null,
     }));
-    expect(JSON.parse(readFileSync(paths.markerPath, "utf8"))).toMatchObject({ schema_version: 2 });
+    expect(migratedState.credentials[0]?.pepperVersion).toBe("pepper-legacy-v1");
+    expect(JSON.parse(readFileSync(paths.markerPath, "utf8"))).toMatchObject({ schema_version: 3 });
     await migrated.close();
 
     const reopened = new SqliteTenantAccessStore({

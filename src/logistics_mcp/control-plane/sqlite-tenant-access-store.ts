@@ -37,7 +37,8 @@ const DATABASE_MODE = 0o600;
 const MARKER_MODE = 0o400;
 const MARKER_FORMAT = "mcp-tenant-access-identity/v1" as const;
 const LEGACY_DATABASE_SCHEMA_VERSION = 1 as const;
-const DATABASE_SCHEMA_VERSION = 2 as const;
+const CLIENT_DATABASE_SCHEMA_VERSION = 2 as const;
+const DATABASE_SCHEMA_VERSION = 3 as const;
 
 const SCHEMA_SQL = `
 CREATE TABLE access_meta (
@@ -83,7 +84,10 @@ CREATE TABLE credentials (
   expires_at INTEGER NOT NULL,
   last_used_at TEXT,
   revoked_at TEXT,
-  rotated_from_id TEXT REFERENCES credentials(credential_id)
+  rotated_from_id TEXT REFERENCES credentials(credential_id),
+  pepper_version TEXT NOT NULL CHECK (
+    length(pepper_version) BETWEEN 8 AND 128
+  )
 ) STRICT;
 
 CREATE TABLE access_events (
@@ -118,6 +122,7 @@ export interface TenantAccessStoreOptions {
   readonly applicationRoot: string;
   readonly instanceId: string;
   readonly managementTenantId: string;
+  readonly legacyCredentialPepperVersion?: string;
 }
 
 export interface TenantAccessStorePaths {
@@ -129,7 +134,10 @@ export interface TenantAccessStorePaths {
 
 interface Marker {
   readonly marker_format: typeof MARKER_FORMAT;
-  readonly schema_version: typeof LEGACY_DATABASE_SCHEMA_VERSION | typeof DATABASE_SCHEMA_VERSION;
+  readonly schema_version:
+    | typeof LEGACY_DATABASE_SCHEMA_VERSION
+    | typeof CLIENT_DATABASE_SCHEMA_VERSION
+    | typeof DATABASE_SCHEMA_VERSION;
   readonly access_store_id: string;
   readonly application_root: string;
   readonly database_path: string;
@@ -143,13 +151,19 @@ function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER_PATTERN.test(value);
 }
 
+function isPepperVersion(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(value);
+}
+
 function validateOptions(options: TenantAccessStoreOptions): TenantAccessStoreOptions {
   if (
     typeof options !== "object" ||
     options === null ||
     !isAbsolute(options.applicationRoot) ||
     !isIdentifier(options.instanceId) ||
-    !isIdentifier(options.managementTenantId)
+    !isIdentifier(options.managementTenantId) ||
+    (options.legacyCredentialPepperVersion !== undefined &&
+      !isPepperVersion(options.legacyCredentialPepperVersion))
   ) {
     throw new TenantAccessError("invalid_options");
   }
@@ -226,6 +240,7 @@ function readMarker(path: string): Marker {
     if (
       value.marker_format !== MARKER_FORMAT ||
       (value.schema_version !== LEGACY_DATABASE_SCHEMA_VERSION &&
+        value.schema_version !== CLIENT_DATABASE_SCHEMA_VERSION &&
         value.schema_version !== DATABASE_SCHEMA_VERSION) ||
       !isIdentifier(value.access_store_id) ||
       typeof value.application_root !== "string" ||
@@ -354,6 +369,8 @@ function credentialFromRow(row: SqlRow): StoredCredentialRecord {
   if (status !== "active" && status !== "revoked") repositoryFailure("corrupt");
   if (expectText(row, "actor_role") !== "service") repositoryFailure("corrupt");
   if (expectText(row, "roles_json") !== '["service"]') repositoryFailure("corrupt");
+  const pepperVersion = expectText(row, "pepper_version");
+  if (!isPepperVersion(pepperVersion)) repositoryFailure("corrupt");
   return Object.freeze({
     credentialId: expectText(row, "credential_id"),
     tenantId: expectText(row, "tenant_id"),
@@ -367,6 +384,7 @@ function credentialFromRow(row: SqlRow): StoredCredentialRecord {
     secretLastFour: expectText(row, "secret_last_four"),
     secretSalt: expectBytes(row, "secret_salt"),
     secretHash: expectBytes(row, "secret_hash"),
+    pepperVersion,
     createdAt: expectText(row, "created_at"),
     expiresAt: expectInteger(row, "expires_at"),
     lastUsedAt: expectNullableText(row, "last_used_at"),
@@ -411,8 +429,8 @@ function insertCredential(database: DatabaseSync, value: StoredCredentialRecord)
       credential_id, tenant_id, client_id, label, actor_role, roles_json,
       scopes_json, status, key_prefix, secret_last_four, secret_salt,
       secret_hash, created_at, expires_at, last_used_at, revoked_at,
-      rotated_from_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      rotated_from_id, pepper_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     value.credentialId,
     value.tenantId,
@@ -431,6 +449,7 @@ function insertCredential(database: DatabaseSync, value: StoredCredentialRecord)
     value.lastUsedAt,
     value.revokedAt,
     value.rotatedFromId,
+    value.pepperVersion,
   );
 }
 
@@ -509,6 +528,7 @@ export function initializeSqliteTenantAccessState(
 export class SqliteTenantAccessStore implements TenantAccessRepository {
   readonly managementTenantId: string;
   readonly #database: DatabaseSync;
+  readonly #legacyCredentialPepperVersion: string | undefined;
   #marker: Marker;
   readonly #paths: TenantAccessStorePaths;
   #closed = false;
@@ -518,6 +538,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     const root = normalizedRoot(options.applicationRoot);
     this.#paths = tenantAccessPaths(root);
     this.managementTenantId = options.managementTenantId;
+    this.#legacyCredentialPepperVersion = options.legacyCredentialPepperVersion;
     assertEntry(this.#paths.stateDir, "directory", DIRECTORY_MODE, "state_missing");
     assertEntry(this.#paths.databasePath, "file", DATABASE_MODE, "database_open_failed");
     assertEntry(this.#paths.markerPath, "file", MARKER_MODE, "database_open_failed");
@@ -530,11 +551,13 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     ) {
       throw new TenantAccessError("identity_mismatch");
     }
+    let database: DatabaseSync | undefined;
     try {
-      this.#database = new DatabaseSync(this.#paths.databasePath, {
+      database = new DatabaseSync(this.#paths.databasePath, {
         allowExtension: false,
         enableDoubleQuotedStringLiterals: false,
       });
+      this.#database = database;
       this.#database.exec("PRAGMA foreign_keys = ON");
       this.#database.exec("PRAGMA journal_mode = WAL");
       this.#database.exec("PRAGMA synchronous = FULL");
@@ -542,6 +565,11 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       this.#migrateDatabaseIfRequired();
       this.#verifyDatabase();
     } catch (error) {
+      try {
+        database?.close();
+      } catch {
+        // Preserve the stable initialization or migration error.
+      }
       if (error instanceof TenantAccessError) throw error;
       throw new TenantAccessError("database_open_failed", { cause: error });
     }
@@ -565,18 +593,22 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     ) {
       throw new TenantAccessError("schema_mismatch");
     }
-    const databaseVersion = row.schema_version;
+    let databaseVersion = row.schema_version;
     if (
       databaseVersion !== LEGACY_DATABASE_SCHEMA_VERSION &&
+      databaseVersion !== CLIENT_DATABASE_SCHEMA_VERSION &&
       databaseVersion !== DATABASE_SCHEMA_VERSION
     ) {
       throw new TenantAccessError("schema_mismatch");
     }
-    if (
-      databaseVersion === LEGACY_DATABASE_SCHEMA_VERSION &&
-      this.#marker.schema_version !== LEGACY_DATABASE_SCHEMA_VERSION
-    ) {
+    if (this.#marker.schema_version > databaseVersion) {
       throw new TenantAccessError("schema_mismatch");
+    }
+    if (
+      databaseVersion !== DATABASE_SCHEMA_VERSION &&
+      this.#legacyCredentialPepperVersion === undefined
+    ) {
+      throw new TenantAccessError("invalid_options");
     }
     if (databaseVersion === LEGACY_DATABASE_SCHEMA_VERSION) {
       const legacyTables = (this.#database.prepare(`
@@ -643,6 +675,27 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         }
         throw error;
       }
+      databaseVersion = CLIENT_DATABASE_SCHEMA_VERSION;
+    }
+    if (databaseVersion === CLIENT_DATABASE_SCHEMA_VERSION) {
+      const pepperVersion = this.#legacyCredentialPepperVersion;
+      if (pepperVersion === undefined) throw new TenantAccessError("invalid_options");
+      this.#database.exec("BEGIN IMMEDIATE");
+      try {
+        this.#database.exec(`
+          ALTER TABLE credentials ADD COLUMN pepper_version TEXT NOT NULL
+            DEFAULT '${pepperVersion}' CHECK (length(pepper_version) BETWEEN 8 AND 128);
+          UPDATE access_meta SET schema_version = 3 WHERE singleton = 1;
+        `);
+        this.#database.exec("COMMIT");
+      } catch (error) {
+        try {
+          this.#database.exec("ROLLBACK");
+        } catch {
+          // Preserve the migration error.
+        }
+        throw error;
+      }
     }
     if (this.#marker.schema_version !== DATABASE_SCHEMA_VERSION) {
       const nextMarker: Marker = Object.freeze({
@@ -687,6 +740,8 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       .map((value) => expectText(value, "name"));
     const eventColumns = (this.#database.prepare("PRAGMA table_info(access_events)").all() as SqlRow[])
       .map((value) => expectText(value, "name"));
+    const credentialColumns = (this.#database.prepare("PRAGMA table_info(credentials)").all() as SqlRow[])
+      .map((value) => expectText(value, "name"));
     if (
       JSON.stringify(clientColumns) !== JSON.stringify([
         "tenant_id", "client_id", "label", "status", "created_at", "updated_at",
@@ -694,6 +749,12 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       JSON.stringify(eventColumns) !== JSON.stringify([
         "event_id", "tenant_id", "credential_id", "actor_ref", "action", "reason_code",
         "created_at", "client_id",
+      ]) ||
+      JSON.stringify(credentialColumns) !== JSON.stringify([
+        "credential_id", "tenant_id", "client_id", "label", "actor_role", "roles_json",
+        "scopes_json", "status", "key_prefix", "secret_last_four", "secret_salt",
+        "secret_hash", "created_at", "expires_at", "last_used_at", "revoked_at",
+        "rotated_from_id", "pepper_version",
       ])
     ) {
       throw new TenantAccessError("schema_mismatch");

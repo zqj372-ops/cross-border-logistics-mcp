@@ -34,6 +34,7 @@ export interface StoredCredentialRecord {
   readonly secretLastFour: string;
   readonly secretSalt: Uint8Array;
   readonly secretHash: Uint8Array;
+  readonly pepperVersion: string;
   readonly createdAt: string;
   readonly expiresAt: number;
   readonly lastUsedAt: string | null;

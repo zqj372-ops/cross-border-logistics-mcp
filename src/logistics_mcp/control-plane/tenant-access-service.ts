@@ -57,8 +57,14 @@ export interface TenantAccessServiceOptions {
 }
 
 export interface TenantCredentialSecretProvider {
+  readonly pepperVersion: string;
   hash(secret: string, salt: Uint8Array): Promise<Uint8Array>;
-  verify(secret: string, salt: Uint8Array, expectedHash: Uint8Array): Promise<boolean>;
+  verify(
+    secret: string,
+    salt: Uint8Array,
+    expectedHash: Uint8Array,
+    pepperVersion: string,
+  ): Promise<boolean>;
 }
 
 type TenantDto = Readonly<{
@@ -425,8 +431,15 @@ async function deriveSecret(secret: string, salt: Uint8Array): Promise<Uint8Arra
 }
 
 const DEFAULT_CREDENTIAL_SECRET_PROVIDER: TenantCredentialSecretProvider = Object.freeze({
+  pepperVersion: "unpeppered-scrypt-v1",
   hash: deriveSecret,
-  async verify(secret: string, salt: Uint8Array, expectedHash: Uint8Array) {
+  async verify(
+    secret: string,
+    salt: Uint8Array,
+    expectedHash: Uint8Array,
+    pepperVersion: string,
+  ) {
+    if (pepperVersion !== "unpeppered-scrypt-v1") return false;
     const candidate = await deriveSecret(secret, salt);
     return candidate.byteLength === expectedHash.byteLength &&
       timingSafeEqual(candidate, expectedHash);
@@ -472,6 +485,11 @@ export class TenantAccessService {
     this.#saltGenerator = options.saltGenerator ?? (() => randomBytes(16));
     this.#credentialSecretProvider = options.credentialSecretProvider ??
       DEFAULT_CREDENTIAL_SECRET_PROVIDER;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(
+      this.#credentialSecretProvider.pepperVersion,
+    )) {
+      throw new TenantAccessError("invalid_options");
+    }
   }
 
   async getState(context: ExecutionContext): Promise<Readonly<{
@@ -707,6 +725,7 @@ export class TenantAccessService {
       secretLastFour: secret.slice(-4),
       secretSalt: new Uint8Array(salt),
       secretHash: hash,
+      pepperVersion: this.#credentialSecretProvider.pepperVersion,
       createdAt: now,
       expiresAt: nowSeconds + request.expires_in_seconds,
       lastUsedAt: null,
@@ -811,6 +830,7 @@ export class TenantAccessService {
       secretLastFour: secret.slice(-4),
       secretSalt: new Uint8Array(salt),
       secretHash: await this.#credentialSecretProvider.hash(secret, salt),
+      pepperVersion: this.#credentialSecretProvider.pepperVersion,
       createdAt: now,
       expiresAt: nowSeconds + request.expires_in_seconds,
       lastUsedAt: null,
@@ -1045,6 +1065,7 @@ export class TenantAccessService {
         secret,
         found.credential.secretSalt,
         found.credential.secretHash,
+        found.credential.pepperVersion,
       ))) {
         throw new TenantAccessError("authentication_failed");
       }

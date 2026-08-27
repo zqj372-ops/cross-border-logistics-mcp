@@ -25,6 +25,8 @@ const SCRYPT_OPTIONS = Object.freeze({
 });
 const DUMMY_SALT = new Uint8Array(16).fill(0x5a);
 const DUMMY_HASH = new Uint8Array(SCRYPT_KEY_LENGTH).fill(0xa5);
+const PEPPER_HISTORY_FORMAT = "access-gateway-credential-pepper-history/v1" as const;
+const MAX_RETAINED_PEPPERS = 64;
 const KEY_HISTORY_FORMAT = "access-gateway-jwt-key-history/v1" as const;
 const MIN_KEY_RETENTION_SECONDS = 900 + 30 + 300;
 const MAX_KEY_RETENTION_SECONDS = 7 * 24 * 60 * 60;
@@ -60,15 +62,159 @@ function derive(secret: string, salt: Uint8Array, pepper: Uint8Array): Promise<U
 export interface FileSecretPepperProviderOptions {
   readonly pepperPath: string;
   readonly pepperVersion: string;
+  readonly historyPath?: string;
+}
+
+interface PepperHistoryEntry {
+  readonly version: string;
+  readonly pepper: Uint8Array;
+}
+
+interface PepperHistory {
+  readonly format: typeof PEPPER_HISTORY_FORMAT;
+  readonly activeVersion: string;
+  readonly entries: readonly PepperHistoryEntry[];
+}
+
+function validPepperVersion(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(value);
+}
+
+function readPepperHistory(path: string): PepperHistory | null {
+  let bytes: Buffer;
+  try {
+    bytes = readProtectedFile(path, "Credential pepper history");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new TypeError("Credential pepper history is invalid.");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Credential pepper history is invalid.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join(",") !== "active_version,format,peppers" ||
+    record.format !== PEPPER_HISTORY_FORMAT ||
+    !validPepperVersion(record.active_version) ||
+    !Array.isArray(record.peppers) ||
+    record.peppers.length < 1 ||
+    record.peppers.length > MAX_RETAINED_PEPPERS
+  ) {
+    throw new TypeError("Credential pepper history is invalid.");
+  }
+  const entries: PepperHistoryEntry[] = [];
+  const versions = new Set<string>();
+  for (const candidate of record.peppers) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      throw new TypeError("Credential pepper history is invalid.");
+    }
+    const entry = candidate as Record<string, unknown>;
+    if (
+      Object.keys(entry).sort().join(",") !== "pepper,version" ||
+      !validPepperVersion(entry.version) ||
+      typeof entry.pepper !== "string" ||
+      !/^[A-Za-z0-9+/]+={0,2}$/u.test(entry.pepper)
+    ) {
+      throw new TypeError("Credential pepper history is invalid.");
+    }
+    const pepper = Buffer.from(entry.pepper, "base64");
+    if (
+      pepper.byteLength < 32 ||
+      pepper.byteLength > 256 ||
+      pepper.toString("base64") !== entry.pepper ||
+      versions.has(entry.version)
+    ) {
+      throw new TypeError("Credential pepper history is invalid.");
+    }
+    versions.add(entry.version);
+    entries.push(Object.freeze({ version: entry.version, pepper: new Uint8Array(pepper) }));
+  }
+  if (!versions.has(record.active_version)) {
+    throw new TypeError("Credential pepper history is invalid.");
+  }
+  return Object.freeze({
+    format: PEPPER_HISTORY_FORMAT,
+    activeVersion: record.active_version,
+    entries: Object.freeze(entries),
+  });
+}
+
+function writePepperHistory(path: string, value: PepperHistory): void {
+  if (!isAbsolute(path)) throw new TypeError("Credential pepper history path must be absolute.");
+  const parent = resolve(dirname(path));
+  const parentEntry = lstatSync(parent);
+  if (
+    !parentEntry.isDirectory() ||
+    parentEntry.isSymbolicLink() ||
+    (parentEntry.mode & 0o077) !== 0
+  ) {
+    throw new TypeError("Credential pepper history parent must be a protected real directory.");
+  }
+  const temporaryPath = join(parent, `.credential-pepper-history-${randomBytes(12).toString("hex")}.tmp`);
+  const serialized = `${JSON.stringify({
+    format: value.format,
+    active_version: value.activeVersion,
+    peppers: value.entries.map((entry) => ({
+      version: entry.version,
+      pepper: Buffer.from(entry.pepper).toString("base64"),
+    })),
+  }, null, 2)}\n`;
+  try {
+    writeFileSync(temporaryPath, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    chmodSync(temporaryPath, 0o600);
+    renameSync(temporaryPath, path);
+    chmodSync(path, 0o600);
+  } catch (error) {
+    try {
+      rmSync(temporaryPath, { force: true });
+    } catch {
+      // Preserve the history write error.
+    }
+    throw error;
+  }
+}
+
+function reconcilePepperHistory(
+  currentVersion: string,
+  currentPepper: Uint8Array,
+  previous: PepperHistory | null,
+): PepperHistory {
+  const entries = previous === null ? [] : [...previous.entries];
+  const existing = entries.find((entry) => entry.version === currentVersion);
+  if (existing !== undefined) {
+    if (!Buffer.from(existing.pepper).equals(Buffer.from(currentPepper))) {
+      throw new TypeError("Credential pepper version cannot be reused with different material.");
+    }
+  } else {
+    if (entries.length >= MAX_RETAINED_PEPPERS) {
+      throw new TypeError("Credential pepper history retention limit was reached.");
+    }
+    entries.push(Object.freeze({
+      version: currentVersion,
+      pepper: new Uint8Array(currentPepper),
+    }));
+  }
+  return Object.freeze({
+    format: PEPPER_HISTORY_FORMAT,
+    activeVersion: currentVersion,
+    entries: Object.freeze(entries),
+  });
 }
 
 export class FileSecretPepperProvider implements SecretPepperProvider {
   readonly kind = "production" as const;
   readonly pepperVersion: string;
   readonly #pepper: Uint8Array;
+  readonly #peppers: ReadonlyMap<string, Uint8Array>;
 
   constructor(options: FileSecretPepperProviderOptions) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(options.pepperVersion)) {
+    if (!validPepperVersion(options.pepperVersion)) {
       throw new TypeError("Credential pepper version is invalid.");
     }
     const pepper = readProtectedFile(options.pepperPath, "Credential pepper");
@@ -77,6 +223,27 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
     }
     this.pepperVersion = options.pepperVersion;
     this.#pepper = new Uint8Array(pepper);
+    if (options.historyPath === undefined) {
+      this.#peppers = new Map([[this.pepperVersion, this.#pepper]]);
+      return;
+    }
+    if (resolve(options.historyPath) === resolve(options.pepperPath)) {
+      throw new TypeError("Credential pepper and history paths must be different.");
+    }
+    const history = reconcilePepperHistory(
+      this.pepperVersion,
+      this.#pepper,
+      readPepperHistory(options.historyPath),
+    );
+    writePepperHistory(options.historyPath, history);
+    this.#peppers = new Map(history.entries.map((entry) => [
+      entry.version,
+      new Uint8Array(entry.pepper),
+    ]));
+  }
+
+  supportsPepperVersion(version: string): boolean {
+    return this.#peppers.has(version);
   }
 
   hashCredentialSecret(input: Readonly<{
@@ -105,8 +272,11 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
     }> | null;
   }>): Promise<boolean> {
     const material = input.material;
+    const selectedPepper = material === null
+      ? undefined
+      : this.#peppers.get(material.pepperVersion);
     const structurallyValid = material !== null &&
-      material.pepperVersion === this.pepperVersion &&
+      selectedPepper !== undefined &&
       material.salt instanceof Uint8Array &&
       material.salt.byteLength >= 16 &&
       material.salt.byteLength <= 64 &&
@@ -116,7 +286,7 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
     const candidate = await derive(
       /^[A-Za-z0-9_-]{43}$/u.test(input.secret) ? input.secret : "_".repeat(43),
       structurallyValid ? material.salt : DUMMY_SALT,
-      this.#pepper,
+      structurallyValid && selectedPepper !== undefined ? selectedPepper : this.#pepper,
     );
     const expected = structurallyValid ? material.expectedHash : DUMMY_HASH;
     return structurallyValid && timingSafeEqual(candidate, expected);

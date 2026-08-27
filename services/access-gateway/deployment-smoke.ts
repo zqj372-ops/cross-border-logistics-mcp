@@ -17,6 +17,7 @@ import {
 } from "../../src/logistics_mcp/control-plane/tenant-access-service";
 import { TENANT_API_KEY_TOOL_NAMES } from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
 import { FileSecretPepperProvider } from "./production-crypto";
+import { assertCandidateSyntheticWriteTarget } from "./deployment-safety";
 
 const CONFIRMATION = "run-synthetic-write";
 const EXPECTED_RESOURCES = Object.freeze([
@@ -138,6 +139,125 @@ function equalStrings(actual: readonly string[], expected: readonly string[]): b
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
+export interface DeploymentSmokeToolCaller {
+  callTool(request: Readonly<{
+    name: string;
+    arguments: Record<string, unknown>;
+  }>): Promise<unknown>;
+}
+
+function cargoSmokeInput(): Record<string, unknown> {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "cargo.calculate@deployment-smoke-v1",
+    cargo_lines: [{
+      version: "cargo-line@deployment-smoke-v1",
+      line_id: "line_deployment_smoke_1",
+      description: "synthetic carton",
+      quantity: 2,
+      quantity_unit: "carton",
+      package_type: "carton",
+      unit_weight: { value: "12.5", unit: "kg" },
+      dimensions: [{
+        length: { value: "60", unit: "cm" },
+        width: { value: "50", unit: "cm" },
+        height: { value: "40", unit: "cm" },
+        quantity: 2,
+      }],
+      stackable: true,
+      fragile: false,
+      sensitive: false,
+      source_ref_ids: ["src_deployment_smoke_input_1"],
+    }],
+    dimensional_divisor: null,
+    bubble_rule: {
+      channel: "CAQ-HP",
+      mode: "full",
+      ratio: null,
+      rule_version: "CAQ-HP@deployment-smoke-v1",
+      source_ref_ids: ["src_deployment_smoke_rule_1"],
+      density: { value: "1000", unit: "kg_per_cbm" },
+      unit: "kg",
+      rounding: { mode: "none", decimals: 6 },
+    },
+    channel_code: "CAQ-HP",
+    source_refs: [
+      {
+        source_id: "src_deployment_smoke_input_1",
+        source_type: "fixture",
+        system: "deployment-smoke",
+        locator: "fixture://deployment-smoke/cargo/input",
+        version: "deployment-smoke-v1",
+        retrieved_at: "2026-08-27T00:00:00Z",
+        authority: "user_provided",
+        content_hash: "sha256:deploymentsmokecargoinput01",
+      },
+      {
+        source_id: "src_deployment_smoke_rule_1",
+        source_type: "fixture",
+        system: "deployment-smoke",
+        locator: "fixture://deployment-smoke/cargo/rule",
+        version: "CAQ-HP@deployment-smoke-v1",
+        retrieved_at: "2026-08-27T00:00:00Z",
+        authority: "authoritative",
+        content_hash: "sha256:deploymentsmokecargorule01",
+      },
+    ],
+  };
+}
+
+function containerSmokeInput(): Record<string, unknown> {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "container-profile@deployment-smoke-v1",
+    plan_id: "plan_deployment_smoke_1",
+    container_type: "40HQ",
+    physical_capacity: { value: "76", unit: "cbm" },
+    operational_target: { value: "75", unit: "cbm" },
+    max_payload: { value: "26000", unit: "kg" },
+    source_ref_ids: ["src:container:deployment-smoke"],
+    cargo_metrics: {
+      version: "cargo-metrics@deployment-smoke-v1",
+      line_count: 1,
+      total_quantity: 2,
+      total_volume: { value: "60", unit: "cbm" },
+      actual_weight: { value: "18000", unit: "kg" },
+      volumetric_weight: { value: "60000", unit: "kg" },
+      weight_evidence: "line_total_weight",
+      derived_from_line_ids: ["line_deployment_smoke_1"],
+    },
+    loading_constraints: {
+      sensitive_at_head: true,
+      declaration_at_tail: true,
+      fifo_for_other: true,
+      customer_priority: null,
+    },
+    loading_lines: [{
+      line_id: "line_deployment_smoke_1",
+      sensitive: false,
+      customer_priority: null,
+      declaration_required: false,
+    }],
+  };
+}
+
+export async function runDeterministicSmokeCalls(
+  caller: DeploymentSmokeToolCaller,
+): Promise<readonly ["cargo.calculate", "container.plan_summary"]> {
+  const calls = Object.freeze([
+    Object.freeze({ name: "cargo.calculate" as const, arguments: cargoSmokeInput() }),
+    Object.freeze({ name: "container.plan_summary" as const, arguments: containerSmokeInput() }),
+  ] as const);
+  for (const call of calls) {
+    const result = asRecord(await caller.callTool(call), `${call.name} call result`);
+    const payload = asRecord(result.structuredContent, `${call.name} result`);
+    if (payload.status !== "success") {
+      throw new Error(`${call.name} deployment smoke did not succeed.`);
+    }
+  }
+  return Object.freeze(["cargo.calculate", "container.plan_summary"] as const);
+}
+
 async function tenantIsolationStatus(
   baseUrl: URL,
   accessToken: string,
@@ -174,13 +294,22 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
   if (requiredSetting("DEPLOYMENT_SMOKE_CONFIRM") !== CONFIRMATION) {
     throw new Error(`DEPLOYMENT_SMOKE_CONFIRM must equal ${CONFIRMATION}.`);
   }
+  if (requiredSetting("DEPLOYMENT_SMOKE_ENVIRONMENT") !== "staging") {
+    throw new Error("DEPLOYMENT_SMOKE_ENVIRONMENT must equal staging.");
+  }
+  if (requiredSetting("ACCESS_GATEWAY_PROFILE") !== "single-node-candidate") {
+    throw new Error("Deployment smoke requires the single-node-candidate profile.");
+  }
   const baseUrl = baseUrlFromEnvironment();
+  await assertCandidateSyntheticWriteTarget({ baseUrl });
   const applicationRoot = requiredSetting("ACCESS_GATEWAY_APPLICATION_ROOT");
   const instanceId = requiredSetting("ACCESS_GATEWAY_INSTANCE_ID");
   const managementTenantId = requiredSetting("ACCESS_GATEWAY_MANAGEMENT_TENANT_ID");
   const pepperVersion = requiredSetting("ACCESS_GATEWAY_PEPPER_VERSION");
   const pepperPath = process.env.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
     join(applicationRoot, ".secrets", "credential-pepper.bin");
+  const pepperHistoryPath = process.env.ACCESS_GATEWAY_PEPPER_HISTORY_PATH?.trim() ||
+    join(applicationRoot, ".secrets", "credential-pepper-history.json");
   const runId = randomUUID().replaceAll("-", "").slice(0, 16);
   const tenantIds = Object.freeze([
     `tenant_smoke_a_${runId}`,
@@ -196,22 +325,27 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
     session_id: `deployment_smoke_${runId}`,
     expires_at: Math.floor(Date.now() / 1_000) + 1_800,
   });
+  const pepper = new FileSecretPepperProvider({
+    pepperPath,
+    pepperVersion,
+    historyPath: pepperHistoryPath,
+  });
   const store = new SqliteTenantAccessStore({
     applicationRoot,
     instanceId,
     managementTenantId,
   });
-  const pepper = new FileSecretPepperProvider({ pepperPath, pepperVersion });
   const service = new TenantAccessService(store, {
     credentialSecretProvider: {
+      pepperVersion: pepper.pepperVersion,
       hash: (secret, salt) => pepper.hashCredentialSecret({
         secret,
         salt,
         pepperVersion: pepper.pepperVersion,
       }),
-      verify: (secret, salt, expectedHash) => pepper.verifyCredentialSecret({
+      verify: (secret, salt, expectedHash, storedPepperVersion) => pepper.verifyCredentialSecret({
         secret,
-        material: { salt, expectedHash, pepperVersion: pepper.pepperVersion },
+        material: { salt, expectedHash, pepperVersion: storedPepperVersion },
       }),
     },
   });
@@ -284,6 +418,11 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
     });
     const contextPayload = asRecord(context.structuredContent, "Agent context result");
     if (contextPayload.status !== "success") throw new Error("Agent context call did not succeed.");
+    const deterministicTools = await runDeterministicSmokeCalls(client);
+    const deterministicCallStatus = deterministicTools.length === 2 ? "success" as const : null;
+    if (deterministicCallStatus === null) {
+      throw new Error("Deterministic deployment smoke calls are incomplete.");
+    }
 
     const isolationStatus = await tenantIsolationStatus(
       baseUrl,
@@ -342,7 +481,7 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
       run_id: runId,
       tools,
       resources,
-      deterministic_call_status: "success",
+      deterministic_call_status: deterministicCallStatus,
       tenant_isolation_http_status: 403,
       revoked_exchange_http_status: 401,
       gateway_audit_count: auditCount,

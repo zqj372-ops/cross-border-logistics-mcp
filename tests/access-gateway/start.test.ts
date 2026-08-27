@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { FileSecretPepperProvider } from "../../services/access-gateway/production-crypto";
 import {
+  evaluateAccessGatewayReadiness,
   gatewaySecretPaths,
   initializeAccessGatewayState,
   startAccessGateway,
@@ -56,6 +57,8 @@ const ENV_KEYS = [
   "ACCESS_GATEWAY_JWT_ISSUER",
   "ACCESS_GATEWAY_JWT_AUDIENCE",
   "ACCESS_GATEWAY_PEPPER_VERSION",
+  "ACCESS_GATEWAY_LEGACY_PEPPER_VERSION",
+  "ACCESS_GATEWAY_PEPPER_HISTORY_PATH",
   "ACCESS_GATEWAY_ALLOWED_HOSTS",
   "ACCESS_GATEWAY_ALLOWED_ORIGINS",
   "ACCESS_GATEWAY_TRUSTED_PROXY_ADDRESSES",
@@ -68,6 +71,25 @@ afterEach(() => {
 });
 
 describe("standalone Access Gateway runtime", () => {
+  it("fails readiness closed when a configured administrator IdP is unavailable", () => {
+    expect(evaluateAccessGatewayReadiness({
+      tenantStoreReady: true,
+      operationStoreReady: true,
+      signingKeyCount: 1,
+      adminConfigured: true,
+      adminReady: false,
+    })).toEqual({
+      httpStatus: 503,
+      status: "unavailable",
+      operationalReady: false,
+      blockers: [
+        "enterprise_idp_unavailable",
+        "kms_signer_unconfigured",
+        "managed_database_unconfigured",
+      ],
+    });
+  });
+
   it("removes every artifact from a failed initialization so a safe retry can succeed", async () => {
     const applicationRoot = mkdtempSync(join(tmpdir(), "logistics-mcp-access-init-"));
     roots.push(applicationRoot);
@@ -103,6 +125,7 @@ describe("standalone Access Gateway runtime", () => {
     const pepper = new FileSecretPepperProvider({
       pepperPath: secrets.credentialPepperPath,
       pepperVersion: "pepper-2026-08-v1",
+      historyPath: secrets.credentialPepperHistoryPath,
     });
     const store = new SqliteTenantAccessStore({
       applicationRoot,
@@ -111,14 +134,15 @@ describe("standalone Access Gateway runtime", () => {
     });
     const service = new TenantAccessService(store, {
       credentialSecretProvider: {
+        pepperVersion: pepper.pepperVersion,
         hash: (secret, salt) => pepper.hashCredentialSecret({
           secret,
           salt,
           pepperVersion: pepper.pepperVersion,
         }),
-        verify: (secret, salt, expectedHash) => pepper.verifyCredentialSecret({
+        verify: (secret, salt, expectedHash, pepperVersion) => pepper.verifyCredentialSecret({
           secret,
-          material: { salt, expectedHash, pepperVersion: pepper.pepperVersion },
+          material: { salt, expectedHash, pepperVersion },
         }),
       },
     });

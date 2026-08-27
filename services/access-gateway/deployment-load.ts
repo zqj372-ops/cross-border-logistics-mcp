@@ -15,6 +15,7 @@ import { TENANT_API_KEY_TOOL_NAMES } from "../../src/logistics_mcp/control-plane
 import { SqliteTenantAccessStore } from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
 import { FileSecretPepperProvider } from "./production-crypto";
+import { assertCandidateSyntheticWriteTarget } from "./deployment-safety";
 
 const CONFIRMATION = "run-synthetic-load";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -400,7 +401,14 @@ export async function runT0DeploymentLoad(): Promise<DeploymentLoadSummary> {
   if (requiredSetting("DEPLOYMENT_LOAD_CONFIRM") !== CONFIRMATION) {
     throw new Error(`DEPLOYMENT_LOAD_CONFIRM must equal ${CONFIRMATION}.`);
   }
+  if (requiredSetting("DEPLOYMENT_LOAD_ENVIRONMENT") !== "staging") {
+    throw new Error("DEPLOYMENT_LOAD_ENVIRONMENT must equal staging.");
+  }
+  if (requiredSetting("ACCESS_GATEWAY_PROFILE") !== "single-node-candidate") {
+    throw new Error("Deployment load requires the single-node-candidate profile.");
+  }
   const baseUrl = baseUrlFromEnvironment();
+  await assertCandidateSyntheticWriteTarget({ baseUrl });
   const concurrency = integerSetting("DEPLOYMENT_LOAD_CONCURRENCY", 50, 1, 100);
   const durationSeconds = integerSetting("DEPLOYMENT_LOAD_DURATION_SECONDS", 600, 60, 900);
   const requestIntervalMs = integerSetting("DEPLOYMENT_LOAD_REQUEST_INTERVAL_MS", 7_000, 1_000, 60_000);
@@ -410,6 +418,8 @@ export async function runT0DeploymentLoad(): Promise<DeploymentLoadSummary> {
   const pepperVersion = requiredSetting("ACCESS_GATEWAY_PEPPER_VERSION");
   const pepperPath = process.env.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
     join(applicationRoot, ".secrets", "credential-pepper.bin");
+  const pepperHistoryPath = process.env.ACCESS_GATEWAY_PEPPER_HISTORY_PATH?.trim() ||
+    join(applicationRoot, ".secrets", "credential-pepper-history.json");
   const runId = randomUUID().replaceAll("-", "").slice(0, 16);
   const tenantId = `tenant_load_${runId}`;
   const admin = parseExecutionContext({
@@ -422,18 +432,27 @@ export async function runT0DeploymentLoad(): Promise<DeploymentLoadSummary> {
     session_id: `deployment_load_${runId}`,
     expires_at: Math.floor(Date.now() / 1_000) + durationSeconds + 1_800,
   });
-  const store = new SqliteTenantAccessStore({ applicationRoot, instanceId, managementTenantId });
-  const pepper = new FileSecretPepperProvider({ pepperPath, pepperVersion });
+  const pepper = new FileSecretPepperProvider({
+    pepperPath,
+    pepperVersion,
+    historyPath: pepperHistoryPath,
+  });
+  const store = new SqliteTenantAccessStore({
+    applicationRoot,
+    instanceId,
+    managementTenantId,
+  });
   const service = new TenantAccessService(store, {
     credentialSecretProvider: {
+      pepperVersion: pepper.pepperVersion,
       hash: (secret, salt) => pepper.hashCredentialSecret({
         secret,
         salt,
         pepperVersion: pepper.pepperVersion,
       }),
-      verify: (secret, salt, expectedHash) => pepper.verifyCredentialSecret({
+      verify: (secret, salt, expectedHash, storedPepperVersion) => pepper.verifyCredentialSecret({
         secret,
-        material: { salt, expectedHash, pepperVersion: pepper.pepperVersion },
+        material: { salt, expectedHash, pepperVersion: storedPepperVersion },
       }),
     },
   });

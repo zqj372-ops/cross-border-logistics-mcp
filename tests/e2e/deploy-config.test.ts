@@ -70,7 +70,11 @@ describe("safe deployment artifacts", () => {
     expect(build).toContain("dist/services/access-gateway/deployment-smoke.mjs");
     expect(packageJson).toContain("smoke:t0-deployment");
     expect(smoke).toContain("DEPLOYMENT_SMOKE_CONFIRM");
+    expect(smoke).toContain("DEPLOYMENT_SMOKE_ENVIRONMENT");
+    expect(smoke).toContain("assertCandidateSyntheticWriteTarget");
     expect(smoke).toContain("run-synthetic-write");
+    expect(smoke).toContain('name: "cargo.calculate"');
+    expect(smoke).toContain('name: "container.plan_summary"');
     expect(smoke).toContain("revokeCredential");
     expect(smoke).toContain("setTenantStatus");
     expect(smoke).toContain("terminateSession");
@@ -88,6 +92,8 @@ describe("safe deployment artifacts", () => {
     expect(build).toContain("dist/services/access-gateway/deployment-load.mjs");
     expect(packageJson).toContain("load:t0-deployment");
     expect(load).toContain("DEPLOYMENT_LOAD_CONFIRM");
+    expect(load).toContain("DEPLOYMENT_LOAD_ENVIRONMENT");
+    expect(load).toContain("assertCandidateSyntheticWriteTarget");
     expect(load).toContain("run-synthetic-load");
     expect(load).toContain("revokeCredential");
     expect(load).toContain("setTenantStatus");

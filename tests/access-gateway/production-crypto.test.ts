@@ -20,11 +20,12 @@ function fixture() {
   const privateKeyPath = join(root, "jwt-signing.pem");
   const historyPath = join(root, "jwt-key-history.json");
   const pepperPath = join(root, "credential-pepper");
+  const pepperHistoryPath = join(root, "credential-pepper-history.json");
   writeFileSync(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), {
     mode: 0o400,
   });
   writeFileSync(pepperPath, Buffer.alloc(48, 0x5a), { mode: 0o400 });
-  return { privateKeyPath, historyPath, pepperPath };
+  return { privateKeyPath, historyPath, pepperPath, pepperHistoryPath };
 }
 
 afterEach(() => {
@@ -33,10 +34,11 @@ afterEach(() => {
 
 describe("production gateway cryptographic providers", () => {
   it("derives credential hashes with a mounted pepper and verifies in constant-shape paths", async () => {
-    const { pepperPath } = fixture();
+    const { pepperPath, pepperHistoryPath } = fixture();
     const provider = new FileSecretPepperProvider({
       pepperPath,
       pepperVersion: "pepper-2026-08-v1",
+      historyPath: pepperHistoryPath,
     });
     const salt = new Uint8Array(16).fill(7);
     const expectedHash = await provider.hashCredentialSecret({
@@ -57,6 +59,61 @@ describe("production gateway cryptographic providers", () => {
       secret: "B".repeat(43),
       material: null,
     })).resolves.toBe(false);
+  });
+
+  it("retains versioned credential peppers across rotation and rollback", async () => {
+    const { pepperPath, pepperHistoryPath } = fixture();
+    const salt = new Uint8Array(16).fill(9);
+    const secretV1 = "C".repeat(43);
+    const first = new FileSecretPepperProvider({
+      pepperPath,
+      pepperVersion: "pepper-2026-08-v1",
+      historyPath: pepperHistoryPath,
+    });
+    const hashV1 = await first.hashCredentialSecret({
+      secret: secretV1,
+      salt,
+      pepperVersion: first.pepperVersion,
+    });
+
+    chmodSync(pepperPath, 0o600);
+    writeFileSync(pepperPath, Buffer.alloc(48, 0x6b));
+    chmodSync(pepperPath, 0o400);
+    const rotated = new FileSecretPepperProvider({
+      pepperPath,
+      pepperVersion: "pepper-2026-08-v2",
+      historyPath: pepperHistoryPath,
+    });
+    const secretV2 = "D".repeat(43);
+    const hashV2 = await rotated.hashCredentialSecret({
+      secret: secretV2,
+      salt,
+      pepperVersion: rotated.pepperVersion,
+    });
+    await expect(rotated.verifyCredentialSecret({
+      secret: secretV1,
+      material: { salt, expectedHash: hashV1, pepperVersion: "pepper-2026-08-v1" },
+    })).resolves.toBe(true);
+    expect(rotated.supportsPepperVersion("pepper-2026-08-v1")).toBe(true);
+    expect(rotated.supportsPepperVersion("pepper-2026-08-v2")).toBe(true);
+    expect(rotated.supportsPepperVersion("pepper-missing-v1")).toBe(false);
+    await expect(rotated.verifyCredentialSecret({
+      secret: secretV2,
+      material: { salt, expectedHash: hashV2, pepperVersion: "pepper-2026-08-v2" },
+    })).resolves.toBe(true);
+
+    chmodSync(pepperPath, 0o600);
+    writeFileSync(pepperPath, Buffer.alloc(48, 0x5a));
+    chmodSync(pepperPath, 0o400);
+    const rolledBack = new FileSecretPepperProvider({
+      pepperPath,
+      pepperVersion: "pepper-2026-08-v1",
+      historyPath: pepperHistoryPath,
+    });
+    await expect(rolledBack.verifyCredentialSecret({
+      secret: secretV2,
+      material: { salt, expectedHash: hashV2, pepperVersion: "pepper-2026-08-v2" },
+    })).resolves.toBe(true);
   });
 
   it("signs exact RS256 claims and publishes only the matching public key", async () => {
