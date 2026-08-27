@@ -19,7 +19,7 @@ const PROVIDER_METHODS: Readonly<Record<keyof GatewayProviders, readonly string[
   adminIdentityProvider: ["authenticateAdmin"],
   auditRepository: ["append"],
   clock: ["nowSeconds"],
-  credentialRepository: ["findForExchange", "listState"],
+  credentialRepository: ["findForExchange", "listState", "markUsed"],
   jwtSigningProvider: ["sign", "getJwks"],
   randomSource: ["opaque", "bytes"],
   rateLimitRepository: ["reserve"],

@@ -10,65 +10,88 @@
     <header class="topbar">
       <div>
         <p class="eyebrow">T0 · Access Control</p>
-        <h1>租户接入控制台</h1>
-        <p>仅管理租户、客户端、密钥、三个内置工具权限和操作回读。</p>
+        <h1>租户与 API Key</h1>
+        <p>只管理租户、长期 Key、三个镜像内置工具权限和操作状态回读。</p>
       </div>
       <button id="refresh" type="button">刷新状态</button>
     </header>
 
     <main>
+      <section class="qualification" aria-label="资格说明">
+        <strong>单机候选</strong>
+        <span>页面可验证真实写入，但生产资格仍取决于企业身份、托管密钥和托管数据库门禁。</span>
+      </section>
+
       <section class="status-card" aria-live="polite">
         <span id="status-dot" class="status-dot"></span>
         <div>
-          <strong id="status-title">等待服务状态</strong>
-          <p id="status-detail">连接由企业身份和受控入口建立。</p>
+          <strong id="status-title">等待身份验证</strong>
+          <p id="status-detail">企业入口可注入管理员身份；本机核验也可临时加载短期管理员 JWT。</p>
         </div>
+      </section>
+
+      <section class="identity-card" aria-labelledby="identity-title">
+        <div>
+          <h2 id="identity-title">管理员身份</h2>
+          <p>令牌只保存在当前页面内存，不写入浏览器存储。企业入口已注入身份时可留空。</p>
+        </div>
+        <form id="identity-form" class="identity-form">
+          <label>短期管理员 JWT<input id="admin-token" type="password" autocomplete="off" spellcheck="false"></label>
+          <div class="button-row">
+            <button type="submit">加载并读取</button>
+            <button id="clear-token" class="secondary" type="button">清除</button>
+          </div>
+        </form>
       </section>
 
       <div class="grid">
         <section class="panel" aria-labelledby="tenant-title">
           <h2 id="tenant-title">租户</h2>
           <form id="tenant-form">
+            <label>租户标识<input name="tenant_id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{2,127}" maxlength="128"></label>
             <label>显示名称<input name="display_name" required maxlength="80"></label>
             <button type="submit">创建租户</button>
           </form>
           <div id="tenants" class="records"></div>
         </section>
 
-        <section class="panel" aria-labelledby="client-title">
-          <h2 id="client-title">客户端</h2>
-          <form id="client-form">
-            <label>租户标识<input name="tenant_id" required></label>
-            <label>客户端名称<input name="label" required maxlength="80"></label>
-            <button type="submit">创建客户端</button>
-          </form>
-          <div id="clients" class="records"></div>
-        </section>
-
         <section class="panel" aria-labelledby="key-title">
-          <h2 id="key-title">密钥</h2>
+          <h2 id="key-title">API Key 与工具权限</h2>
           <form id="key-form">
             <label>租户标识<input name="tenant_id" required></label>
-            <label>客户端标识<input name="client_id" required></label>
-            <label>密钥名称<input name="label" required maxlength="80"></label>
-            <button type="submit">签发一次性密钥</button>
+            <label>调用方标识<input name="client_id" required></label>
+            <label>Key 名称<input name="label" required maxlength="80"></label>
+            <label>有效期
+              <select name="expires_in_seconds">
+                <option value="86400">1 天</option>
+                <option value="2592000" selected>30 天</option>
+                <option value="7776000">90 天</option>
+              </select>
+            </label>
+            <fieldset id="tool-permissions">
+              <legend>允许调用</legend>
+              <label><input type="checkbox" value="cargo.calculate"> cargo.calculate</label>
+              <label><input type="checkbox" value="container.plan_summary"> container.plan_summary</label>
+              <label><input type="checkbox" value="system.agent_context.get"> system.agent_context.get</label>
+            </fieldset>
+            <p class="hint">服务端只接受以上精确集合，页面选择不能扩大权限。</p>
+            <button type="submit">签发一次性 Key</button>
           </form>
-          <output id="one-time-key" class="secret-output" hidden></output>
+          <section id="one-time-panel" class="secret-panel" hidden>
+            <strong>一次性 Key</strong>
+            <p>复制到批准的 Secret Manager 后确认交付；关闭后不可再次显示。</p>
+            <output id="one-time-key" class="secret-output"></output>
+            <div class="button-row">
+              <button id="copy-key" type="button">复制</button>
+              <button id="ack-key" class="secondary" type="button">确认已安全保存</button>
+              <button id="hide-key" class="secondary" type="button">隐藏</button>
+            </div>
+          </section>
           <div id="credentials" class="records"></div>
         </section>
 
-        <section class="panel" aria-labelledby="tools-title">
-          <h2 id="tools-title">工具权限</h2>
-          <fieldset id="tool-permissions">
-            <label><input type="checkbox" value="cargo.calculate"> cargo.calculate</label>
-            <label><input type="checkbox" value="container.plan_summary"> container.plan_summary</label>
-            <label><input type="checkbox" value="system.agent_context.get"> system.agent_context.get</label>
-          </fieldset>
-          <p class="hint">权限由服务端精确校验；页面选择不能扩大目录。</p>
-        </section>
-
         <section class="panel operations" aria-labelledby="operations-title">
-          <h2 id="operations-title">操作回读</h2>
+          <h2 id="operations-title">操作回读（状态流转）</h2>
           <div id="operations" class="records"></div>
         </section>
       </div>

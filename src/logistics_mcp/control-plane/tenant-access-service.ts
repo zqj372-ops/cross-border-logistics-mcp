@@ -50,6 +50,12 @@ export interface TenantAccessServiceOptions {
   readonly idGenerator?: (prefix: "event" | "key") => string;
   readonly secretGenerator?: () => string;
   readonly saltGenerator?: () => Uint8Array;
+  readonly credentialSecretProvider?: TenantCredentialSecretProvider;
+}
+
+export interface TenantCredentialSecretProvider {
+  hash(secret: string, salt: Uint8Array): Promise<Uint8Array>;
+  verify(secret: string, salt: Uint8Array, expectedHash: Uint8Array): Promise<boolean>;
 }
 
 type TenantDto = Readonly<{
@@ -364,6 +370,15 @@ async function deriveSecret(secret: string, salt: Uint8Array): Promise<Uint8Arra
   });
 }
 
+const DEFAULT_CREDENTIAL_SECRET_PROVIDER: TenantCredentialSecretProvider = Object.freeze({
+  hash: deriveSecret,
+  async verify(secret: string, salt: Uint8Array, expectedHash: Uint8Array) {
+    const candidate = await deriveSecret(secret, salt);
+    return candidate.byteLength === expectedHash.byteLength &&
+      timingSafeEqual(candidate, expectedHash);
+  },
+});
+
 function createEvent(
   idGenerator: (prefix: "event" | "key") => string,
   context: ExecutionContext,
@@ -387,6 +402,7 @@ export class TenantAccessService {
   readonly #idGenerator: (prefix: "event" | "key") => string;
   readonly #secretGenerator: () => string;
   readonly #saltGenerator: () => Uint8Array;
+  readonly #credentialSecretProvider: TenantCredentialSecretProvider;
 
   constructor(
     repository: TenantAccessRepository,
@@ -399,6 +415,8 @@ export class TenantAccessService {
     ));
     this.#secretGenerator = options.secretGenerator ?? (() => randomBytes(32).toString("base64url"));
     this.#saltGenerator = options.saltGenerator ?? (() => randomBytes(16));
+    this.#credentialSecretProvider = options.credentialSecretProvider ??
+      DEFAULT_CREDENTIAL_SECRET_PROVIDER;
   }
 
   async getState(context: ExecutionContext): Promise<Readonly<{
@@ -549,7 +567,7 @@ export class TenantAccessService {
     if (!/^[A-Za-z0-9_-]{43}$/.test(secret)) requestError();
     const salt = this.#saltGenerator();
     if (!(salt instanceof Uint8Array) || salt.byteLength < 16) requestError();
-    const hash = await deriveSecret(secret, salt);
+    const hash = await this.#credentialSecretProvider.hash(secret, salt);
     const toolNames = canonicalToolNames(request.tool_names);
     const scopes = tenantApiKeyScopesForToolNames(toolNames);
     const credential: StoredCredentialRecord = Object.freeze({
@@ -658,7 +676,7 @@ export class TenantAccessService {
       keyPrefix: `lmcpk_${nextCredentialId}`,
       secretLastFour: secret.slice(-4),
       secretSalt: new Uint8Array(salt),
-      secretHash: await deriveSecret(secret, salt),
+      secretHash: await this.#credentialSecretProvider.hash(secret, salt),
       createdAt: now,
       expiresAt: nowSeconds + request.expires_in_seconds,
       lastUsedAt: null,
@@ -862,11 +880,11 @@ export class TenantAccessService {
       ) {
         throw new TenantAccessError("authentication_failed");
       }
-      const candidate = await deriveSecret(secret, found.credential.secretSalt);
-      if (
-        candidate.byteLength !== found.credential.secretHash.byteLength ||
-        !timingSafeEqual(candidate, found.credential.secretHash)
-      ) {
+      if (!(await this.#credentialSecretProvider.verify(
+        secret,
+        found.credential.secretSalt,
+        found.credential.secretHash,
+      ))) {
         throw new TenantAccessError("authentication_failed");
       }
       const acceptedAt = this.#clock();

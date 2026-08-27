@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isIP } from "node:net";
 
 import {
   acknowledgeCredentialDeliveryRequestSchema,
@@ -68,6 +69,12 @@ export interface TenantAccessAdminService {
 
 export interface AdminTenantAccessApiHandlerOptions {
   readonly dataMode: "fixtures" | "production";
+  /**
+   * Production writes stay fail-closed unless the dedicated Access Gateway
+   * assembly has supplied real identity, persistence and audit providers.
+   */
+  readonly productionWritesEnabled?: boolean;
+  readonly trustedProxyAddresses?: readonly string[];
   readonly service: TenantAccessAdminService;
   readonly authenticate: (
     token: string,
@@ -160,12 +167,26 @@ function boundaryFailure(
   options: AdminTenantAccessApiHandlerOptions,
   method: string,
 ): string | null {
-  if (!isLoopback(request.socket.remoteAddress)) return "admin_loopback_required";
-  if (
-    !options.allowLoopbackHttp &&
-    (request.socket as { readonly encrypted?: boolean }).encrypted !== true
-  ) {
-    return "admin_https_required";
+  const remoteAddress = request.socket.remoteAddress;
+  const trustedProxy = remoteAddress !== undefined &&
+    (options.trustedProxyAddresses ?? []).includes(remoteAddress);
+  if (!isLoopback(remoteAddress) && !trustedProxy) return "admin_loopback_required";
+  const forwardedProto = rawHeaderValues(request, "x-forwarded-proto");
+  if (forwardedProto === null || forwardedProto.length > 1) {
+    return "admin_request_headers_invalid";
+  }
+  if (trustedProxy) {
+    if (forwardedProto.length !== 1 || forwardedProto[0] !== "https") {
+      return "admin_https_required";
+    }
+  } else {
+    if (forwardedProto.length !== 0) return "admin_request_headers_invalid";
+    if (
+      !options.allowLoopbackHttp &&
+      (request.socket as { readonly encrypted?: boolean }).encrypted !== true
+    ) {
+      return "admin_https_required";
+    }
   }
   const hosts = rawHeaderValues(request, "host");
   if (hosts === null) return "admin_request_headers_invalid";
@@ -479,6 +500,13 @@ export function createAdminTenantAccessApiHandler(
   if (!Number.isSafeInteger(options.maxBodyBytes) || options.maxBodyBytes <= 0) {
     throw new TypeError("maxBodyBytes must be a positive safe integer.");
   }
+  if (
+    (options.trustedProxyAddresses ?? []).some((value) => isIP(value) === 0) ||
+    new Set(options.trustedProxyAddresses ?? []).size !==
+      (options.trustedProxyAddresses ?? []).length
+  ) {
+    throw new TypeError("trustedProxyAddresses must contain unique IP addresses.");
+  }
   return {
     handle(request, response): boolean {
       const path = pathOf(request);
@@ -499,7 +527,11 @@ export function createAdminTenantAccessApiHandler(
         });
         return true;
       }
-      if (route.method === "POST" && options.dataMode === "production") {
+      if (
+        route.method === "POST" &&
+        options.dataMode === "production" &&
+        options.productionWritesEnabled !== true
+      ) {
         sendJson(
           request,
           response,

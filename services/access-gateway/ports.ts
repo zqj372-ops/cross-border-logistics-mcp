@@ -28,6 +28,7 @@ export interface CredentialExchangeRecord {
 export interface CredentialRepository extends ProviderIdentity {
   findForExchange(credentialId: string): Promise<CredentialExchangeRecord | null>;
   listState(): Promise<AccessState>;
+  markUsed(credentialId: string, usedAt: string, nowSeconds: number): Promise<boolean>;
 }
 
 export interface SecretPepperProvider extends ProviderIdentity {

@@ -193,6 +193,20 @@ class SyntheticCredentialRepository implements CredentialRepository {
       operations: [],
     });
   }
+
+  markUsed(credentialId: string, usedAt: string, nowSeconds: number): Promise<boolean> {
+    const credential = this.credentials.get(credentialId);
+    if (
+      credential === undefined ||
+      credential.status !== "active" ||
+      credential.deliveryStatus !== "acknowledged" ||
+      credential.expiresAt <= nowSeconds
+    ) {
+      return Promise.resolve(false);
+    }
+    this.credentials.set(credentialId, Object.freeze({ ...credential, lastUsedAt: usedAt }));
+    return Promise.resolve(true);
+  }
 }
 
 interface SigningKey {

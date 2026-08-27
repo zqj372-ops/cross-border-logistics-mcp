@@ -126,7 +126,14 @@ function service() {
   };
 }
 
-async function listen(dataMode: "fixtures" | "production"): Promise<{
+async function listen(
+  dataMode: "fixtures" | "production",
+  options: {
+    readonly allowLoopbackHttp?: boolean;
+    readonly productionWritesEnabled?: boolean;
+    readonly trustedProxyAddresses?: readonly string[];
+  } = {},
+): Promise<{
   readonly server: Server;
   readonly url: string;
 }> {
@@ -147,12 +154,18 @@ async function listen(dataMode: "fixtures" | "production"): Promise<{
   const url = `http://${host}`;
   ref.current = createAdminTenantAccessApiHandler({
     dataMode,
+    ...(options.productionWritesEnabled === undefined
+      ? {}
+      : { productionWritesEnabled: options.productionWritesEnabled }),
+    ...(options.trustedProxyAddresses === undefined
+      ? {}
+      : { trustedProxyAddresses: options.trustedProxyAddresses }),
     service: service(),
     authenticate,
     managementTenantId,
     allowedOrigins: [url],
     allowedHosts: [host],
-    allowLoopbackHttp: true,
+    allowLoopbackHttp: options.allowLoopbackHttp ?? true,
     maxBodyBytes: 32 * 1024,
   });
   return { server, url };
@@ -167,13 +180,21 @@ async function close(server: Server): Promise<void> {
 async function request(
   url: string,
   path: string,
-  options: { readonly method?: "GET" | "POST"; readonly body?: unknown; readonly key?: string } = {},
+  options: {
+    readonly method?: "GET" | "POST";
+    readonly body?: unknown;
+    readonly key?: string;
+    readonly forwardedProto?: "https";
+  } = {},
 ): Promise<Response> {
   const method = options.method ?? "POST";
   return fetch(`${url}${path}`, {
     method,
     headers: {
       authorization: "Bearer fixture-admin-token",
+      ...(options.forwardedProto === undefined
+        ? {}
+        : { "x-forwarded-proto": options.forwardedProto }),
       ...(method === "POST" ? {
         origin: url,
         "content-type": "application/json",
@@ -322,6 +343,47 @@ describe("Admin Tenant Access API", () => {
       expect(getState).not.toHaveBeenCalled();
       expect(createTenant).not.toHaveBeenCalled();
       expect(issueCredential).not.toHaveBeenCalled();
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("allows an explicitly enabled production tenant write after boundary and admin auth", async () => {
+    const { server, url } = await listen("production", { productionWritesEnabled: true });
+    try {
+      const response = await request(url, "/admin/api/v1/access/tenants", {
+        body: {
+          schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+          tenant_id: tenant.tenant_id,
+          display_name: tenant.display_name,
+        },
+        key: "production-tenant-idem-0001",
+      });
+      expect(response.status).toBe(201);
+      expect(createTenant).toHaveBeenCalledTimes(1);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("accepts HTTPS only from an explicitly trusted reverse proxy", async () => {
+    const { server, url } = await listen("production", {
+      allowLoopbackHttp: false,
+      productionWritesEnabled: true,
+      trustedProxyAddresses: ["127.0.0.1"],
+    });
+    try {
+      const response = await request(url, "/admin/api/v1/access/state", {
+        method: "GET",
+        forwardedProto: "https",
+      });
+      expect(response.status).toBe(200);
+
+      const missingProof = await request(url, "/admin/api/v1/access/state", { method: "GET" });
+      expect(missingProof.status).toBe(403);
+      expect(await missingProof.json()).toMatchObject({
+        reason_codes: ["admin_https_required"],
+      });
     } finally {
       await close(server);
     }

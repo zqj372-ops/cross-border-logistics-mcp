@@ -241,6 +241,12 @@ export class AccessGateway {
       };
       const signed = await this.#providers.jwtSigningProvider.sign(claims);
       assertSignedJwtMatchesClaims(signed, claims);
+      const markedUsed = await this.#providers.credentialRepository.markUsed(
+        record.credential.credentialId,
+        new Date(nowSeconds * 1_000).toISOString(),
+        nowSeconds,
+      );
+      if (!markedUsed) throw new AccessGatewayError("authentication_failed");
       await this.#providers.auditRepository.append({
         auditId: this.#providers.randomSource.opaque("audit"),
         action: "token.exchange",

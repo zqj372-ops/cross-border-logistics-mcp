@@ -1,10 +1,71 @@
 services:
+  access-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: cross-border-logistics-mcp:candidate
+    command: ["node", "dist/services/access-gateway/start.mjs"]
+    restart: "unless-stopped"
+    expose:
+      - "8081"
+    environment:
+      ACCESS_GATEWAY_PROFILE: "${ACCESS_GATEWAY_PROFILE:?ACCESS_GATEWAY_PROFILE is required}"
+      ACCESS_GATEWAY_PORT: "8081"
+      ACCESS_GATEWAY_APPLICATION_ROOT: "/var/lib/access-gateway"
+      ACCESS_GATEWAY_INSTANCE_ID: "${ACCESS_GATEWAY_INSTANCE_ID:?ACCESS_GATEWAY_INSTANCE_ID is required}"
+      ACCESS_GATEWAY_MANAGEMENT_TENANT_ID: "${ACCESS_GATEWAY_MANAGEMENT_TENANT_ID:?ACCESS_GATEWAY_MANAGEMENT_TENANT_ID is required}"
+      ACCESS_GATEWAY_JWT_ISSUER: "${ACCESS_GATEWAY_JWT_ISSUER:?ACCESS_GATEWAY_JWT_ISSUER is required}"
+      ACCESS_GATEWAY_JWT_AUDIENCE: "${ACCESS_GATEWAY_JWT_AUDIENCE:?ACCESS_GATEWAY_JWT_AUDIENCE is required}"
+      ACCESS_GATEWAY_JWT_TTL_SECONDS: "${ACCESS_GATEWAY_JWT_TTL_SECONDS:?ACCESS_GATEWAY_JWT_TTL_SECONDS is required}"
+      ACCESS_GATEWAY_PEPPER_VERSION: "${ACCESS_GATEWAY_PEPPER_VERSION:?ACCESS_GATEWAY_PEPPER_VERSION is required}"
+      ACCESS_GATEWAY_RATE_LIMIT_PER_MINUTE: "${ACCESS_GATEWAY_RATE_LIMIT_PER_MINUTE:?ACCESS_GATEWAY_RATE_LIMIT_PER_MINUTE is required}"
+      ACCESS_GATEWAY_ALLOWED_ORIGINS: "${ACCESS_GATEWAY_ALLOWED_ORIGINS:?ACCESS_GATEWAY_ALLOWED_ORIGINS is required}"
+      ACCESS_GATEWAY_ALLOWED_HOSTS: "${ACCESS_GATEWAY_ALLOWED_HOSTS:?ACCESS_GATEWAY_ALLOWED_HOSTS is required}"
+      ACCESS_GATEWAY_TRUSTED_PROXY_ADDRESSES: "${ACCESS_GATEWAY_TRUSTED_PROXY_ADDRESSES:?ACCESS_GATEWAY_TRUSTED_PROXY_ADDRESSES is required}"
+      ACCESS_GATEWAY_ADMIN_JWKS_URL: "${ACCESS_GATEWAY_ADMIN_JWKS_URL:-}"
+      ACCESS_GATEWAY_ADMIN_JWKS_HOST: "${ACCESS_GATEWAY_ADMIN_JWKS_HOST:-}"
+      ACCESS_GATEWAY_ADMIN_ISSUER: "${ACCESS_GATEWAY_ADMIN_ISSUER:-}"
+      ACCESS_GATEWAY_ADMIN_AUDIENCE: "${ACCESS_GATEWAY_ADMIN_AUDIENCE:-}"
+    volumes:
+      - gateway_state:/var/lib/access-gateway
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    user: "10001:10001"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - fetch('http://127.0.0.1:8081/access/v1/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
   logistics-mcp:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     image: cross-border-logistics-mcp:candidate
     restart: "unless-stopped"
+    depends_on:
+      access-gateway:
+        condition: service_healthy
     expose:
       - "8080"
     environment:
@@ -51,4 +112,5 @@ services:
       retries: 3
       start_period: 10s
 volumes:
+  gateway_state:
   mcp_state:

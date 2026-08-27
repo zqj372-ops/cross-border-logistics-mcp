@@ -26,10 +26,16 @@ const adminAssetSpecs = [
   },
 ];
 const adminSourcePaths = adminAssetSpecs.map(({ source }) => source);
+const accessConsoleAssetSpecs = [
+  { name: "index.html", source: resolve("apps/access-console/index.html") },
+  { name: "styles.css", source: resolve("apps/access-console/styles.css") },
+  { name: "app.js", source: resolve("apps/access-console/app.js") },
+];
+const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
 
 rmSync("dist", { recursive: true, force: true });
 
-if (adminSourcePaths.some((path) => {
+if ([...adminSourcePaths, ...accessConsoleSourcePaths].some((path) => {
   try {
     return !statSync(path).isFile();
   } catch {
@@ -52,6 +58,17 @@ await build({
   legalComments: "none",
 });
 
+await build({
+  entryPoints: ["services/access-gateway/start.ts"],
+  outfile: "dist/services/access-gateway/start.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
+  sourcemap: false,
+  legalComments: "none",
+});
+
 execFileSync(process.execPath, [
   "--import",
   "tsx/esm",
@@ -65,4 +82,9 @@ for (const asset of adminAssetSpecs) {
   const destination = resolve("dist/admin", asset.name);
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(asset.source, destination);
+}
+
+mkdirSync(resolve("dist/access-console"), { recursive: true });
+for (const asset of accessConsoleAssetSpecs) {
+  cpSync(asset.source, resolve("dist/access-console", asset.name));
 }
