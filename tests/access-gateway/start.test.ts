@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { FileSecretPepperProvider } from "../../services/access-gateway/production-crypto";
 import {
+  adminIdentityConfigurationFromEnvironment,
   evaluateAccessGatewayReadiness,
   gatewaySecretPaths,
   initializeAccessGatewayState,
@@ -63,6 +64,14 @@ const ENV_KEYS = [
   "ACCESS_GATEWAY_ALLOWED_ORIGINS",
   "ACCESS_GATEWAY_TRUSTED_PROXY_ADDRESSES",
   "ACCESS_GATEWAY_PORT",
+  "ACCESS_GATEWAY_ADMIN_JWKS_URL",
+  "ACCESS_GATEWAY_ADMIN_JWKS_HOST",
+  "ACCESS_GATEWAY_ADMIN_ISSUER",
+  "ACCESS_GATEWAY_ADMIN_AUDIENCE",
+  "ACCESS_GATEWAY_ADMIN_IDENTITY_MODE",
+  "ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS",
+  "ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS",
+  "ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS",
 ] as const;
 
 afterEach(() => {
@@ -71,6 +80,42 @@ afterEach(() => {
 });
 
 describe("standalone Access Gateway runtime", () => {
+  it("builds an explicit Cloudflare Access administrator mapping without secrets or broad roles", () => {
+    expect(adminIdentityConfigurationFromEnvironment({
+      ACCESS_GATEWAY_ADMIN_JWKS_URL: "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
+      ACCESS_GATEWAY_ADMIN_JWKS_HOST: "team.cloudflareaccess.com",
+      ACCESS_GATEWAY_ADMIN_ISSUER: "https://team.cloudflareaccess.com",
+      ACCESS_GATEWAY_ADMIN_AUDIENCE: "app-audience",
+      ACCESS_GATEWAY_ADMIN_IDENTITY_MODE: "cloudflare-access",
+      ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS: "admin@example.com,security@example.com",
+      ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS: "subject-1,subject-2",
+      ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS: "900",
+    }, "tenant_management")).toEqual({
+      configured: true,
+      options: {
+        jwksUrl: "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
+        allowedHosts: ["team.cloudflareaccess.com"],
+        issuer: "https://team.cloudflareaccess.com",
+        audience: "app-audience",
+        managementTenantId: "tenant_management",
+        claimMode: "cloudflare-access",
+        allowedEmails: ["admin@example.com", "security@example.com"],
+        allowedSubjects: ["subject-1", "subject-2"],
+        maxTokenAgeSeconds: 900,
+      },
+    });
+  });
+
+  it("fails closed when Cloudflare Access has no explicit administrator mapping", () => {
+    expect(() => adminIdentityConfigurationFromEnvironment({
+      ACCESS_GATEWAY_ADMIN_JWKS_URL: "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
+      ACCESS_GATEWAY_ADMIN_JWKS_HOST: "team.cloudflareaccess.com",
+      ACCESS_GATEWAY_ADMIN_ISSUER: "https://team.cloudflareaccess.com",
+      ACCESS_GATEWAY_ADMIN_AUDIENCE: "app-audience",
+      ACCESS_GATEWAY_ADMIN_IDENTITY_MODE: "cloudflare-access",
+    }, "tenant_management")).toThrow(/ALLOWED_EMAILS/u);
+  });
+
   it("fails readiness closed when a configured administrator IdP is unavailable", () => {
     expect(evaluateAccessGatewayReadiness({
       tenantStoreReady: true,
@@ -203,6 +248,13 @@ describe("standalone Access Gateway runtime", () => {
       const consoleResponse = await fetch(`${origin}/`);
       expect(consoleResponse.status).toBe(200);
       expect(await consoleResponse.text()).toContain("租户与 API Key");
+
+      for (const adminPath of ["/admin", "/admin/"] as const) {
+        const adminResponse = await fetch(`${origin}${adminPath}`, { redirect: "manual" });
+        expect(adminResponse.status).toBe(308);
+        expect(adminResponse.headers.get("location")).toBe("/access-console/");
+        expect(adminResponse.headers.get("cache-control")).toBe("no-store");
+      }
 
       const exchange = await fetch(`${origin}/access/v1/token/exchange`, {
         method: "POST",

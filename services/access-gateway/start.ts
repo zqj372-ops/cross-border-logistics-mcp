@@ -36,6 +36,7 @@ import {
   SystemGatewayClock,
   SystemGatewayRandomSource,
   UnavailableAdminIdentityProvider,
+  type RemoteJwksAdminIdentityProviderOptions,
 } from "./production-identity";
 import {
   initializeSqliteGatewayOperationalState,
@@ -215,6 +216,14 @@ function sendAsset(response: ServerResponse, path: string, contentType: string):
   response.end(body);
 }
 
+function redirectToAccessConsole(response: ServerResponse): void {
+  securityHeaders(response);
+  response.statusCode = 308;
+  response.setHeader("location", "/access-console/");
+  response.setHeader("cache-control", "no-store");
+  response.end();
+}
+
 function staticConsole(
   request: IncomingMessage,
   response: ServerResponse,
@@ -222,6 +231,10 @@ function staticConsole(
 ): boolean {
   if (request.method !== "GET" && request.method !== "HEAD") return false;
   const path = (request.url ?? "/").split("?", 1)[0];
+  if (path === "/admin" || path === "/admin/") {
+    redirectToAccessConsole(response);
+    return true;
+  }
   const asset = path === "/" || path === "/access-console" || path === "/access-console/"
     ? ["index.html", "text/html; charset=utf-8"] as const
     : path === "/access-console/app.js"
@@ -236,31 +249,119 @@ function staticConsole(
 
 type AdminProvider = UnavailableAdminIdentityProvider | RemoteJwksAdminIdentityProvider;
 
+export type AdminIdentityEnvironmentConfiguration =
+  | Readonly<{ configured: false }>
+  | Readonly<{
+      configured: true;
+      options: RemoteJwksAdminIdentityProviderOptions;
+    }>;
+
+function environmentList(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  required: boolean,
+): readonly string[] | undefined {
+  const raw = environment[name]?.trim();
+  if (raw === undefined || raw.length === 0) {
+    if (required) throw new Error(`${name} is required.`);
+    return undefined;
+  }
+  const values = raw.split(",").map((value) => value.trim());
+  if (values.some((value) => value.length === 0) || new Set(values).size !== values.length) {
+    throw new Error(`${name} must contain unique non-empty values.`);
+  }
+  return Object.freeze(values);
+}
+
+export function adminIdentityConfigurationFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+  managementTenantId: string,
+): AdminIdentityEnvironmentConfiguration {
+  const coreNames = [
+    "ACCESS_GATEWAY_ADMIN_JWKS_URL",
+    "ACCESS_GATEWAY_ADMIN_ISSUER",
+    "ACCESS_GATEWAY_ADMIN_AUDIENCE",
+    "ACCESS_GATEWAY_ADMIN_JWKS_HOST",
+  ] as const;
+  const coreValues = coreNames.map((name) => environment[name]?.trim() || undefined);
+  const configuredCoreCount = coreValues.filter((value) => value !== undefined).length;
+  const policyNames = [
+    "ACCESS_GATEWAY_ADMIN_IDENTITY_MODE",
+    "ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS",
+    "ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS",
+    "ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS",
+  ] as const;
+  const hasPolicySetting = policyNames.some((name) => {
+    const value = environment[name]?.trim();
+    return value !== undefined && value.length > 0;
+  });
+  if (configuredCoreCount === 0) {
+    if (hasPolicySetting) {
+      throw new Error("Administrator identity policy requires all IdP settings.");
+    }
+    return Object.freeze({ configured: false as const });
+  }
+  if (configuredCoreCount !== coreNames.length) {
+    throw new Error("Administrator IdP settings must be supplied together.");
+  }
+  const claimMode = environment.ACCESS_GATEWAY_ADMIN_IDENTITY_MODE?.trim() ||
+    "embedded-admin-claims";
+  if (claimMode !== "embedded-admin-claims" && claimMode !== "cloudflare-access") {
+    throw new Error("ACCESS_GATEWAY_ADMIN_IDENTITY_MODE is invalid.");
+  }
+  const allowedEmails = environmentList(
+    environment,
+    "ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS",
+    claimMode === "cloudflare-access",
+  );
+  const allowedSubjects = environmentList(
+    environment,
+    "ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS",
+    false,
+  );
+  if (
+    claimMode === "embedded-admin-claims" &&
+    (allowedEmails !== undefined || allowedSubjects !== undefined)
+  ) {
+    throw new Error("Administrator allowlists require cloudflare-access identity mode.");
+  }
+  const rawMaxTokenAge = environment.ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS?.trim();
+  let maxTokenAgeSeconds: number | undefined;
+  if (rawMaxTokenAge !== undefined && rawMaxTokenAge.length > 0) {
+    const parsed = Number(rawMaxTokenAge);
+    if (!Number.isSafeInteger(parsed) || parsed < 60 || parsed > 3_600) {
+      throw new Error(
+        "ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS must be an integer from 60 through 3600.",
+      );
+    }
+    maxTokenAgeSeconds = parsed;
+  }
+  return Object.freeze({
+    configured: true as const,
+    options: Object.freeze({
+      jwksUrl: coreValues[0]!,
+      issuer: coreValues[1]!,
+      audience: coreValues[2]!,
+      allowedHosts: Object.freeze([coreValues[3]!] as const),
+      managementTenantId,
+      claimMode,
+      ...(allowedEmails === undefined ? {} : { allowedEmails }),
+      ...(allowedSubjects === undefined ? {} : { allowedSubjects }),
+      ...(maxTokenAgeSeconds === undefined ? {} : { maxTokenAgeSeconds }),
+    }),
+  });
+}
+
 function adminProviderFromEnvironment(managementTenantId: string): Readonly<{
   provider: AdminProvider;
   configured: boolean;
 }> {
-  const values = [
-    process.env.ACCESS_GATEWAY_ADMIN_JWKS_URL?.trim(),
-    process.env.ACCESS_GATEWAY_ADMIN_ISSUER?.trim(),
-    process.env.ACCESS_GATEWAY_ADMIN_AUDIENCE?.trim(),
-    process.env.ACCESS_GATEWAY_ADMIN_JWKS_HOST?.trim(),
-  ];
-  const configured = values.filter((value) => value !== undefined && value.length > 0);
-  if (configured.length === 0) {
+  const configuration = adminIdentityConfigurationFromEnvironment(process.env, managementTenantId);
+  if (!configuration.configured) {
     return Object.freeze({ provider: new UnavailableAdminIdentityProvider(), configured: false });
   }
-  if (configured.length !== values.length) {
-    throw new Error("Administrator IdP settings must be supplied together.");
-  }
   return Object.freeze({
-    provider: new RemoteJwksAdminIdentityProvider({
-      jwksUrl: values[0]!,
-      issuer: values[1]!,
-      audience: values[2]!,
-      allowedHosts: Object.freeze([values[3]!] as const),
-      managementTenantId,
-    }),
+    provider: new RemoteJwksAdminIdentityProvider(configuration.options),
     configured: true,
   });
 }
