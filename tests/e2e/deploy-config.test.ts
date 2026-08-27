@@ -73,6 +73,7 @@ describe("safe deployment artifacts", () => {
     expect(smoke).toContain("run-synthetic-write");
     expect(smoke).toContain("revokeCredential");
     expect(smoke).toContain("setTenantStatus");
+    expect(smoke).toContain("terminateSession");
     expect(smoke).toContain("tenant_isolation_http_status");
     expect(smoke).toContain("revoked_exchange_http_status");
     expect(smoke).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);

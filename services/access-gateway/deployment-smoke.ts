@@ -218,6 +218,7 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
   const createdTenants: string[] = [];
   const credentials: Array<{ id: string; apiKey: string; revoked: boolean }> = [];
   let client: Client | undefined;
+  let transport: StreamableHTTPClientTransport | undefined;
   let completed = false;
   let cleanupFailure: unknown = null;
   let runFailure: unknown = null;
@@ -263,7 +264,7 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
     }
 
     client = new Client({ name: "t0-public-deployment-smoke", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(new URL("mcp", baseUrl), {
+    transport = new StreamableHTTPClientTransport(new URL("mcp", baseUrl), {
       requestInit: { headers: { authorization: `Bearer ${firstExchange.accessToken}` } },
     });
     await client.connect(transport as Transport);
@@ -290,8 +291,10 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
       sessionId,
     );
     if (isolationStatus !== 403) throw new Error("Cross-tenant MCP session was not rejected.");
+    await transport.terminateSession();
     await client.close();
     client = undefined;
+    transport = undefined;
 
     await service.revokeCredential(admin, first.id, {
       schema_version: TENANT_ACCESS_SCHEMA_VERSION,
@@ -348,6 +351,13 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
   } catch (error) {
     runFailure = error;
   } finally {
+    if (transport?.sessionId !== undefined) {
+      try {
+        await transport.terminateSession();
+      } catch (error) {
+        cleanupFailure ??= error;
+      }
+    }
     await client?.close().catch(() => undefined);
     for (const [index, credential] of credentials.entries()) {
       if (credential.revoked) continue;
