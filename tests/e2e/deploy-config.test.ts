@@ -210,6 +210,26 @@ describe("safe deployment artifacts", () => {
     expect(compose).not.toContain("fetch('http://127.0.0.1:8080/healthz')");
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
     expect(riskCustomsOverride).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+
+    for (const setting of [
+      "ACCESS_GATEWAY_ADMIN_IDENTITY_MODE",
+      "ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS",
+      "ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS",
+      "ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS",
+    ]) {
+      expect(compose).toContain(setting);
+      expect(env).toContain(setting);
+    }
+  });
+
+  it("documents the exact Cloudflare Access assertion-to-admin mapping boundary", () => {
+    const deployReadme = read("deploy/README.md");
+    expect(deployReadme).toContain("Cf-Access-Jwt-Assertion");
+    expect(deployReadme).toContain("cloudflare-access");
+    expect(deployReadme).toContain("ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS");
+    expect(deployReadme).toContain("ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS");
+    expect(deployReadme).toMatch(/service token[\s\S]*拒绝|拒绝[\s\S]*service token/iu);
+    expect(deployReadme).toContain("显式 email 映射");
   });
 
   it("sets runtime request and header timeout guards", () => {

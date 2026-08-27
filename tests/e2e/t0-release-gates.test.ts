@@ -25,6 +25,39 @@ describe("T0 single-region release gates", () => {
     );
   });
 
+  it("requires an Edge-injected administrator identity for every backend route", () => {
+    const nginx = read("deploy/nginx/www.freightclaw.net.conf");
+
+    expect(nginx).toMatch(
+      /map \$http_cf_access_jwt_assertion \$freightclaw_admin_edge_authenticated \{\s*default 1;\s*"" 0;\s*\}/u,
+    );
+    expect(nginx).toMatch(
+      /map \$http_cf_access_jwt_assertion \$freightclaw_admin_authorization \{\s*default "Bearer \$http_cf_access_jwt_assertion";\s*"" "";\s*\}/u,
+    );
+
+    for (const location of [
+      "location = /admin {",
+      "location = /admin/ {",
+      "location ^~ /admin/api/v1/access/ {",
+      "location = /access-console {",
+      "location ^~ /access-console/ {",
+    ]) {
+      const start = nginx.indexOf(location);
+      expect(start, `${location} is missing`).toBeGreaterThanOrEqual(0);
+      const end = nginx.indexOf("\n    }", start);
+      expect(nginx.slice(start, end)).toContain(
+        "if ($freightclaw_admin_edge_authenticated = 0) { return 401; }",
+      );
+    }
+
+    expect(nginx).toMatch(
+      /location = \/admin \{[\s\S]*?return 308 \/access-console\/;/u,
+    );
+    expect(nginx).toMatch(
+      /location = \/admin\/ \{[\s\S]*?return 308 \/access-console\/;/u,
+    );
+  });
+
   it("hardens the runtime container and routes traffic by readiness", () => {
     const compose = read("deploy/compose.yml");
 

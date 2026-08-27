@@ -37,6 +37,34 @@ Unified Access Gateway 兑换短期 JWT，不能直接进入 MCP 实例。生产
 JWKS 必须使用 HTTPS，并由部署环境配置实际企业域名。示例中的 `.invalid` 地址只用于
 离线 config 检查，不能成为 staging 或 production readback。
 
+### Cloudflare Access 管理员入口
+
+`deploy/nginx/www.freightclaw.net.conf` 只从 Cloudflare Access 注入的
+`Cf-Access-Jwt-Assertion` 构造管理 API 的 Bearer 身份；没有该断言时，`/admin/`、
+`/access-console/` 和 `/admin/api/v1/access/` 均在边缘代理后的 origin 入口失败闭合。
+Gateway 仍会校验 RS256 签名、issuer、application audience、时间窗口和管理员映射，
+不把“存在 header”当成身份证明。
+
+适配 Cloudflare Access 时必须成组提供：
+
+```text
+ACCESS_GATEWAY_ADMIN_JWKS_URL=https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
+ACCESS_GATEWAY_ADMIN_JWKS_HOST=<team>.cloudflareaccess.com
+ACCESS_GATEWAY_ADMIN_ISSUER=https://<team>.cloudflareaccess.com
+ACCESS_GATEWAY_ADMIN_AUDIENCE=<exact-application-aud-tag>
+ACCESS_GATEWAY_ADMIN_IDENTITY_MODE=cloudflare-access
+ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS=<exact-admin-email>[,<exact-admin-email>]
+ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS=<optional-exact-sub>[,<optional-exact-sub>]
+ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS=900
+```
+
+`cloudflare-access` 不依赖宽泛域名或前端隐藏做授权：必须命中显式 email 映射；
+配置 subject 时还必须同时命中精确 `sub`。Gateway 拒绝没有用户 email/sub 的
+service token，并用脱敏稳定的 `sub` 作为审计 actor。不依赖 JWT 中可被截断的大型
+custom group 列表做唯一授权依据。任一核心 IdP 参数、email 映射或密钥健康检查缺失时，
+管理 API 保持 `unavailable`。这只闭合了仓库内的身份适配路径；目标环境的 Access 应用、
+MFA、角色 owner 和真实登录回执仍是上线门禁。
+
 ## 持久平台状态
 
 `MCP_STATE_DB_PATH=/var/lib/logistics-mcp/platform.sqlite` 保存脱敏的 MCP audit、idempotency
