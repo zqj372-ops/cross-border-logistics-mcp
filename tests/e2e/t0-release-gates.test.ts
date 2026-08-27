@@ -6,6 +6,25 @@ const root = resolve(import.meta.dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("T0 single-region release gates", () => {
+  it("preserves the existing public homepage and isolates the access console", () => {
+    const nginx = read("deploy/nginx/www.freightclaw.net.conf");
+
+    expect(nginx).toContain("location = /access-console {");
+    expect(nginx).toContain("location ^~ /access-console/ {");
+    expect(nginx).toMatch(
+      /location = \/access-console \{[\s\S]*?proxy_pass http:\/\/logistics-mcp-access-gateway:8081;/u,
+    );
+    expect(nginx).toMatch(
+      /location \^~ \/access-console\/ \{[\s\S]*?proxy_pass http:\/\/logistics-mcp-access-gateway:8081;/u,
+    );
+    expect(nginx).toMatch(
+      /location \/ \{\s*root \/usr\/share\/nginx\/html;\s*try_files \$uri \$uri\/ =404;\s*\}/u,
+    );
+    expect(nginx).not.toContain(
+      "location / {\n        proxy_pass http://logistics-mcp-access-gateway:8081;",
+    );
+  });
+
   it("hardens the runtime container and routes traffic by readiness", () => {
     const compose = read("deploy/compose.yml");
 
