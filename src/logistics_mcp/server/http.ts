@@ -824,10 +824,15 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       allowedHosts: [...options.allowedHosts],
       allowedOrigins: [...options.allowedOrigins],
       enableDnsRebindingProtection: true,
-      onsessionclosed: (closedSessionId) => {
+      onsessionclosed: async (closedSessionId) => {
         createdSessionIds.delete(closedSessionId);
-        void sessions.delete(closedSessionId).catch(() => undefined);
-        void sessionBindingStore?.delete(closedSessionId).catch(() => undefined);
+        const results = await Promise.allSettled([
+          sessions.delete(closedSessionId),
+          sessionBindingStore?.delete(closedSessionId),
+        ]);
+        if (results.some((result) => result.status === "rejected")) {
+          throw new Error("The MCP session could not be terminated durably.");
+        }
       },
     });
     const server = new McpServer(

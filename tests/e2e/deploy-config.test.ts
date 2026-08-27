@@ -90,6 +90,7 @@ describe("safe deployment artifacts", () => {
     expect(load).toContain("run-synthetic-load");
     expect(load).toContain("revokeCredential");
     expect(load).toContain("setTenantStatus");
+    expect(load).toContain("terminateSession");
     expect(load).toContain("readiness_failures");
     expect(load).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
   });

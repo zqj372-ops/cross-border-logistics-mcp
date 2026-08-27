@@ -354,6 +354,43 @@ describe("Streamable HTTP security boundary", () => {
     expect(bindings.size).toBe(0);
   });
 
+  it("deletes the durable binding when a client explicitly terminates its session", async () => {
+    const bindings = new Map<string, SessionBinding>();
+    const handle = makeHandler({
+      sessionBindingStore: {
+        get: (sessionId) => Promise.resolve(bindings.get(sessionId) ?? null),
+        put: (binding) => {
+          bindings.set(binding.sessionId, binding);
+          return Promise.resolve();
+        },
+        delete: (sessionId) => {
+          bindings.delete(sessionId);
+          return Promise.resolve();
+        },
+      },
+      sessionOwnerId: "worker_terminate_test",
+    });
+    const initialized = await handle(makeRequest(initializeBody));
+    const sessionId = initialized.headers.get("mcp-session-id");
+    expect(sessionId).not.toBeNull();
+    expect(bindings.size).toBe(1);
+
+    const terminated = await handle(new Request("https://mcp.example.invalid/mcp", {
+      method: "DELETE",
+      headers: {
+        authorization: "Bearer test-token",
+        origin: "https://client.example.invalid",
+        host: "mcp.example.invalid",
+        "mcp-session-id": sessionId ?? "",
+      },
+    }));
+
+    expect(terminated.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bindings.size).toBe(0);
+    await handle.close();
+  });
+
   it("maps a verified raw JWT payload only after gateway token policy validation", async () => {
     const now = Math.floor(Date.now() / 1000);
     const handle = makeHandler({

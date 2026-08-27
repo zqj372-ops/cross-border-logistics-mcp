@@ -182,16 +182,38 @@ async function openClient(baseUrl: URL, accessToken: string, name: string): Prom
     }
     return Object.freeze({ client, transport });
   } catch (error) {
+    await transport.terminateSession().catch(() => undefined);
     await client.close().catch(() => undefined);
     throw error;
   }
 }
 
+async function terminateClient(managed: ManagedClient): Promise<void> {
+  let failed = false;
+  try {
+    await managed.transport.terminateSession();
+  } catch {
+    failed = true;
+  }
+  try {
+    await managed.client.close();
+  } catch {
+    failed = true;
+  }
+  if (failed) throw new Error("MCP session termination failed.");
+}
+
 async function closeClients(clients: readonly ManagedClient[]): Promise<void> {
+  let failed = false;
   for (const managed of clients) {
-    await managed.client.close().catch(() => undefined);
+    try {
+      await terminateClient(managed);
+    } catch {
+      failed = true;
+    }
     await delay(SESSION_STEP_MS);
   }
+  if (failed) throw new Error("One or more MCP sessions were not terminated.");
 }
 
 function statusFromToolResult(result: unknown): string {
@@ -322,7 +344,7 @@ async function runLoad(input: Readonly<{
           );
           const previous = clients[index]!;
           clients[index] = replacement;
-          await previous.client.close();
+          await terminateClient(previous);
           await delay(SESSION_STEP_MS);
         }
         tokenRenewals += 1;
