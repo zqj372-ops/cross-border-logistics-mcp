@@ -78,6 +78,22 @@ describe("safe deployment artifacts", () => {
     expect(smoke).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
   });
 
+  it("packages the bounded T0 deployment load runner", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const packageJson = read("package.json");
+    const load = read("services/access-gateway/deployment-load.ts");
+
+    expect(build).toContain("services/access-gateway/deployment-load.ts");
+    expect(build).toContain("dist/services/access-gateway/deployment-load.mjs");
+    expect(packageJson).toContain("load:t0-deployment");
+    expect(load).toContain("DEPLOYMENT_LOAD_CONFIRM");
+    expect(load).toContain("run-synthetic-load");
+    expect(load).toContain("revokeCredential");
+    expect(load).toContain("setTenantStatus");
+    expect(load).toContain("readiness_failures");
+    expect(load).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
+  });
+
   it("copies every registered Agent source into the image build stage", () => {
     const dockerfile = read("deploy/Dockerfile");
     const registry = JSON.parse(read("docs/agent/index.json")) as {

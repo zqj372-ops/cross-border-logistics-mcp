@@ -80,6 +80,17 @@ await build({
   legalComments: "none",
 });
 
+await build({
+  entryPoints: ["services/access-gateway/deployment-load.ts"],
+  outfile: "dist/services/access-gateway/deployment-load.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
+  sourcemap: false,
+  legalComments: "none",
+});
+
 execFileSync(process.execPath, [
   "--import",
   "tsx/esm",

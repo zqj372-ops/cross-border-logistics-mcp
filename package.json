@@ -19,6 +19,7 @@
     "start:access-gateway": "npm run build && node dist/services/access-gateway/start.mjs",
     "init:access-gateway": "npm run build && node deploy/scripts/init-access-gateway.mjs",
     "smoke:t0-deployment": "node dist/services/access-gateway/deployment-smoke.mjs",
+    "load:t0-deployment": "node dist/services/access-gateway/deployment-load.mjs",
     "test": "vitest run",
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
     "typecheck": "tsc --noEmit",
