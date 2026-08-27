@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -68,6 +68,28 @@ afterEach(() => {
 });
 
 describe("standalone Access Gateway runtime", () => {
+  it("removes every artifact from a failed initialization so a safe retry can succeed", async () => {
+    const applicationRoot = mkdtempSync(join(tmpdir(), "logistics-mcp-access-init-"));
+    roots.push(applicationRoot);
+    await expect(initializeAccessGatewayState({
+      applicationRoot,
+      instanceId: "invalid instance id",
+      managementTenantId: "tenant_management",
+    })).rejects.toBeDefined();
+    const secrets = gatewaySecretPaths(applicationRoot);
+    expect(existsSync(secrets.secretsDir)).toBe(false);
+    expect(existsSync(join(applicationRoot, ".runtime", "mcp-tenant-access"))).toBe(false);
+    expect(existsSync(join(applicationRoot, ".runtime", "access-gateway-operations"))).toBe(false);
+
+    const initialized = await initializeAccessGatewayState({
+      applicationRoot,
+      instanceId: "gateway_01",
+      managementTenantId: "tenant_management",
+    });
+    expect(initialized.jwtPublicKeySha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(initialized.pepperSha256).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
   it("serves candidate readiness, JWKS and a real API Key to short JWT exchange", async () => {
     const applicationRoot = mkdtempSync(join(tmpdir(), "logistics-mcp-access-runtime-"));
     roots.push(applicationRoot);

@@ -254,7 +254,11 @@ function credentialDto(
               : "active";
   const allowedActions: TenantAccessCredentialAction[] = [];
   if (status === "active") {
-    if (deliveryStatus === "pending" && clientStatus === "active") {
+    if (
+      deliveryStatus === "pending" &&
+      tenantStatus === "active" &&
+      clientStatus === "active"
+    ) {
       allowedActions.push("acknowledge_delivery");
     }
     if (

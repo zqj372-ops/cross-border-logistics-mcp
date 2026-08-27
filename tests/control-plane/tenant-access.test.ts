@@ -452,6 +452,28 @@ describe("Tenant Access SQLite store and service", () => {
       },
       "idem_rotate_pending_0001",
     )).rejects.toMatchObject({ code: "credential_delivery_pending" });
+
+    await service.setTenantStatus(
+      adminContext(),
+      "tenant_demo_a",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "suspended",
+        reason_code: "operator_suspended",
+      },
+      "idem_suspend_pending_tenant_0001",
+    );
+    const suspended = await service.getState(adminContext());
+    expect(suspended.data.credentials).toContainEqual(expect.objectContaining({
+      credential_id: issued.data.credential.credential_id,
+      effective_status: "tenant_suspended",
+      allowed_actions: ["revoke"],
+    }));
+    await expect(acknowledgeCredential(
+      service,
+      issued.data.credential.credential_id,
+      "idem_ack_suspended_credential_0001",
+    )).rejects.toMatchObject({ code: "tenant_not_active" });
   });
 
   it("fails closed for disallowed scopes, suspended tenants, expiry, revoke, and rotation", async () => {

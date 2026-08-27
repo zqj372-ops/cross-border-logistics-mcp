@@ -1151,6 +1151,9 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         const credential = this.#credential(database, request.credentialId);
         if (credential.status !== "active") repositoryFailure("credential_not_active");
         if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        if (this.#tenant(database, credential.tenantId).status !== "active") {
+          repositoryFailure("tenant_not_active");
+        }
         if (this.#client(database, credential.tenantId, credential.clientId).status !== "active") {
           repositoryFailure("client_not_active");
         }

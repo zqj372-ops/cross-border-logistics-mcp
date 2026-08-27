@@ -3,13 +3,10 @@ import { readFile } from "node:fs/promises";
 import { fixtureSnapshot } from "./fixture-data.js";
 import {
   architectureNodeStatus,
-  createTenantAccessClient,
   deriveArchitectureModel,
   escapeHtml,
   safeOpaqueReference,
-  TENANT_ACCESS_SCHEMA_VERSION,
   toChineseDisplayText,
-  validateTenantAccessState,
   validateSnapshot,
 } from "./app.js";
 import {
@@ -57,25 +54,6 @@ assert.match(files.app, /source\.last_checked_at/);
 assert.match(files.app, /source\.last_success_at/);
 assert.match(files.app, /source\.affected_tools/);
 assert.match(files.app, /renderModuleCenter/);
-assert.match(files.app, /renderTenantAccess/);
-assert.match(files.app, /\/admin\/api\/v1\/access\/state/);
-assert.match(files.app, /secret_last_four/);
-assert.match(files.app, /key_prefix/);
-assert.match(files.app, /复制后无法恢复/);
-assert.match(files.app, /createTenantAccessClient/);
-assert.match(files.app, /setTenantStatus/);
-assert.match(files.app, /issueCredential/);
-assert.match(files.app, /rotateCredential/);
-assert.match(files.app, /revokeCredential/);
-assert.match(files.app, /acknowledgeCredentialDelivery/);
-assert.match(files.app, /操作状态流转/);
-assert.match(files.app, /确认已安全保存/);
-assert.match(files.app, /operation_id/);
-assert.match(files.app, /delivery_status/);
-assert.match(files.app, /idempotency-key/i);
-assert.match(files.app, /Bearer/);
-assert.doesNotMatch(files.app, /localStorage|sessionStorage|document\.cookie/);
-assert.doesNotMatch(files.app, /apiKey[^\n]*(?:location|storage|cookie)/i);
 assert.match(files.app, /createControlPlaneClient/);
 assert.match(files.app, /data-control-action/);
 assert.match(files.app, /manual_review/);
@@ -84,13 +62,6 @@ assert.match(files.app, /未获生产资格/);
 assert.match(files.app, /不写入存储、地址栏、页面文本或日志/);
 assert.match(files.app, /本地演示申请人/);
 assert.match(files.app, /本地演示审批人/);
-assert.match(files.html, /data-view="tenant-access"/);
-assert.match(files.html, /租户与 API Key/);
-assert.match(files.html, /credential-tool-dialog/);
-assert.match(files.html, /调整功能并轮换/);
-assert.match(files.html, /id="access-identity-dialog"/);
-assert.match(files.html, /id="one-time-credential-dialog"/);
-assert.match(files.html, /id="one-time-credential-body"/);
 assert.match(files.html, /data-view="modules"/);
 assert.match(files.html, /模块中心/);
 assert.match(files.html, /Agent 接入/);
@@ -103,10 +74,6 @@ assert.match(files.html, /id="identity-token"[^>]+type="password"/);
 assert.match(files.css, /--navy:/);
 assert.match(files.css, /prefers-reduced-motion/);
 assert.match(files.css, /overflow-x: auto/);
-assert.match(files.css, /tenant-access/);
-assert.match(files.css, /credential-tool-dialog/);
-assert.match(files.css, /one-time-credential/);
-assert.match(files.css, /access-flow-rail/);
 assert.doesNotMatch(files.css, /linear-gradient|radial-gradient|backdrop-filter/i);
 assert.doesNotMatch(files.controlPlane, /\b(?:localStorage|sessionStorage|document|window|console)\b/);
 assert.match(files.controlPlane, /authorization/);
@@ -388,88 +355,5 @@ assert.equal(legacyArchitecture.sources[0].affectedTools.length, 0);
 const missingSourceArchitecture = deriveArchitectureModel({ ...fixtureSnapshot, sources: [{ name: "source_without_status" }] });
 assert.equal(missingSourceArchitecture.sources[0].readiness, "empty");
 assert.match(architectureNodeStatus(missingSourceArchitecture.sources[0], "source"), /暂无记录/);
-
-const accessTenant = {
-  tenant_id: "tenant_self_check",
-  display_name: "自检租户",
-  status: "active",
-  created_at: "2026-08-27T00:00:00.000Z",
-  updated_at: "2026-08-27T00:00:00.000Z",
-  allowed_actions: ["suspend"],
-};
-const accessCredential = {
-  credential_id: "key_self_check",
-  tenant_id: accessTenant.tenant_id,
-  client_id: "self_check_client",
-  label: "自检客户端",
-  actor_role: "service",
-  roles: ["service"],
-  tool_names: ["cargo.calculate"],
-  status: "active",
-  delivery_status: "pending",
-  delivery_acknowledged_at: null,
-  effective_status: "pending_delivery",
-  allowed_actions: ["acknowledge_delivery", "revoke"],
-  key_prefix: "lmcpk_key_self_check",
-  secret_last_four: "AAAA",
-  created_at: "2026-08-27T00:00:00.000Z",
-  expires_at: 1_802_505_600,
-  last_used_at: null,
-  revoked_at: null,
-  rotated_from_id: null,
-};
-const accessState = {
-  available_tools: [{ tool_name: "cargo.calculate", kind: "read" }],
-  tenants: [accessTenant],
-  credentials: [accessCredential],
-  operations: [{
-    operation_id: "event_self_check",
-    tenant_id: accessTenant.tenant_id,
-    credential_id: accessCredential.credential_id,
-    actor_ref: "actor_self_check",
-    action: "credential.issue",
-    from_status: "absent",
-    to_status: "pending_delivery",
-    status: "success",
-    reason_code: "operator_issued",
-    created_at: "2026-08-27T00:00:00.000Z",
-  }],
-};
-assert.equal(TENANT_ACCESS_SCHEMA_VERSION, "2026-08-27.v1");
-assert.equal(validateTenantAccessState(accessState), accessState);
-assert.throws(() => validateTenantAccessState({
-  ...accessState,
-  credentials: [{ ...accessCredential, api_key: `lmcpk_${accessCredential.credential_id}_${"A".repeat(43)}` }],
-}), /字段不完整/);
-
-const accessRequests = [];
-const accessApiKey = `lmcpk_${accessCredential.credential_id}_${"A".repeat(43)}`;
-const accessClient = createTenantAccessClient({
-  fetchImpl: async (input, init) => {
-    const path = new URL(String(input), "http://127.0.0.1").pathname;
-    const headers = new Headers(init?.headers);
-    accessRequests.push({ path, init, authorization: headers.get("authorization"), idempotency: headers.get("idempotency-key") });
-    if (path.endsWith("/state")) {
-      return new Response(JSON.stringify({ schema_version: TENANT_ACCESS_SCHEMA_VERSION, status: "success", data: accessState, reason_codes: [] }));
-    }
-    return new Response(JSON.stringify({
-      schema_version: TENANT_ACCESS_SCHEMA_VERSION,
-      status: "success",
-      data: { credential: accessCredential, api_key: accessApiKey, operation: accessState.operations[0] },
-      reason_codes: [],
-      secret_delivery: { status: "one_time", credential_id: accessCredential.credential_id },
-    }));
-  },
-});
-accessClient.setToken("self-check-memory-token");
-assert.deepEqual(await accessClient.getState(), accessState);
-assert.equal((await accessClient.issueCredential({})).api_key, accessApiKey);
-assert.equal(accessRequests[0].authorization, "Bearer self-check-memory-token");
-assert.equal(accessRequests[0].init.credentials, "omit");
-assert.equal(accessRequests[1].init.method, "POST");
-assert.ok(accessRequests[1].idempotency.length >= 16);
-const blockedAccessClient = createTenantAccessClient({ allowWrites: false, fetchImpl: async () => { throw new Error("must not request"); } });
-blockedAccessClient.setToken("self-check-memory-token");
-await assert.rejects(() => blockedAccessClient.createTenant({}), { status: "blocked" });
 
 console.log("admin console self-check: PASS");

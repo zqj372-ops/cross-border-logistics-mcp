@@ -240,8 +240,11 @@ async function refreshState(options = {}) {
     const payload = await api("/state");
     renderState(payload);
     setStatus("ready", "状态已读回", "租户、Key 权限和操作状态均来自服务端。");
+    return payload;
   } catch (error) {
     setStatus("blocked", "状态不可用", reason(error));
+    if (options.propagate === true) throw error;
+    return null;
   }
 }
 
@@ -265,7 +268,18 @@ async function post(path, body, successMessage) {
       elements.oneTimeKey.textContent = payload.data.api_key;
       elements.oneTimePanel.hidden = false;
     }
-    await refreshState({ announce: false });
+    const operationId = payload?.data?.operation?.operation_id;
+    if (typeof operationId !== "string") {
+      throw new ApiError({ reason_codes: ["readback_not_verified"] });
+    }
+    const readback = await refreshState({ announce: false, propagate: true });
+    const operations = readback?.data?.operations;
+    if (
+      !Array.isArray(operations) ||
+      !operations.some((operation) => operation?.operation_id === operationId)
+    ) {
+      throw new ApiError({ reason_codes: ["readback_not_verified"] });
+    }
     setStatus("ready", successMessage, "服务端已提交并返回状态流转证据。");
     return payload;
   } catch (error) {

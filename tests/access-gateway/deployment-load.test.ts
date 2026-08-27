@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeLatency } from "../../services/access-gateway/deployment-load";
+import {
+  inspectToolOutcome,
+  summarizeLatency,
+} from "../../services/access-gateway/deployment-load";
 
 describe("T0 deployment load metrics", () => {
   it("reports deterministic nearest-rank percentiles without mutating samples", () => {
@@ -17,5 +20,25 @@ describe("T0 deployment load metrics", () => {
 
   it("rejects an empty latency sample", () => {
     expect(() => summarizeLatency([])).toThrow("Latency samples are empty.");
+  });
+
+  it("counts an audit persistence blocker separately from transport failures", () => {
+    expect(inspectToolOutcome({
+      structuredContent: {
+        status: "manual_review",
+        blockers: [{
+          code: "audit.persistence_failed",
+          message: "Audit unavailable.",
+          severity: "error",
+          field: null,
+        }],
+      },
+    })).toEqual({ status: "manual_review", auditFailed: true });
+    expect(inspectToolOutcome({
+      structuredContent: {
+        status: "success",
+        blockers: [],
+      },
+    })).toEqual({ status: "success", auditFailed: false });
   });
 });

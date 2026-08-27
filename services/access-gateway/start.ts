@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -20,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   initializeSqliteTenantAccessState,
   SqliteTenantAccessStore,
+  tenantAccessPaths,
 } from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
 import { TenantAccessService } from "../../src/logistics_mcp/control-plane/tenant-access-service";
 import { createAdminTenantAccessApiHandler } from "../../src/logistics_mcp/server/admin-tenant-access-api";
@@ -37,6 +39,7 @@ import {
 } from "./production-identity";
 import {
   initializeSqliteGatewayOperationalState,
+  gatewayOperationalPaths,
   SqliteGatewayOperationalStore,
   TenantAccessGatewayRepository,
 } from "./production-store";
@@ -75,6 +78,16 @@ function normalizedRoot(applicationRoot: string): string {
   return root;
 }
 
+function entryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 export async function initializeAccessGatewayState(input: Readonly<{
   applicationRoot: string;
   instanceId: string;
@@ -86,31 +99,49 @@ export async function initializeAccessGatewayState(input: Readonly<{
   const root = normalizedRoot(input.applicationRoot);
   const runtimeDir = join(root, ".runtime");
   const secrets = gatewaySecretPaths(root);
-  mkdirSync(runtimeDir, { mode: 0o700 });
-  chmodSync(runtimeDir, 0o700);
-  mkdirSync(secrets.secretsDir, { mode: 0o700 });
-  chmodSync(secrets.secretsDir, 0o700);
-  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 3072 });
-  const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
-  const publicDer = publicKey.export({ type: "spki", format: "der" });
-  const pepper = randomBytes(48);
-  writeFileSync(secrets.jwtSigningKeyPath, privatePem, { flag: "wx", mode: 0o400 });
-  writeFileSync(secrets.credentialPepperPath, pepper, { flag: "wx", mode: 0o400 });
-  chmodSync(secrets.jwtSigningKeyPath, 0o400);
-  chmodSync(secrets.credentialPepperPath, 0o400);
-  await initializeSqliteTenantAccessState({
-    applicationRoot: root,
-    instanceId: input.instanceId,
-    managementTenantId: input.managementTenantId,
-  });
-  await initializeSqliteGatewayOperationalState({
-    applicationRoot: root,
-    instanceId: input.instanceId,
-  });
-  return Object.freeze({
-    jwtPublicKeySha256: createHash("sha256").update(publicDer).digest("hex"),
-    pepperSha256: createHash("sha256").update(pepper).digest("hex"),
-  });
+  const tenantPaths = tenantAccessPaths(root);
+  const operationalPaths = gatewayOperationalPaths(root);
+  if (
+    entryExists(secrets.secretsDir) ||
+    entryExists(tenantPaths.stateDir) ||
+    entryExists(operationalPaths.stateDir)
+  ) {
+    throw new TypeError("Access Gateway state is already initialized or incomplete.");
+  }
+  const runtimeExisted = entryExists(runtimeDir);
+  try {
+    mkdirSync(runtimeDir, { mode: 0o700 });
+    chmodSync(runtimeDir, 0o700);
+    mkdirSync(secrets.secretsDir, { mode: 0o700 });
+    chmodSync(secrets.secretsDir, 0o700);
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 3072 });
+    const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
+    const publicDer = publicKey.export({ type: "spki", format: "der" });
+    const pepper = randomBytes(48);
+    writeFileSync(secrets.jwtSigningKeyPath, privatePem, { flag: "wx", mode: 0o400 });
+    writeFileSync(secrets.credentialPepperPath, pepper, { flag: "wx", mode: 0o400 });
+    chmodSync(secrets.jwtSigningKeyPath, 0o400);
+    chmodSync(secrets.credentialPepperPath, 0o400);
+    await initializeSqliteTenantAccessState({
+      applicationRoot: root,
+      instanceId: input.instanceId,
+      managementTenantId: input.managementTenantId,
+    });
+    await initializeSqliteGatewayOperationalState({
+      applicationRoot: root,
+      instanceId: input.instanceId,
+    });
+    return Object.freeze({
+      jwtPublicKeySha256: createHash("sha256").update(publicDer).digest("hex"),
+      pepperSha256: createHash("sha256").update(pepper).digest("hex"),
+    });
+  } catch (error) {
+    rmSync(secrets.secretsDir, { recursive: true, force: true });
+    rmSync(tenantPaths.stateDir, { recursive: true, force: true });
+    rmSync(operationalPaths.stateDir, { recursive: true, force: true });
+    if (!runtimeExisted) rmSync(runtimeDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function requiredSetting(name: string): string {

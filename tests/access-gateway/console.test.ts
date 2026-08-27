@@ -23,5 +23,8 @@ describe("narrow Access Console boundary", () => {
     expect(app).toMatch(/Idempotency-Key/iu);
     expect(app).toMatch(/acknowledge-delivery|rotate|revoke/iu);
     expect(app).toMatch(/tool_names/iu);
+    expect(app).toMatch(/operation_id/iu);
+    expect(app).toMatch(/readback_not_verified/iu);
+    expect(html).not.toMatch(/7776000|90 天/iu);
   });
 });

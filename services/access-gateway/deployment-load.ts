@@ -216,11 +216,26 @@ async function closeClients(clients: readonly ManagedClient[]): Promise<void> {
   if (failed) throw new Error("One or more MCP sessions were not terminated.");
 }
 
-function statusFromToolResult(result: unknown): string {
+export function inspectToolOutcome(result: unknown): Readonly<{
+  status: string;
+  auditFailed: boolean;
+}> {
   const structured = asRecord(asRecord(result, "Tool result").structuredContent, "Tool envelope");
   const status = structured.status;
   if (typeof status !== "string" || status.length === 0) throw new Error("Tool status is invalid.");
-  return status;
+  const blockers = structured.blockers;
+  if (!Array.isArray(blockers)) throw new Error("Tool blockers are invalid.");
+  const blockerCodes = blockers.map((blocker) => {
+    const code = asRecord(blocker, "Tool blocker").code;
+    if (typeof code !== "string" || code.length === 0) {
+      throw new Error("Tool blocker code is invalid.");
+    }
+    return code;
+  });
+  return Object.freeze({
+    status,
+    auditFailed: blockerCodes.includes("audit.persistence_failed"),
+  });
 }
 
 function isAuthenticationFailure(error: unknown): boolean {
@@ -276,6 +291,7 @@ async function runLoad(input: Readonly<{
     const statuses: Record<string, number> = Object.create(null) as Record<string, number>;
     let transportErrors = 0;
     let authenticationRejections = 0;
+    let auditFailures = 0;
     let readinessSamples = 0;
     let readinessFailures = 0;
     let tokenRenewals = 0;
@@ -301,8 +317,9 @@ async function runLoad(input: Readonly<{
             name: "system.agent_context.get",
             arguments: { profile_id: "runtime-caller" },
           });
-          const status = statusFromToolResult(result);
-          statuses[status] = (statuses[status] ?? 0) + 1;
+          const outcome = inspectToolOutcome(result);
+          statuses[outcome.status] = (statuses[outcome.status] ?? 0) + 1;
+          if (outcome.auditFailed) auditFailures += 1;
         } catch (error) {
           transportErrors += 1;
           if (isAuthenticationFailure(error)) authenticationRejections += 1;
@@ -360,7 +377,6 @@ async function runLoad(input: Readonly<{
     await Promise.all([...workers, readiness, renewals]);
     const actualDurationSeconds = rounded((Date.now() - startedAt) / 1_000);
     const calls = summarizeLatency(latencies);
-    const auditFailures = transportErrors;
     return Object.freeze({
       concurrency: input.concurrency,
       target_duration_seconds: input.durationSeconds,
