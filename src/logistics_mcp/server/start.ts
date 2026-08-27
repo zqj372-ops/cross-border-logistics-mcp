@@ -723,6 +723,7 @@ const DISABLED_TENANT_ACCESS_SERVICE: TenantAccessAdminService = Object.freeze({
   getState: rejectTenantAccessCall,
   createTenant: rejectTenantAccessCall,
   setTenantStatus: rejectTenantAccessCall,
+  setClientStatus: rejectTenantAccessCall,
   issueCredential: rejectTenantAccessCall,
   rotateCredential: rejectTenantAccessCall,
   revokeCredential: rejectTenantAccessCall,

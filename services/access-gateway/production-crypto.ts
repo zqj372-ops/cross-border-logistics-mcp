@@ -2,12 +2,13 @@ import {
   createHash,
   createPrivateKey,
   createPublicKey,
+  randomBytes,
   scrypt,
   timingSafeEqual,
   type KeyObject,
 } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { chmodSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { SignJWT } from "jose";
 
@@ -24,6 +25,9 @@ const SCRYPT_OPTIONS = Object.freeze({
 });
 const DUMMY_SALT = new Uint8Array(16).fill(0x5a);
 const DUMMY_HASH = new Uint8Array(SCRYPT_KEY_LENGTH).fill(0xa5);
+const KEY_HISTORY_FORMAT = "access-gateway-jwt-key-history/v1" as const;
+const MIN_KEY_RETENTION_SECONDS = 900 + 30 + 300;
+const MAX_KEY_RETENTION_SECONDS = 7 * 24 * 60 * 60;
 
 function readProtectedFile(path: string, label: string): Buffer {
   if (!isAbsolute(path)) throw new TypeError(`${label} path must be absolute.`);
@@ -121,6 +125,183 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
 
 export interface FileJwtSigningProviderOptions {
   readonly privateKeyPath: string;
+  readonly historyPath: string;
+  readonly nowSeconds: () => number;
+  readonly retentionSeconds: number;
+}
+
+type SigningPublicJwk = ReturnType<typeof publicJwkFor>;
+
+interface KeyHistory {
+  readonly format: typeof KEY_HISTORY_FORMAT;
+  readonly active: SigningPublicJwk;
+  readonly previous: Readonly<{
+    readonly key: SigningPublicJwk;
+    readonly retireAfter: number;
+  }> | null;
+}
+
+function publicJwkFromUnknown(value: unknown): SigningPublicJwk {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join(",") !== "alg,e,kid,kty,n,use" ||
+    record.kty !== "RSA" ||
+    record.alg !== "RS256" ||
+    record.use !== "sig" ||
+    typeof record.kid !== "string" ||
+    !/^[A-Za-z0-9_-]{8,128}$/u.test(record.kid) ||
+    typeof record.n !== "string" ||
+    !/^[A-Za-z0-9_-]{128,1024}$/u.test(record.n) ||
+    typeof record.e !== "string" ||
+    !/^[A-Za-z0-9_-]{1,16}$/u.test(record.e)
+  ) {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  const calculatedKid = createHash("sha256")
+    .update(`logistics-mcp-rs256\u0000${record.n}\u0000${record.e}`, "utf8")
+    .digest("base64url");
+  if (calculatedKid !== record.kid) throw new TypeError("JWT key history is invalid.");
+  return Object.freeze({
+    kty: "RSA",
+    kid: record.kid,
+    alg: "RS256",
+    use: "sig",
+    n: record.n,
+    e: record.e,
+  });
+}
+
+function readKeyHistory(path: string): KeyHistory | null {
+  let bytes: Buffer;
+  try {
+    bytes = readProtectedFile(path, "JWT key history");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join(",") !== "active,format,previous" ||
+    record.format !== KEY_HISTORY_FORMAT
+  ) {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  const active = publicJwkFromUnknown(record.active);
+  if (record.previous === null) {
+    return Object.freeze({ format: KEY_HISTORY_FORMAT, active, previous: null });
+  }
+  if (typeof record.previous !== "object" || Array.isArray(record.previous)) {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  const previous = record.previous as Record<string, unknown>;
+  if (
+    Object.keys(previous).sort().join(",") !== "key,retire_after" ||
+    !Number.isSafeInteger(previous.retire_after) ||
+    (previous.retire_after as number) < 0
+  ) {
+    throw new TypeError("JWT key history is invalid.");
+  }
+  const previousKey = publicJwkFromUnknown(previous.key);
+  if (previousKey.kid === active.kid) throw new TypeError("JWT key history is invalid.");
+  return Object.freeze({
+    format: KEY_HISTORY_FORMAT,
+    active,
+    previous: Object.freeze({
+      key: previousKey,
+      retireAfter: previous.retire_after as number,
+    }),
+  });
+}
+
+function writeKeyHistory(path: string, value: KeyHistory): void {
+  if (!isAbsolute(path)) throw new TypeError("JWT key history path must be absolute.");
+  const parent = resolve(dirname(path));
+  const parentEntry = lstatSync(parent);
+  if (!parentEntry.isDirectory() || parentEntry.isSymbolicLink()) {
+    throw new TypeError("JWT key history parent must be a real directory.");
+  }
+  const temporaryPath = join(parent, `.jwt-key-history-${randomBytes(12).toString("hex")}.tmp`);
+  const serialized = `${JSON.stringify({
+    format: value.format,
+    active: value.active,
+    previous: value.previous === null
+      ? null
+      : { key: value.previous.key, retire_after: value.previous.retireAfter },
+  }, null, 2)}\n`;
+  try {
+    writeFileSync(temporaryPath, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    chmodSync(temporaryPath, 0o600);
+    renameSync(temporaryPath, path);
+    chmodSync(path, 0o600);
+  } catch (error) {
+    try {
+      rmSync(temporaryPath, { force: true });
+    } catch {
+      // Preserve the history write error.
+    }
+    throw error;
+  }
+}
+
+function selectKeyHistory(
+  current: SigningPublicJwk,
+  previousHistory: KeyHistory | null,
+  nowSeconds: number,
+  retentionSeconds: number,
+): KeyHistory {
+  if (!Number.isSafeInteger(nowSeconds) || nowSeconds < 0) {
+    throw new TypeError("JWT key history clock is invalid.");
+  }
+  if (
+    !Number.isSafeInteger(retentionSeconds) ||
+    retentionSeconds < MIN_KEY_RETENTION_SECONDS ||
+    retentionSeconds > MAX_KEY_RETENTION_SECONDS
+  ) {
+    throw new TypeError("JWT key retention window is invalid.");
+  }
+  if (previousHistory === null) {
+    return Object.freeze({ format: KEY_HISTORY_FORMAT, active: current, previous: null });
+  }
+  const retained = previousHistory.previous?.retireAfter !== undefined &&
+    previousHistory.previous.retireAfter > nowSeconds
+    ? previousHistory.previous
+    : null;
+  if (previousHistory.active.kid === current.kid) {
+    return Object.freeze({ format: KEY_HISTORY_FORMAT, active: current, previous: retained });
+  }
+  if (retained?.key.kid === current.kid) {
+    return Object.freeze({
+      format: KEY_HISTORY_FORMAT,
+      active: current,
+      previous: Object.freeze({
+        key: previousHistory.active,
+        retireAfter: Math.max(retained.retireAfter, nowSeconds + retentionSeconds),
+      }),
+    });
+  }
+  if (retained !== null) {
+    throw new TypeError("JWT signing key cannot rotate again before the retained key expires.");
+  }
+  return Object.freeze({
+    format: KEY_HISTORY_FORMAT,
+    active: current,
+    previous: Object.freeze({
+      key: previousHistory.active,
+      retireAfter: nowSeconds + retentionSeconds,
+    }),
+  });
 }
 
 function publicJwkFor(privateKey: KeyObject): Readonly<{
@@ -158,6 +339,9 @@ export class FileJwtSigningProvider implements JwtSigningProvider {
   readonly #jwks: JwksResponse;
 
   constructor(options: FileJwtSigningProviderOptions) {
+    if (!isAbsolute(options.historyPath) || options.historyPath === options.privateKeyPath) {
+      throw new TypeError("JWT key history path is invalid.");
+    }
     const pem = readProtectedFile(options.privateKeyPath, "JWT signing key");
     const privateKey = createPrivateKey(pem);
     if (
@@ -166,8 +350,21 @@ export class FileJwtSigningProvider implements JwtSigningProvider {
     ) {
       throw new TypeError("JWT signing key must be RSA with at least 2048 bits.");
     }
+    const current = publicJwkFor(privateKey);
+    const history = selectKeyHistory(
+      current,
+      readKeyHistory(options.historyPath),
+      options.nowSeconds(),
+      options.retentionSeconds,
+    );
+    writeKeyHistory(options.historyPath, history);
     this.#privateKey = privateKey;
-    this.#jwks = Object.freeze({ keys: Object.freeze([publicJwkFor(privateKey)]) });
+    this.#jwks = Object.freeze({
+      keys: Object.freeze([
+        history.active,
+        ...(history.previous === null ? [] : [history.previous.key]),
+      ]),
+    });
   }
 
   async sign(claims: JwtClaims): Promise<SignedJwt> {

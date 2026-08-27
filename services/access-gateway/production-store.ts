@@ -17,6 +17,7 @@ import type {
   SqliteTenantAccessStore,
 } from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
 import type {
+  ClientRecord as TenantStoreClientRecord,
   StoredCredentialRecord as TenantStoredCredentialRecord,
   TenantAccessEventRecord,
   TenantAccessStateRecord,
@@ -310,34 +311,40 @@ export class SqliteGatewayOperationalStore implements GatewayAuditRepository, Ra
     if (!Number.isSafeInteger(input.nowSeconds) || input.nowSeconds < 0) {
       return Promise.reject(new TypeError("Rate limit time is invalid."));
     }
-    const bucketKey = createHash("sha256")
-      .update(
-        `access-gateway-rate/v1\u0000${input.tenantId}\u0000${input.clientId}` +
-        `\u0000${input.credentialId}\u0000${input.clientIp}`,
-        "utf8",
-      )
-      .digest("hex");
+    const bucketKeys = [
+      ["tenant", input.tenantId],
+      ["client", input.tenantId, input.clientId],
+      ["credential", input.credentialId],
+      ["ip", input.clientIp],
+    ].map((parts) => createHash("sha256")
+      .update(`access-gateway-rate/v2\u0000${parts.join("\u0000")}`, "utf8")
+      .digest("hex"));
     const windowStart = Math.floor(input.nowSeconds / 60) * 60;
     database.exec("BEGIN IMMEDIATE");
     try {
       database.prepare("DELETE FROM gateway_rate_windows WHERE window_start < ?")
         .run(windowStart - 3_600);
-      const row = database.prepare(`
-        SELECT window_start, request_count FROM gateway_rate_windows WHERE bucket_key = ?
-      `).get(bucketKey) as SqlRow | undefined;
-      const currentCount = row?.window_start === windowStart &&
-        typeof row.request_count === "number" ? row.request_count : 0;
-      if (currentCount >= this.#rateLimitPerMinute) {
+      const counts = bucketKeys.map((bucketKey) => {
+        const row = database.prepare(`
+          SELECT window_start, request_count FROM gateway_rate_windows WHERE bucket_key = ?
+        `).get(bucketKey) as SqlRow | undefined;
+        return row?.window_start === windowStart && typeof row.request_count === "number"
+          ? row.request_count
+          : 0;
+      });
+      if (counts.some((count) => count >= this.#rateLimitPerMinute)) {
         database.exec("COMMIT");
         return Promise.resolve(false);
       }
-      database.prepare(`
-        INSERT INTO gateway_rate_windows (bucket_key, window_start, request_count)
-        VALUES (?, ?, ?)
-        ON CONFLICT(bucket_key) DO UPDATE SET
-          window_start = excluded.window_start,
-          request_count = excluded.request_count
-      `).run(bucketKey, windowStart, currentCount + 1);
+      for (const [index, bucketKey] of bucketKeys.entries()) {
+        database.prepare(`
+          INSERT INTO gateway_rate_windows (bucket_key, window_start, request_count)
+          VALUES (?, ?, ?)
+          ON CONFLICT(bucket_key) DO UPDATE SET
+            window_start = excluded.window_start,
+            request_count = excluded.request_count
+        `).run(bucketKey, windowStart, (counts[index] ?? 0) + 1);
+      }
       database.exec("COMMIT");
       return Promise.resolve(true);
     } catch (error) {
@@ -381,14 +388,14 @@ function gatewayTenant(value: TenantStoreRecord): TenantRecord {
   });
 }
 
-function gatewayClient(value: TenantStoredCredentialRecord): ClientRecord {
+function gatewayClient(value: TenantStoreClientRecord): ClientRecord {
   return Object.freeze({
     clientId: value.clientId,
     tenantId: value.tenantId,
     label: value.label,
-    status: "active",
+    status: value.status,
     createdAt: value.createdAt,
-    updatedAt: value.lastUsedAt ?? value.createdAt,
+    updatedAt: value.updatedAt,
     version: 1,
   });
 }
@@ -428,17 +435,20 @@ function gatewayCredential(
 function publicCredential(
   value: StoredCredentialRecord,
   tenantStatus: TenantStoreRecord["status"],
+  clientStatus: TenantStoreClientRecord["status"],
   nowSeconds: number,
 ): PublicCredentialRecord {
   const effectiveStatus = value.status === "revoked"
     ? "revoked"
     : value.expiresAt <= nowSeconds
       ? "expired"
-      : value.deliveryStatus === "pending"
-        ? "pending_delivery"
-        : tenantStatus === "suspended"
+      : tenantStatus === "suspended"
           ? "tenant_suspended"
-          : "active";
+          : clientStatus === "disabled"
+            ? "client_disabled"
+            : value.deliveryStatus === "pending"
+              ? "pending_delivery"
+              : "active";
   return Object.freeze({
     credentialId: value.credentialId,
     tenantId: value.tenantId,
@@ -473,6 +483,9 @@ function operationTransition(event: TenantAccessEventRecord): readonly [
     case "tenant.created": return ["tenant.create", "absent", "active"];
     case "tenant.active": return ["tenant.activate", "suspended", "active"];
     case "tenant.suspended": return ["tenant.suspend", "active", "suspended"];
+    case "client.created": return ["client.create", "absent", "active"];
+    case "client.active": return ["client.enable", "disabled", "active"];
+    case "client.disabled": return ["client.disable", "active", "disabled"];
     case "credential.issued": return ["credential.issue", "absent", "pending_delivery"];
     case "credential.delivery_acknowledged":
       return ["credential.delivery_acknowledge", "pending_delivery", "active"];
@@ -487,7 +500,7 @@ function gatewayOperation(event: TenantAccessEventRecord): OperationRecord {
   return Object.freeze({
     operationId: event.eventId,
     tenantId: event.tenantId,
-    clientId: null,
+    clientId: event.clientId,
     credentialId: event.credentialId,
     actorRef: event.actorRef,
     action,
@@ -499,6 +512,7 @@ function gatewayOperation(event: TenantAccessEventRecord): OperationRecord {
       event_id: event.eventId,
       action: event.action,
       tenant_id: event.tenantId,
+      client_id: event.clientId,
       credential_id: event.credentialId,
       created_at: event.createdAt,
     }),
@@ -532,7 +546,7 @@ export class TenantAccessGatewayRepository implements CredentialRepository, Revo
     if (found === null) return null;
     return Object.freeze({
       tenant: gatewayTenant(found.tenant),
-      client: gatewayClient(found.credential),
+      client: gatewayClient(found.client),
       credential: gatewayCredential(
         found.credential,
         found.deliveryAcknowledgedAt,
@@ -545,22 +559,27 @@ export class TenantAccessGatewayRepository implements CredentialRepository, Revo
     const state: TenantAccessStateRecord = await this.#store.getState();
     const tenants = state.tenants.map(gatewayTenant);
     const tenantStatus = new Map(state.tenants.map((tenant) => [tenant.tenantId, tenant.status]));
-    const clients = new Map<string, ClientRecord>();
+    const clients = state.clients.map(gatewayClient);
+    const clientStatus = new Map(state.clients.map((client) => [
+      `${client.tenantId}\u0000${client.clientId}`,
+      client.status,
+    ]));
     const credentials = state.credentials.map((credential) => {
-      const client = gatewayClient(credential);
-      clients.set(`${client.tenantId}\u0000${client.clientId}`, client);
       const status = tenantStatus.get(credential.tenantId);
-      if (status === undefined) throw new TypeError("Credential tenant is unavailable.");
+      const callerStatus = clientStatus.get(`${credential.tenantId}\u0000${credential.clientId}`);
+      if (status === undefined || callerStatus === undefined) {
+        throw new TypeError("Credential authority is unavailable.");
+      }
       const stored = gatewayCredential(
         credential,
         state.deliveryAcknowledgements[credential.credentialId] ?? null,
         this.#pepperVersion,
       );
-      return publicCredential(stored, status, this.#nowSeconds());
+      return publicCredential(stored, status, callerStatus, this.#nowSeconds());
     });
     return Object.freeze({
       tenants: Object.freeze(tenants),
-      clients: Object.freeze([...clients.values()]),
+      clients: Object.freeze(clients),
       credentials: Object.freeze(credentials),
       operations: Object.freeze(state.events.map(gatewayOperation)),
     });

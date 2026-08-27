@@ -77,6 +77,11 @@ export const TENANT_ACCESS_TENANT_ACTIONS = Object.freeze([
   "suspend",
 ] as const);
 
+export const TENANT_ACCESS_CLIENT_ACTIONS = Object.freeze([
+  "enable",
+  "disable",
+] as const);
+
 export const TENANT_ACCESS_CREDENTIAL_ACTIONS = Object.freeze([
   "acknowledge_delivery",
   "rotate",
@@ -87,6 +92,9 @@ export const TENANT_ACCESS_OPERATION_ACTIONS = Object.freeze([
   "tenant.create",
   "tenant.activate",
   "tenant.suspend",
+  "client.create",
+  "client.enable",
+  "client.disable",
   "credential.issue",
   "credential.delivery_acknowledge",
   "credential.rotate",
@@ -97,6 +105,7 @@ export const TENANT_ACCESS_OPERATION_STATES = Object.freeze([
   "absent",
   "active",
   "suspended",
+  "disabled",
   "pending_delivery",
   "tenant_suspended",
   "expired",
@@ -104,6 +113,7 @@ export const TENANT_ACCESS_OPERATION_STATES = Object.freeze([
 ] as const);
 
 export type TenantAccessTenantAction = (typeof TENANT_ACCESS_TENANT_ACTIONS)[number];
+export type TenantAccessClientAction = (typeof TENANT_ACCESS_CLIENT_ACTIONS)[number];
 export type TenantAccessCredentialAction = (typeof TENANT_ACCESS_CREDENTIAL_ACTIONS)[number];
 export type TenantAccessOperationAction = (typeof TENANT_ACCESS_OPERATION_ACTIONS)[number];
 export type TenantAccessOperationState = (typeof TENANT_ACCESS_OPERATION_STATES)[number];
@@ -152,6 +162,14 @@ export const setTenantStatusRequestSchema = z
   })
   .strict();
 
+export const setClientStatusRequestSchema = z
+  .object({
+    schema_version: schemaVersionSchema,
+    status: z.enum(["active", "disabled"]),
+    reason_code: reasonCodeSchema,
+  })
+  .strict();
+
 export const issueCredentialRequestSchema = z
   .object({
     schema_version: schemaVersionSchema,
@@ -188,6 +206,7 @@ export const acknowledgeCredentialDeliveryRequestSchema = z
 
 export type CreateTenantRequest = z.infer<typeof createTenantRequestSchema>;
 export type SetTenantStatusRequest = z.infer<typeof setTenantStatusRequestSchema>;
+export type SetClientStatusRequest = z.infer<typeof setClientStatusRequestSchema>;
 export type IssueCredentialRequest = z.infer<typeof issueCredentialRequestSchema>;
 export type RotateCredentialRequest = z.infer<typeof rotateCredentialRequestSchema>;
 export type RevokeCredentialRequest = z.infer<typeof revokeCredentialRequestSchema>;

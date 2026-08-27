@@ -1,12 +1,22 @@
 import type { TenantApiKeyScope } from "./tenant-access-contracts";
 
 export type TenantStatus = "active" | "suspended";
+export type ClientStatus = "active" | "disabled";
 export type StoredCredentialStatus = "active" | "revoked";
 
 export interface TenantRecord {
   readonly tenantId: string;
   readonly displayName: string;
   readonly status: TenantStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ClientRecord {
+  readonly clientId: string;
+  readonly tenantId: string;
+  readonly label: string;
+  readonly status: ClientStatus;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -34,6 +44,7 @@ export interface StoredCredentialRecord {
 export interface TenantAccessEventRecord {
   readonly eventId: string;
   readonly tenantId: string;
+  readonly clientId: string | null;
   readonly credentialId: string | null;
   readonly actorRef: string;
   readonly action: string;
@@ -43,6 +54,7 @@ export interface TenantAccessEventRecord {
 
 export interface TenantAccessStateRecord {
   readonly tenants: readonly TenantRecord[];
+  readonly clients: readonly ClientRecord[];
   readonly credentials: readonly StoredCredentialRecord[];
   readonly events: readonly TenantAccessEventRecord[];
   readonly deliveryAcknowledgements: Readonly<Record<string, string>>;
@@ -62,6 +74,9 @@ export type TenantAccessRepositoryErrorCode =
   | "credential_expired"
   | "credential_not_found"
   | "credential_not_active"
+  | "client_not_active"
+  | "client_not_found"
+  | "client_status_unchanged"
   | "idempotency_conflict"
   | "path_invalid"
   | "schema_unsupported"
@@ -98,6 +113,15 @@ export interface TenantAccessRepository {
     readonly idempotencyKey: string;
     readonly requestHash: string;
   }): Promise<TenantAccessWriteResult<TenantRecord>>;
+  setClientStatus(request: {
+    readonly tenantId: string;
+    readonly clientId: string;
+    readonly status: ClientStatus;
+    readonly updatedAt: string;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<ClientRecord>>;
   issueCredential(request: {
     readonly credential: StoredCredentialRecord;
     readonly event: TenantAccessEventRecord;
@@ -130,6 +154,7 @@ export interface TenantAccessRepository {
   }): Promise<TenantAccessWriteResult<StoredCredentialRecord>>;
   findCredentialForAuthentication(credentialId: string): Promise<{
     readonly tenant: TenantRecord;
+    readonly client: ClientRecord;
     readonly credential: StoredCredentialRecord;
     readonly deliveryAcknowledgedAt: string | null;
   } | null>;

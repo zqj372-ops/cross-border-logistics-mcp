@@ -12,6 +12,7 @@ const elements = Object.freeze({
   statusDetail: document.getElementById("status-detail"),
   tokenInput: document.getElementById("admin-token"),
   tenants: document.getElementById("tenants"),
+  clients: document.getElementById("clients"),
   credentials: document.getElementById("credentials"),
   operations: document.getElementById("operations"),
   oneTimePanel: document.getElementById("one-time-panel"),
@@ -169,6 +170,41 @@ function renderCredentials(records) {
   }
 }
 
+function renderClients(records) {
+  elements.clients.replaceChildren();
+  if (!Array.isArray(records) || records.length === 0) {
+    renderEmpty(elements.clients);
+    return;
+  }
+  for (const client of records) {
+    const article = document.createElement("article");
+    article.className = "record";
+    article.append(
+      row("名称", client.label),
+      row("状态", client.status),
+      row("租户", client.tenant_id),
+      row("调用方", client.client_id),
+    );
+    const actions = document.createElement("div");
+    actions.className = "record-actions";
+    const allowed = Array.isArray(client.allowed_actions) ? client.allowed_actions : [];
+    if (allowed.includes("disable")) {
+      actions.append(actionButton(
+        "停用调用方",
+        () => setClientStatus(client.tenant_id, client.client_id, "disabled"),
+      ));
+    }
+    if (allowed.includes("enable")) {
+      actions.append(actionButton(
+        "恢复调用方",
+        () => setClientStatus(client.tenant_id, client.client_id, "active"),
+      ));
+    }
+    if (actions.childElementCount > 0) article.append(actions);
+    elements.clients.append(article);
+  }
+}
+
 function renderOperations(records) {
   elements.operations.replaceChildren();
   if (!Array.isArray(records) || records.length === 0) {
@@ -193,6 +229,7 @@ function renderOperations(records) {
 function renderState(payload) {
   const state = payload?.data;
   renderTenants(state?.tenants);
+  renderClients(state?.clients);
   renderCredentials(state?.credentials);
   renderOperations(state?.operations);
 }
@@ -243,6 +280,18 @@ function setTenantStatus(tenantId, status) {
     status,
     reason_code: status === "active" ? "operator_reactivated" : "operator_suspended",
   }, status === "active" ? "租户已恢复" : "租户已停用");
+}
+
+function setClientStatus(tenantId, clientId, status) {
+  return post(
+    `/tenants/${encodeURIComponent(tenantId)}/clients/${encodeURIComponent(clientId)}/status`,
+    {
+      schema_version: SCHEMA_VERSION,
+      status,
+      reason_code: status === "active" ? "operator_reenabled" : "operator_disabled",
+    },
+    status === "active" ? "调用方已恢复" : "调用方已停用",
+  );
 }
 
 function acknowledgeDelivery(credentialId) {

@@ -134,6 +134,34 @@ describe("production gateway SQLite providers", () => {
       "2027-01-15T08:00:00.000Z",
       1_800_000_000,
     )).resolves.toBe(true);
+    await service.setClientStatus(admin(), "tenant_demo", "codex_ops", {
+      schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+      status: "disabled",
+      reason_code: "operator_disabled",
+    }, "disable-client-idem-0001");
+    await expect(credentials.findForExchange(
+      issued.data.credential.credential_id,
+    )).resolves.toMatchObject({ client: { status: "disabled" } });
+    const disabledState = await credentials.listState();
+    expect(disabledState).toMatchObject({
+      clients: [{ clientId: "codex_ops", status: "disabled" }],
+      credentials: [{ effectiveStatus: "client_disabled" }],
+    });
+    expect(disabledState.operations).toContainEqual(expect.objectContaining({
+      action: "client.disable",
+      clientId: "codex_ops",
+    }));
+    await expect(credentials.markUsed(
+      issued.data.credential.credential_id,
+      "2027-01-15T08:01:00.000Z",
+      1_800_000_060,
+    )).resolves.toBe(false);
+    await expect(credentials.isRevoked({
+      tenantId: "tenant_demo",
+      clientId: "codex_ops",
+      credentialId: issued.data.credential.credential_id,
+      jti: "jwt_existing_0001",
+    })).resolves.toBe(true);
 
     const operations = new SqliteGatewayOperationalStore({
       applicationRoot,
@@ -148,8 +176,41 @@ describe("production gateway SQLite providers", () => {
       nowSeconds: 1_800_000_000,
     };
     await expect(operations.reserve(reservation)).resolves.toBe(true);
-    await expect(operations.reserve(reservation)).resolves.toBe(true);
-    await expect(operations.reserve(reservation)).resolves.toBe(false);
+    await expect(operations.reserve({
+      ...reservation,
+      clientId: "enterprise_agent",
+      credentialId: "key_other_0001",
+      clientIp: "203.0.113.11",
+    })).resolves.toBe(true);
+    await expect(operations.reserve({
+      ...reservation,
+      clientId: "chatgpt_ops",
+      credentialId: "key_other_0002",
+      clientIp: "203.0.113.12",
+    })).resolves.toBe(false);
+
+    const nextWindow = reservation.nowSeconds + 60;
+    await expect(operations.reserve({
+      ...reservation,
+      tenantId: "tenant_other_a",
+      clientId: "client_other_a",
+      credentialId: "key_other_a",
+      nowSeconds: nextWindow,
+    })).resolves.toBe(true);
+    await expect(operations.reserve({
+      ...reservation,
+      tenantId: "tenant_other_b",
+      clientId: "client_other_b",
+      credentialId: "key_other_b",
+      nowSeconds: nextWindow,
+    })).resolves.toBe(true);
+    await expect(operations.reserve({
+      ...reservation,
+      tenantId: "tenant_other_c",
+      clientId: "client_other_c",
+      credentialId: "key_other_c",
+      nowSeconds: nextWindow,
+    })).resolves.toBe(false);
     await operations.append({
       auditId: "audit_00000001",
       action: "token.exchange",

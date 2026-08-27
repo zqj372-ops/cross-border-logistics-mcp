@@ -125,8 +125,9 @@ describe("exact T0 token exchange", () => {
         .rejects.toMatchObject({ code: "authentication_failed" });
     }
     expect(fixture.pepper.verificationCount).toBe(3);
-    expect(fixture.audit.events).toHaveLength(3);
+    expect(fixture.audit.events).toHaveLength(4);
     expect(fixture.audit.events.map(({ reasonCode }) => reasonCode)).toEqual([
+      "authentication_failed",
       "authentication_failed",
       "authentication_failed",
       "authentication_failed",

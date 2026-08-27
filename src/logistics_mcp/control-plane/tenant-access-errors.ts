@@ -1,6 +1,9 @@
 export type TenantAccessErrorCode =
   | "admin_role_required"
   | "authentication_failed"
+  | "client_not_active"
+  | "client_not_found"
+  | "client_status_unchanged"
   | "closed"
   | "credential_delivery_acknowledged"
   | "credential_delivery_pending"
@@ -29,6 +32,9 @@ export type TenantAccessErrorCode =
 const ERROR_MESSAGES: Readonly<Record<TenantAccessErrorCode, string>> = {
   admin_role_required: "Tenant administration requires the admin role.",
   authentication_failed: "Authentication failed.",
+  client_not_active: "Client is not active.",
+  client_not_found: "Client was not found.",
+  client_status_unchanged: "Client is already in the requested status.",
   closed: "Tenant access store is closed.",
   credential_delivery_acknowledged: "Credential delivery was already acknowledged.",
   credential_delivery_pending: "Credential delivery must be acknowledged first.",

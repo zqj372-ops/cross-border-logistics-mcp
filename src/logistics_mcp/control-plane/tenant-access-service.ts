@@ -14,12 +14,14 @@ import {
   issueCredentialRequestSchema,
   revokeCredentialRequestSchema,
   rotateCredentialRequestSchema,
+  setClientStatusRequestSchema,
   setTenantStatusRequestSchema,
   TENANT_ACCESS_SCHEMA_VERSION,
   TENANT_API_KEY_TOOL_CATALOG,
   TENANT_API_KEY_TOOL_NAMES,
   tenantApiKeyScopesForToolNames,
   tenantApiKeyToolNamesForScopes,
+  type TenantAccessClientAction,
   type TenantAccessCredentialAction,
   type TenantAccessOperationAction,
   type TenantAccessOperationState,
@@ -28,6 +30,7 @@ import {
 } from "./tenant-access-contracts";
 import { TenantAccessError } from "./tenant-access-errors";
 import type {
+  ClientRecord,
   StoredCredentialRecord,
   TenantAccessEventRecord,
   TenantAccessRepository,
@@ -67,6 +70,16 @@ type TenantDto = Readonly<{
   allowed_actions: readonly TenantAccessTenantAction[];
 }>;
 
+type ClientDto = Readonly<{
+  client_id: string;
+  tenant_id: string;
+  label: string;
+  status: "active" | "disabled";
+  created_at: string;
+  updated_at: string;
+  allowed_actions: readonly TenantAccessClientAction[];
+}>;
+
 type CredentialDto = Readonly<{
   credential_id: string;
   tenant_id: string;
@@ -78,7 +91,7 @@ type CredentialDto = Readonly<{
   status: "active" | "expired" | "revoked";
   delivery_status: "pending" | "acknowledged";
   delivery_acknowledged_at: string | null;
-  effective_status: "pending_delivery" | "active" | "tenant_suspended" | "expired" | "revoked";
+  effective_status: "pending_delivery" | "active" | "tenant_suspended" | "client_disabled" | "expired" | "revoked";
   allowed_actions: readonly TenantAccessCredentialAction[];
   key_prefix: string;
   secret_last_four: string;
@@ -92,6 +105,7 @@ type CredentialDto = Readonly<{
 type OperationDto = Readonly<{
   operation_id: string;
   tenant_id: string;
+  client_id: string | null;
   credential_id: string | null;
   actor_ref: string;
   action: TenantAccessOperationAction;
@@ -194,6 +208,20 @@ function tenantDto(value: TenantRecord): TenantDto {
   });
 }
 
+function clientDto(value: ClientRecord): ClientDto {
+  return Object.freeze({
+    client_id: value.clientId,
+    tenant_id: value.tenantId,
+    label: value.label,
+    status: value.status,
+    created_at: value.createdAt,
+    updated_at: value.updatedAt,
+    allowed_actions: Object.freeze([
+      value.status === "active" ? "disable" : "enable",
+    ] as const),
+  });
+}
+
 function deliveryAcknowledgedAt(
   credentialId: string,
   acknowledgements: Readonly<Record<string, string>>,
@@ -205,6 +233,7 @@ function credentialDto(
   value: StoredCredentialRecord,
   nowSeconds: number,
   tenantStatus: TenantRecord["status"],
+  clientStatus: ClientRecord["status"],
   acknowledgements: Readonly<Record<string, string>>,
 ): CredentialDto {
   const status = value.status === "active" && value.expiresAt <= nowSeconds
@@ -216,15 +245,23 @@ function credentialDto(
     ? "revoked"
     : status === "expired"
       ? "expired"
-      : deliveryStatus === "pending"
-        ? "pending_delivery"
-        : tenantStatus === "suspended"
+      : tenantStatus === "suspended"
           ? "tenant_suspended"
-          : "active";
+          : clientStatus === "disabled"
+            ? "client_disabled"
+            : deliveryStatus === "pending"
+              ? "pending_delivery"
+              : "active";
   const allowedActions: TenantAccessCredentialAction[] = [];
   if (status === "active") {
-    if (deliveryStatus === "pending") allowedActions.push("acknowledge_delivery");
-    if (deliveryStatus === "acknowledged" && tenantStatus === "active") {
+    if (deliveryStatus === "pending" && clientStatus === "active") {
+      allowedActions.push("acknowledge_delivery");
+    }
+    if (
+      deliveryStatus === "acknowledged" &&
+      tenantStatus === "active" &&
+      clientStatus === "active"
+    ) {
       allowedActions.push("rotate");
     }
     allowedActions.push("revoke");
@@ -263,6 +300,12 @@ function operationTransition(
       return ["tenant.activate", "suspended", "active"];
     case "tenant.suspended":
       return ["tenant.suspend", "active", "suspended"];
+    case "client.created":
+      return ["client.create", "absent", "active"];
+    case "client.active":
+      return ["client.enable", "disabled", "active"];
+    case "client.disabled":
+      return ["client.disable", "active", "disabled"];
     case "credential.issued":
       return ["credential.issue", "absent", "pending_delivery"];
     case "credential.delivery_acknowledged":
@@ -287,6 +330,7 @@ function operationDto(
   return Object.freeze({
     operation_id: value.eventId,
     tenant_id: value.tenantId,
+    client_id: value.clientId,
     credential_id: value.credentialId,
     actor_ref: value.actorRef,
     action,
@@ -313,6 +357,12 @@ function mapRepositoryError(error: unknown): never {
       throw new TenantAccessError("credential_not_active", { cause: error });
     case "credential_not_found":
       throw new TenantAccessError("credential_not_found", { cause: error });
+    case "client_not_active":
+      throw new TenantAccessError("client_not_active", { cause: error });
+    case "client_not_found":
+      throw new TenantAccessError("client_not_found", { cause: error });
+    case "client_status_unchanged":
+      throw new TenantAccessError("client_status_unchanged", { cause: error });
     case "idempotency_conflict":
       throw new TenantAccessError("idempotency_conflict", { cause: error });
     case "tenant_already_exists":
@@ -388,6 +438,7 @@ function createEvent(
   return Object.freeze({
     eventId: idGenerator("event"),
     tenantId: values.tenantId,
+    clientId: values.clientId,
     credentialId: values.credentialId,
     actorRef: `${context.actorId}:${context.clientId}`,
     action: values.action,
@@ -424,6 +475,7 @@ export class TenantAccessService {
     status: "success";
     data: Readonly<{
       tenants: readonly TenantDto[];
+      clients: readonly ClientDto[];
       available_tools: typeof TENANT_API_KEY_TOOL_CATALOG;
       credentials: readonly CredentialDto[];
       operations: readonly OperationDto[];
@@ -439,16 +491,30 @@ export class TenantAccessService {
     }
     const now = this.#clock();
     const tenantsById = new Map(state.tenants.map((tenant) => [tenant.tenantId, tenant]));
+    const clientsById = new Map(state.clients.map((client) => [
+      `${client.tenantId}\u0000${client.clientId}`,
+      client,
+    ]));
     return Object.freeze({
       schema_version: TENANT_ACCESS_SCHEMA_VERSION,
       status: "success",
       data: Object.freeze({
         available_tools: TENANT_API_KEY_TOOL_CATALOG,
         tenants: Object.freeze(state.tenants.map(tenantDto)),
+        clients: Object.freeze(state.clients.map(clientDto)),
         credentials: Object.freeze(state.credentials.map((value) => {
           const tenant = tenantsById.get(value.tenantId);
-          if (tenant === undefined) throw new TenantAccessError("schema_mismatch");
-          return credentialDto(value, now, tenant.status, state.deliveryAcknowledgements);
+          const client = clientsById.get(`${value.tenantId}\u0000${value.clientId}`);
+          if (tenant === undefined || client === undefined) {
+            throw new TenantAccessError("schema_mismatch");
+          }
+          return credentialDto(
+            value,
+            now,
+            tenant.status,
+            client.status,
+            state.deliveryAcknowledgements,
+          );
         })),
         operations: Object.freeze(state.events.map((event) => (
           operationDto(event, state.deliveryAcknowledgements)
@@ -479,6 +545,7 @@ export class TenantAccessService {
     });
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: tenant.tenantId,
+      clientId: null,
       credentialId: null,
       action: "tenant.created",
       reasonCode: "operator_created",
@@ -520,6 +587,7 @@ export class TenantAccessService {
     const now = timestamp(this.#clock());
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId,
+      clientId: null,
       credentialId: null,
       action: `tenant.${request.status}`,
       reasonCode: request.reason_code,
@@ -539,6 +607,58 @@ export class TenantAccessService {
         replayed: result.replayed,
         data: Object.freeze({
           tenant: tenantDto(result.value),
+          operation: operationDto(result.operation, Object.freeze({})),
+        }),
+        reason_codes: Object.freeze([]),
+      });
+    } catch (error) {
+      mapRepositoryError(error);
+    }
+  }
+
+  async setClientStatus(
+    context: ExecutionContext,
+    tenantId: string,
+    clientId: string,
+    input: unknown,
+    rawIdempotencyKey: string,
+  ): Promise<WriteResponse<Readonly<{ client: ClientDto; operation: OperationDto }>>> {
+    assertAdmin(context, this.#repository.managementTenantId);
+    const request = parseRequest(setClientStatusRequestSchema, input);
+    if (tenantId === this.#repository.managementTenantId) {
+      throw new TenantAccessError("management_tenant_forbidden");
+    }
+    const idempotencyKey = validateIdempotencyKey(rawIdempotencyKey);
+    const now = timestamp(this.#clock());
+    const event = createEvent(this.#idGenerator, context, now, {
+      tenantId,
+      clientId,
+      credentialId: null,
+      action: `client.${request.status}`,
+      reasonCode: request.reason_code,
+    });
+    try {
+      const result = await this.#repository.setClientStatus({
+        tenantId,
+        clientId,
+        status: request.status,
+        updatedAt: now,
+        event,
+        idempotencyKey,
+        requestHash: canonicalHash({
+          action: "client.status",
+          tenant_id: tenantId,
+          client_id: clientId,
+          actor: context.actorId,
+          request,
+        }),
+      });
+      return Object.freeze({
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "success",
+        replayed: result.replayed,
+        data: Object.freeze({
+          client: clientDto(result.value),
           operation: operationDto(result.operation, Object.freeze({})),
         }),
         reason_codes: Object.freeze([]),
@@ -591,6 +711,7 @@ export class TenantAccessService {
     });
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: credential.tenantId,
+      clientId: credential.clientId,
       credentialId: credential.credentialId,
       action: "credential.issued",
       reasonCode: "operator_issued",
@@ -612,6 +733,9 @@ export class TenantAccessService {
       const tenantStatus = replayState?.tenants.find((tenant) => (
         tenant.tenantId === result.value.tenantId
       ))?.status ?? "active";
+      const clientStatus = replayState?.clients.find((client) => (
+        client.tenantId === result.value.tenantId && client.clientId === result.value.clientId
+      ))?.status ?? "active";
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: replayed ? "manual_review" : "success",
@@ -621,7 +745,13 @@ export class TenantAccessService {
           credential_id: result.value.credentialId,
         }),
         data: Object.freeze({
-          credential: credentialDto(result.value, nowSeconds, tenantStatus, acknowledgements),
+          credential: credentialDto(
+            result.value,
+            nowSeconds,
+            tenantStatus,
+            clientStatus,
+            acknowledgements,
+          ),
           api_key: replayed ? null : `lmcpk_${credentialId}_${secret}`,
           operation: operationDto(result.operation, acknowledgements),
         }),
@@ -685,6 +815,7 @@ export class TenantAccessService {
     });
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: next.tenantId,
+      clientId: next.clientId,
       credentialId: next.credentialId,
       action: "credential.rotated",
       reasonCode: request.reason_code,
@@ -709,7 +840,12 @@ export class TenantAccessService {
       });
       const replayed = result.replayed;
       const tenant = state.tenants.find((value) => value.tenantId === result.value.tenantId);
-      if (tenant === undefined) throw new TenantAccessError("schema_mismatch");
+      const client = state.clients.find((value) => (
+        value.tenantId === result.value.tenantId && value.clientId === result.value.clientId
+      ));
+      if (tenant === undefined || client === undefined) {
+        throw new TenantAccessError("schema_mismatch");
+      }
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: replayed ? "manual_review" : "success",
@@ -723,6 +859,7 @@ export class TenantAccessService {
             result.value,
             nowSeconds,
             tenant.status,
+            client.status,
             state.deliveryAcknowledgements,
           ),
           api_key: replayed ? null : `lmcpk_${nextCredentialId}_${secret}`,
@@ -757,6 +894,7 @@ export class TenantAccessService {
     if (existing.expiresAt <= nowSeconds) throw new TenantAccessError("credential_expired");
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: existing.tenantId,
+      clientId: existing.clientId,
       credentialId,
       action: "credential.revoked",
       reasonCode: request.reason_code,
@@ -776,7 +914,12 @@ export class TenantAccessService {
         }),
       });
       const tenant = state.tenants.find((value) => value.tenantId === result.value.tenantId);
-      if (tenant === undefined) throw new TenantAccessError("schema_mismatch");
+      const client = state.clients.find((value) => (
+        value.tenantId === result.value.tenantId && value.clientId === result.value.clientId
+      ));
+      if (tenant === undefined || client === undefined) {
+        throw new TenantAccessError("schema_mismatch");
+      }
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: "success",
@@ -786,6 +929,7 @@ export class TenantAccessService {
             result.value,
             nowSeconds,
             tenant.status,
+            client.status,
             state.deliveryAcknowledgements,
           ),
           operation: operationDto(result.operation, state.deliveryAcknowledgements),
@@ -819,9 +963,15 @@ export class TenantAccessService {
     if (existing.status !== "active") throw new TenantAccessError("credential_not_active");
     if (existing.expiresAt <= nowSeconds) throw new TenantAccessError("credential_expired");
     const tenant = state.tenants.find((value) => value.tenantId === existing.tenantId);
-    if (tenant === undefined) throw new TenantAccessError("schema_mismatch");
+    const client = state.clients.find((value) => (
+      value.tenantId === existing.tenantId && value.clientId === existing.clientId
+    ));
+    if (tenant === undefined || client === undefined) {
+      throw new TenantAccessError("schema_mismatch");
+    }
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: existing.tenantId,
+      clientId: existing.clientId,
       credentialId,
       action: "credential.delivery_acknowledged",
       reasonCode: request.reason_code,
@@ -848,7 +998,13 @@ export class TenantAccessService {
         status: "success",
         replayed: result.replayed,
         data: Object.freeze({
-          credential: credentialDto(result.value, nowSeconds, tenant.status, acknowledgements),
+          credential: credentialDto(
+            result.value,
+            nowSeconds,
+            tenant.status,
+            client.status,
+            acknowledgements,
+          ),
           operation: operationDto(result.operation, acknowledgements),
         }),
         reason_codes: Object.freeze([]),
@@ -874,6 +1030,7 @@ export class TenantAccessService {
       if (
         found === null ||
         found.tenant.status !== "active" ||
+        found.client.status !== "active" ||
         found.credential.status !== "active" ||
         found.deliveryAcknowledgedAt === null ||
         found.credential.expiresAt <= this.#clock()

@@ -18,12 +18,13 @@ function fixture() {
   roots.push(root);
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const privateKeyPath = join(root, "jwt-signing.pem");
+  const historyPath = join(root, "jwt-key-history.json");
   const pepperPath = join(root, "credential-pepper");
   writeFileSync(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), {
     mode: 0o400,
   });
   writeFileSync(pepperPath, Buffer.alloc(48, 0x5a), { mode: 0o400 });
-  return { privateKeyPath, pepperPath };
+  return { privateKeyPath, historyPath, pepperPath };
 }
 
 afterEach(() => {
@@ -59,8 +60,13 @@ describe("production gateway cryptographic providers", () => {
   });
 
   it("signs exact RS256 claims and publishes only the matching public key", async () => {
-    const { privateKeyPath } = fixture();
-    const provider = new FileJwtSigningProvider({ privateKeyPath });
+    const { privateKeyPath, historyPath } = fixture();
+    const provider = new FileJwtSigningProvider({
+      privateKeyPath,
+      historyPath,
+      nowSeconds: () => 1_800_000_000,
+      retentionSeconds: 1_230,
+    });
     const claims = {
       iss: "https://www.freightclaw.net/",
       aud: "logistics-mcp-t0",
@@ -92,11 +98,78 @@ describe("production gateway cryptographic providers", () => {
     expect(verified.payload).toMatchObject(claims);
   });
 
+  it("retains the previous public key across signing-key rotation and rollback", async () => {
+    const { privateKeyPath, historyPath } = fixture();
+    const first = new FileJwtSigningProvider({
+      privateKeyPath,
+      historyPath,
+      nowSeconds: () => 1_800_000_000,
+      retentionSeconds: 1_230,
+    });
+    const claims = {
+      iss: "https://www.freightclaw.net/",
+      aud: "logistics-mcp-t0",
+      sub: "key_00000001",
+      iat: 1_800_000_000,
+      exp: 1_800_000_300,
+      jti: "jwt_00000001",
+      tenant_id: "tenant_demo",
+      actor_id: "key_00000001",
+      actor_role: "service" as const,
+      roles: ["service"] as const,
+      scopes: ["tool:cargo.calculate"] as const,
+      client_id: "codex_ops",
+      session_id: "auth_00000001",
+    };
+    const firstSigned = await first.sign(claims);
+    const firstPem = Buffer.from(await import("node:fs").then(({ readFileSync }) => (
+      readFileSync(privateKeyPath)
+    )));
+    const { privateKey: nextPrivateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    chmodSync(privateKeyPath, 0o600);
+    writeFileSync(privateKeyPath, nextPrivateKey.export({ type: "pkcs8", format: "pem" }));
+    chmodSync(privateKeyPath, 0o400);
+    const rotated = new FileJwtSigningProvider({
+      privateKeyPath,
+      historyPath,
+      nowSeconds: () => 1_800_000_100,
+      retentionSeconds: 1_230,
+    });
+    const rotatedJwks = await rotated.getJwks();
+    expect(rotatedJwks.keys).toHaveLength(2);
+    await expect(jwtVerify(firstSigned.token, createLocalJWKSet({
+      keys: rotatedJwks.keys.map((key) => ({ ...key })),
+    }), {
+      algorithms: ["RS256"],
+      issuer: claims.iss,
+      audience: claims.aud,
+      currentDate: new Date((claims.iat + 101) * 1_000),
+    })).resolves.toBeDefined();
+
+    chmodSync(privateKeyPath, 0o600);
+    writeFileSync(privateKeyPath, firstPem);
+    chmodSync(privateKeyPath, 0o400);
+    const rolledBack = new FileJwtSigningProvider({
+      privateKeyPath,
+      historyPath,
+      nowSeconds: () => 1_800_000_200,
+      retentionSeconds: 1_230,
+    });
+    const rolledBackJwks = await rolledBack.getJwks();
+    expect(rolledBackJwks.keys).toHaveLength(2);
+    expect(rolledBackJwks.keys[0]?.kid).toBe(firstSigned.kid);
+  });
+
   it("rejects secret material that is group/world readable", () => {
-    const { privateKeyPath, pepperPath } = fixture();
+    const { privateKeyPath, historyPath, pepperPath } = fixture();
     chmodSync(privateKeyPath, 0o644);
     chmodSync(pepperPath, 0o644);
-    expect(() => new FileJwtSigningProvider({ privateKeyPath })).toThrow(/permission/u);
+    expect(() => new FileJwtSigningProvider({
+      privateKeyPath,
+      historyPath,
+      nowSeconds: () => 1_800_000_000,
+      retentionSeconds: 1_230,
+    })).toThrow(/permission/u);
     expect(() => new FileSecretPepperProvider({
       pepperPath,
       pepperVersion: "pepper-2026-08-v1",

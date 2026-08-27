@@ -33,6 +33,14 @@ const credential = {
   revoked_at: null,
   rotated_from_id: null,
 } as const;
+const client = {
+  client_id: credential.client_id,
+  tenant_id: tenant.tenant_id,
+  label: credential.label,
+  status: "active",
+  created_at: credential.created_at,
+  updated_at: credential.created_at,
+} as const;
 const apiKey = `lmcpk_key_00000001_${"A".repeat(43)}`;
 
 const getState = vi.fn(() => Promise.resolve({
@@ -54,6 +62,7 @@ const getState = vi.fn(() => Promise.resolve({
       },
     ],
     tenants: [tenant],
+    clients: [client],
     credentials: [credential],
     operations: [],
   },
@@ -71,6 +80,13 @@ const setTenantStatus = vi.fn(() => Promise.resolve({
   status: "success",
   replayed: false,
   data: { tenant },
+  reason_codes: [],
+}));
+const setClientStatus = vi.fn(() => Promise.resolve({
+  schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+  status: "success",
+  replayed: false,
+  data: { client },
   reason_codes: [],
 }));
 const issueCredential = vi.fn<() => Promise<unknown>>(() => Promise.resolve({
@@ -119,6 +135,7 @@ function service() {
     getState,
     createTenant,
     setTenantStatus,
+    setClientStatus,
     issueCredential,
     rotateCredential,
     revokeCredential,
@@ -263,6 +280,11 @@ describe("Admin Tenant Access API", () => {
           schema_version: TENANT_ACCESS_SCHEMA_VERSION,
           reason_code: "operator_confirmed_secure_storage",
         }, "ack-credential-idem-0001"],
+        [`/admin/api/v1/access/tenants/${tenant.tenant_id}/clients/${client.client_id}/status`, {
+          schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+          status: "disabled",
+          reason_code: "operator_disabled",
+        }, "status-client-idem-0001"],
       ] as const;
       for (const [path, body, key] of cases) {
         const response = await request(url, path, { body, key });
@@ -278,6 +300,13 @@ describe("Admin Tenant Access API", () => {
         credential.credential_id,
         cases[5][1],
         cases[5][2],
+      );
+      expect(setClientStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        tenant.tenant_id,
+        client.client_id,
+        cases[6][1],
+        cases[6][2],
       );
     } finally {
       await close(server);
@@ -326,6 +355,7 @@ describe("Admin Tenant Access API", () => {
   it.each([
     "/admin/api/v1/access/tenants",
     `/admin/api/v1/access/tenants/${tenant.tenant_id}/status`,
+    `/admin/api/v1/access/tenants/${tenant.tenant_id}/clients/${client.client_id}/status`,
     "/admin/api/v1/access/credentials",
     `/admin/api/v1/access/credentials/${credential.credential_id}/rotate`,
     `/admin/api/v1/access/credentials/${credential.credential_id}/revoke`,

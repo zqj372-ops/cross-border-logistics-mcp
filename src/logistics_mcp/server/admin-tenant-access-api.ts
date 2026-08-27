@@ -7,6 +7,7 @@ import {
   issueCredentialRequestSchema,
   revokeCredentialRequestSchema,
   rotateCredentialRequestSchema,
+  setClientStatusRequestSchema,
   setTenantStatusRequestSchema,
   TENANT_ACCESS_SCHEMA_VERSION,
 } from "../control-plane/tenant-access-contracts";
@@ -43,6 +44,13 @@ export interface TenantAccessAdminService {
   setTenantStatus(
     context: ExecutionContext,
     tenantId: string,
+    input: unknown,
+    idempotencyKey: string,
+  ): Promise<unknown>;
+  setClientStatus(
+    context: ExecutionContext,
+    tenantId: string,
+    clientId: string,
     input: unknown,
     idempotencyKey: string,
   ): Promise<unknown>;
@@ -94,6 +102,12 @@ type Route =
   | { readonly kind: "state"; readonly method: "GET" }
   | { readonly kind: "create_tenant"; readonly method: "POST" }
   | { readonly kind: "set_tenant_status"; readonly method: "POST"; readonly targetId: string }
+  | {
+      readonly kind: "set_client_status";
+      readonly method: "POST";
+      readonly tenantId: string;
+      readonly clientId: string;
+    }
   | { readonly kind: "issue_credential"; readonly method: "POST" }
   | { readonly kind: "rotate_credential"; readonly method: "POST"; readonly targetId: string }
   | { readonly kind: "revoke_credential"; readonly method: "POST"; readonly targetId: string }
@@ -267,6 +281,17 @@ function resolveRoute(path: string): Route | null {
     const targetId = decodedIdentifier(tenantStatus[1] ?? "");
     return targetId === null ? null : { kind: "set_tenant_status", method: "POST", targetId };
   }
+  const clientStatus = new RegExp(
+    `^${ACCESS_PREFIX}/tenants/([^/]+)/clients/([^/]+)/status$`,
+    "u",
+  ).exec(path);
+  if (clientStatus !== null) {
+    const tenantId = decodedIdentifier(clientStatus[1] ?? "");
+    const clientId = decodedIdentifier(clientStatus[2] ?? "");
+    return tenantId === null || clientId === null
+      ? null
+      : { kind: "set_client_status", method: "POST", tenantId, clientId };
+  }
   const credentialAction = new RegExp(
     `^${ACCESS_PREFIX}/credentials/([^/]+)/(rotate|revoke|acknowledge-delivery)$`,
     "u",
@@ -335,6 +360,8 @@ function parseRouteBody(route: Exclude<Route, { readonly kind: "state" }>, value
     ? createTenantRequestSchema.safeParse(value)
     : route.kind === "set_tenant_status"
       ? setTenantStatusRequestSchema.safeParse(value)
+      : route.kind === "set_client_status"
+        ? setClientStatusRequestSchema.safeParse(value)
       : route.kind === "issue_credential"
         ? issueCredentialRequestSchema.safeParse(value)
       : route.kind === "rotate_credential"
@@ -375,12 +402,15 @@ function serviceError(error: unknown): { readonly http: number; readonly status:
     case "tenant_already_exists":
     case "tenant_not_active":
     case "credential_not_active":
+    case "client_not_active":
+    case "client_status_unchanged":
     case "credential_delivery_acknowledged":
     case "credential_delivery_pending":
     case "credential_expired":
     case "tenant_status_unchanged":
       return { http: 409, status: "manual_review", reason: error.code };
     case "tenant_not_found":
+    case "client_not_found":
     case "credential_not_found":
       return { http: 404, status: "blocked", reason: error.code };
     case "scope_not_allowed":
@@ -418,6 +448,8 @@ async function dispatch(
       return service.createTenant(context, body, key);
     case "set_tenant_status":
       return service.setTenantStatus(context, route.targetId, body, key);
+    case "set_client_status":
+      return service.setClientStatus(context, route.tenantId, route.clientId, body, key);
     case "issue_credential":
       return service.issueCredential(context, body, key);
     case "rotate_credential":

@@ -51,6 +51,7 @@ const CONTENT_SECURITY_POLICY =
 export interface GatewaySecretPaths {
   readonly secretsDir: string;
   readonly jwtSigningKeyPath: string;
+  readonly jwtKeyHistoryPath: string;
   readonly credentialPepperPath: string;
 }
 
@@ -59,6 +60,7 @@ export function gatewaySecretPaths(applicationRoot: string): GatewaySecretPaths 
   return Object.freeze({
     secretsDir,
     jwtSigningKeyPath: join(secretsDir, "jwt-signing-key.pem"),
+    jwtKeyHistoryPath: join(secretsDir, "jwt-key-history.json"),
     credentialPepperPath: join(secretsDir, "credential-pepper.bin"),
   });
 }
@@ -260,12 +262,28 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   const secrets = gatewaySecretPaths(applicationRoot);
   const privateKeyPath = process.env.ACCESS_GATEWAY_JWT_PRIVATE_KEY_PATH?.trim() ||
     secrets.jwtSigningKeyPath;
+  const keyHistoryPath = process.env.ACCESS_GATEWAY_JWT_KEY_HISTORY_PATH?.trim() ||
+    secrets.jwtKeyHistoryPath;
   const pepperPath = process.env.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
     secrets.credentialPepperPath;
+  const jwtTtlSeconds = positiveIntegerSetting("ACCESS_GATEWAY_JWT_TTL_SECONDS", 300, 900);
+  const keyRetentionSeconds = positiveIntegerSetting(
+    "ACCESS_GATEWAY_JWT_KEY_RETENTION_SECONDS",
+    1_230,
+    7 * 24 * 60 * 60,
+  );
+  if (keyRetentionSeconds < 1_230) {
+    throw new Error("ACCESS_GATEWAY_JWT_KEY_RETENTION_SECONDS must cover TTL, skew and JWKS cache.");
+  }
   const clock = new SystemGatewayClock();
   const randomSource = new SystemGatewayRandomSource();
   const pepper = new FileSecretPepperProvider({ pepperPath, pepperVersion });
-  const signer = new FileJwtSigningProvider({ privateKeyPath });
+  const signer = new FileJwtSigningProvider({
+    privateKeyPath,
+    historyPath: keyHistoryPath,
+    nowSeconds: () => clock.nowSeconds(),
+    retentionSeconds: keyRetentionSeconds,
+  });
   const tenantStore = new SqliteTenantAccessStore({
     applicationRoot,
     instanceId,
@@ -308,7 +326,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   }, {
     issuer,
     audience,
-    defaultTtlSeconds: positiveIntegerSetting("ACCESS_GATEWAY_JWT_TTL_SECONDS", 300, 900),
+    defaultTtlSeconds: jwtTtlSeconds,
   });
   const gatewayHandler = createAccessGatewayHttpHandler({
     gateway,
@@ -364,7 +382,8 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
         signer.getJwks(),
         admin.provider.health(),
       ]).then(([tenantHealth, operationHealth, jwks, adminHealth]) => {
-        const operationalReady = tenantHealth.ready && operationHealth.ready && jwks.keys.length === 1;
+        const operationalReady = tenantHealth.ready && operationHealth.ready &&
+          jwks.keys.length >= 1 && jwks.keys.length <= 2;
         sendJson(response, operationalReady ? 200 : 503, {
           status: operationalReady ? "manual_review" : "unavailable",
           data: {

@@ -153,10 +153,6 @@ export class AccessGateway {
     }
     const requestId = input.requestId ?? this.#providers.randomSource.opaque("req");
     if (!requestIdPattern.test(requestId)) throw new AccessGatewayError("invalid_request");
-    const parsedKey = apiKeyPattern.exec(input.apiKey);
-    if (parsedKey === null) throw new AccessGatewayError("authentication_failed");
-    const credentialId = parsedKey[1]!;
-    const secret = parsedKey[2]!;
     const requestedTools = normalizedTools(parsedBody.data.requested_tool_names);
     const nowSeconds = this.#providers.clock.nowSeconds();
     const exchangeRequestHash = canonicalJsonHash(
@@ -171,6 +167,10 @@ export class AccessGateway {
     let signedJti: string | null = null;
 
     try {
+      const parsedKey = apiKeyPattern.exec(input.apiKey);
+      if (parsedKey === null) throw new AccessGatewayError("authentication_failed");
+      const credentialId = parsedKey[1]!;
+      const secret = parsedKey[2]!;
       const record = await this.#providers.credentialRepository.findForExchange(credentialId);
       const credentialVerified = await this.#providers.secretPepperProvider.verifyCredentialSecret({
         secret,

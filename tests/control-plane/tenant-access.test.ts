@@ -1,12 +1,16 @@
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -168,6 +172,148 @@ describe("Tenant Access SQLite store and service", () => {
       instanceId: "instance_other",
       managementTenantId: "tenant_management",
     })).toThrow(TenantAccessError);
+  });
+
+  it("migrates an existing v1 credential store to authoritative v2 clients", async () => {
+    const root = applicationRoot();
+    const canonicalRoot = realpathSync(root);
+    const paths = tenantAccessPaths(canonicalRoot);
+    mkdirSync(paths.stateDir, { mode: 0o700 });
+    const storeId = "access_11111111111111111111111111111111";
+    const legacy = new DatabaseSync(paths.databasePath, {
+      allowExtension: false,
+      enableDoubleQuotedStringLiterals: false,
+    });
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE access_meta (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        schema_version INTEGER NOT NULL,
+        access_store_id TEXT NOT NULL,
+        instance_id TEXT NOT NULL,
+        management_tenant_id TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE tenants (
+        tenant_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE credentials (
+        credential_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+        client_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        actor_role TEXT NOT NULL CHECK (actor_role = 'service'),
+        roles_json TEXT NOT NULL CHECK (roles_json = '["service"]'),
+        scopes_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+        key_prefix TEXT NOT NULL,
+        secret_last_four TEXT NOT NULL,
+        secret_salt BLOB NOT NULL,
+        secret_hash BLOB NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_used_at TEXT,
+        revoked_at TEXT,
+        rotated_from_id TEXT REFERENCES credentials(credential_id)
+      ) STRICT;
+      CREATE TABLE access_events (
+        event_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+        credential_id TEXT REFERENCES credentials(credential_id),
+        actor_ref TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason_code TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE access_idempotency (
+        action TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        result_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (action, idempotency_key)
+      ) STRICT;
+    `);
+    legacy.prepare(`
+      INSERT INTO access_meta VALUES (1, 1, ?, 'instance_fixture_001', 'tenant_management')
+    `).run(storeId);
+    legacy.prepare(`
+      INSERT INTO tenants VALUES (
+        'tenant_demo_a', '北美演示租户', 'active',
+        '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z'
+      )
+    `).run();
+    legacy.prepare(`
+      INSERT INTO credentials VALUES (
+        'key_legacy_0001', 'tenant_demo_a', 'codex_ops', '运营 Codex',
+        'service', '["service"]', '["tool:cargo.calculate"]', 'active',
+        'lmcpk_key_legacy_0001', 'AAAA', ?, ?,
+        '2026-08-27T00:00:00.000Z', 1802505600, '2026-08-27T00:01:00.000Z',
+        NULL, NULL
+      )
+    `).run(Buffer.alloc(16, 1), Buffer.alloc(32, 2));
+    legacy.prepare(`
+      INSERT INTO access_events VALUES (
+        'event_tenant_legacy', 'tenant_demo_a', NULL, 'admin:console',
+        'tenant.created', 'operator_created', '2026-08-27T00:00:00.000Z'
+      )
+    `).run();
+    legacy.prepare(`
+      INSERT INTO access_events VALUES (
+        'event_key_legacy', 'tenant_demo_a', 'key_legacy_0001', 'admin:console',
+        'credential.delivery_acknowledged', 'operator_acknowledged',
+        '2026-08-27T00:00:30.000Z'
+      )
+    `).run();
+    legacy.close();
+    chmodSync(paths.databasePath, 0o600);
+    writeFileSync(paths.markerPath, `${JSON.stringify({
+      marker_format: "mcp-tenant-access-identity/v1",
+      schema_version: 1,
+      access_store_id: storeId,
+      application_root: canonicalRoot,
+      database_path: paths.databasePath,
+      instance_id: "instance_fixture_001",
+      management_tenant_id: "tenant_management",
+    }, null, 2)}\n`, { mode: 0o400 });
+    chmodSync(paths.markerPath, 0o400);
+
+    const migrated = new SqliteTenantAccessStore({
+      applicationRoot: root,
+      instanceId: "instance_fixture_001",
+      managementTenantId: "tenant_management",
+    });
+    stores.push(migrated);
+    const migratedState = await migrated.getState();
+    expect(migratedState.clients).toEqual([{
+        tenantId: "tenant_demo_a",
+        clientId: "codex_ops",
+        label: "运营 Codex",
+        status: "active",
+        createdAt: "2026-08-27T00:00:00.000Z",
+        updatedAt: "2026-08-27T00:01:00.000Z",
+    }]);
+    expect(migratedState.events).toContainEqual(expect.objectContaining({
+      eventId: "event_key_legacy",
+      clientId: "codex_ops",
+    }));
+    expect(migratedState.events).toContainEqual(expect.objectContaining({
+      eventId: "event_tenant_legacy",
+      clientId: null,
+    }));
+    expect(JSON.parse(readFileSync(paths.markerPath, "utf8"))).toMatchObject({ schema_version: 2 });
+    await migrated.close();
+
+    const reopened = new SqliteTenantAccessStore({
+      applicationRoot: root,
+      instanceId: "instance_fixture_001",
+      managementTenantId: "tenant_management",
+    });
+    stores.push(reopened);
+    await expect(reopened.health()).resolves.toEqual({ ready: true });
   });
 
   it("creates tenants idempotently and rejects conflicting replays", async () => {
@@ -418,6 +564,65 @@ describe("Tenant Access SQLite store and service", () => {
     fixture.setNow(1_800_086_400);
     await expect(service.verifyApiKey(expiring.data.api_key)).rejects.toMatchObject({
       code: "authentication_failed",
+    });
+  });
+
+  it("persists client disablement and blocks every credential for that client", async () => {
+    const { service } = await serviceFixture();
+    await createTenant(service);
+    const issued = await issueCredential(service, "idem_client_issue_0001");
+    if (issued.data.api_key === null) throw new Error("expected one-time API key");
+    await acknowledgeCredential(
+      service,
+      issued.data.credential.credential_id,
+      "idem_client_ack_0001",
+    );
+
+    await expect(service.setClientStatus(
+      adminContext(),
+      "tenant_demo_a",
+      "codex_ops",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "disabled",
+        reason_code: "compromised_client",
+      },
+      "idem_client_disable_0001",
+    )).resolves.toMatchObject({
+      status: "success",
+      data: {
+        client: { client_id: "codex_ops", status: "disabled" },
+        operation: { action: "client.disable", from_status: "active", to_status: "disabled" },
+      },
+    });
+    await expect(service.verifyApiKey(issued.data.api_key)).rejects.toMatchObject({
+      code: "authentication_failed",
+    });
+    const disabled = await service.getState(adminContext());
+    expect(disabled.data.clients).toEqual(expect.arrayContaining([
+      expect.objectContaining({ client_id: "codex_ops", status: "disabled" }),
+    ]));
+    expect(disabled.data.credentials).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        credential_id: issued.data.credential.credential_id,
+        effective_status: "client_disabled",
+        allowed_actions: ["revoke"],
+      }),
+    ]));
+
+    await service.setClientStatus(
+      adminContext(),
+      "tenant_demo_a",
+      "codex_ops",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "active",
+        reason_code: "client_reenabled",
+      },
+      "idem_client_enable_0001",
+    );
+    await expect(service.verifyApiKey(issued.data.api_key)).resolves.toMatchObject({
+      client_id: "codex_ops",
     });
   });
 

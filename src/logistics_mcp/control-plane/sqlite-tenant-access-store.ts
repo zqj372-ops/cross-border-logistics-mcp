@@ -16,6 +16,8 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { IDENTIFIER_PATTERN } from "./lexical-contracts";
 import { TenantAccessError } from "./tenant-access-errors";
 import type {
+  ClientRecord,
+  ClientStatus,
   StoredCredentialRecord,
   TenantAccessEventRecord,
   TenantAccessRepository,
@@ -34,7 +36,8 @@ const DIRECTORY_MODE = 0o700;
 const DATABASE_MODE = 0o600;
 const MARKER_MODE = 0o400;
 const MARKER_FORMAT = "mcp-tenant-access-identity/v1" as const;
-const DATABASE_SCHEMA_VERSION = 1 as const;
+const LEGACY_DATABASE_SCHEMA_VERSION = 1 as const;
+const DATABASE_SCHEMA_VERSION = 2 as const;
 
 const SCHEMA_SQL = `
 CREATE TABLE access_meta (
@@ -51,6 +54,16 @@ CREATE TABLE tenants (
   status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE clients (
+  tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+  client_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, client_id)
 ) STRICT;
 
 CREATE TABLE credentials (
@@ -80,7 +93,8 @@ CREATE TABLE access_events (
   actor_ref TEXT NOT NULL,
   action TEXT NOT NULL,
   reason_code TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  client_id TEXT
 ) STRICT;
 
 CREATE TABLE access_idempotency (
@@ -94,6 +108,8 @@ CREATE TABLE access_idempotency (
 
 CREATE INDEX credentials_tenant_status_idx
   ON credentials(tenant_id, status, expires_at);
+CREATE INDEX clients_tenant_status_idx
+  ON clients(tenant_id, status, client_id);
 CREATE INDEX access_events_created_idx
   ON access_events(created_at DESC, event_id DESC);
 `;
@@ -113,7 +129,7 @@ export interface TenantAccessStorePaths {
 
 interface Marker {
   readonly marker_format: typeof MARKER_FORMAT;
-  readonly schema_version: typeof DATABASE_SCHEMA_VERSION;
+  readonly schema_version: typeof LEGACY_DATABASE_SCHEMA_VERSION | typeof DATABASE_SCHEMA_VERSION;
   readonly access_store_id: string;
   readonly application_root: string;
   readonly database_path: string;
@@ -209,7 +225,8 @@ function readMarker(path: string): Marker {
     }
     if (
       value.marker_format !== MARKER_FORMAT ||
-      value.schema_version !== DATABASE_SCHEMA_VERSION ||
+      (value.schema_version !== LEGACY_DATABASE_SCHEMA_VERSION &&
+        value.schema_version !== DATABASE_SCHEMA_VERSION) ||
       !isIdentifier(value.access_store_id) ||
       typeof value.application_root !== "string" ||
       typeof value.database_path !== "string" ||
@@ -221,6 +238,28 @@ function readMarker(path: string): Marker {
     return value as unknown as Marker;
   } catch (error) {
     throw new TenantAccessError("identity_mismatch", { cause: error });
+  }
+}
+
+function writeMarker(path: string, marker: Marker): void {
+  const parent = resolve(join(path, ".."));
+  const temporaryPath = join(parent, `.access-identity-${randomBytes(12).toString("hex")}.tmp`);
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(marker, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: MARKER_MODE,
+    });
+    chmodSync(temporaryPath, MARKER_MODE);
+    renameSync(temporaryPath, path);
+    chmodSync(path, MARKER_MODE);
+  } catch (error) {
+    try {
+      rmSync(temporaryPath, { force: true });
+    } catch {
+      // Preserve the marker write error.
+    }
+    throw error;
   }
 }
 
@@ -284,6 +323,19 @@ function tenantFromRow(row: SqlRow): TenantRecord {
   });
 }
 
+function clientFromRow(row: SqlRow): ClientRecord {
+  const status = expectText(row, "status");
+  if (status !== "active" && status !== "disabled") repositoryFailure("corrupt");
+  return Object.freeze({
+    clientId: expectText(row, "client_id"),
+    tenantId: expectText(row, "tenant_id"),
+    label: expectText(row, "label"),
+    status,
+    createdAt: expectText(row, "created_at"),
+    updatedAt: expectText(row, "updated_at"),
+  });
+}
+
 function parseScopes(value: string): readonly TenantApiKeyScope[] {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -327,6 +379,7 @@ function eventFromRow(row: SqlRow): TenantAccessEventRecord {
   return Object.freeze({
     eventId: expectText(row, "event_id"),
     tenantId: expectText(row, "tenant_id"),
+    clientId: expectNullableText(row, "client_id"),
     credentialId: expectNullableText(row, "credential_id"),
     actorRef: expectText(row, "actor_ref"),
     action: expectText(row, "action"),
@@ -338,11 +391,12 @@ function eventFromRow(row: SqlRow): TenantAccessEventRecord {
 function insertEvent(database: DatabaseSync, event: TenantAccessEventRecord): void {
   database.prepare(`
     INSERT INTO access_events (
-      event_id, tenant_id, credential_id, actor_ref, action, reason_code, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      event_id, tenant_id, client_id, credential_id, actor_ref, action, reason_code, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     event.eventId,
     event.tenantId,
+    event.clientId,
     event.credentialId,
     event.actorRef,
     event.action,
@@ -455,7 +509,7 @@ export function initializeSqliteTenantAccessState(
 export class SqliteTenantAccessStore implements TenantAccessRepository {
   readonly managementTenantId: string;
   readonly #database: DatabaseSync;
-  readonly #marker: Marker;
+  #marker: Marker;
   readonly #paths: TenantAccessStorePaths;
   #closed = false;
 
@@ -485,6 +539,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       this.#database.exec("PRAGMA journal_mode = WAL");
       this.#database.exec("PRAGMA synchronous = FULL");
       this.#database.exec("PRAGMA trusted_schema = OFF");
+      this.#migrateDatabaseIfRequired();
       this.#verifyDatabase();
     } catch (error) {
       if (error instanceof TenantAccessError) throw error;
@@ -495,6 +550,108 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
   #activeDatabase(): DatabaseSync {
     if (this.#closed) repositoryFailure("closed");
     return this.#database;
+  }
+
+  #migrateDatabaseIfRequired(): void {
+    const row = this.#database.prepare(`
+      SELECT schema_version, access_store_id, instance_id, management_tenant_id
+      FROM access_meta WHERE singleton = 1
+    `).get() as SqlRow | undefined;
+    if (
+      row === undefined ||
+      row.access_store_id !== this.#marker.access_store_id ||
+      row.instance_id !== this.#marker.instance_id ||
+      row.management_tenant_id !== this.#marker.management_tenant_id
+    ) {
+      throw new TenantAccessError("schema_mismatch");
+    }
+    const databaseVersion = row.schema_version;
+    if (
+      databaseVersion !== LEGACY_DATABASE_SCHEMA_VERSION &&
+      databaseVersion !== DATABASE_SCHEMA_VERSION
+    ) {
+      throw new TenantAccessError("schema_mismatch");
+    }
+    if (
+      databaseVersion === LEGACY_DATABASE_SCHEMA_VERSION &&
+      this.#marker.schema_version !== LEGACY_DATABASE_SCHEMA_VERSION
+    ) {
+      throw new TenantAccessError("schema_mismatch");
+    }
+    if (databaseVersion === LEGACY_DATABASE_SCHEMA_VERSION) {
+      const legacyTables = (this.#database.prepare(`
+        SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name
+      `).all() as SqlRow[]).map((value) => expectText(value, "name"));
+      if (JSON.stringify(legacyTables) !== JSON.stringify([
+        "access_events",
+        "access_idempotency",
+        "access_meta",
+        "credentials",
+        "tenants",
+      ])) {
+        throw new TenantAccessError("schema_mismatch");
+      }
+      this.#database.exec("BEGIN IMMEDIATE");
+      try {
+        this.#database.exec(`
+          CREATE TABLE clients (
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+            client_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, client_id)
+          ) STRICT;
+          CREATE INDEX clients_tenant_status_idx
+            ON clients(tenant_id, status, client_id);
+          INSERT INTO clients (
+            tenant_id, client_id, label, status, created_at, updated_at
+          )
+          SELECT
+            credential.tenant_id,
+            credential.client_id,
+            (
+              SELECT first_credential.label
+              FROM credentials AS first_credential
+              WHERE first_credential.tenant_id = credential.tenant_id
+                AND first_credential.client_id = credential.client_id
+              ORDER BY first_credential.created_at, first_credential.credential_id
+              LIMIT 1
+            ),
+            'active',
+            MIN(credential.created_at),
+            MAX(COALESCE(credential.last_used_at, credential.created_at))
+          FROM credentials AS credential
+          GROUP BY credential.tenant_id, credential.client_id;
+          ALTER TABLE access_events ADD COLUMN client_id TEXT;
+          UPDATE access_events
+          SET client_id = (
+            SELECT credentials.client_id
+            FROM credentials
+            WHERE credentials.credential_id = access_events.credential_id
+          )
+          WHERE credential_id IS NOT NULL;
+          UPDATE access_meta SET schema_version = 2 WHERE singleton = 1;
+        `);
+        this.#database.exec("COMMIT");
+      } catch (error) {
+        try {
+          this.#database.exec("ROLLBACK");
+        } catch {
+          // Preserve the migration error.
+        }
+        throw error;
+      }
+    }
+    if (this.#marker.schema_version !== DATABASE_SCHEMA_VERSION) {
+      const nextMarker: Marker = Object.freeze({
+        ...this.#marker,
+        schema_version: DATABASE_SCHEMA_VERSION,
+      });
+      writeMarker(this.#paths.markerPath, nextMarker);
+      this.#marker = nextMarker;
+    }
   }
 
   #verifyDatabase(): void {
@@ -515,6 +672,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       "access_events",
       "access_idempotency",
       "access_meta",
+      "clients",
       "credentials",
       "tenants",
     ];
@@ -523,6 +681,21 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     `).all() as SqlRow[];
     const observed = rows.map((value) => expectText(value, "name"));
     if (JSON.stringify(observed) !== JSON.stringify(requiredTables)) {
+      throw new TenantAccessError("schema_mismatch");
+    }
+    const clientColumns = (this.#database.prepare("PRAGMA table_info(clients)").all() as SqlRow[])
+      .map((value) => expectText(value, "name"));
+    const eventColumns = (this.#database.prepare("PRAGMA table_info(access_events)").all() as SqlRow[])
+      .map((value) => expectText(value, "name"));
+    if (
+      JSON.stringify(clientColumns) !== JSON.stringify([
+        "tenant_id", "client_id", "label", "status", "created_at", "updated_at",
+      ]) ||
+      JSON.stringify(eventColumns) !== JSON.stringify([
+        "event_id", "tenant_id", "credential_id", "actor_ref", "action", "reason_code",
+        "created_at", "client_id",
+      ])
+    ) {
       throw new TenantAccessError("schema_mismatch");
     }
   }
@@ -605,6 +778,14 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     return credentialFromRow(row);
   }
 
+  #client(database: DatabaseSync, tenantId: string, clientId: string): ClientRecord {
+    const row = database.prepare(`
+      SELECT * FROM clients WHERE tenant_id = ? AND client_id = ?
+    `).get(tenantId, clientId) as SqlRow | undefined;
+    if (row === undefined) repositoryFailure("client_not_found");
+    return clientFromRow(row);
+  }
+
   #operationEvent(
     database: DatabaseSync,
     template: TenantAccessEventRecord,
@@ -612,6 +793,11 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     createdAt: string,
   ): TenantAccessEventRecord {
     const credentialId = template.credentialId === null ? null : resultId;
+    const clientId = template.clientId === null
+      ? null
+      : template.credentialId === null
+        ? resultId
+        : template.clientId;
     const rows = database.prepare(`
       SELECT * FROM access_events
       WHERE tenant_id = ?
@@ -621,6 +807,10 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           (? IS NULL AND credential_id IS NULL)
           OR credential_id = ?
         )
+        AND (
+          (? IS NULL AND client_id IS NULL)
+          OR client_id = ?
+        )
       ORDER BY event_id
     `).all(
       template.tenantId,
@@ -628,6 +818,8 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       createdAt,
       credentialId,
       credentialId,
+      clientId,
+      clientId,
     ) as SqlRow[];
     if (rows.length !== 1 || rows[0] === undefined) repositoryFailure("corrupt");
     return eventFromRow(rows[0]);
@@ -646,6 +838,9 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     const database = this.#activeDatabase();
     const tenants = (database.prepare("SELECT * FROM tenants ORDER BY tenant_id").all() as SqlRow[])
       .map(tenantFromRow);
+    const clients = (database.prepare(`
+      SELECT * FROM clients ORDER BY tenant_id, client_id
+    `).all() as SqlRow[]).map(clientFromRow);
     const credentials = (database.prepare(`
       SELECT * FROM credentials ORDER BY created_at DESC, credential_id DESC
     `).all() as SqlRow[]).map(credentialFromRow);
@@ -668,6 +863,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     ));
     return Promise.resolve(Object.freeze({
       tenants: Object.freeze(tenants),
+      clients: Object.freeze(clients),
       credentials: Object.freeze(credentials),
       events: Object.freeze(events),
       deliveryAcknowledgements,
@@ -747,6 +943,46 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     )));
   }
 
+  setClientStatus(request: {
+    readonly tenantId: string;
+    readonly clientId: string;
+    readonly status: ClientStatus;
+    readonly updatedAt: string;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<ClientRecord>> {
+    return Promise.resolve(this.#transaction((database) => this.#idempotent(
+      database,
+      "client.status",
+      request.idempotencyKey,
+      request.requestHash,
+      request.updatedAt,
+      (resultId, createdAt) => ({
+        value: this.#client(database, request.tenantId, resultId),
+        operation: this.#operationEvent(database, request.event, resultId, createdAt),
+      }),
+      () => {
+        const tenant = this.#tenant(database, request.tenantId);
+        if (request.status === "active" && tenant.status !== "active") {
+          repositoryFailure("tenant_not_active");
+        }
+        const client = this.#client(database, request.tenantId, request.clientId);
+        if (client.status === request.status) repositoryFailure("client_status_unchanged");
+        database.prepare(`
+          UPDATE clients SET status = ?, updated_at = ?
+          WHERE tenant_id = ? AND client_id = ?
+        `).run(request.status, request.updatedAt, request.tenantId, request.clientId);
+        insertEvent(database, request.event);
+        return {
+          resultId: request.clientId,
+          value: this.#client(database, request.tenantId, request.clientId),
+          operation: request.event,
+        };
+      },
+    )));
+  }
+
   issueCredential(request: {
     readonly credential: StoredCredentialRecord;
     readonly event: TenantAccessEventRecord;
@@ -766,6 +1002,34 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       () => {
         const tenant = this.#tenant(database, request.credential.tenantId);
         if (tenant.status !== "active") repositoryFailure("tenant_not_active");
+        const clientRow = database.prepare(`
+          SELECT * FROM clients WHERE tenant_id = ? AND client_id = ?
+        `).get(request.credential.tenantId, request.credential.clientId) as SqlRow | undefined;
+        if (clientRow === undefined) {
+          database.prepare(`
+            INSERT INTO clients (
+              tenant_id, client_id, label, status, created_at, updated_at
+            ) VALUES (?, ?, ?, 'active', ?, ?)
+          `).run(
+            request.credential.tenantId,
+            request.credential.clientId,
+            request.credential.label,
+            request.credential.createdAt,
+            request.credential.createdAt,
+          );
+          insertEvent(database, Object.freeze({
+            eventId: `${request.event.eventId}_client_created`,
+            tenantId: request.credential.tenantId,
+            clientId: request.credential.clientId,
+            credentialId: null,
+            actorRef: request.event.actorRef,
+            action: "client.created",
+            reasonCode: "credential_issue_created_client",
+            createdAt: request.credential.createdAt,
+          }));
+        } else if (clientFromRow(clientRow).status !== "active") {
+          repositoryFailure("client_not_active");
+        }
         insertCredential(database, request.credential);
         insertEvent(database, request.event);
         return {
@@ -805,6 +1069,9 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         }
         const tenant = this.#tenant(database, previous.tenantId);
         if (tenant.status !== "active") repositoryFailure("tenant_not_active");
+        if (this.#client(database, previous.tenantId, previous.clientId).status !== "active") {
+          repositoryFailure("client_not_active");
+        }
         if (
           request.credential.tenantId !== previous.tenantId ||
           request.credential.clientId !== previous.clientId ||
@@ -884,6 +1151,9 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         const credential = this.#credential(database, request.credentialId);
         if (credential.status !== "active") repositoryFailure("credential_not_active");
         if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        if (this.#client(database, credential.tenantId, credential.clientId).status !== "active") {
+          repositoryFailure("client_not_active");
+        }
         if (this.#deliveryAcknowledgedAt(database, credential.credentialId) !== null) {
           repositoryFailure("credential_delivery_acknowledged");
         }
@@ -899,6 +1169,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
 
   findCredentialForAuthentication(credentialId: string): Promise<{
     readonly tenant: TenantRecord;
+    readonly client: ClientRecord;
     readonly credential: StoredCredentialRecord;
     readonly deliveryAcknowledgedAt: string | null;
   } | null> {
@@ -912,6 +1183,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     if (tenantRow === undefined) repositoryFailure("corrupt");
     return Promise.resolve(Object.freeze({
       tenant: tenantFromRow(tenantRow),
+      client: this.#client(database, credential.tenantId, credential.clientId),
       credential,
       deliveryAcknowledgedAt: this.#deliveryAcknowledgedAt(database, credential.credentialId),
     }));
@@ -937,6 +1209,12 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           SELECT 1 FROM tenants
           WHERE tenants.tenant_id = credentials.tenant_id
             AND tenants.status = 'active'
+        )
+        AND EXISTS (
+          SELECT 1 FROM clients
+          WHERE clients.tenant_id = credentials.tenant_id
+            AND clients.client_id = credentials.client_id
+            AND clients.status = 'active'
         )
     `).run(usedAt, credentialId, nowSeconds);
     return Promise.resolve(Number(result.changes) === 1);
