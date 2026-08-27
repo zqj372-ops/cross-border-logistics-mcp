@@ -69,6 +69,17 @@ await build({
   legalComments: "none",
 });
 
+await build({
+  entryPoints: ["services/access-gateway/deployment-smoke.ts"],
+  outfile: "dist/services/access-gateway/deployment-smoke.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
+  sourcemap: false,
+  legalComments: "none",
+});
+
 execFileSync(process.execPath, [
   "--import",
   "tsx/esm",

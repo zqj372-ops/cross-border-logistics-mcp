@@ -60,6 +60,23 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
   });
 
+  it("packages a fail-closed T0 deployment smoke without exposing credentials", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const packageJson = read("package.json");
+    const smoke = read("services/access-gateway/deployment-smoke.ts");
+
+    expect(build).toContain("services/access-gateway/deployment-smoke.ts");
+    expect(build).toContain("dist/services/access-gateway/deployment-smoke.mjs");
+    expect(packageJson).toContain("smoke:t0-deployment");
+    expect(smoke).toContain("DEPLOYMENT_SMOKE_CONFIRM");
+    expect(smoke).toContain("run-synthetic-write");
+    expect(smoke).toContain("revokeCredential");
+    expect(smoke).toContain("setTenantStatus");
+    expect(smoke).toContain("tenant_isolation_http_status");
+    expect(smoke).toContain("revoked_exchange_http_status");
+    expect(smoke).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
+  });
+
   it("copies every registered Agent source into the image build stage", () => {
     const dockerfile = read("deploy/Dockerfile");
     const registry = JSON.parse(read("docs/agent/index.json")) as {
