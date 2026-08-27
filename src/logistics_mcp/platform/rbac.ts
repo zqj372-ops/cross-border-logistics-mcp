@@ -23,6 +23,33 @@ export const agentContextToolName = "system.agent_context.get" as const;
 export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
 type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName;
 
+export const tenantApiKeyToolNames = Object.freeze([
+  "cargo.calculate",
+  "container.plan_summary",
+  agentContextToolName,
+] as const);
+
+export type TenantApiKeyToolName = (typeof tenantApiKeyToolNames)[number];
+export type TenantApiKeyToolScope = `tool:${TenantApiKeyToolName}`;
+
+const tenantApiKeyToolNameSet = new Set<string>(tenantApiKeyToolNames);
+
+export function tenantApiKeyScopeForToolName(
+  toolName: TenantApiKeyToolName,
+): TenantApiKeyToolScope {
+  return `tool:${toolName}`;
+}
+
+export function tenantApiKeyToolNameFromScope(
+  scope: string,
+): TenantApiKeyToolName | null {
+  if (!scope.startsWith("tool:")) return null;
+  const toolName = scope.slice("tool:".length);
+  return tenantApiKeyToolNameSet.has(toolName)
+    ? toolName as TenantApiKeyToolName
+    : null;
+}
+
 type ToolPolicy = {
   readonly permission: string;
   readonly kind: "read" | "write";
@@ -87,6 +114,22 @@ function hasScope(context: ExecutionContext, permission: string): boolean {
   );
 }
 
+function usesExactToolEntitlements(context: ExecutionContext): boolean {
+  return context.scopes.some((scope) => scope.startsWith("tool:"));
+}
+
+function hasExactToolEntitlement(context: ExecutionContext, toolName: string): boolean {
+  return tenantApiKeyToolNameSet.has(toolName)
+    && context.scopes.includes(`tool:${toolName}`);
+}
+
+export function toolVisibleForContext(
+  context: ExecutionContext,
+  toolName: string,
+): boolean {
+  return !usesExactToolEntitlements(context) || hasExactToolEntitlement(context, toolName);
+}
+
 export function assertTenantScope(
   context: ExecutionContext,
   targetTenantId = context.tenantId,
@@ -110,7 +153,11 @@ export function authorizeTool(
   if (!context.roles.some((role) => policy.roles.includes(role))) {
     throw new ForbiddenError("The authenticated role cannot use this tool.");
   }
-  if (!hasScope(context, policy.permission)) {
+  if (
+    usesExactToolEntitlements(context)
+      ? !hasExactToolEntitlement(context, toolName)
+      : !hasScope(context, policy.permission)
+  ) {
     throw new ForbiddenError("The authenticated scope cannot use this tool.");
   }
 

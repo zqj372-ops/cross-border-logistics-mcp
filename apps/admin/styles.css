@@ -301,6 +301,10 @@ dialog:focus-visible {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230c607f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='14' rx='2'/%3E%3Cpath d='M7 9h10M7 13h5M7 16h3'/%3E%3C/svg%3E");
 }
 
+.nav-item[data-view="tenant-access"] .nav-icon {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230c607f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8.5' cy='15.5' r='4'/%3E%3Cpath d='m11.5 12.5 7-7M16 6l2 2M18.5 3.5 21 6l-2.5 2.5'/%3E%3Cpath d='M5.7 15.5h.01'/%3E%3C/svg%3E");
+}
+
 .nav-item[data-view="tools"] .nav-icon {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230c607f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.4-2.9 7.9-7 10-4.1-2.1-7-5.6-7-10V6l7-3Z'/%3E%3Cpath d='m8.5 12 2.2 2.2 4.8-5'/%3E%3C/svg%3E");
 }
@@ -1835,6 +1839,341 @@ dialog:focus-visible {
   margin-top: 20px;
 }
 
+.access-boundary,
+.access-notice {
+  margin-bottom: 20px;
+}
+
+.access-identity-panel {
+  max-width: none;
+  margin-bottom: 20px;
+}
+
+.access-identity-panel .card-head {
+  align-items: flex-start;
+}
+
+.access-identity-panel .card-head > .status-pill {
+  flex: 0 0 auto;
+}
+
+.access-metric-grid {
+  margin-bottom: 20px;
+}
+
+.access-form-grid {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.access-form-panel,
+.access-list-panel,
+.access-audit-panel {
+  min-width: 0;
+}
+
+.access-form-panel .card-head {
+  min-height: 74px;
+}
+
+.access-form {
+  display: grid;
+  gap: 16px;
+}
+
+.access-form .field {
+  margin: 0;
+}
+
+.access-form .button-row {
+  margin-top: 2px;
+}
+
+.scope-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+}
+
+.scope-fieldset legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.scope-options {
+  display: grid;
+  gap: 9px 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scope-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.scope-option input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--brand);
+}
+
+.scope-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.scope-option small {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.access-tenant-grid {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  margin-top: 20px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.access-tenant-card {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-soft);
+}
+
+.access-card-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.access-card-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.access-card-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.access-meta-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+
+.access-meta-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.access-meta-list > div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.access-meta-list dt {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.access-meta-list dd {
+  margin: 0;
+  color: var(--ink-soft);
+  font-weight: 750;
+  text-align: right;
+}
+
+.access-card-actions {
+  align-items: stretch;
+}
+
+.access-card-actions .button {
+  flex: 1 1 130px;
+}
+
+.access-table-scroll {
+  margin-top: 4px;
+}
+
+.access-credential-table {
+  min-width: 1050px;
+}
+
+.access-credential-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.access-key-prefix {
+  display: block;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.access-scope-list {
+  display: flex;
+  min-width: 160px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.access-scope-chip {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid #c8ddea;
+  border-radius: 999px;
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.access-credential-actions {
+  min-width: 150px;
+}
+
+.access-operation-panel {
+  margin-top: 20px;
+}
+
+.access-flow-rail {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 18px;
+  padding: 0;
+  list-style: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.access-flow-rail li {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--brand);
+  border-radius: var(--radius-small);
+  background: var(--surface-soft);
+}
+
+.access-flow-rail strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.access-flow-rail span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.access-operation-table {
+  min-width: 760px;
+}
+
+.access-operation-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.one-time-credential-dialog {
+  width: min(680px, calc(100% - 32px));
+}
+
+.credential-tool-dialog {
+  width: min(760px, calc(100% - 32px));
+}
+
+.credential-tool-options {
+  margin: 18px 22px 4px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface-soft);
+}
+
+.credential-tool-warning {
+  margin: 18px 22px 0;
+}
+
+.credential-tool-warning h3,
+.credential-tool-warning p {
+  margin: 0;
+}
+
+.one-time-credential-dialog > .dialog-description {
+  margin: 0 22px 18px;
+  color: var(--muted);
+}
+
+.one-time-credential-dialog > .dialog-body {
+  margin: 0 22px 22px;
+}
+
+.one-time-secret-warning {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid #ecd7a5;
+  border-radius: var(--radius-small);
+  background: #fffaf0;
+}
+
+.one-time-secret-warning p {
+  margin: 0;
+  color: var(--warning);
+  font-weight: 650;
+}
+
+.one-time-credential-dialog .field {
+  margin: 0;
+}
+
+.one-time-credential-dialog .field input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+
+.one-time-secret-actions {
+  margin-top: 18px;
+}
+
 .noscript-warning {
   position: fixed;
   z-index: 200;
@@ -1875,7 +2214,8 @@ dialog:focus-visible {
 
   .client-card-grid,
   .role-grid,
-  .source-api-grid {
+  .source-api-grid,
+  .access-tenant-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1919,8 +2259,13 @@ dialog:focus-visible {
   .section-grid-wide,
   .source-api-grid,
   .module-workspace,
-  .control-detail-grid {
+  .control-detail-grid,
+  .access-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scope-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .architecture-layout {
@@ -1933,6 +2278,10 @@ dialog:focus-visible {
   }
 
   .release-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .access-flow-rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1954,10 +2303,16 @@ dialog:focus-visible {
   .metric-grid,
   .client-card-grid,
   .role-grid,
+  .access-tenant-grid,
   .state-guide,
   .release-rail,
+  .access-flow-rail,
   .diff-summary {
     grid-template-columns: 1fr;
+  }
+
+  .scope-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .architecture-node-list {

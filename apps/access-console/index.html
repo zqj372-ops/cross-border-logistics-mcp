@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>T0 Access Console</title>
+    <link rel="stylesheet" href="/access-console/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">T0 · Access Control</p>
+        <h1>租户接入控制台</h1>
+        <p>仅管理租户、客户端、密钥、三个内置工具权限和操作回读。</p>
+      </div>
+      <button id="refresh" type="button">刷新状态</button>
+    </header>
+
+    <main>
+      <section class="status-card" aria-live="polite">
+        <span id="status-dot" class="status-dot"></span>
+        <div>
+          <strong id="status-title">等待服务状态</strong>
+          <p id="status-detail">连接由企业身份和受控入口建立。</p>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel" aria-labelledby="tenant-title">
+          <h2 id="tenant-title">租户</h2>
+          <form id="tenant-form">
+            <label>显示名称<input name="display_name" required maxlength="80"></label>
+            <button type="submit">创建租户</button>
+          </form>
+          <div id="tenants" class="records"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="client-title">
+          <h2 id="client-title">客户端</h2>
+          <form id="client-form">
+            <label>租户标识<input name="tenant_id" required></label>
+            <label>客户端名称<input name="label" required maxlength="80"></label>
+            <button type="submit">创建客户端</button>
+          </form>
+          <div id="clients" class="records"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="key-title">
+          <h2 id="key-title">密钥</h2>
+          <form id="key-form">
+            <label>租户标识<input name="tenant_id" required></label>
+            <label>客户端标识<input name="client_id" required></label>
+            <label>密钥名称<input name="label" required maxlength="80"></label>
+            <button type="submit">签发一次性密钥</button>
+          </form>
+          <output id="one-time-key" class="secret-output" hidden></output>
+          <div id="credentials" class="records"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="tools-title">
+          <h2 id="tools-title">工具权限</h2>
+          <fieldset id="tool-permissions">
+            <label><input type="checkbox" value="cargo.calculate"> cargo.calculate</label>
+            <label><input type="checkbox" value="container.plan_summary"> container.plan_summary</label>
+            <label><input type="checkbox" value="system.agent_context.get"> system.agent_context.get</label>
+          </fieldset>
+          <p class="hint">权限由服务端精确校验；页面选择不能扩大目录。</p>
+        </section>
+
+        <section class="panel operations" aria-labelledby="operations-title">
+          <h2 id="operations-title">操作回读</h2>
+          <div id="operations" class="records"></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/access-console/app.js"></script>
+  </body>
+</html>

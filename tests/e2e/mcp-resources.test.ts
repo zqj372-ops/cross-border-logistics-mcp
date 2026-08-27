@@ -94,6 +94,26 @@ describe("MCP Agent resources and context tool", () => {
         expect(profileText).not.toContain(privateControlMarker);
       }
 
+      for (const resource of [
+        "logistics://agent/bootstrap",
+        "logistics://standards/index",
+        "logistics://contracts/envelope/current",
+        "logistics://modules/catalog",
+        "logistics://agent/profiles",
+      ]) {
+        const resourceRead = await harness.request({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "resources/read",
+          params: { uri: resource },
+        }, sessionId);
+        expect(resourceRead.ok).toBe(true);
+        const resourceBody = (await resourceRead.json()) as {
+          result?: { contents?: readonly { text?: string }[] };
+        };
+        expect(resourceBody.result?.contents?.[0]?.text).toBeTypeOf("string");
+      }
+
       const context = await callTool(harness, sessionId, "system.agent_context.get", {
         profile_id: "runtime-caller",
         module_id: "cargo",
@@ -245,6 +265,22 @@ describe("MCP Agent resources and context tool", () => {
       );
       expect(deniedReviewerResource.body.result?.contents).toBeUndefined();
       expect(deniedReviewerResource.body.error).toBeDefined();
+
+      for (const resource of [
+        "logistics://agent/bootstrap",
+        "logistics://standards/index",
+        "logistics://contracts/envelope/current",
+        "logistics://modules/catalog",
+        "logistics://agent/profiles",
+      ]) {
+        const denied = await readResourceAs(
+          "resource-denied-token",
+          deniedResourceSession,
+          resource,
+        );
+        expect(denied.body.result?.contents).toBeUndefined();
+        expect(denied.body.error).toBeDefined();
+      }
 
       const borrowedResource = await readResourceAs(
         "resource-denied-token",

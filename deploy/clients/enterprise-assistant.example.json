@@ -5,19 +5,12 @@
   "transport": "Streamable HTTP",
   "authentication": {
     "scheme": "Bearer",
-    "token_source": "企业身份平台短期令牌",
+    "token_source": "统一凭证网关签发的短期 JWT",
     "identity_source": "服务端校验后注入，客户端不提供租户或操作人身份"
   },
   "allowed_tools": [
     "cargo.calculate",
     "container.plan_summary",
-    "quote.canada_final_mile.calculate",
-    "quote.save_draft",
-    "customs.ca.search",
-    "customs.ca.estimate",
-    "knowledge.search_curated",
-    "system.get_data_status",
-    "review.create_task",
     "system.agent_context.get"
   ],
   "agent_access": {
@@ -32,9 +25,9 @@
     ]
   },
   "safety": {
-    "write_tools_require_approval": true,
     "unavailable_is_not_success": true,
     "sendable": false,
     "theoretical_only": true
-  }
+  },
+  "production_readiness": "待真实 staging 适配验证"
 }

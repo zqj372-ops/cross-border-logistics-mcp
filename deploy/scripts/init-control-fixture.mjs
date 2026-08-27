@@ -5,7 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const FIXTURE_INSTANCE_ID = "instance_fixture_001";
 const FIXTURE_MANAGEMENT_TENANT_ID = "tenant_fixture";
 const BUILT_START_ENTRY = "dist/src/logistics_mcp/server/start.mjs";
-const INITIALIZER_EXPORT = "initializeSqliteControlState";
+const INITIALIZER_EXPORTS = [
+  "initializeSqliteControlState",
+  "initializeSqliteTenantAccessState",
+];
 
 /**
  * Derive the application root from this checked-in file only. In particular,
@@ -37,23 +40,27 @@ async function loadOfficialInitializer(root) {
       "The built start entry is unavailable; run npm run build before initializing the fixture.",
     );
   }
-  const initializer = builtEntry[INITIALIZER_EXPORT];
-  if (typeof initializer !== "function") {
-    throw new Error(
-      "The built start entry must export initializeSqliteControlState for fixture initialization.",
-    );
+  const initializers = INITIALIZER_EXPORTS.map((name) => builtEntry[name]);
+  if (initializers.some((initializer) => typeof initializer !== "function")) {
+    throw new Error("The built start entry must export every fixture state initializer.");
   }
-  return initializer;
+  return initializers;
 }
 
 export async function initializeFixtureControlState() {
   const root = applicationRoot();
-  const initializeSqliteControlState = await loadOfficialInitializer(root);
+  const [initializeSqliteControlState, initializeSqliteTenantAccessState] =
+    await loadOfficialInitializer(root);
 
   // The official initializer owns the fixed paths, permissions, schema, and
   // cryptographically random control_db_id. This wrapper only supplies the
   // explicit fixture identity and application root.
   await initializeSqliteControlState({
+    applicationRoot: root,
+    instanceId: FIXTURE_INSTANCE_ID,
+    managementTenantId: FIXTURE_MANAGEMENT_TENANT_ID,
+  });
+  await initializeSqliteTenantAccessState({
     applicationRoot: root,
     instanceId: FIXTURE_INSTANCE_ID,
     managementTenantId: FIXTURE_MANAGEMENT_TENANT_ID,

@@ -4,12 +4,13 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     image: cross-border-logistics-mcp:candidate
-    restart: "no"
+    restart: "unless-stopped"
     expose:
       - "8080"
     environment:
       MCP_PORT: "8080"
       MCP_DATA_MODE: "${MCP_DATA_MODE:?MCP_DATA_MODE is required}"
+      MCP_RUNTIME_PROFILE: "${MCP_RUNTIME_PROFILE:?MCP_RUNTIME_PROFILE is required}"
       MCP_JWT_ISSUER: "${MCP_JWT_ISSUER:?MCP_JWT_ISSUER is required}"
       MCP_JWT_AUDIENCE: "${MCP_JWT_AUDIENCE:?MCP_JWT_AUDIENCE is required}"
       MCP_JWKS_URL: "${MCP_JWKS_URL:?MCP_JWKS_URL is required}"
@@ -19,28 +20,32 @@ services:
       MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:?MCP_ALLOWED_HOSTS is required}"
       MCP_ALLOWED_OUTBOUND_HOSTS: "${MCP_ALLOWED_OUTBOUND_HOSTS:?MCP_ALLOWED_OUTBOUND_HOSTS is required}"
       MCP_TRUSTED_PROXY_ADDRESSES: "${MCP_TRUSTED_PROXY_ADDRESSES:?MCP_TRUSTED_PROXY_ADDRESSES is required}"
-      MCP_RISK_CUSTOMS_ENABLED: "${MCP_RISK_CUSTOMS_ENABLED:-false}"
-      MCP_RISK_CUSTOMS_BASE_URL: "${MCP_RISK_CUSTOMS_BASE_URL:-}"
-      MCP_RISK_CUSTOMS_ALLOWED_HOSTS: "${MCP_RISK_CUSTOMS_ALLOWED_HOSTS:-}"
-      MCP_RISK_CUSTOMS_ALLOWED_TENANTS: "${MCP_RISK_CUSTOMS_ALLOWED_TENANTS:-}"
-      MCP_RISK_CUSTOMS_AUTH_SECRET_FILE: "${MCP_RISK_CUSTOMS_AUTH_SECRET_FILE:-}"
     volumes:
       - mcp_state:/var/lib/logistics-mcp
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     user: "10001:10001"
+    pids_limit: 256
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
     healthcheck:
       test:
         - CMD
         - node
         - --input-type=module
         - -e
-        - fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
       interval: 30s
       timeout: 3s
       retries: 3

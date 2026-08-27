@@ -9,9 +9,9 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { SignJWT, exportJWK, generateKeyPair } from "jose";
 import { describe, expect, it, vi } from "vitest";
 
+import type { AgentAccessRuntime } from "../../src/logistics_mcp/agent-context/runtime";
 import { SqliteProductionStore } from "../../src/logistics_mcp/platform/sqlite-production-store";
 import {
-  createProductionApiAdapterSource,
   createProductionComposition,
 } from "../../src/logistics_mcp/server/composition";
 import {
@@ -33,6 +33,66 @@ async function freePort(): Promise<number> {
     server.close((error) => error === undefined ? resolve() : reject(error)),
   );
   return address.port;
+}
+
+function t0AgentAccessRuntime(): AgentAccessRuntime {
+  const modules = [
+    {
+      module_id: "cargo",
+      version: "2026-08-21.v0",
+      risk_level: "T0",
+      standard_ids: ["module-runtime.v0", "platform.contracts"],
+      tool_names: ["cargo.calculate"],
+    },
+    {
+      module_id: "container",
+      version: "2026-08-21.v0",
+      risk_level: "T0",
+      standard_ids: ["module-runtime.v0", "platform.contracts"],
+      tool_names: ["container.plan_summary"],
+    },
+    {
+      module_id: "agent-access",
+      version: "2026-08-21.v0",
+      risk_level: "T0",
+      standard_ids: ["module-runtime.v0", "platform.contracts", "agent-access.v0"],
+      tool_names: ["system.agent_context.get"],
+    },
+  ];
+  return {
+    available: true,
+    getContext: () => ({ status: "unavailable", data: null }),
+    readResource: (uri) => {
+      if (uri === "logistics://modules/catalog") {
+        return {
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify({ modules }),
+        };
+      }
+      if (uri === "logistics://agent/profiles") {
+        return {
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify({
+            profiles: [{
+              profile_id: "runtime-caller",
+              audience: "caller",
+              content_mode: "summary",
+              allowed_module_ids: ["cargo", "container", "agent-access"],
+            }],
+          }),
+        };
+      }
+      return {
+        uri,
+        mimeType: uri === "logistics://contracts/envelope/current"
+          ? "text/markdown"
+          : "application/json",
+        text: "{}",
+      };
+    },
+  };
 }
 
 describe("production platform runtime", () => {
@@ -57,6 +117,7 @@ describe("production platform runtime", () => {
     const port = await freePort();
     const composition = createProductionComposition({
       dataMode: "production",
+      profile: "t0-v1",
       allowedOrigins: ["https://client.example.invalid"],
       allowedHosts: [`127.0.0.1:${port}`],
       tokenPolicy: {
@@ -64,19 +125,19 @@ describe("production platform runtime", () => {
         audience: "logistics-mcp",
       },
       tokenVerifier: verifier,
-      adapterSource: createProductionApiAdapterSource(),
       auditRepository: store,
       idempotencyRepository: store,
       sessionBindingStore: store,
       sessionOwnerId: "production-test-worker",
+      agentAccessRuntime: t0AgentAccessRuntime(),
     });
     const now = Math.floor(Date.now() / 1000);
     const token = await new SignJWT({
       tenant_id: "tenant_demo_a",
-      actor_id: "sales_demo",
-      actor_role: "sales",
-      roles: ["sales"],
-      scopes: ["system:read", "quote:calculate"],
+      actor_id: "admin_demo",
+      actor_role: "admin",
+      roles: ["admin"],
+      scopes: ["platform:admin"],
       client_id: "codex-production-test",
       session_id: "auth-session-production-test",
     })
@@ -125,6 +186,25 @@ describe("production platform runtime", () => {
       server.once("error", reject);
       server.listen(port, "127.0.0.1", resolve);
     });
+    const longKey = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer lmcpk_fixture_long_term_key",
+        "content-type": "application/json",
+        "x-forwarded-proto": "https",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "long-key",
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "long-key-spoof", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(longKey.status).toBe(401);
     const client = new Client({ name: "production-runtime-test", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(
       new URL(`http://127.0.0.1:${port}/mcp`),
@@ -142,8 +222,19 @@ describe("production platform runtime", () => {
         ownerId: "production-test-worker",
       });
       const tools = (await client.listTools()).tools;
-      expect(tools).toHaveLength(11);
-      expect(tools.map((tool) => tool.name)).toContain("quote.freightcom_ltl.preview");
+      expect(tools.map((tool) => tool.name)).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      const resources = (await client.listResources()).resources;
+      expect(resources.map((resource) => resource.uri).sort()).toEqual([
+        "logistics://agent/bootstrap",
+        "logistics://agent/profiles",
+        "logistics://contracts/envelope/current",
+        "logistics://modules/catalog",
+        "logistics://standards/index",
+      ]);
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),

@@ -1,11 +1,11 @@
 {
   "$schema": "../../../schemas/agent-profile.schema.json",
   "profile_id": "runtime-caller",
-  "version": "2026-08-21.v1",
+  "version": "2026-08-27.v1",
   "audience": "caller",
-  "standard_ids": ["agent.bootstrap", "platform.contracts", "agent-access.v0", "release-agent-adapters"],
-  "allowed_rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001", "CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001", "AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001", "RELEASE-ADAPTER-001", "RELEASE-ADAPTER-002"],
+  "standard_ids": ["agent.bootstrap", "platform.contracts", "agent-access.v0", "release-agent-adapters", "t0-production-profile-v1", "credential-exchange-v1"],
+  "allowed_rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001", "CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001", "AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001", "RELEASE-ADAPTER-001", "RELEASE-ADAPTER-002", "T0-PROFILE-001", "T0-CATALOG-001", "T0-READINESS-001", "T0-AUTH-001", "ACCESS-EXCHANGE-001", "ACCESS-JWT-001", "ACCESS-REVOKE-001", "ACCESS-AUDIT-001"],
   "context_scopes": ["bootstrap", "standards", "module_catalog", "release"],
-  "allowed_module_ids": ["cargo", "container", "freightcom-ltl"],
+  "allowed_module_ids": ["agent-access", "cargo", "container"],
   "content_mode": "summary"
 }

@@ -134,9 +134,9 @@ describe("Agent context resolver", () => {
     expect(result.source_refs.some((source) => source.source_id === "standard:writable-module-control-plane-v1:2026-08-22.v1")).toBe(false);
     expect(result.source_refs.some((source) => source.source_id === adminControlStateSourceRef)).toBe(false);
     expect(result.modules.map((module) => module.module_id).sort()).toEqual([
+      "agent-access",
       "cargo",
       "container",
-      "freightcom-ltl",
     ]);
   });
 

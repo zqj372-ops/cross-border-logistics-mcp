@@ -21,6 +21,11 @@ import {
   type SqliteControlStore,
   type SqliteReadbackRecoveryDriver,
 } from "../control-plane/sqlite-control-store";
+import {
+  SqliteTenantAccessStore,
+} from "../control-plane/sqlite-tenant-access-store";
+import { TenantAccessError } from "../control-plane/tenant-access-errors";
+import { TenantAccessService } from "../control-plane/tenant-access-service";
 import type {
   ControlFinalResult,
   DeepReadonly,
@@ -33,6 +38,7 @@ import {
   CapabilityRegistry,
   ModuleHost,
   normalizeCapabilityRequirement,
+  parseT0ProductionProfile,
 } from "../module-runtime";
 import {
   cargoModule,
@@ -44,11 +50,13 @@ import {
 } from "../modules";
 import {
   createFixtureComposition,
-  createProductionApiAdapterSource,
   createProductionComposition,
   type GatewayComposition,
 } from "./composition";
-import type { ShortLivedTokenValidationOptions } from "../platform/security";
+import {
+  assertAllowedOutboundUrl,
+  type ShortLivedTokenValidationOptions,
+} from "../platform/security";
 import {
   createAdminStaticHandler,
   type AdminStaticHandler,
@@ -57,6 +65,11 @@ import {
   createAdminControlApiHandler,
   type AdminControlApiHandler,
 } from "./admin-control-api";
+import {
+  createAdminTenantAccessApiHandler,
+  type AdminTenantAccessApiHandler,
+  type TenantAccessAdminService,
+} from "./admin-tenant-access-api";
 import { createProductionTokenVerifier } from "./production-token-verifier";
 import {
   createFreightcomDisabledRateAdapter,
@@ -65,9 +78,9 @@ import {
 } from "../adapters/quote/freightcom-rate-adapter";
 import { DEFAULT_FREIGHTCOM_TEST_BASE_URL } from "../adapters/quote/freightcom-test-client";
 import type { FreightcomRatePort } from "../adapters/ports";
-import { createRiskCustomsApiAdapterFromEnvironment } from "../adapters/customs/riskcustoms-runtime";
 
 export { initializeSqliteControlState } from "../control-plane/sqlite-control-store";
+export { initializeSqliteTenantAccessState } from "../control-plane/sqlite-tenant-access-store";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
@@ -156,7 +169,7 @@ export function createFixtureAuthenticatorFromEnvironment(
       actor_id: identity.actor_id,
       actor_role: "admin",
       roles: ["admin"],
-      scopes: ["platform:admin"],
+      scopes: ["platform:admin", "tenant:admin"],
       client_id: identity.client_id,
       session_id: identity.session_id,
       expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
@@ -189,6 +202,7 @@ async function readiness(
         "MCP_JWT_ISSUER",
         "MCP_JWT_AUDIENCE",
         "MCP_JWKS_URL",
+        "MCP_RUNTIME_PROFILE",
         "MCP_STATE_DB_PATH",
         "MCP_INSTANCE_ID",
         "MCP_ALLOWED_ORIGINS",
@@ -395,7 +409,9 @@ interface ManagedFixtureRuntimeConfig {
   readonly managementTenantId: string;
   readonly allowedOrigins: readonly string[];
   readonly allowedHosts: readonly string[];
-  readonly authenticate: (token: string) => AuthClaims;
+  readonly authenticate: (
+    token: string,
+  ) => AuthClaims | Promise<AuthClaims>;
 }
 
 function managedFixtureRuntimeConfig(applicationRoot: string): ManagedFixtureRuntimeConfig {
@@ -680,7 +696,9 @@ async function recoverPriorBootReadbackAttempts(
 interface RuntimeResources {
   readonly composition: GatewayComposition;
   readonly controlStore?: SqliteControlStore;
+  readonly tenantAccessStore?: SqliteTenantAccessStore;
   readonly adminControlApi?: AdminControlApiHandler;
+  readonly adminTenantAccessApi?: AdminTenantAccessApiHandler;
 }
 
 function rejectProductionAdminControlCall(): Promise<never> {
@@ -697,6 +715,20 @@ const PRODUCTION_DISABLED_ADMIN_CONTROL_SERVICE: ModuleControlService =
     reconcile: rejectProductionAdminControlCall,
   });
 
+function rejectTenantAccessCall(): Promise<never> {
+  return Promise.reject(new Error("Tenant Access is unavailable."));
+}
+
+const DISABLED_TENANT_ACCESS_SERVICE: TenantAccessAdminService = Object.freeze({
+  getState: rejectTenantAccessCall,
+  createTenant: rejectTenantAccessCall,
+  setTenantStatus: rejectTenantAccessCall,
+  issueCredential: rejectTenantAccessCall,
+  rotateCredential: rejectTenantAccessCall,
+  revokeCredential: rejectTenantAccessCall,
+  acknowledgeCredentialDelivery: rejectTenantAccessCall,
+});
+
 function createProductionAdminControlApi(): AdminControlApiHandler {
   return createAdminControlApiHandler({
     dataMode: "production",
@@ -711,6 +743,39 @@ function createProductionAdminControlApi(): AdminControlApiHandler {
   });
 }
 
+function createAdminTenantAccessApi(
+  dataMode: "fixtures" | "production",
+  service: TenantAccessAdminService,
+  authenticate: (
+    token: string,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  managementTenantId: string,
+  allowedOrigins: readonly string[],
+  allowedHosts: readonly string[],
+): AdminTenantAccessApiHandler {
+  return createAdminTenantAccessApiHandler({
+    dataMode,
+    service,
+    authenticate,
+    managementTenantId,
+    allowedOrigins,
+    allowedHosts,
+    allowLoopbackHttp: true,
+    maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
+  });
+}
+
+function createProductionAdminTenantAccessApi(): AdminTenantAccessApiHandler {
+  return createAdminTenantAccessApi(
+    "production",
+    DISABLED_TENANT_ACCESS_SERVICE,
+    rejectProductionAdminControlCall,
+    "production_tenant_access_disabled",
+    splitSetting("MCP_ALLOWED_ORIGINS", ""),
+    splitSetting("MCP_ALLOWED_HOSTS", ""),
+  );
+}
+
 async function createManagedFixtureRuntime(
   applicationRoot: string,
 ): Promise<RuntimeResources & { readonly controlStore: SqliteControlStore }> {
@@ -723,6 +788,7 @@ async function createManagedFixtureRuntime(
   });
   const controlStore = opened.repository;
   let composition: GatewayComposition | undefined;
+  let tenantAccessStore: SqliteTenantAccessStore | undefined;
   try {
     await recoverPriorBootReadbackAttempts(controlStore, opened.recoveryDriver);
     const activationRestoreEvidence = await loadManagedActivationRestoreEvidence(
@@ -751,9 +817,32 @@ async function createManagedFixtureRuntime(
     if (!isDeepStrictEqual(restoredActivation, expectedActivation)) {
       throw new Error("Managed activation restore did not match persisted state.");
     }
+    let tenantAccessService: TenantAccessAdminService = DISABLED_TENANT_ACCESS_SERVICE;
+    let mcpAuthenticate = config.authenticate;
+    try {
+      tenantAccessStore = new SqliteTenantAccessStore({
+        applicationRoot: config.applicationRoot,
+        instanceId: config.instanceId,
+        managementTenantId: config.managementTenantId,
+      });
+      const service = new TenantAccessService(tenantAccessStore);
+      tenantAccessService = service;
+      mcpAuthenticate = async (token) => {
+        try {
+          return await config.authenticate(token);
+        } catch (error) {
+          if (!(error instanceof AuthenticationError)) throw error;
+          return service.verifyApiKey(token);
+        }
+      };
+    } catch (error) {
+      if (!(error instanceof TenantAccessError) || error.code !== "state_missing") {
+        throw error;
+      }
+    }
     composition = makeComposition({
       managementTenantId: config.managementTenantId,
-      authenticate: config.authenticate,
+      authenticate: mcpAuthenticate,
       activation: assembly.activation,
       dispatch: assembly.dispatch,
     });
@@ -768,9 +857,24 @@ async function createManagedFixtureRuntime(
       maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
       clock: () => new Date().toISOString(),
     });
-    return { composition, controlStore, adminControlApi };
+    const adminTenantAccessApi = createAdminTenantAccessApi(
+      "fixtures",
+      tenantAccessService,
+      config.authenticate,
+      config.managementTenantId,
+      config.allowedOrigins,
+      config.allowedHosts,
+    );
+    return {
+      composition,
+      controlStore,
+      ...(tenantAccessStore === undefined ? {} : { tenantAccessStore }),
+      adminControlApi,
+      adminTenantAccessApi,
+    };
   } catch (error) {
     await composition?.close().catch(() => undefined);
+    await tenantAccessStore?.close().catch(() => undefined);
     await controlStore.close().catch(() => undefined);
     throw error;
   }
@@ -922,9 +1026,11 @@ async function handleRuntimeRequest(
   composition: GatewayComposition,
   adminUi: AdminStaticHandler,
   adminControlApi: AdminControlApiHandler | undefined,
+  adminTenantAccessApi: AdminTenantAccessApiHandler | undefined,
   trustedProxy: (address: string | undefined) => boolean,
 ): Promise<void> {
   if (adminControlApi?.handle(request, response)) return;
+  if (adminTenantAccessApi?.handle(request, response)) return;
   if (adminUi.handle(request, response)) return;
   const path = (request.url ?? "/").split("?", 1)[0];
   if (request.method === "GET" && path === "/healthz") {
@@ -966,6 +1072,7 @@ async function handleRuntimeRequest(
 export interface RuntimeServerOptions {
   readonly adminUi?: AdminStaticHandler;
   readonly adminControlApi?: AdminControlApiHandler;
+  readonly adminTenantAccessApi?: AdminTenantAccessApiHandler;
   readonly applicationRoot?: string;
   readonly trustedProxyAddresses?: readonly string[];
 }
@@ -1028,6 +1135,7 @@ export function createRuntimeServer(
         composition,
         adminUi,
         options.adminControlApi,
+        options.adminTenantAccessApi,
         trustedProxy,
       );
     },
@@ -1085,6 +1193,11 @@ async function closeRuntimeResources(
   } catch {
     failed = true;
   }
+  try {
+    await resources.tenantAccessStore?.close();
+  } catch {
+    failed = true;
+  }
   if (failed) {
     throw new Error("The runtime could not close every resource cleanly.");
   }
@@ -1126,12 +1239,16 @@ export async function startRuntime(
       : {
           composition: makeComposition(),
           adminControlApi: createProductionAdminControlApi(),
+          adminTenantAccessApi: createProductionAdminTenantAccessApi(),
         };
     server = createRuntimeServer(resources.composition, {
       applicationRoot,
       ...(resources.adminControlApi === undefined
         ? {}
         : { adminControlApi: resources.adminControlApi }),
+      ...(resources.adminTenantAccessApi === undefined
+        ? {}
+        : { adminTenantAccessApi: resources.adminTenantAccessApi }),
     });
     close = closeOnce(() => closeRuntimeResources(server, resources!));
     await (options.listen ?? listenRuntime)(
@@ -1158,7 +1275,9 @@ function assertNoRuntimeArguments(): void {
 
 interface CompositionWiring {
   readonly managementTenantId?: string;
-  readonly authenticate?: (token: string) => AuthClaims;
+  readonly authenticate?: (
+    token: string,
+  ) => AuthClaims | Promise<AuthClaims>;
   readonly activation?: ActivationReadFacade;
   readonly dispatch?: ControlledDispatchFacade;
 }
@@ -1194,31 +1313,38 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     throw new Error("MCP_DATA_MODE must be explicitly set to production or fixtures.");
   }
   const tokenPolicy = tokenPolicyFromEnvironment();
+  const profileSetting = Object.hasOwn(process.env, "MCP_RUNTIME_PROFILE")
+    ? process.env.MCP_RUNTIME_PROFILE ?? ""
+    : "t0-v1";
+  const profile = parseT0ProductionProfile(profileSetting);
   const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
   const instanceId = process.env.MCP_INSTANCE_ID?.trim();
   const jwksUrl = process.env.MCP_JWKS_URL?.trim();
-  const outboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
+  const allowedOutboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
   const store =
     databasePath === undefined || databasePath.length === 0
       ? undefined
       : new SqliteProductionStore(databasePath);
+  if (jwksUrl !== undefined && jwksUrl.length > 0) {
+    if (allowedOutboundHosts.length !== 1) {
+      throw new Error("T0 production must allow exactly the configured JWKS host.");
+    }
+    assertAllowedOutboundUrl(jwksUrl, allowedOutboundHosts);
+  }
   const tokenVerifier =
     tokenPolicy === undefined ||
     jwksUrl === undefined ||
     jwksUrl.length === 0 ||
-    outboundHosts.length === 0
+    allowedOutboundHosts.length !== 1
       ? undefined
       : createProductionTokenVerifier({
           jwksUrl,
-          allowedHosts: outboundHosts,
+          allowedHosts: allowedOutboundHosts,
         });
-  const riskCustoms = createRiskCustomsApiAdapterFromEnvironment();
   return createProductionComposition({
     dataMode: "production",
+    profile,
     ...common,
-    adapterSource: createProductionApiAdapterSource(
-      riskCustoms === undefined ? {} : { customs: riskCustoms },
-    ),
     ...(store === undefined
       ? {}
       : {

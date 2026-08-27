@@ -76,6 +76,24 @@
       "summary": "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness."
     },
     {
+      "standard_id": "t0-production-profile-v1",
+      "version": "2026-08-27.v1",
+      "path": "docs/rfcs/2026-08-27-t0-production-profile-v1.md",
+      "priority": 92,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["T0-PROFILE-001", "T0-CATALOG-001", "T0-READINESS-001", "T0-AUTH-001"],
+      "summary": "Accepted T0 production profile: exact three-tool/five-resource catalog, static modules, short JWT and readiness gates."
+    },
+    {
+      "standard_id": "credential-exchange-v1",
+      "version": "2026-08-27.v1",
+      "path": "docs/rfcs/2026-08-27-credential-exchange-v1.md",
+      "priority": 93,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["ACCESS-EXCHANGE-001", "ACCESS-JWT-001", "ACCESS-REVOKE-001", "ACCESS-AUDIT-001"],
+      "summary": "Accepted provider-neutral long-lived API Key to short-lived JWT exchange and revocation boundary; real provider pending verification."
+    },
+    {
       "standard_id": "release-agent-adapters",
       "version": "2026-08-21.v1",
       "path": "docs/standards/release-agent-adapters.md",

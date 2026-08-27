@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-27/admin-control/tenant-access-envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "data", "reason_codes"],
+  "properties": {
+    "schema_version": {"const": "2026-08-27.v1"},
+    "status": {"enum": ["success", "needs_input", "manual_review", "blocked", "unavailable"]},
+    "data": {
+      "oneOf": [
+        {"$ref": "#/$defs/state_data"},
+        {"$ref": "#/$defs/tenant_data"},
+        {"$ref": "#/$defs/credential_metadata_data"},
+        {"$ref": "#/$defs/credential_data"},
+        {"type": "null"}
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+    },
+    "replayed": {"type": "boolean"},
+    "secret_delivery": {"$ref": "#/$defs/secret_delivery"}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$"
+    },
+    "nullable_timestamp": {
+      "oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]
+    },
+    "nullable_identifier": {
+      "oneOf": [{"$ref": "#/$defs/identifier"}, {"type": "null"}]
+    },
+    "tool_name": {
+      "enum": [
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get"
+      ]
+    },
+    "tool_catalog_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_name", "kind"],
+      "properties": {
+        "tool_name": {"$ref": "#/$defs/tool_name"},
+        "kind": {"const": "read"}
+      }
+    },
+    "tenant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenant_id", "display_name", "status", "created_at", "updated_at", "allowed_actions"],
+      "properties": {
+        "tenant_id": {"$ref": "#/$defs/identifier"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "status": {"enum": ["active", "suspended"]},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "updated_at": {"$ref": "#/$defs/timestamp"},
+        "allowed_actions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["activate", "suspend"]}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "active"}}, "required": ["status"]},
+          "then": {"properties": {"allowed_actions": {"const": ["suspend"]}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "suspended"}}, "required": ["status"]},
+          "then": {"properties": {"allowed_actions": {"const": ["activate"]}}}
+        }
+      ]
+    },
+    "credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credential_id", "tenant_id", "client_id", "label", "actor_role", "roles",
+        "tool_names", "status", "key_prefix", "secret_last_four", "created_at", "expires_at",
+        "delivery_status", "delivery_acknowledged_at", "effective_status", "allowed_actions",
+        "last_used_at", "revoked_at", "rotated_from_id"
+      ],
+      "properties": {
+        "credential_id": {"$ref": "#/$defs/identifier"},
+        "tenant_id": {"$ref": "#/$defs/identifier"},
+        "client_id": {"$ref": "#/$defs/identifier"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "actor_role": {"const": "service"},
+        "roles": {"type": "array", "prefixItems": [{"const": "service"}], "items": false, "minItems": 1},
+        "tool_names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/tool_name"}
+        },
+        "status": {"enum": ["active", "expired", "revoked"]},
+        "delivery_status": {"enum": ["pending", "acknowledged"]},
+        "delivery_acknowledged_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "effective_status": {"enum": ["pending_delivery", "active", "tenant_suspended", "expired", "revoked"]},
+        "allowed_actions": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {"enum": ["acknowledge_delivery", "rotate", "revoke"]}
+        },
+        "key_prefix": {"type": "string", "pattern": "^lmcpk_[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "secret_last_four": {"type": "string", "pattern": "^[A-Za-z0-9_-]{4}$"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"type": "integer", "minimum": 1},
+        "last_used_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "revoked_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "rotated_from_id": {"$ref": "#/$defs/nullable_identifier"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"delivery_status": {"const": "pending"}}, "required": ["delivery_status"]},
+          "then": {"properties": {"delivery_acknowledged_at": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"delivery_status": {"const": "acknowledged"}}, "required": ["delivery_status"]},
+          "then": {"properties": {"delivery_acknowledged_at": {"$ref": "#/$defs/timestamp"}}}
+        },
+        {
+          "if": {"properties": {"effective_status": {"const": "pending_delivery"}}, "required": ["effective_status"]},
+          "then": {"properties": {
+            "status": {"const": "active"},
+            "delivery_status": {"const": "pending"},
+            "allowed_actions": {"const": ["acknowledge_delivery", "revoke"]}
+          }}
+        },
+        {
+          "if": {"properties": {"effective_status": {"const": "active"}}, "required": ["effective_status"]},
+          "then": {"properties": {
+            "status": {"const": "active"},
+            "delivery_status": {"const": "acknowledged"},
+            "allowed_actions": {"const": ["rotate", "revoke"]}
+          }}
+        },
+        {
+          "if": {"properties": {"effective_status": {"const": "tenant_suspended"}}, "required": ["effective_status"]},
+          "then": {"properties": {
+            "status": {"const": "active"},
+            "delivery_status": {"const": "acknowledged"},
+            "allowed_actions": {"const": ["revoke"]}
+          }}
+        },
+        {
+          "if": {"properties": {"effective_status": {"const": "expired"}}, "required": ["effective_status"]},
+          "then": {"properties": {"status": {"const": "expired"}, "allowed_actions": {"const": []}}}
+        },
+        {
+          "if": {"properties": {"effective_status": {"const": "revoked"}}, "required": ["effective_status"]},
+          "then": {"properties": {"status": {"const": "revoked"}, "allowed_actions": {"const": []}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "active"}}, "required": ["status"]},
+          "then": {"properties": {"revoked_at": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "expired"}}, "required": ["status"]},
+          "then": {"properties": {"revoked_at": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "revoked"}}, "required": ["status"]},
+          "then": {"properties": {"revoked_at": {"$ref": "#/$defs/timestamp"}}}
+        }
+      ]
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id", "tenant_id", "credential_id", "actor_ref", "action",
+        "from_status", "to_status", "status", "reason_code", "created_at"
+      ],
+      "properties": {
+        "operation_id": {"$ref": "#/$defs/identifier"},
+        "tenant_id": {"$ref": "#/$defs/identifier"},
+        "credential_id": {"$ref": "#/$defs/nullable_identifier"},
+        "actor_ref": {"$ref": "#/$defs/identifier"},
+        "action": {
+          "enum": [
+            "tenant.create", "tenant.activate", "tenant.suspend", "credential.issue",
+            "credential.delivery_acknowledge", "credential.rotate", "credential.revoke"
+          ]
+        },
+        "from_status": {
+          "enum": ["absent", "active", "suspended", "pending_delivery", "tenant_suspended", "expired", "revoked"]
+        },
+        "to_status": {
+          "enum": ["absent", "active", "suspended", "pending_delivery", "tenant_suspended", "expired", "revoked"]
+        },
+        "status": {"const": "success"},
+        "reason_code": {"$ref": "#/$defs/identifier"},
+        "created_at": {"$ref": "#/$defs/timestamp"}
+      },
+      "oneOf": [
+        {"properties": {
+          "action": {"const": "tenant.create"}, "credential_id": {"type": "null"},
+          "from_status": {"const": "absent"}, "to_status": {"const": "active"}
+        }},
+        {"properties": {
+          "action": {"const": "tenant.activate"}, "credential_id": {"type": "null"},
+          "from_status": {"const": "suspended"}, "to_status": {"const": "active"}
+        }},
+        {"properties": {
+          "action": {"const": "tenant.suspend"}, "credential_id": {"type": "null"},
+          "from_status": {"const": "active"}, "to_status": {"const": "suspended"}
+        }},
+        {"properties": {
+          "action": {"const": "credential.issue"}, "credential_id": {"$ref": "#/$defs/identifier"},
+          "from_status": {"const": "absent"}, "to_status": {"const": "pending_delivery"}
+        }},
+        {"properties": {
+          "action": {"const": "credential.delivery_acknowledge"}, "credential_id": {"$ref": "#/$defs/identifier"},
+          "from_status": {"const": "pending_delivery"}, "to_status": {"const": "active"}
+        }},
+        {"properties": {
+          "action": {"const": "credential.rotate"}, "credential_id": {"$ref": "#/$defs/identifier"},
+          "from_status": {"const": "active"}, "to_status": {"const": "pending_delivery"}
+        }},
+        {"properties": {
+          "action": {"const": "credential.revoke"}, "credential_id": {"$ref": "#/$defs/identifier"},
+          "from_status": {"enum": ["pending_delivery", "active"]}, "to_status": {"const": "revoked"}
+        }}
+      ]
+    },
+    "state_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available_tools", "tenants", "credentials", "operations"],
+      "properties": {
+        "available_tools": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/tool_catalog_entry"}
+        },
+        "tenants": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/tenant"}},
+        "credentials": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/credential"}},
+        "operations": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/operation"}}
+      }
+    },
+    "tenant_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenant", "operation"],
+      "properties": {
+        "tenant": {"$ref": "#/$defs/tenant"},
+        "operation": {"$ref": "#/$defs/operation"}
+      }
+    },
+    "credential_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credential", "api_key", "operation"],
+      "properties": {
+        "credential": {"$ref": "#/$defs/credential"},
+        "api_key": {
+          "oneOf": [
+            {"type": "string", "pattern": "^lmcpk_[A-Za-z0-9][A-Za-z0-9._:-]{0,127}_[A-Za-z0-9_-]{43}$"},
+            {"type": "null"}
+          ]
+        },
+        "operation": {"$ref": "#/$defs/operation"}
+      }
+    },
+    "credential_metadata_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credential", "operation"],
+      "properties": {
+        "credential": {"$ref": "#/$defs/credential"},
+        "operation": {"$ref": "#/$defs/operation"}
+      }
+    },
+    "secret_delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "credential_id"],
+      "properties": {
+        "status": {"enum": ["one_time", "withheld"]},
+        "credential_id": {"$ref": "#/$defs/identifier"}
+      }
+    }
+  }
+}

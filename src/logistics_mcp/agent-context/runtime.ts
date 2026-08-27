@@ -22,7 +22,7 @@ import {
   isTrustedExecutionContext,
   type ExecutionContext,
 } from "../platform/context";
-import type { AgentStandardPack } from "./types";
+import type { AgentContextScope, AgentStandardPack } from "./types";
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 
@@ -146,6 +146,10 @@ export interface AgentContextAuthorizationRequest {
   readonly context: ExecutionContext;
   readonly profileId: string;
   readonly moduleId: string | null;
+  /** Present only for a resource read; binds authorization to one fixed URI. */
+  readonly resourceId?: string;
+  readonly resourceUri?: string;
+  readonly contextScope?: AgentContextScope;
 }
 
 export type AgentContextAuthorizationCallback = (
@@ -236,9 +240,13 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
     profileId: string,
     moduleId: string | undefined,
     context: ExecutionContext,
+    resource?: (typeof CANONICAL_AGENT_RESOURCES)[number],
   ): boolean {
     const profile = pack.profiles.find((candidate) => candidate.profile_id === profileId);
     if (profile === undefined) return false;
+    if (resource !== undefined && !profile.context_scopes.includes(resource.context_scope)) {
+      return false;
+    }
     if (this.authorizationCallback === null) {
       return profile.profile_id === RUNTIME_PROFILE_ID && profile.audience === "caller";
     }
@@ -246,6 +254,13 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
       context,
       profileId,
       moduleId: moduleId ?? null,
+      ...(resource === undefined
+        ? {}
+        : {
+            resourceId: resource.resource_id,
+            resourceUri: resource.uri,
+            contextScope: resource.context_scope,
+          }),
     };
     try {
       return this.authorizationCallback(request) === true;
@@ -345,42 +360,39 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         "The requested Agent resource request is invalid.",
       );
     }
-    const knownUnavailableResources = new Map(
-      CANONICAL_AGENT_RESOURCES.map((resource) => [resource.uri, resource]),
-    );
-    const pack = this.runtimePack();
-    if (pack === null) {
-      const unavailableResource = knownUnavailableResources.get(uri);
-      if (unavailableResource === undefined) {
-        throw new AgentAccessRuntimeError(
-          "resource_unknown",
-          "The requested Agent resource is not registered.",
-        );
-      }
-      return {
-        uri,
-        mimeType: unavailableResource.mimeType,
-        text: JSON.stringify({ status: "unavailable", code: "agent_pack.unavailable" }),
-      };
-    }
-    if (!this.isProfileAuthorized(pack, RUNTIME_PROFILE_ID, undefined, context)) {
-      throw new AgentAccessRuntimeError(
-        "resource_not_authorized",
-        "The requested Agent resource is not authorized for this caller.",
-      );
-    }
-    const resource = pack.resources.find((candidate) => candidate.uri === uri);
-    if (resource === undefined) {
+    const knownResource = CANONICAL_AGENT_RESOURCES.find((resource) => resource.uri === uri);
+    if (knownResource === undefined) {
       throw new AgentAccessRuntimeError(
         "resource_unknown",
         "The requested Agent resource is not registered.",
       );
     }
-    const canonical = canonicalAgentResource(resource.resource_id);
-    if (canonical === undefined) {
+    const pack = this.runtimePack();
+    if (pack === null) {
+      return {
+        uri,
+        mimeType: knownResource.mimeType,
+        text: JSON.stringify({ status: "unavailable", code: "agent_pack.unavailable" }),
+      };
+    }
+    const resource = pack.resources.find((candidate) => candidate.uri === uri);
+    if (resource === undefined || resource.resource_id !== knownResource.resource_id) {
       throw new AgentAccessRuntimeError(
         "resource_invalid",
         "The requested Agent resource is not registered.",
+      );
+    }
+    const canonical = canonicalAgentResource(resource.resource_id);
+    if (canonical === undefined || canonical.uri !== uri) {
+      throw new AgentAccessRuntimeError(
+        "resource_invalid",
+        "The requested Agent resource is not registered.",
+      );
+    }
+    if (!this.isProfileAuthorized(pack, RUNTIME_PROFILE_ID, undefined, context, canonical)) {
+      throw new AgentAccessRuntimeError(
+        "resource_not_authorized",
+        "The requested Agent resource is not authorized for this caller.",
       );
     }
     const standards = pack.standards.filter((standard) =>
@@ -390,10 +402,23 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
       return { uri, mimeType: canonical.mimeType, text: standards.map((standard) => standard.content).join("\n\n") };
     }
     if (resource.resource_id === "modules.catalog") {
+      const runtimeCaller = pack.profiles.find(
+        (profile) => profile.profile_id === RUNTIME_PROFILE_ID,
+      );
+      if (runtimeCaller === undefined || runtimeCaller.audience !== "caller") {
+        throw new AgentAccessRuntimeError(
+          "resource_invalid",
+          "The requested Agent resource is not registered.",
+        );
+      }
       return {
         uri,
         mimeType: canonical.mimeType,
-        text: JSON.stringify({ modules: pack.modules }, null, 2),
+        text: JSON.stringify({
+          modules: pack.modules.filter((module) =>
+            module.risk_level === "T0" && runtimeCaller.allowed_module_ids.includes(module.module_id),
+          ),
+        }, null, 2),
       };
     }
     if (resource.resource_id === "agent.profiles") {

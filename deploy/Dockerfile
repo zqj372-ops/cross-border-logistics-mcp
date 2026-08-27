@@ -12,6 +12,8 @@ COPY docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md ./docs/rfcs
 COPY docs/rfcs/2026-08-22-admin-control-state-dto-v1.md ./docs/rfcs/2026-08-22-admin-control-state-dto-v1.md
 COPY docs/rfcs/2026-08-22-writable-module-control-plane-v1.md ./docs/rfcs/2026-08-22-writable-module-control-plane-v1.md
 COPY docs/rfcs/2026-08-23-readback-attempt-finalization-v1.md ./docs/rfcs/2026-08-23-readback-attempt-finalization-v1.md
+COPY docs/rfcs/2026-08-27-t0-production-profile-v1.md ./docs/rfcs/2026-08-27-t0-production-profile-v1.md
+COPY docs/rfcs/2026-08-27-credential-exchange-v1.md ./docs/rfcs/2026-08-27-credential-exchange-v1.md
 COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY tsconfig.json .
@@ -35,6 +37,6 @@ RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nolog
 USER mcp
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node --input-type=module -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  CMD node --input-type=module -e "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/src/logistics_mcp/server/start.mjs"]

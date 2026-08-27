@@ -32,8 +32,12 @@
 | 04 装柜 | `src/logistics_mcp/domains/container/**`、`tests/container/**` | 理论容量/可操作容量、装载汇总、超方超重和装载顺序摘要 |
 | 05 适配器 | `src/logistics_mcp/adapters/**`、`src/logistics_mcp/domains/{quote,customs,knowledge,status,review}/**`、`tests/adapters/**`、`tests/domains/**` | 现有报价、RiskCustoms、精选知识、状态和复核任务的窄适配 |
 | 06 集成 | `tests/e2e/**`、`deploy/**`、`docs/runbooks/**`、`apps/admin/**`、客户端配置示例 | 多客户端、Admin 控制台、部署、安全发布、端到端和回滚验证 |
+| 07 接入网关 | `services/access-gateway/**`、`apps/access-console/**`、`schemas/access-gateway/**`、`tests/access-gateway/**` | 企业接入网关的 provider-neutral ports、本地合成 fixture、长期 Key 兑换短期 JWT、JWKS、精确 T0 entitlement、窄 Access Console 和失败闭合测试；真实 IdP/KMS/托管数据库/Edge 由部署环境提供 |
 
 任务 06 原则上不重写 02–05 的领域实现，只通过小型集成修复解决问题。
+任务 07 不得修改 MCP 工具合同、领域算法、现有 `apps/admin/**` 或生产部署配置；它只实现
+`2026-08-27-credential-exchange-v1` 已接受合同。与 MCP Runtime 的互操作只通过短期 JWT、
+JWKS 和 `tests/e2e/**` 完成，不能把长期 API Key verifier 嵌入生产 MCP 进程。
 
 ## 禁止交叉修改
 

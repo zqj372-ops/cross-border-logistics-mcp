@@ -1,5 +1,5 @@
 # 按 OpenAI 当前 Codex MCP 配置格式编写。使用前替换示例地址，
-# 并由企业身份平台把短期令牌注入 LOGISTICS_MCP_BEARER_TOKEN。
+# 并由统一凭证网关/企业身份平台把短期 JWT 注入 LOGISTICS_MCP_BEARER_TOKEN。
 [mcp_servers.cross_border_logistics]
 url = "https://mcp.example.invalid/mcp"
 bearer_token_env_var = "LOGISTICS_MCP_BEARER_TOKEN"
@@ -7,17 +7,9 @@ enabled = true
 required = true
 startup_timeout_sec = 20
 tool_timeout_sec = 60
-default_tools_approval_mode = "writes"
 enabled_tools = [
   "cargo.calculate",
   "container.plan_summary",
-  "quote.canada_final_mile.calculate",
-  "quote.save_draft",
-  "customs.ca.search",
-  "customs.ca.estimate",
-  "knowledge.search_curated",
-  "system.get_data_status",
-  "review.create_task",
   "system.agent_context.get",
 ]
 # Read-only resources are discovered after initialize:
@@ -26,3 +18,4 @@ enabled_tools = [
 # logistics://contracts/envelope/current
 # logistics://modules/catalog
 # logistics://agent/profiles
+# 当前仅为模板，待真实 staging 适配验证。

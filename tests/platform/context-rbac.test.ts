@@ -12,6 +12,8 @@ import {
   authorizeTool,
   getToolPolicy,
   phaseOneToolNames,
+  tenantApiKeyToolNames,
+  toolVisibleForContext,
 } from "../../src/logistics_mcp/platform/rbac";
 
 const claims = (role: AuthClaims["actor_role"]): AuthClaims => ({
@@ -155,6 +157,29 @@ describe("platform context and RBAC", () => {
       scopes: ["system:read"],
     });
     expect(() => authorizeTool(withoutScope, "quote.freightcom_ltl.preview")).toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("uses exact API-key tool scopes without inheriting sibling tools", () => {
+    const exact = parseExecutionContext({
+      ...claims("service"),
+      scopes: ["tool:cargo.calculate"],
+    });
+
+    expect(tenantApiKeyToolNames).toContain("cargo.calculate");
+    expect([...tenantApiKeyToolNames]).toEqual([
+      "cargo.calculate",
+      "container.plan_summary",
+      "system.agent_context.get",
+    ]);
+    expect(tenantApiKeyToolNames).not.toContain("quote.canada_final_mile.calculate");
+    expect(tenantApiKeyToolNames).not.toContain("customs.ca.search");
+    expect(tenantApiKeyToolNames).not.toContain("quote.freightcom_ltl.preview");
+    expect(authorizeTool(exact, "cargo.calculate")).toBe(true);
+    expect(toolVisibleForContext(exact, "cargo.calculate")).toBe(true);
+    expect(toolVisibleForContext(exact, "quote.canada_final_mile.calculate")).toBe(false);
+    expect(() => authorizeTool(exact, "quote.canada_final_mile.calculate")).toThrow(
       ForbiddenError,
     );
   });

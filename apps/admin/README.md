@@ -2,7 +2,9 @@
 
 这是 08A 的单页控制面原型。它管理客户端接入、角色/工具授权、API-first 来源状态、适配器引用、系统结构、就绪状态、审批差异和审计摘要；它不是报价、关税、Zone 或装柜业务数据库。
 
-前端只显示中文业务名称和状态；内部工具名、权限码、配置路径、接口引用、凭证引用、版本号和追踪号仅保留在底层契约中，页面不回显具体值。
+前端以中文业务名称和状态为主；Tenant Access 的精确授权选择器会同时显示 canonical MCP
+tool name，便于核对实际 entitlement。权限码、配置路径、接口引用、凭证引用、完整凭证、版本号
+和追踪号仍只保留在底层契约或脱敏状态中，页面不回显具体值。
 
 ## 本地运行
 
@@ -37,6 +39,26 @@ GET /admin/api/v1/snapshot
 模块中心按“登记制品 → 生成预览 → 双人审批 → 发布读回”展示 release rail，并提供已登记、待审批、当前激活三张状态卡。模块表的开关只修改当前页面内存中的期望草稿；模块检查器、预览差异、逐项校验、发布轨迹和回滚目标均以服务端控制状态为准，并隐藏具体引用与凭证。
 
 登记、预览、审批、发布、读回和回滚按钮只调用同源模块控制面 API。操作成功后必须再次读取并验证服务端控制状态，运行时卡片不会乐观更新；服务端返回 `manual_review`、`blocked` 或 `unavailable` 时保留原状态并显示人工复核/失败闭合提示。回滚也先生成预览，不能直接修改运行时。
+
+## 租户与 API Key（Tenant Access）
+
+`#tenant-access` 是独立的租户接入视图，不依赖旧的业务快照来生成租户或凭证。它只做租户、
+客户端 Key metadata 和 T0 内置工具权限配置，不加载模块、不配置报价/关务/Freightcom，也不发起
+业务写操作。它只请求固定前缀 `/admin/api/v1/access`：
+
+- `GET /state` 读取租户、机器客户端凭证元数据和最近 operation；列表只显示 `key_prefix` 与 `secret_last_four`，不显示完整 key、salt、哈希或业务数据。
+- `POST /tenants` 创建租户；`POST /tenants/{tenant_id}/status` 设置 `active`/`suspended`；`POST /credentials` 签发凭证；`POST /credentials/{credential_id}/acknowledge-delivery` 确认安全交付；`POST /credentials/{credential_id}/rotate` 轮换；`POST /credentials/{credential_id}/revoke` 吊销。
+- 签发与轮换按服务端 `available_tools` 选择 canonical `tool_names`。当前 allowlist 只包含
+  `cargo.calculate`、`container.plan_summary`、`system.agent_context.get`。页面不提交 broad
+  scope；每枚 API Key 的 `tools/list` 只暴露被选择工具。工具授权不代表模块已激活、依赖已
+  ready 或已获生产资格。
+- active 凭证的“调整功能”不是原地改权限：旧 Key 原子吊销，新 Key 进入 `pending_delivery`，并重新执行一次性显示、安全交付确认和 `operation_id` + `credential_id` + `tool_names` 精确读回。
+- 所有请求使用当前页面内存中的 Bearer 身份；POST 自动携带至少 16 个字符的 `Idempotency-Key`，请求不携带 cookie。客户端不接受页面提交的租户归属作为认证依据。
+- 写操作只有在随后读取的 `/state.operations` 精确出现同一 `operation_id` 时才显示完成；HTTP 成功或任意状态 GET 不能替代精确读回。按钮只服从服务端 `allowed_actions`，不按页面猜测状态。
+- 完整 key 只在签发或轮换成功、并通过响应格式校验后，于当前窗口内存和一次性弹窗中显示。新 Key 先处于 `pending_delivery`；点击“确认已安全保存”且确认 operation 精确读回后才可调用 MCP。未确认就关闭时 Key 无法恢复，必须吊销待交付凭证并重新签发。幂等重放或 `withheld` 响应不会显示 key。
+- `?fixture=1` 仅允许本地演示路径尝试写操作；非 fixture 路径固定关闭创建、状态切换、签发、轮换和吊销。正式路径失败、不可用或身份未绑定时保持 `blocked`/`unavailable`/`needs_input`，不会补造数据，也不代表生产资格。
+
+前端不会把身份或完整 key 写入 URL、`localStorage`、`sessionStorage`、cookie、持久化 DOM 模板或日志；输入提交后立即清空。生产客户端不得把长期 API Key 直接交给每个 MCP 实例；必须先由统一凭证网关换短期 JWT，再调用现有生产 JWT 入口。Tenant Access 服务端接口和生产身份/审批能力仍需按 RFC 与对应后端验收结果确认。
 
 ## 边界
 

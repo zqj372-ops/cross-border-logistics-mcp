@@ -16,6 +16,7 @@ import type {
 } from "./capabilities";
 import type { ModuleCatalog } from "./catalog";
 import type { RegistrationLease } from "./lease";
+import type { ModuleDescriptor } from "./production";
 
 export type ModuleRiskLevel = "T0" | "T1" | "T2" | "T3";
 
@@ -93,6 +94,12 @@ export interface ModuleCatalogEntry extends ModuleToolContribution {
 export interface ModuleHostOptions {
   readonly capabilities: CapabilityRegistry;
   readonly modules: readonly ModuleDefinition[];
+  /**
+   * Optional reviewed descriptors. When supplied, the host validates the
+   * descriptor set before mounting and validates each module's tool set after
+   * mounting.
+   */
+  readonly trustedDescriptors?: readonly ModuleDescriptor[];
 }
 
 export type ModuleHostStatus = "created" | "mounting" | "mounted" | "closing" | "closed" | "failed";
@@ -105,6 +112,7 @@ export interface ModuleHostSnapshot {
     readonly risk_level: ModuleRiskLevel;
     readonly mounted: boolean;
     readonly tool_names: readonly string[];
+    readonly manifest_digest?: `sha256:${string}`;
   }[];
 }
 

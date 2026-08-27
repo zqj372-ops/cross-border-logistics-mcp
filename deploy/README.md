@@ -1,55 +1,83 @@
-# MCP deployment template
+# T0 MCP deployment template
 
-这是 Node 22 网关的非部署模板。服务只在容器网络暴露 `8080`，不通过 Compose
-直接发布公网；公网访问必须经过已批准的 HTTPS 反向代理或企业网关，负责 TLS、身份
-验证、Origin/Host、限流和 WAF 策略。
+这是 `t0-v1` 的单区域候选部署模板，不是已完成的生产部署。服务只在容器网络暴露
+`8080`，公网入口必须由企业 TLS/WAF/Edge 提供，并负责受控路由、限流、紧急 denylist
+和告警。Compose 不直接发布公网端口。
 
-## 模式与配置
+## 固定生产范围
 
-`MCP_DATA_MODE` 必须显式设置为 `production` 或 `fixtures`。fixture 只能用于隔离的
-本地验证；生产组合不会创建 fixture adapter。真实 endpoint、tenant mapping、认证和
-RiskCustoms readiness 未核验前，生产 adapter 默认 disabled/fail-closed，结果为
-`unavailable` 或 `manual_review`，不能用 fixture 冒充 ready。
+`MCP_DATA_MODE=production` 与 `MCP_RUNTIME_PROFILE=t0-v1` 必须同时显式提供。该 profile
+只注册 3 个工具：
 
-RiskCustoms 的生产 M2M 适配器只有在服务端同时收到以下配置时才会注入：
-`MCP_RISK_CUSTOMS_ENABLED=true`、HTTPS 的 `MCP_RISK_CUSTOMS_BASE_URL`、包含该主机的
-`MCP_RISK_CUSTOMS_ALLOWED_HOSTS`、至少一个明确的 `MCP_RISK_CUSTOMS_ALLOWED_TENANTS`，以及
-`MCP_RISK_CUSTOMS_AUTH_SECRET_FILE`。该主机还必须同时出现在 `MCP_ALLOWED_OUTBOUND_HOSTS`
-中；否则适配器保持 disabled。secret 文件由部署系统挂载到容器，服务端通过拒绝符号链接、
-非普通文件和超过 8 KiB 的有界读取按请求获取 token，并发送 `Authorization: Bearer ...`；
-token、文件内容和路径不会写入日志、客户端配置或仓库。请求中的 tenant 只取自已认证的
-`ExecutionContext.tenantId`，且必须命中本地精确白名单，客户端不能覆盖。
+```text
+cargo.calculate
+container.plan_summary
+system.agent_context.get
+```
 
-仓库提供 `deploy/compose.riskcustoms.override.yml.example` 作为 secret 文件挂载示例。它要求
-部署环境额外提供 `RISK_CUSTOMS_M2M_TOKEN_FILE`，并不包含真实 endpoint、token 或上游
-token-to-tenant mapping。本地 tenant allowlist 只是额外收窄调用范围，不替代 RiskCustoms
-上游授权。外部服务必须先由其自身发布已批准的非测试 M2M contract；本仓库的本地测试只能
-证明 MCP 适配、fail-closed 和请求头映射，不能证明外部部署已上线。
+它只发布五个固定 Agent resources，并只装载 `cargo`、`container`、`agent-access` 三个
+镜像内静态 T0 模块。正式报价、RiskCustoms/关务、Freightcom、知识/状态、review 和所有
+业务写工具在 `t0-v1` 中不注册、不初始化、不读取 secret，也不产生业务出站请求。它们不是
+“返回 unavailable 的生产工具”，而是不存在于此 profile 的工具目录。
 
-Compose 不会为 production、JWT、Origin/Host 或出站 allowlist 配置静默填入示例默认值；
-这些变量必须由调用环境显式提供。只有本地只读 config 检查可以使用
-`--env-file deploy/env.example`，其中的值全部是假值。
+现有宽 Phase 1、Freightcom 和 Admin module-control 只保留在显式 local/fixture 或后续独立
+release 轨道。`deploy/compose.riskcustoms.override.yml.example` 是历史/后续适配器参考，不能
+叠加到 `t0-v1` 候选并宣称仍符合本 profile。
 
-生产入口使用 `MCP_JWKS_URL` 的 RS256 公钥验证 JWT，再按
-`MCP_JWT_ISSUER` 和 `MCP_JWT_AUDIENCE` 校验短时 token。JWKS 必须是 HTTPS，
-且主机必须在 `MCP_ALLOWED_OUTBOUND_HOSTS` 中；签名、issuer、audience、时效或租户
-claims 任一失败都拒绝请求。
+## 身份、JWT 与出站
 
-生产组合还必须由调用方显式提供带 durable marker 和 health/close lifecycle 的审计仓库、幂等仓库、
-session binding store，以及带 health lifecycle 的 token verifier 和 production adapter source。
-这三项持久数据由 `MCP_STATE_DB_PATH` 指定的 SQLite WAL 文件提供；Compose 将其
-挂载在 `/var/lib/logistics-mcp`。`MCP_INSTANCE_ID` 用于会话粘性所有者绑定。缺少任一依赖时
-`/readyz` 返回 `503/not_ready`，`/mcp` 返回 `503/unavailable`，不会回退到内存存储。
+生产 MCP 只接受 `Authorization: Bearer <short-jwt>`。长期 `lmcpk_...` API Key 必须先在
+Unified Access Gateway 兑换短期 JWT，不能直接进入 MCP 实例。生产入口使用：
+
+- `MCP_JWKS_URL` 读取 RS256 公钥；
+- `MCP_JWT_ISSUER`、`MCP_JWT_AUDIENCE` 和最长 15 分钟策略校验 claims；
+- JWT 中服务端签发的 tenant、actor、client、service role、精确 `tool:` scope 和 session；
+- `MCP_ALLOWED_OUTBOUND_HOSTS` 只允许 JWKS 主机。T0 Runtime 没有业务 API 出站用途。
+
+JWKS 必须使用 HTTPS，并由部署环境配置实际企业域名。示例中的 `.invalid` 地址只用于
+离线 config 检查，不能成为 staging 或 production readback。
+
+## 持久平台状态
+
+`MCP_STATE_DB_PATH=/var/lib/logistics-mcp/platform.sqlite` 保存脱敏的 MCP audit、idempotency
+和 session binding。Compose 将 `/var/lib/logistics-mcp` 放入持久 volume，容器根文件系统
+保持只读、非 root、无 Linux capabilities。
+
+SQLite 只用于当前单实例 T0 Runtime 的平台状态，不是 Unified Access Gateway 的生产
+tenant/client/Key 权威库。多实例、共享 Gateway DB、KMS、IdP 和集中审计仍必须由目标环境
+提供并完成独立恢复/故障验证。
 
 ## health 与 readiness
 
-- `GET /healthz` 只证明 Node 进程能响应，不代表适配器、数据发布或写端点可用。
-- `GET /readyz` 只反映身份、SQLite 和生产组合的全局可用性。报价、关务等未启用的
-  业务 API 按工具返回 `unavailable`，不阻断本地 `cargo`/`container`；RiskCustoms
-  `ready=false` 绝不能被映射成工具成功。
-- SDK server/transport 只存在当前进程；SQLite 仅保存脱敏 session binding metadata。
-  请求命中其他 `MCP_INSTANCE_ID` 时失败闭合，部署层必须保持会话粘性。
-- `/mcp` 只通过前置 HTTPS 边界访问；容器不会暴露数据库、SSH 或用户凭证。
+- `GET /healthz` 只证明 Node 进程能响应；不用于 Compose 流量门禁。
+- `GET /readyz` 聚合 production profile、精确目录、reviewed Agent Pack、JWKS、SQLite
+  audit/idempotency/session 和 shutdown 状态。任一全局依赖失败返回非 2xx。
+- Compose healthcheck 使用 `/readyz`，使不满足门禁的实例不接收流量。
+- fixture mode、fixture token、长期 API Key verifier、缺少 pack/catalog 或目录漂移不能进入
+  production ready。
+- RiskCustoms `ready=false`、报价接口健康或 Freightcom 测试状态与 T0 Runtime readiness 无关，
+  因为这些模块未注册。
+
+## 必填配置
+
+Compose 不为下列 production 设置提供静默默认值：
+
+```text
+MCP_DATA_MODE
+MCP_RUNTIME_PROFILE
+MCP_JWT_ISSUER
+MCP_JWT_AUDIENCE
+MCP_JWKS_URL
+MCP_INSTANCE_ID
+MCP_ALLOWED_ORIGINS
+MCP_ALLOWED_HOSTS
+MCP_ALLOWED_OUTBOUND_HOSTS
+MCP_TRUSTED_PROXY_ADDRESSES
+```
+
+`MCP_ALLOWED_ORIGINS`、`MCP_ALLOWED_HOSTS` 和可信代理必须精确配置；不得使用 `*`、客户
+提交值或默认公网网段。TLS 私钥、JWT、API Key、KMS handle 和数据库凭证不得写入
+`deploy/env.example`、Compose、镜像、日志或审计正文。
 
 ## 本地静态检查
 
@@ -58,7 +86,9 @@ docker compose --env-file deploy/env.example -f deploy/compose.yml config
 bash deploy/scripts/check-release.sh --fixture-only
 ```
 
-这两个命令只做配置/隔离验证，不启动容器、不推送镜像、不访问真实 URL。示例中的
-issuer、JWKS 和 host 都是假值；部署管理员必须改为已批准的企业身份源。
-`MCP_TRUSTED_PROXY_ADDRESSES` 中的文档示例地址也必须替换为实际 TLS
-反向代理的 IP 或 CIDR；不要把任意客户网段加入信任列表。
+这些命令不启动容器、不访问真实 URL、不推送镜像，也不证明生产完成。发布候选还必须绑定
+当前 Git SHA、镜像 digest、配置版本，并在目标 staging 完成短 JWT、3 工具、5 资源、
+tenant 隔离、审计、备份恢复、目标负载、告警和前一镜像回滚演练。
+
+在真实企业 IdP、TLS/Edge、KMS/Secret Manager、Unified Access Gateway、集中吊销和上述
+演练没有回执前，状态固定为“待适配验证 / NO-GO”。

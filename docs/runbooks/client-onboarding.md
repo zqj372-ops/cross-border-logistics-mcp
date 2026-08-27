@@ -1,55 +1,70 @@
-# Client onboarding
+# T0 Client onboarding
 
-ChatGPT、Codex 和企业助手只使用同一远程 MCP endpoint：
-`https://mcp.example.invalid/mcp`。`deploy/clients/codex.example.toml` 已按 OpenAI 当前
-`[mcp_servers.<name>]` 格式编写，但仍使用假地址，必须由管理员替换并通过
-`LOGISTICS_MCP_BEARER_TOKEN` 注入短期令牌。另两个 JSON 只是对接清单，
-不是可导入的机器配置，也不包含真实 token。
+ChatGPT、Codex 和企业助手使用同一个受企业 Edge 保护的远程 MCP endpoint。仓库中的
+`deploy/clients/*` 只是不含真实身份的配置模板；假地址、静态模板和解析测试不能证明真实客户端
+已经兼容。
 
-OpenAI 当前说明：ChatGPT 桌面端、Codex CLI 和 IDE 扩展在同一 Codex 主机上
-共享 MCP 配置；ChatGPT Work 网页则由工作区管理员安装包含远程 MCP 工具的
-插件，不读取本地 Codex 配置。参考：
-<https://learn.chatgpt.com/docs/extend/mcp?surface=cli>。
+生产 `t0-v1` 客户端只接收 Unified Access Gateway 签发的短期 JWT。长期 API Key 仅用于
+`POST /access/v1/token/exchange`，不得写入提示词、仓库、普通配置或日志，也不得直接发送给 MCP。
+tenant、actor、roles、scopes、client 和 session 均由服务端校验后注入，客户端不能提交或覆盖。
 
-管理员必须先确认企业身份 provider、issuer、audience、tenant mapping、
-Origin/Host allowlist、HTTPS gateway 和审计保留策略。租户、操作人、角色和会话
-都由服务端校验令牌后注入，客户端配置不得提供或覆盖这些字段。
+## T0 精确目录
 
-## 工具与状态
+`tools/list` 必须精确等于：
 
-冻结的九个业务工具仍是：`cargo.calculate`、`container.plan_summary`、
-`quote.canada_final_mile.calculate`、`quote.save_draft`、`customs.ca.search`、
-`customs.ca.estimate`、`knowledge.search_curated`、`system.get_data_status`、
-`review.create_task`。另外暴露一个只读控制面工具 `system.agent_context.get`，用于
-allowlisted profile 的标准和模块上下文。不存在 `commit_operation`、send、publish、booking
-或通用写工具。
+```text
+cargo.calculate
+container.plan_summary
+system.agent_context.get
+```
 
-固定资源为：`logistics://agent/bootstrap`、`logistics://standards/index`、
-`logistics://contracts/envelope/current`、`logistics://modules/catalog`、
-`logistics://agent/profiles`。运行时只读取不可变 Standard Pack；Pack 缺失时返回
-`unavailable`，不回退到当前工作目录 Markdown。
+`resources/list` 必须精确等于：
 
-客户端必须按统一 envelope 处理：
+```text
+logistics://agent/bootstrap
+logistics://standards/index
+logistics://contracts/envelope/current
+logistics://modules/catalog
+logistics://agent/profiles
+```
+
+生产 T0 不注册报价、RiskCustoms、Freightcom、知识/状态、复核或任何业务写工具。旧的九业务工具
+只属于历史 Phase 1/fixture 验证范围；它们不是 `t0-v1` 可用能力，不能出现在 T0 客户端模板或
+生产 `tools/list` 中。
+
+## 首次连接顺序
+
+1. 客户端从企业 secret injection 取得长期 Key，向 Gateway 兑换所需 exact T0 scopes 的短期 JWT；
+2. 使用短期 JWT initialize MCP session；
+3. 读取 `resources/list`，验证精确五项；
+4. 读取 `logistics://agent/bootstrap`、`logistics://standards/index` 和
+   `logistics://agent/profiles`；
+5. 调用 `system.agent_context.get({"profile_id":"runtime-caller"})`；
+6. 读取 `tools/list`，验证精确三项；
+7. 只按返回 Schema 调用 cargo/container，并保留版本、source refs、warnings、blockers 和 trace；
+8. JWT 到期后重新兑换并建立新 session，不把旧 token 当作可续期长期凭证。
+
+Pack 缺失、hash/descriptor/profile/catalog 不一致、未知资源或逐资源 scope 不满足必须失败闭合；
+客户端不能回退读取工作目录 Markdown、网络说明或模型自造规则。
+
+## 五态处理
 
 - `success`：展示版本、来源、trace 和 warnings；仍遵守 `sendable=false` 与
   `theoretical_only=true`。
-- `needs_input`：把 blockers 转成字段问题；不能使用默认地址、重量、Zone、汇率或税率。
-- `manual_review`：展示原因、来源和责任角色，交给人工复核；不能当作最终报价/税额。
-- `unavailable`：展示权威源/版本不可用；不以搜索、旧数据、fixture 或模型估值替代。
-- `blocked`：展示权限/Phase 1/安全策略拒绝；不改名重试或绕过网关。
+- `needs_input`：把 blockers 转成补问；禁止猜重量、单位、规则或其他默认值。
+- `manual_review`：保留原因和来源交给人工复核，不改写为确定结果。
+- `unavailable`：说明权威依赖不可用，不以旧数据、fixture、搜索或模型估值替代。
+- `blocked`：停止调用并展示脱敏拒绝原因，不改名重试或绕过权限、Gateway/Edge。
 
-## 接入 smoke
+## Staging 验收
 
-1. 管理员使用假 endpoint 和短期身份在 staging 完成 initialize，获取 tools/resources 列表，
-   确认九个业务工具加一个只读 Agent 控制面工具，并读回五个固定资源。
-2. 调用 `system.agent_context.get`，只使用 `runtime-caller` profile 和已注册模块 ID；
-   核对 profile、规则优先级、Standard Pack hash 和 `unavailable`/`blocked` 失败闭合。
-3. 调用 `system.get_data_status` 核对其已注册的数据源；该工具当前没有 RiskCustoms M2M
-   认证上下文，不能作为 RiskCustoms readiness 证明。
-4. 在批准的 staging context 中调用 `customs.ca.search`；由适配器内部完成带认证的
-   `/api/m2m/status`→`/api/m2m/query`，并核对返回的 `ready`、`test_data`、release IDs 和 hashes。
-5. 运行 cargo/quote 查询和一个 `needs_input` 负例；确认金额/重量带单位和版本。
-6. 只在批准的 fixture/sandbox 中验证 `quote.save_draft` 与 `review.create_task` 的
-   preview→approval→commit→readback；不得发送、发布、订舱或写生产。
-7. 保存响应、审计 ID、工具版本和管理员批准记录；ChatGPT Work 插件和
-   企业助手必须在 staging 通过身份、权限、审批和状态处理验收后再开放。
+ChatGPT、Codex 和企业助手必须分别保存真实 staging 回执，至少覆盖：
+
+1. Gateway 一次性 Key 交付、短 JWT exchange、TTL/续期和 JWKS；
+2. `tools/list` 精确 3、`resources/list` 精确 5、Pack/profile/catalog digest 一致；
+3. cargo/container 的 `success`、`needs_input`、`manual_review`，以及 container 3D 请求 `blocked`；
+4. 错误 issuer/audience、过期 token、错误 tenant/client/session、非 T0 scope 全部拒绝；
+5. Key/tenant/client 吊销阻断新 token，Edge denylist 和新 session 策略按 RFC 生效；
+6. 每次成功/拒绝均有脱敏 request/audit ID，审计失败时不签 token且工具不返回 success。
+
+在取得上述真实回执前，三份模板的兼容状态统一为：**待真实 staging 适配验证**。

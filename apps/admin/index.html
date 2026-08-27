@@ -53,6 +53,7 @@
             <ul id="primary-nav" class="nav-list">
               <li><button class="nav-item is-active" type="button" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true"></span><span>总览</span></button></li>
               <li><button class="nav-item" type="button" data-view="modules"><span class="nav-icon" aria-hidden="true"></span><span>模块中心</span></button></li>
+              <li><button class="nav-item" type="button" data-view="tenant-access"><span class="nav-icon" aria-hidden="true"></span><span>租户与 API Key</span></button></li>
               <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"></span><span>Agent 接入</span></button></li>
               <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"></span><span>适配器状态</span></button></li>
               <li><button class="nav-item" type="button" data-view="approvals"><span class="nav-icon" aria-hidden="true"></span><span>审批与发布</span></button></li>
@@ -62,7 +63,7 @@
           </nav>
           <div class="sidebar-note">
             <span class="icon-wrap" aria-hidden="true"></span>
-            <p>报价、关税和装柜数据仍在原系统。本页只展示引用、权限、状态和审批。</p>
+            <p>报价、关税和装柜数据仍在原系统。本页只展示接入引用、权限、状态和审批。</p>
           </div>
         </aside>
 
@@ -79,7 +80,7 @@
       </div>
 
       <footer class="app-footer">
-        <span>控制台范围：接入、适配器、模块草稿、审批边界和审计状态</span>
+        <span>控制台范围：租户接入、适配器、模块草稿、审批边界和审计状态</span>
         <span id="footer-mode">未连接正式后台</span>
       </footer>
     </div>
@@ -112,6 +113,52 @@
         <p id="identity-form-error" class="field-error" role="alert" hidden>请输入身份后继续。</p>
         <div class="dialog-actions"><button class="button button-secondary" type="button" data-control-action="close-identity">取消</button><button class="button button-primary" type="submit" data-control-action="submit-identity">绑定并读取</button></div>
       </form>
+    </dialog>
+
+    <dialog id="access-identity-dialog" class="identity-dialog" aria-labelledby="access-identity-dialog-title" aria-describedby="access-identity-dialog-description">
+      <form id="access-identity-form" class="identity-form" novalidate>
+        <div class="dialog-head">
+          <div>
+            <span class="eyebrow">Tenant Access 身份</span>
+            <h2 id="access-identity-dialog-title">输入控制面身份</h2>
+          </div>
+          <button class="icon-button" type="button" data-access-action="close-identity" aria-label="关闭身份输入"><span class="close-icon" aria-hidden="true"></span></button>
+        </div>
+        <p id="access-identity-dialog-description">身份只用于当前页面内的 Tenant Access 同源请求。提交后输入框立即清空，页面不保存、不回显凭证。</p>
+        <div class="field"><label for="access-identity-token">Bearer 身份</label><input id="access-identity-token" name="access-identity-token" type="password" autocomplete="off" required /></div>
+        <p id="access-identity-form-error" class="field-error" role="alert" hidden>请输入身份后继续。</p>
+        <div class="dialog-actions"><button class="button button-secondary" type="button" data-access-action="close-identity">取消</button><button class="button button-primary" type="submit" data-access-action="submit-identity">绑定并读取</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="credential-tool-dialog" class="identity-dialog credential-tool-dialog" aria-labelledby="credential-tool-dialog-title" aria-describedby="credential-tool-dialog-description">
+      <form id="credential-tool-form" class="identity-form" novalidate>
+        <div class="dialog-head">
+          <div>
+            <span class="eyebrow">精确工具授权</span>
+            <h2 id="credential-tool-dialog-title">调整插件功能</h2>
+          </div>
+          <button class="icon-button" type="button" data-access-action="close-tool-editor" aria-label="关闭插件功能调整"><span class="close-icon" aria-hidden="true"></span></button>
+        </div>
+        <p id="credential-tool-dialog-description">保存会吊销当前 Key，并签发一个功能清单精确匹配的新 Key；新 Key 在确认安全保存前不能调用服务。</p>
+        <div id="credential-tool-options" class="scope-options credential-tool-options"></div>
+        <div class="field"><label for="credential-tool-expires">新 Key 有效期</label><select id="credential-tool-expires" name="expires_in_seconds" required><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000" selected>30 天</option></select></div>
+        <p id="credential-tool-form-error" class="field-error" role="alert" hidden>请至少选择一项插件功能。</p>
+        <div class="callout callout-warning credential-tool-warning" role="note"><div class="callout-head"><h3>状态流转</h3><span class="status-pill status-needs_input"><span class="status-icon" aria-hidden="true">!</span>需要重新交付</span></div><p><code>active</code> 旧 Key → <code>revoked</code>；新 Key → <code>pending_delivery</code> → 确认保存后 <code>active</code>。</p></div>
+        <div class="dialog-actions"><button class="button button-secondary" type="button" data-access-action="close-tool-editor">取消</button><button class="button button-primary" type="submit">调整功能并轮换</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="one-time-credential-dialog" class="identity-dialog one-time-credential-dialog" aria-labelledby="one-time-credential-title" aria-describedby="one-time-credential-description">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">Tenant Access 凭证</span>
+          <h2 id="one-time-credential-title">完整 API Key</h2>
+        </div>
+        <button class="icon-button" type="button" data-access-action="close-secret" aria-label="尚未确认保存，关闭并清除完整凭证"><span class="close-icon" aria-hidden="true"></span></button>
+      </div>
+      <p id="one-time-credential-description" class="dialog-description">只有签发或轮换成功后，服务端才会在当前页面内存中返回一次完整 key。</p>
+      <div id="one-time-credential-body" class="dialog-body"></div>
     </dialog>
 
     <noscript>

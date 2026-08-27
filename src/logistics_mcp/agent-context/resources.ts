@@ -1,3 +1,5 @@
+import type { AgentContextScope } from "./types";
+
 export type AgentResourceMimeType = "application/json" | "text/markdown";
 
 export interface CanonicalAgentResource {
@@ -5,6 +7,8 @@ export interface CanonicalAgentResource {
   readonly uri: string;
   readonly standard_ids: readonly string[];
   readonly mimeType: AgentResourceMimeType;
+  /** The only context scope that may authorize this fixed resource. */
+  readonly context_scope: AgentContextScope;
 }
 
 const canonicalResources = [
@@ -13,30 +17,35 @@ const canonicalResources = [
     uri: "logistics://agent/bootstrap",
     standard_ids: ["agent.bootstrap"],
     mimeType: "application/json",
+    context_scope: "bootstrap",
   },
   {
     resource_id: "standards.index",
     uri: "logistics://standards/index",
     standard_ids: ["agent.bootstrap", "platform.contracts", "module-runtime.v0", "agent-access.v0"],
     mimeType: "application/json",
+    context_scope: "standards",
   },
   {
     resource_id: "contracts.envelope.current",
     uri: "logistics://contracts/envelope/current",
     standard_ids: ["platform.contracts"],
     mimeType: "text/markdown",
+    context_scope: "standards",
   },
   {
     resource_id: "modules.catalog",
     uri: "logistics://modules/catalog",
     standard_ids: ["module-runtime.v0"],
     mimeType: "application/json",
+    context_scope: "module_catalog",
   },
   {
     resource_id: "agent.profiles",
     uri: "logistics://agent/profiles",
     standard_ids: ["agent-access.v0"],
     mimeType: "application/json",
+    context_scope: "release",
   },
 ] as const satisfies readonly CanonicalAgentResource[];
 

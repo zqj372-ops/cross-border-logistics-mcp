@@ -367,7 +367,7 @@ describe("gateway composition modes", () => {
         actor_id: "local_operator",
         actor_role: "admin",
         roles: ["admin"],
-        scopes: ["platform:admin"],
+        scopes: ["platform:admin", "tenant:admin"],
         client_id: "local_fixture_applicant_client",
         session_id: "local_fixture_applicant_session",
       });
@@ -376,7 +376,7 @@ describe("gateway composition modes", () => {
         actor_id: "local_approver",
         actor_role: "admin",
         roles: ["admin"],
-        scopes: ["platform:admin"],
+        scopes: ["platform:admin", "tenant:admin"],
         client_id: "local_fixture_approver_client",
         session_id: "local_fixture_approver_session",
       });
@@ -903,6 +903,57 @@ describe("gateway composition modes", () => {
     await source.close();
   });
 
+  it("constructs production as an exact T0 composition without Phase 1 adapters", async () => {
+    const composition = createProductionComposition({
+      dataMode: "production",
+      profile: "t0-v1",
+    });
+
+    try {
+      expect(composition.definitions.map(({ name }) => name)).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      expect(composition.moduleHost.catalog.list().map(({ name }) => name)).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      expect(composition.moduleHost.snapshot().modules.map(({ module_id }) => module_id)).toEqual([
+        "cargo",
+        "container",
+        "agent-access",
+      ]);
+      expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
+        "sha256:4a3125f1a305aa1d68b7a10616fcdcefe172e8e6aea310317a63cdb38eab6ef4",
+        "sha256:f06ef7053f07b264a214cc5022f77f51794fb730dfa6df99169df4a835472bc4",
+        "sha256:93c40b3def7a5ddf256267d11527f193e515460cbc197be83c5c5d7873bdfa8f",
+      ]);
+      expect(Object.keys(composition.handlers).sort()).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+      ]);
+      expect(Object.keys(composition.contracts).sort()).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+      ]);
+      expect(Object.keys(composition.adapters)).toEqual([]);
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it.each(["", "fixture-lab", "production", "unknown-profile"])(
+    "fails closed for an invalid production profile %j",
+    (profile) => {
+      expect(() => createProductionComposition({
+        dataMode: "production",
+        profile,
+      })).toThrow();
+    },
+  );
+
   it("passes server execution context to M2M and projects the CA result through the inclusive source date", async () => {
     const customsFetch = vi.fn<FetchImplementation>()
       .mockResolvedValueOnce(jsonResponse(riskCustomsStatus(true)))
@@ -984,17 +1035,26 @@ describe("gateway composition modes", () => {
     expect(customsFetch).not.toHaveBeenCalled();
   });
 
-  it("overrides production write adapters supplied through a manually constructed source", async () => {
+  it("does not expose or lifecycle-manage non-T0 adapters supplied to production", async () => {
     const quoteFetch = vi.fn<FetchImplementation>();
     const fixtureAdapters = createFixtureAdapters();
+    let healthCalls = 0;
+    let closeCalls = 0;
     const adapterSource: ProductionAdapterSource = {
       kind: "adapter_source",
       adapters: { ...fixtureAdapters, quote: quoteApi(quoteFetch) },
-      health: () => Promise.resolve({ ready: true }),
-      close: () => Promise.resolve(),
+      health: () => {
+        healthCalls += 1;
+        return Promise.resolve({ ready: true });
+      },
+      close: () => {
+        closeCalls += 1;
+        return Promise.resolve();
+      },
     };
     const composition = createProductionComposition({
       dataMode: "production",
+      profile: "t0-v1",
       adapterSource,
       allowedOrigins: ["https://client.example.invalid"],
       allowedHosts: ["mcp.example.invalid"],
@@ -1002,67 +1062,46 @@ describe("gateway composition modes", () => {
     });
 
     try {
-      const result = await composition.adapters.quote.calculate(apiQuoteInput, serverContext());
-      const review = await composition.adapters.review.previewTask({
-        schema_version: "2026-08-11.v1",
-        version: "review-request@test",
-        task_type: "quote",
-        priority: "high",
-        reason_codes: ["quote.zone_conflict"],
-        opaque_context_refs: [],
-        write_context: {
-          tenant_context: {
-            tenant_id: "tenant_demo_a",
-            actor_id: "sales_demo",
-            actor_role: "sales",
-            client_id: "client_demo",
-            session_id: "session_demo",
-          },
-          idempotency_key: "idem_review_disabled_123456",
-          operation_mode: "preview",
-          preview_ref: null,
-          approval: { required: false, status: "not_required", approval_id: null },
-        },
-      });
-
-      expect(result.status).toBe("blocked");
-      expect(result.blockers?.map(({ code }) => code)).toContain("quote.authorization_unconfigured");
-      expect(review.status).toBe("unavailable");
-      expect(review.blockers?.map(({ code }) => code)).toContain("review.adapter_disabled");
-      expect(composition.adapters.review).not.toBe(fixtureAdapters.review);
+      expect(composition.definitions.map(({ name }) => name)).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      expect(Object.keys(composition.adapters)).toEqual([]);
+      expect((await composition.readiness()).reasons).toContain(
+        "production_non_t0_adapter_configured",
+      );
+      expect(healthCalls).toBe(0);
       expect(quoteFetch).not.toHaveBeenCalled();
     } finally {
       await composition.close();
     }
+    expect(closeCalls).toBe(0);
   });
 
-  it("keeps production adapters disabled until endpoint, tenant and readiness contracts are verified", async () => {
+  it("keeps the production composition structurally limited to the reviewed T0 set", async () => {
     const composition = createProductionComposition({
       dataMode: "production",
+      profile: "t0-v1",
       allowedOrigins: ["https://client.example.invalid"],
       allowedHosts: ["mcp.example.invalid"],
       authenticate: () => securityClaims,
     });
     try {
       expect(composition.dataMode).toBe("production");
-      expect(composition.definitions).toHaveLength(11);
-      expect(
-        composition.definitions.find(
-          (definition) => definition.name === "quote.freightcom_ltl.preview",
-        )?.handler,
-      ).toBeTypeOf("function");
-      expect(composition.adapters.quote).not.toBe(composition.adapters.status);
-
-      const context = parseExecutionContext(securityClaims);
-      const quoteHandler = composition.handlers["quote.canada_final_mile.calculate"];
-      if (quoteHandler === undefined) throw new Error("quote handler was not registered");
-      const quote = await quoteHandler(quoteInput(), context);
-      expect(quote.status).toBe("unavailable");
-      expect(quote.data).toBeNull();
-
-      const customs = await composition.adapters.customs.getStatus({ rule_date: API_DATE }, context);
-      expect(customs.status).toBe("unavailable");
-      expect(JSON.stringify(customs)).toContain("customs.adapter_disabled");
+      expect(composition.definitions.map(({ name }) => name)).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      expect(composition.definitions.some(({ name }) => name.includes("quote"))).toBe(false);
+      expect(composition.definitions.some(({ name }) => name.includes("customs"))).toBe(false);
+      expect(composition.definitions.some(({ name }) => name.includes("review"))).toBe(false);
+      expect(Object.keys(composition.adapters)).toEqual([]);
+      expect(Object.keys(composition.handlers).sort()).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+      ]);
     } finally {
       await composition.close();
     }
