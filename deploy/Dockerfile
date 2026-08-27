@@ -1,4 +1,4 @@
-FROM node:22.13.0-bookworm-slim AS build
+FROM node:22.13.0-bookworm-slim@sha256:f5a0871ab03b035c58bdb3007c3d177b001c2145c18e81817b71624dcf7d8bff AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -24,7 +24,7 @@ COPY vitest.config.ts .
 RUN npm run build
 RUN npm run typecheck
 
-FROM node:22.13.0-bookworm-slim AS runtime
+FROM node:22.13.0-bookworm-slim@sha256:f5a0871ab03b035c58bdb3007c3d177b001c2145c18e81817b71624dcf7d8bff AS runtime
 
 ENV NODE_ENV=production
 ENV MCP_PORT=8080

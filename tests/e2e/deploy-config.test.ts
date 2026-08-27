@@ -42,6 +42,7 @@ describe("safe deployment artifacts", () => {
   it("defines a Node 22.13 multi-stage non-root image with a minimal runtime", () => {
     const dockerfile = read("deploy/Dockerfile");
     expect(dockerfile.match(/node:22\.13\.0-bookworm-slim/g)).toHaveLength(2);
+    expect(dockerfile.match(/node:22\.13\.0-bookworm-slim@sha256:f5a0871ab03b035c58bdb3007c3d177b001c2145c18e81817b71624dcf7d8bff/g)).toHaveLength(2);
     expect(dockerfile).toMatch(/FROM .* AS build/i);
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
