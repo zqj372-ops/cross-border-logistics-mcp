@@ -7,11 +7,15 @@ import {
   PostgresGatewayStore,
   postgresConfigurationFromEnvironment,
 } from "./postgres-store";
+import type { GatewayOperationsReader } from "./operations-overview";
 import { SqliteGatewayOperationalStore } from "./production-store";
 
 export type GatewayStoreBackend = "sqlite" | "postgresql";
 
-export interface GatewayOperationalStore extends GatewayAuditRepository, RateLimitRepository {
+export interface GatewayOperationalStore extends
+  GatewayAuditRepository,
+  RateLimitRepository,
+  GatewayOperationsReader {
   health(): Promise<{ readonly ready: boolean; readonly auditCount: number }>;
   close(): Promise<void>;
 }

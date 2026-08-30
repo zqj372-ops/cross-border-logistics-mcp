@@ -30,6 +30,31 @@
         </div>
       </section>
 
+      <section class="panel overview-panel" aria-labelledby="overview-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Last 24 hours</p>
+            <h2 id="overview-title">运营概览</h2>
+          </div>
+          <p class="hint">只展示汇总计数和脱敏异常引用，不展示 Key、请求正文或客户资料。</p>
+        </div>
+        <div id="overview-metrics" class="metric-grid" aria-live="polite"></div>
+        <div class="overview-grid">
+          <section aria-labelledby="readiness-title">
+            <h3 id="readiness-title">生产门禁</h3>
+            <div id="readiness" class="records"></div>
+          </section>
+          <section aria-labelledby="issues-title">
+            <h3 id="issues-title">最近异常</h3>
+            <div id="recent-issues" class="records"></div>
+          </section>
+          <section aria-labelledby="onboarding-title">
+            <h3 id="onboarding-title">Agent 接入</h3>
+            <div id="agent-onboarding" class="records"></div>
+          </section>
+        </div>
+      </section>
+
       <section class="identity-card" aria-labelledby="identity-title">
         <div>
           <h2 id="identity-title">管理员身份</h2>

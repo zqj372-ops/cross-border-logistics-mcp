@@ -37,6 +37,7 @@ import {
   UnavailableAdminIdentityProvider,
   type RemoteJwksAdminIdentityProviderOptions,
 } from "./production-identity";
+import { createAccessOperationsAdminHandler } from "./operations-overview";
 import {
   initializeSqliteGatewayOperationalState,
   gatewayOperationalPaths,
@@ -551,6 +552,17 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
     trustedProxyAddresses,
     maxBodyBytes: MAX_ADMIN_BODY_BYTES,
   });
+  const operationsHandler = createAccessOperationsAdminHandler({
+    authenticate: (token) => admin.provider.authenticateAdmin(token),
+    managementTenantId,
+    allowedOrigins,
+    allowedHosts,
+    trustedProxyAddresses,
+    allowLoopbackHttp: true,
+    readState: () => credentials.listState(),
+    readActivity: (input) => operations.summarize(input),
+    nowSeconds: () => clock.nowSeconds(),
+  });
   const consoleRoot = consoleRootFromEntry();
   for (const name of ["index.html", "styles.css", "app.js"] as const) {
     if (!statSync(join(consoleRoot, name)).isFile()) {
@@ -602,6 +614,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
       return;
     }
     if (gatewayHandler.handle(request, response)) return;
+    if (operationsHandler.handle(request, response)) return;
     if (adminHandler.handle(request, response)) return;
     if (staticConsole(request, response, consoleRoot)) return;
     securityHeaders(response);

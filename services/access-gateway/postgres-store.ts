@@ -23,6 +23,12 @@ import {
   TenantAccessRepositoryError,
 } from "../../src/logistics_mcp/control-plane/tenant-access-repository";
 import type { AuditEvent } from "./contracts";
+import type {
+  GatewayActivitySummary,
+  GatewayOperationsReader,
+  GatewayRecentIssue,
+} from "./operations-overview";
+import { isCanonicalGatewayTimestamp } from "./operations-overview";
 import type { GatewayAuditRepository, RateLimitRepository } from "./ports";
 
 export const POSTGRES_GATEWAY_SCHEMA_VERSION = 1 as const;
@@ -630,7 +636,8 @@ export interface PostgresGatewayStoreOptions {
 export class PostgresGatewayStore implements
   TenantAccessRepository,
   GatewayAuditRepository,
-  RateLimitRepository {
+  RateLimitRepository,
+  GatewayOperationsReader {
   readonly kind = "production" as const;
   readonly managementTenantId: string;
   readonly #configuration: PostgresGatewayConfiguration;
@@ -1298,6 +1305,69 @@ export class PostgresGatewayStore implements
         SET request_count = ${qualified(this.#configuration.schema, "gateway_rate_windows")}.request_count + 1
       `, [bucketKeys, windowStart]);
       return true;
+    });
+  }
+
+  async summarize(input: Readonly<{
+    windowStartedAt: string;
+    issueLimit: number;
+  }>): Promise<GatewayActivitySummary> {
+    if (
+      !isCanonicalGatewayTimestamp(input.windowStartedAt) ||
+      !Number.isSafeInteger(input.issueLimit) ||
+      input.issueLimit < 1 ||
+      input.issueLimit > 100
+    ) {
+      throw new TypeError("Gateway activity summary request is invalid.");
+    }
+    return this.#readSnapshot(async (client) => {
+      const statusCounts = {
+        success: 0,
+        needs_input: 0,
+        manual_review: 0,
+        blocked: 0,
+        unavailable: 0,
+      };
+      const countRows = await client.query<DatabaseRow>(`
+        SELECT status, COUNT(*) AS count
+        FROM ${qualified(this.#configuration.schema, "gateway_audit")}
+        WHERE created_at >= $1
+        GROUP BY status
+      `, [input.windowStartedAt]);
+      for (const row of countRows.rows) {
+        const status = text(row, "status");
+        if (!(status in statusCounts)) repositoryFailure("corrupt");
+        statusCounts[status as keyof typeof statusCounts] = integer(row, "count");
+      }
+      const issueRows = await client.query<DatabaseRow>(`
+        SELECT audit_id, action, status, reason_code, created_at
+        FROM ${qualified(this.#configuration.schema, "gateway_audit")}
+        WHERE created_at >= $1 AND status <> 'success'
+        ORDER BY created_at DESC, audit_id DESC
+        LIMIT $2
+      `, [input.windowStartedAt, input.issueLimit]);
+      const recentIssues: GatewayRecentIssue[] = issueRows.rows.map((row) => {
+        const status = text(row, "status");
+        if (
+          status !== "needs_input" && status !== "manual_review" &&
+          status !== "blocked" && status !== "unavailable"
+        ) {
+          repositoryFailure("corrupt");
+        }
+        return Object.freeze({
+          auditRef: text(row, "audit_id"),
+          action: text(row, "action"),
+          status,
+          reasonCode: nullableText(row, "reason_code"),
+          createdAt: timestamp(row, "created_at"),
+        });
+      });
+      return Object.freeze({
+        windowStartedAt: input.windowStartedAt,
+        totalAuditEvents: Object.values(statusCounts).reduce((total, count) => total + count, 0),
+        statusCounts: Object.freeze(statusCounts),
+        recentIssues: Object.freeze(recentIssues),
+      });
     });
   }
 

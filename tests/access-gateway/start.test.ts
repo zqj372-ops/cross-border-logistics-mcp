@@ -248,6 +248,13 @@ describe("standalone Access Gateway runtime", () => {
       const consoleResponse = await fetch(`${origin}/`);
       expect(consoleResponse.status).toBe(200);
       expect(await consoleResponse.text()).toContain("租户与 API Key");
+      const operationsOverview = await fetch(`${origin}/admin/api/v1/access/overview`);
+      expect(operationsOverview.status).toBe(401);
+      expect(await operationsOverview.json()).toMatchObject({
+        schema_version: "2026-08-30.v1",
+        status: "blocked",
+        reason_codes: ["authentication_failed"],
+      });
 
       for (const adminPath of ["/admin", "/admin/"] as const) {
         const adminResponse = await fetch(`${origin}${adminPath}`, { redirect: "manual" });

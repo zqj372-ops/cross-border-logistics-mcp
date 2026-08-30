@@ -15,6 +15,10 @@ const elements = Object.freeze({
   clients: document.getElementById("clients"),
   credentials: document.getElementById("credentials"),
   operations: document.getElementById("operations"),
+  overviewMetrics: document.getElementById("overview-metrics"),
+  readiness: document.getElementById("readiness"),
+  recentIssues: document.getElementById("recent-issues"),
+  agentOnboarding: document.getElementById("agent-onboarding"),
   oneTimePanel: document.getElementById("one-time-panel"),
   oneTimeKey: document.getElementById("one-time-key"),
 });
@@ -80,6 +84,18 @@ async function api(path, options = {}) {
   return payload;
 }
 
+async function readinessApi() {
+  const response = await fetch("/access/v1/readyz", {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  try {
+    return await response.json();
+  } catch {
+    return { status: "unavailable", data: null, blockers: ["readiness_response_invalid"] };
+  }
+}
+
 function row(label, value) {
   const paragraph = document.createElement("p");
   const strong = document.createElement("strong");
@@ -102,6 +118,105 @@ function renderEmpty(target) {
   paragraph.className = "empty";
   paragraph.textContent = "暂无记录";
   target.append(paragraph);
+}
+
+function metric(label, value, tone = "neutral") {
+  const article = document.createElement("article");
+  article.className = `metric ${tone}`;
+  const count = document.createElement("strong");
+  count.textContent = Number.isSafeInteger(value) ? String(value) : "—";
+  const caption = document.createElement("span");
+  caption.textContent = label;
+  article.append(count, caption);
+  return article;
+}
+
+function renderOverview(payload) {
+  const data = payload?.data;
+  const access = data?.access_state;
+  const activity = data?.gateway_activity;
+  elements.overviewMetrics.replaceChildren(
+    metric("有效租户", access?.tenants?.active, "positive"),
+    metric("有效调用方", access?.clients?.active, "positive"),
+    metric("有效 Key", access?.credentials?.active, "positive"),
+    metric("待确认交付", access?.credentials?.pending_delivery, "attention"),
+    metric("24 小时调用", activity?.total_audit_events),
+    metric(
+      "24 小时非成功",
+      ["needs_input", "manual_review", "blocked", "unavailable"].reduce(
+        (total, status) => total + (Number.isSafeInteger(activity?.status_counts?.[status])
+          ? activity.status_counts[status]
+          : 0),
+        0,
+      ),
+      "attention",
+    ),
+  );
+
+  elements.recentIssues.replaceChildren();
+  const issues = activity?.recent_issues;
+  if (!Array.isArray(issues) || issues.length === 0) {
+    renderEmpty(elements.recentIssues);
+  } else {
+    for (const issue of issues) {
+      const article = document.createElement("article");
+      article.className = "record issue-record";
+      article.append(
+        row("状态", issue.status),
+        row("动作", issue.action),
+        row("原因", issue.reason_code),
+        row("时间", issue.created_at),
+        row("审计引用", issue.audit_ref),
+      );
+      elements.recentIssues.append(article);
+    }
+  }
+
+  elements.agentOnboarding.replaceChildren();
+  const onboarding = data?.agent_onboarding;
+  if (!Array.isArray(onboarding?.supported_clients)) {
+    renderEmpty(elements.agentOnboarding);
+  } else {
+    const article = document.createElement("article");
+    article.className = "record";
+    article.append(
+      row("客户端", onboarding.supported_clients.join("、")),
+      row("换取短期 JWT", onboarding.token_exchange_path),
+      row("MCP 入口", onboarding.mcp_path),
+      row("可授权工具", Array.isArray(onboarding.tool_names)
+        ? onboarding.tool_names.join(", ")
+        : "—"),
+    );
+    const checklist = document.createElement("ol");
+    for (const step of [
+      "创建租户并确认状态为 active",
+      "签发 Key、保存到 Secret Manager 并确认交付",
+      "用 Key 换取短期 JWT",
+      "把 MCP 地址和短期 JWT 交给 Agent 客户端",
+      "读取工具目录并核对精确授权集合",
+    ]) {
+      const item = document.createElement("li");
+      item.textContent = step;
+      checklist.append(item);
+    }
+    article.append(checklist);
+    elements.agentOnboarding.append(article);
+  }
+}
+
+function renderReadiness(payload) {
+  elements.readiness.replaceChildren();
+  const data = payload?.data;
+  const article = document.createElement("article");
+  article.className = "record";
+  article.append(
+    row("运行状态", data?.operational_ready === true ? "ready" : "not ready"),
+    row("企业身份", data?.admin_idp_ready === true ? "ready" : "pending"),
+    row("数据库", data?.database_backend),
+    row("生产资格", data?.production_eligible === true ? "eligible" : "not eligible"),
+    row("阻断项", Array.isArray(payload?.blockers) ? payload.blockers.join("、") : "—"),
+  );
+  elements.readiness.append(article);
 }
 
 function renderTenants(records) {
@@ -237,9 +352,15 @@ function renderState(payload) {
 async function refreshState(options = {}) {
   if (options.announce !== false) setStatus("working", "正在读取", "从服务端读取权威状态。");
   try {
-    const payload = await api("/state");
+    const [payload, overview, readiness] = await Promise.all([
+      api("/state"),
+      api("/overview"),
+      readinessApi(),
+    ]);
     renderState(payload);
-    setStatus("ready", "状态已读回", "租户、Key 权限和操作状态均来自服务端。");
+    renderOverview(overview);
+    renderReadiness(readiness);
+    setStatus("ready", "状态已读回", "租户、Key 权限、运营计数和状态门禁均来自服务端。");
     return payload;
   } catch (error) {
     setStatus("blocked", "状态不可用", reason(error));

@@ -192,6 +192,21 @@ afterAll(async () => {
       })));
       expect(concurrent.filter(Boolean)).toHaveLength(2);
       await expect(store.health()).resolves.toMatchObject({ ready: true, auditCount: 1 });
+      await expect(store.summarize({
+        windowStartedAt: "2027-01-14T08:00:00.000Z",
+        issueLimit: 20,
+      })).resolves.toEqual({
+        windowStartedAt: "2027-01-14T08:00:00.000Z",
+        totalAuditEvents: 1,
+        statusCounts: {
+          success: 1,
+          needs_input: 0,
+          manual_review: 0,
+          blocked: 0,
+          unavailable: 0,
+        },
+        recentIssues: [],
+      });
     } finally {
       await store.close();
     }

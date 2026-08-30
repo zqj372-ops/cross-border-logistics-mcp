@@ -16,6 +16,8 @@ Bearer JWT/JWKS 验证入口。
   精确 email 和可选 `sub` 双重管理员映射；
 - 可部署的 `single-node-candidate` 进程、窄管理 API、Access Console、
   `/admin/` 标准入口和依赖聚合 readiness；
+- 受管理管理员保护的 `/admin/api/v1/access/overview`，从 SQLite/PostgreSQL 读取固定 24 小时
+  五状态计数、最多 20 条脱敏异常和 Agent 接入清单，不返回租户/Client/credential/request hash/JTI；
 - PostgreSQL tenant/client/Key/entitlement、幂等、审计和并发限流适配器；
 - SQLite v3 + operations v1 到 PostgreSQL 的显式事务迁移、全表计数、逻辑指纹读回和
   幂等重跑；旧 SQLite 只保留为切换回滚源，不作为 PostgreSQL 运行时 fallback；
@@ -30,3 +32,5 @@ Bearer JWT/JWKS 验证入口。
 吊销、Edge denylist、目标负载/告警演练及三类 Agent staging 读回证据。
 `single-node-candidate` 即使切到 PostgreSQL，仍使用文件签名密钥/pepper，并固定报告
 `production_eligible=false`；PostgreSQL 可用、页面可见或迁移指纹一致都不能替代剩余门禁。
+
+分阶段产品计划见 [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md)。

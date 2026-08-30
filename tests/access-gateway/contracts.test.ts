@@ -31,6 +31,8 @@ describe("Unified Access Gateway Draft 2020-12 contracts", () => {
   it("ships closed schemas for exchange, errors, and JWKS", () => {
     const files = readdirSync(schemaDirectory).filter((file) => file.endsWith(".schema.json")).sort();
     expect(files).toEqual([
+      "admin-operations-error.schema.json",
+      "admin-operations-overview-response.schema.json",
       "error-envelope.schema.json",
       "exchange-request.schema.json",
       "exchange-response.schema.json",

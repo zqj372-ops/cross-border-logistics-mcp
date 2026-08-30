@@ -39,6 +39,12 @@ import type {
   RateLimitRepository,
   RevocationRepository,
 } from "./ports";
+import type {
+  GatewayActivitySummary,
+  GatewayOperationsReader,
+  GatewayRecentIssue,
+} from "./operations-overview";
+import { isCanonicalGatewayTimestamp } from "./operations-overview";
 
 const DIRECTORY_MODE = 0o700;
 const DATABASE_MODE = 0o600;
@@ -218,7 +224,10 @@ export interface SqliteGatewayOperationalStoreOptions {
   readonly rateLimitPerMinute?: number;
 }
 
-export class SqliteGatewayOperationalStore implements GatewayAuditRepository, RateLimitRepository {
+export class SqliteGatewayOperationalStore implements
+  GatewayAuditRepository,
+  RateLimitRepository,
+  GatewayOperationsReader {
   readonly kind = "production" as const;
   readonly #database: DatabaseSync;
   readonly #rateLimitPerMinute: number;
@@ -353,6 +362,82 @@ export class SqliteGatewayOperationalStore implements GatewayAuditRepository, Ra
       }
       return Promise.reject(error instanceof Error ? error : new Error("Rate limit write failed."));
     }
+  }
+
+  summarize(input: Readonly<{
+    windowStartedAt: string;
+    issueLimit: number;
+  }>): Promise<GatewayActivitySummary> {
+    if (
+      !isCanonicalGatewayTimestamp(input.windowStartedAt) ||
+      !Number.isSafeInteger(input.issueLimit) ||
+      input.issueLimit < 1 ||
+      input.issueLimit > 100
+    ) {
+      return Promise.reject(new TypeError("Gateway activity summary request is invalid."));
+    }
+    const database = this.#active();
+    const statusCounts = {
+      success: 0,
+      needs_input: 0,
+      manual_review: 0,
+      blocked: 0,
+      unavailable: 0,
+    };
+    const rows = database.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM gateway_audit
+      WHERE created_at >= ?
+      GROUP BY status
+    `).all(input.windowStartedAt) as SqlRow[];
+    for (const row of rows) {
+      const status = row.status;
+      const count = row.count;
+      if (
+        typeof status !== "string" ||
+        !(status in statusCounts) ||
+        typeof count !== "number" ||
+        !Number.isSafeInteger(count) ||
+        count < 0
+      ) {
+        return Promise.reject(new TypeError("Gateway audit summary is invalid."));
+      }
+      statusCounts[status as keyof typeof statusCounts] = count;
+    }
+    const issueRows = database.prepare(`
+      SELECT audit_id, action, status, reason_code, created_at
+      FROM gateway_audit
+      WHERE created_at >= ? AND status <> 'success'
+      ORDER BY created_at DESC, audit_id DESC
+      LIMIT ?
+    `).all(input.windowStartedAt, input.issueLimit) as SqlRow[];
+    const recentIssues: GatewayRecentIssue[] = issueRows.map((row) => {
+      const status = row.status;
+      if (
+        typeof row.audit_id !== "string" ||
+        typeof row.action !== "string" ||
+        (status !== "needs_input" && status !== "manual_review" &&
+          status !== "blocked" && status !== "unavailable") ||
+        (row.reason_code !== null && typeof row.reason_code !== "string") ||
+        typeof row.created_at !== "string" ||
+        !isCanonicalGatewayTimestamp(row.created_at)
+      ) {
+        throw new TypeError("Gateway audit issue projection is invalid.");
+      }
+      return Object.freeze({
+        auditRef: row.audit_id,
+        action: row.action,
+        status,
+        reasonCode: row.reason_code,
+        createdAt: row.created_at,
+      });
+    });
+    return Promise.resolve(Object.freeze({
+      windowStartedAt: input.windowStartedAt,
+      totalAuditEvents: Object.values(statusCounts).reduce((total, count) => total + count, 0),
+      statusCounts: Object.freeze(statusCounts),
+      recentIssues: Object.freeze(recentIssues),
+    }));
   }
 
   health(): Promise<{ readonly ready: boolean; readonly auditCount: number }> {
