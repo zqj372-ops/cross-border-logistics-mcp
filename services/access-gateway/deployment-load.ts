@@ -12,10 +12,10 @@ import {
   TenantAccessService,
 } from "../../src/logistics_mcp/control-plane/tenant-access-service";
 import { TENANT_API_KEY_TOOL_NAMES } from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
-import { SqliteTenantAccessStore } from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
 import { FileSecretPepperProvider } from "./production-crypto";
 import { assertCandidateSyntheticWriteTarget } from "./deployment-safety";
+import { openGatewayStores } from "./store-runtime";
 
 const CONFIRMATION = "run-synthetic-load";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -437,11 +437,13 @@ export async function runT0DeploymentLoad(): Promise<DeploymentLoadSummary> {
     pepperVersion,
     historyPath: pepperHistoryPath,
   });
-  const store = new SqliteTenantAccessStore({
+  const stores = await openGatewayStores({
+    environment: process.env,
     applicationRoot,
     instanceId,
     managementTenantId,
   });
+  const store = stores.tenantStore;
   const service = new TenantAccessService(store, {
     credentialSecretProvider: {
       pepperVersion: pepper.pepperVersion,
@@ -524,7 +526,7 @@ export async function runT0DeploymentLoad(): Promise<DeploymentLoadSummary> {
       }
     }
     try {
-      await store.close();
+      await stores.close();
     } catch (error) {
       cleanupFailure ??= error;
     }

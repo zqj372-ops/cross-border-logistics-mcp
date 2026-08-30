@@ -1,0 +1,1336 @@
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+
+import { Pool, type PoolClient, type PoolConfig } from "pg";
+
+import {
+  normalizeStoredTenantApiKeyScopes,
+  type TenantApiKeyScope,
+} from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
+import type {
+  ClientRecord,
+  ClientStatus,
+  StoredCredentialRecord as TenantStoredCredentialRecord,
+  TenantAccessEventRecord,
+  TenantAccessRepository,
+  TenantAccessStateRecord,
+  TenantAccessWriteResult,
+  TenantRecord,
+  TenantStatus,
+} from "../../src/logistics_mcp/control-plane/tenant-access-repository";
+import {
+  TenantAccessRepositoryError,
+} from "../../src/logistics_mcp/control-plane/tenant-access-repository";
+import type { AuditEvent } from "./contracts";
+import type { GatewayAuditRepository, RateLimitRepository } from "./ports";
+
+export const POSTGRES_GATEWAY_SCHEMA_VERSION = 1 as const;
+
+const DEFAULT_CONNECTION_TIMEOUT_MILLIS = 5_000;
+const DEFAULT_IDLE_TIMEOUT_MILLIS = 30_000;
+const DEFAULT_STATEMENT_TIMEOUT_MILLIS = 5_000;
+const DEFAULT_MAX_CONNECTIONS = 8;
+const MAX_SECRET_BYTES = 4_096;
+const SQL_IDENTIFIER_PATTERN = /^[a-z][a-z0-9_]{0,62}$/u;
+const PEPPER_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+
+type DatabaseRow = Record<string, unknown>;
+
+export interface PostgresGatewayConfiguration {
+  readonly backend: "postgresql";
+  readonly host: string;
+  readonly port: number;
+  readonly database: string;
+  readonly user: string;
+  readonly passwordFile: string;
+  readonly schema: string;
+  readonly sslMode: "disable" | "verify-full";
+  readonly sslRootCertificateFile?: string;
+  readonly maxConnections: number;
+  readonly connectionTimeoutMillis: number;
+  readonly idleTimeoutMillis: number;
+  readonly statementTimeoutMillis: number;
+}
+
+export interface PostgresGatewayMeta {
+  readonly storeId: string;
+  readonly instanceId: string;
+  readonly managementTenantId: string;
+  readonly sourceAccessStoreId: string;
+  readonly sourceOperationStoreId: string;
+  readonly sourceFingerprint: string;
+  readonly createdAt: string;
+}
+
+function environmentValue(environment: NodeJS.ProcessEnv, name: string): string {
+  const value = environment[name]?.trim();
+  if (value === undefined || value.length === 0) throw new Error(`${name} is required.`);
+  return value;
+}
+
+function integerEnvironmentValue(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const raw = environment[name]?.trim();
+  if (raw === undefined || raw.length === 0) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} through ${maximum}.`);
+  }
+  return value;
+}
+
+function sqlIdentifier(value: string, label: string): string {
+  if (!SQL_IDENTIFIER_PATTERN.test(value)) {
+    throw new Error(`PostgreSQL ${label} is invalid.`);
+  }
+  return value;
+}
+
+function databaseHost(value: string): string {
+  if (
+    value.length > 253 ||
+    value.startsWith("/") ||
+    /\s/u.test(value) ||
+    containsAsciiControl(value)
+  ) {
+    throw new Error("PostgreSQL host is invalid.");
+  }
+  return value;
+}
+
+function containsAsciiControl(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
+  });
+}
+
+function secureRegularFile(path: string, label: string): string {
+  if (!isAbsolute(path)) throw new Error(`${label} must be an absolute path.`);
+  const resolved = resolve(path);
+  const entry = lstatSync(resolved);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) {
+    throw new Error(`${label} must be a private regular file.`);
+  }
+  if (entry.size < 1 || entry.size > MAX_SECRET_BYTES) {
+    throw new Error(`${label} has an invalid size.`);
+  }
+  return resolved;
+}
+
+export function readPostgresPassword(path: string): string {
+  const resolved = secureRegularFile(path, "PostgreSQL password file");
+  const bytes = readFileSync(resolved);
+  try {
+    const value = bytes.toString("utf8").replace(/\r?\n$/u, "");
+    if (
+      value.length < 8 ||
+      value.length > 1_024 ||
+      value.trim() !== value ||
+      containsAsciiControl(value)
+    ) {
+      throw new Error("PostgreSQL password file content is invalid.");
+    }
+    return value;
+  } finally {
+    bytes.fill(0);
+  }
+}
+
+export function postgresConfigurationFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+): PostgresGatewayConfiguration {
+  if (environment.ACCESS_GATEWAY_STORE_BACKEND?.trim() !== "postgresql") {
+    throw new Error("ACCESS_GATEWAY_STORE_BACKEND must equal postgresql.");
+  }
+  if (
+    (environment.ACCESS_GATEWAY_POSTGRES_PASSWORD?.trim().length ?? 0) > 0 ||
+    (environment.PGPASSWORD?.trim().length ?? 0) > 0
+  ) {
+    throw new Error("Access Gateway rejects plaintext PostgreSQL secrets.");
+  }
+  if (
+    (environment.ACCESS_GATEWAY_POSTGRES_URL?.trim().length ?? 0) > 0 ||
+    (environment.DATABASE_URL?.trim().length ?? 0) > 0
+  ) {
+    throw new Error("Access Gateway rejects PostgreSQL connection URLs.");
+  }
+  const sslMode = environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_SSL_MODE");
+  if (sslMode !== "disable" && sslMode !== "verify-full") {
+    throw new Error("ACCESS_GATEWAY_POSTGRES_SSL_MODE must be disable or verify-full.");
+  }
+  const passwordFile = secureRegularFile(
+    environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_PASSWORD_FILE"),
+    "PostgreSQL password file",
+  );
+  const rawCertificatePath = environment.ACCESS_GATEWAY_POSTGRES_SSL_ROOT_CERT_FILE?.trim();
+  const sslRootCertificateFile = sslMode === "verify-full"
+    ? secureRegularFile(
+        rawCertificatePath === undefined || rawCertificatePath.length === 0
+          ? environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_SSL_ROOT_CERT_FILE")
+          : rawCertificatePath,
+        "PostgreSQL root certificate file",
+      )
+    : undefined;
+  if (sslMode === "disable" && rawCertificatePath !== undefined && rawCertificatePath.length > 0) {
+    throw new Error("PostgreSQL root certificate requires verify-full SSL mode.");
+  }
+  return Object.freeze({
+    backend: "postgresql" as const,
+    host: databaseHost(environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_HOST")),
+    port: integerEnvironmentValue(
+      environment,
+      "ACCESS_GATEWAY_POSTGRES_PORT",
+      5_432,
+      1,
+      65_535,
+    ),
+    database: sqlIdentifier(
+      environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_DATABASE"),
+      "database",
+    ),
+    user: sqlIdentifier(
+      environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_USER"),
+      "user",
+    ),
+    passwordFile,
+    schema: sqlIdentifier(
+      environmentValue(environment, "ACCESS_GATEWAY_POSTGRES_SCHEMA"),
+      "schema",
+    ),
+    sslMode,
+    ...(sslRootCertificateFile === undefined ? {} : { sslRootCertificateFile }),
+    maxConnections: integerEnvironmentValue(
+      environment,
+      "ACCESS_GATEWAY_POSTGRES_MAX_CONNECTIONS",
+      DEFAULT_MAX_CONNECTIONS,
+      2,
+      32,
+    ),
+    connectionTimeoutMillis: integerEnvironmentValue(
+      environment,
+      "ACCESS_GATEWAY_POSTGRES_CONNECTION_TIMEOUT_MILLIS",
+      DEFAULT_CONNECTION_TIMEOUT_MILLIS,
+      500,
+      30_000,
+    ),
+    idleTimeoutMillis: integerEnvironmentValue(
+      environment,
+      "ACCESS_GATEWAY_POSTGRES_IDLE_TIMEOUT_MILLIS",
+      DEFAULT_IDLE_TIMEOUT_MILLIS,
+      1_000,
+      300_000,
+    ),
+    statementTimeoutMillis: integerEnvironmentValue(
+      environment,
+      "ACCESS_GATEWAY_POSTGRES_STATEMENT_TIMEOUT_MILLIS",
+      DEFAULT_STATEMENT_TIMEOUT_MILLIS,
+      500,
+      30_000,
+    ),
+  });
+}
+
+function quoteIdentifier(value: string): string {
+  return `"${sqlIdentifier(value, "schema")}"`;
+}
+
+function qualified(schema: string, table: string): string {
+  return `${quoteIdentifier(schema)}."${sqlIdentifier(table, "table")}"`;
+}
+
+export function postgresQualifiedTable(schema: string, table: string): string {
+  return qualified(schema, table);
+}
+
+export function createPostgresPool(configuration: PostgresGatewayConfiguration): Pool {
+  const password = readPostgresPassword(configuration.passwordFile);
+  const poolConfiguration: PoolConfig = {
+    host: configuration.host,
+    port: configuration.port,
+    database: configuration.database,
+    user: configuration.user,
+    password,
+    application_name: "freightclaw-access-gateway",
+    max: configuration.maxConnections,
+    connectionTimeoutMillis: configuration.connectionTimeoutMillis,
+    idleTimeoutMillis: configuration.idleTimeoutMillis,
+    statement_timeout: configuration.statementTimeoutMillis,
+    idle_in_transaction_session_timeout: configuration.statementTimeoutMillis,
+    allowExitOnIdle: true,
+    ssl: configuration.sslMode === "disable"
+      ? false
+      : {
+          rejectUnauthorized: true,
+          ca: readFileSync(configuration.sslRootCertificateFile!, "utf8"),
+        },
+  };
+  return new Pool(poolConfiguration);
+}
+
+export function postgresGatewaySchemaSql(schema: string): string {
+  const namespace = quoteIdentifier(schema);
+  const table = (name: string) => qualified(schema, name);
+  return `
+CREATE SCHEMA ${namespace};
+
+CREATE TABLE ${table("gateway_meta")} (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  schema_version integer NOT NULL CHECK (schema_version = ${POSTGRES_GATEWAY_SCHEMA_VERSION}),
+  store_id text NOT NULL,
+  instance_id text NOT NULL,
+  management_tenant_id text NOT NULL,
+  source_access_store_id text NOT NULL,
+  source_operation_store_id text NOT NULL,
+  source_fingerprint text NOT NULL CHECK (source_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+  created_at timestamptz NOT NULL
+);
+
+CREATE TABLE ${table("tenants")} (
+  tenant_id text PRIMARY KEY,
+  display_name text NOT NULL,
+  status text NOT NULL CHECK (status IN ('active', 'suspended')),
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+
+CREATE TABLE ${table("clients")} (
+  tenant_id text NOT NULL REFERENCES ${table("tenants")}(tenant_id),
+  client_id text NOT NULL,
+  label text NOT NULL,
+  status text NOT NULL CHECK (status IN ('active', 'disabled')),
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
+  PRIMARY KEY (tenant_id, client_id)
+);
+
+CREATE TABLE ${table("credentials")} (
+  credential_id text PRIMARY KEY,
+  tenant_id text NOT NULL,
+  client_id text NOT NULL,
+  label text NOT NULL,
+  actor_role text NOT NULL CHECK (actor_role = 'service'),
+  roles jsonb NOT NULL CHECK (roles = '["service"]'::jsonb),
+  scopes jsonb NOT NULL CHECK (jsonb_typeof(scopes) = 'array'),
+  status text NOT NULL CHECK (status IN ('active', 'revoked')),
+  delivery_acknowledged_at timestamptz,
+  key_prefix text NOT NULL,
+  secret_last_four text NOT NULL,
+  secret_salt bytea NOT NULL,
+  secret_hash bytea NOT NULL,
+  pepper_version text NOT NULL CHECK (length(pepper_version) BETWEEN 8 AND 128),
+  created_at timestamptz NOT NULL,
+  expires_at bigint NOT NULL CHECK (expires_at >= 0),
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  rotated_from_id text REFERENCES ${table("credentials")}(credential_id),
+  UNIQUE (credential_id, tenant_id),
+  FOREIGN KEY (tenant_id, client_id)
+    REFERENCES ${table("clients")}(tenant_id, client_id)
+);
+
+CREATE TABLE ${table("access_events")} (
+  event_id text PRIMARY KEY,
+  tenant_id text NOT NULL REFERENCES ${table("tenants")}(tenant_id),
+  client_id text,
+  credential_id text,
+  actor_ref text NOT NULL,
+  action text NOT NULL,
+  reason_code text NOT NULL,
+  created_at timestamptz NOT NULL,
+  FOREIGN KEY (tenant_id, client_id)
+    REFERENCES ${table("clients")}(tenant_id, client_id),
+  FOREIGN KEY (credential_id, tenant_id)
+    REFERENCES ${table("credentials")}(credential_id, tenant_id)
+);
+
+CREATE TABLE ${table("access_idempotency")} (
+  action text NOT NULL,
+  idempotency_key text NOT NULL,
+  request_hash text NOT NULL,
+  result_id text NOT NULL,
+  operation_id text NOT NULL REFERENCES ${table("access_events")}(event_id),
+  created_at timestamptz NOT NULL,
+  PRIMARY KEY (action, idempotency_key)
+);
+
+CREATE TABLE ${table("gateway_audit")} (
+  audit_id text PRIMARY KEY,
+  action text NOT NULL,
+  status text NOT NULL CHECK (status IN ('success', 'needs_input', 'manual_review', 'blocked', 'unavailable')),
+  request_id text NOT NULL,
+  tenant_id text,
+  client_id text,
+  credential_id text,
+  tool_names jsonb NOT NULL CHECK (jsonb_typeof(tool_names) = 'array'),
+  request_hash text NOT NULL,
+  jti text,
+  reason_code text,
+  created_at timestamptz NOT NULL
+);
+
+CREATE TABLE ${table("gateway_rate_windows")} (
+  bucket_key text NOT NULL,
+  window_start bigint NOT NULL CHECK (window_start >= 0),
+  request_count integer NOT NULL CHECK (request_count >= 0),
+  PRIMARY KEY (bucket_key, window_start)
+);
+
+CREATE TABLE ${table("migration_history")} (
+  migration_id text PRIMARY KEY,
+  source_fingerprint text NOT NULL UNIQUE CHECK (source_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+  source_counts jsonb NOT NULL CHECK (jsonb_typeof(source_counts) = 'object'),
+  destination_fingerprint text NOT NULL CHECK (destination_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+  applied_at timestamptz NOT NULL
+);
+
+CREATE INDEX credentials_tenant_status_idx
+  ON ${table("credentials")}(tenant_id, status, expires_at);
+CREATE INDEX clients_tenant_status_idx
+  ON ${table("clients")}(tenant_id, status, client_id);
+CREATE INDEX access_events_created_idx
+  ON ${table("access_events")}(created_at DESC, event_id DESC);
+CREATE INDEX access_events_credential_action_idx
+  ON ${table("access_events")}(credential_id, action, created_at DESC);
+CREATE INDEX gateway_audit_created_idx
+  ON ${table("gateway_audit")}(created_at DESC, audit_id DESC);
+CREATE INDEX gateway_audit_credential_idx
+  ON ${table("gateway_audit")}(credential_id, created_at DESC);
+CREATE INDEX gateway_rate_windows_expiry_idx
+  ON ${table("gateway_rate_windows")}(window_start);
+`;
+}
+
+export async function initializePostgresGatewaySchema(
+  client: PoolClient,
+  schema: string,
+  meta: PostgresGatewayMeta,
+): Promise<void> {
+  const namespace = sqlIdentifier(schema, "schema");
+  const existing = await client.query<{ exists: boolean }>(
+    "SELECT to_regnamespace($1) IS NOT NULL AS exists",
+    [namespace],
+  );
+  if (existing.rows[0]?.exists === true) {
+    throw new Error("PostgreSQL Access Gateway schema already exists.");
+  }
+  await client.query(postgresGatewaySchemaSql(namespace));
+  await client.query(`
+    INSERT INTO ${qualified(namespace, "gateway_meta")} (
+      singleton, schema_version, store_id, instance_id, management_tenant_id,
+      source_access_store_id, source_operation_store_id, source_fingerprint, created_at
+    ) VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8)
+  `, [
+    POSTGRES_GATEWAY_SCHEMA_VERSION,
+    meta.storeId,
+    meta.instanceId,
+    meta.managementTenantId,
+    meta.sourceAccessStoreId,
+    meta.sourceOperationStoreId,
+    meta.sourceFingerprint,
+    meta.createdAt,
+  ]);
+}
+
+function repositoryFailure(
+  code: ConstructorParameters<typeof TenantAccessRepositoryError>[0],
+): never {
+  throw new TenantAccessRepositoryError(code);
+}
+
+function text(row: DatabaseRow, key: string): string {
+  const value = row[key];
+  if (typeof value !== "string") repositoryFailure("corrupt");
+  return value;
+}
+
+function nullableText(row: DatabaseRow, key: string): string | null {
+  const value = row[key];
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") repositoryFailure("corrupt");
+  return value;
+}
+
+function integer(row: DatabaseRow, key: string): number {
+  const value = row[key];
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isSafeInteger(parsed)) repositoryFailure("corrupt");
+  return parsed;
+}
+
+function timestampValue(value: unknown): string {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
+  if (typeof value === "string") {
+    const date = new Date(value);
+    if (Number.isFinite(date.getTime())) return date.toISOString();
+  }
+  repositoryFailure("corrupt");
+}
+
+function timestamp(row: DatabaseRow, key: string): string {
+  return timestampValue(row[key]);
+}
+
+function nullableTimestamp(row: DatabaseRow, key: string): string | null {
+  const value = row[key];
+  return value === null || value === undefined ? null : timestampValue(value);
+}
+
+function bytes(row: DatabaseRow, key: string): Uint8Array {
+  const value = row[key];
+  if (!(value instanceof Uint8Array)) repositoryFailure("corrupt");
+  return new Uint8Array(value);
+}
+
+function scopes(row: DatabaseRow, key: string): readonly TenantApiKeyScope[] {
+  const value: unknown = row[key];
+  if (!Array.isArray(value)) repositoryFailure("corrupt");
+  const normalized = normalizeStoredTenantApiKeyScopes(value as unknown[]);
+  if (normalized === null) repositoryFailure("corrupt");
+  return normalized;
+}
+
+function tenantFromRow(row: DatabaseRow): TenantRecord {
+  const status = text(row, "status");
+  if (status !== "active" && status !== "suspended") repositoryFailure("corrupt");
+  return Object.freeze({
+    tenantId: text(row, "tenant_id"),
+    displayName: text(row, "display_name"),
+    status,
+    createdAt: timestamp(row, "created_at"),
+    updatedAt: timestamp(row, "updated_at"),
+  });
+}
+
+function clientFromRow(row: DatabaseRow): ClientRecord {
+  const status = text(row, "status");
+  if (status !== "active" && status !== "disabled") repositoryFailure("corrupt");
+  return Object.freeze({
+    tenantId: text(row, "tenant_id"),
+    clientId: text(row, "client_id"),
+    label: text(row, "label"),
+    status,
+    createdAt: timestamp(row, "created_at"),
+    updatedAt: timestamp(row, "updated_at"),
+  });
+}
+
+function credentialFromRow(row: DatabaseRow): TenantStoredCredentialRecord {
+  const status = text(row, "status");
+  if (status !== "active" && status !== "revoked") repositoryFailure("corrupt");
+  if (text(row, "actor_role") !== "service") repositoryFailure("corrupt");
+  const roles: unknown = row.roles;
+  if (!Array.isArray(roles) || roles.length !== 1 || roles[0] !== "service") {
+    repositoryFailure("corrupt");
+  }
+  const pepperVersion = text(row, "pepper_version");
+  if (!PEPPER_VERSION_PATTERN.test(pepperVersion)) repositoryFailure("corrupt");
+  return Object.freeze({
+    credentialId: text(row, "credential_id"),
+    tenantId: text(row, "tenant_id"),
+    clientId: text(row, "client_id"),
+    label: text(row, "label"),
+    actorRole: "service",
+    roles: Object.freeze(["service"] as const),
+    scopes: scopes(row, "scopes"),
+    status,
+    keyPrefix: text(row, "key_prefix"),
+    secretLastFour: text(row, "secret_last_four"),
+    secretSalt: bytes(row, "secret_salt"),
+    secretHash: bytes(row, "secret_hash"),
+    pepperVersion,
+    createdAt: timestamp(row, "created_at"),
+    expiresAt: integer(row, "expires_at"),
+    lastUsedAt: nullableTimestamp(row, "last_used_at"),
+    revokedAt: nullableTimestamp(row, "revoked_at"),
+    rotatedFromId: nullableText(row, "rotated_from_id"),
+  });
+}
+
+function eventFromRow(row: DatabaseRow): TenantAccessEventRecord {
+  return Object.freeze({
+    eventId: text(row, "event_id"),
+    tenantId: text(row, "tenant_id"),
+    clientId: nullableText(row, "client_id"),
+    credentialId: nullableText(row, "credential_id"),
+    actorRef: text(row, "actor_ref"),
+    action: text(row, "action"),
+    reasonCode: text(row, "reason_code"),
+    createdAt: timestamp(row, "created_at"),
+  });
+}
+
+async function insertEvent(client: PoolClient, schema: string, event: TenantAccessEventRecord) {
+  await client.query(`
+    INSERT INTO ${qualified(schema, "access_events")} (
+      event_id, tenant_id, client_id, credential_id, actor_ref, action, reason_code, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [
+    event.eventId,
+    event.tenantId,
+    event.clientId,
+    event.credentialId,
+    event.actorRef,
+    event.action,
+    event.reasonCode,
+    event.createdAt,
+  ]);
+}
+
+async function insertCredential(
+  client: PoolClient,
+  schema: string,
+  credential: TenantStoredCredentialRecord,
+) {
+  await client.query(`
+    INSERT INTO ${qualified(schema, "credentials")} (
+      credential_id, tenant_id, client_id, label, actor_role, roles, scopes, status,
+      delivery_acknowledged_at, key_prefix, secret_last_four, secret_salt, secret_hash,
+      pepper_version, created_at, expires_at, last_used_at, revoked_at, rotated_from_id
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8,
+      NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+    )
+  `, [
+    credential.credentialId,
+    credential.tenantId,
+    credential.clientId,
+    credential.label,
+    credential.actorRole,
+    JSON.stringify(credential.roles),
+    JSON.stringify(credential.scopes),
+    credential.status,
+    credential.keyPrefix,
+    credential.secretLastFour,
+    Buffer.from(credential.secretSalt),
+    Buffer.from(credential.secretHash),
+    credential.pepperVersion,
+    credential.createdAt,
+    credential.expiresAt,
+    credential.lastUsedAt,
+    credential.revokedAt,
+    credential.rotatedFromId,
+  ]);
+}
+
+export interface PostgresGatewayStoreOptions {
+  readonly configuration: PostgresGatewayConfiguration;
+  readonly instanceId: string;
+  readonly managementTenantId: string;
+  readonly rateLimitPerMinute?: number;
+  readonly pool?: Pool;
+}
+
+export class PostgresGatewayStore implements
+  TenantAccessRepository,
+  GatewayAuditRepository,
+  RateLimitRepository {
+  readonly kind = "production" as const;
+  readonly managementTenantId: string;
+  readonly #configuration: PostgresGatewayConfiguration;
+  readonly #instanceId: string;
+  readonly #pool: Pool;
+  readonly #ownsPool: boolean;
+  readonly #rateLimitPerMinute: number;
+  #closed = false;
+
+  private constructor(options: PostgresGatewayStoreOptions) {
+    this.#configuration = options.configuration;
+    this.#instanceId = options.instanceId;
+    this.managementTenantId = options.managementTenantId;
+    const limit = options.rateLimitPerMinute ?? 30;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+      throw new TypeError("Gateway rate limit must be an integer from 1 through 10000.");
+    }
+    this.#rateLimitPerMinute = limit;
+    this.#pool = options.pool ?? createPostgresPool(options.configuration);
+    this.#ownsPool = options.pool === undefined;
+  }
+
+  static async open(options: PostgresGatewayStoreOptions): Promise<PostgresGatewayStore> {
+    const store = new PostgresGatewayStore(options);
+    try {
+      await store.#verify();
+      return store;
+    } catch (error) {
+      if (store.#ownsPool) await store.#pool.end().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  #active(): Pool {
+    if (this.#closed) repositoryFailure("closed");
+    return this.#pool;
+  }
+
+  async #verify(): Promise<void> {
+    const row = (await this.#active().query<DatabaseRow>(`
+      SELECT schema_version, instance_id, management_tenant_id
+      FROM ${qualified(this.#configuration.schema, "gateway_meta")}
+      WHERE singleton = true
+    `)).rows[0];
+    if (
+      row === undefined ||
+      integer(row, "schema_version") !== POSTGRES_GATEWAY_SCHEMA_VERSION ||
+      text(row, "instance_id") !== this.#instanceId ||
+      text(row, "management_tenant_id") !== this.managementTenantId
+    ) {
+      repositoryFailure("schema_unsupported");
+    }
+  }
+
+  async #transaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#active().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL statement_timeout = '${this.#configuration.statementTimeoutMillis}ms'`);
+      await client.query(
+        `SET LOCAL idle_in_transaction_session_timeout = '${this.#configuration.statementTimeoutMillis}ms'`,
+      );
+      const value = await operation(client);
+      await client.query("COMMIT");
+      return value;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async #readSnapshot<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#active().connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const value = await operation(client);
+      await client.query("COMMIT");
+      return value;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async #tenant(client: PoolClient, tenantId: string, lock = false): Promise<TenantRecord> {
+    const row = (await client.query<DatabaseRow>(`
+      SELECT * FROM ${qualified(this.#configuration.schema, "tenants")}
+      WHERE tenant_id = $1${lock ? " FOR UPDATE" : ""}
+    `, [tenantId])).rows[0];
+    if (row === undefined) repositoryFailure("tenant_not_found");
+    return tenantFromRow(row);
+  }
+
+  async #client(
+    client: PoolClient,
+    tenantId: string,
+    clientId: string,
+    lock = false,
+  ): Promise<ClientRecord> {
+    const row = (await client.query<DatabaseRow>(`
+      SELECT * FROM ${qualified(this.#configuration.schema, "clients")}
+      WHERE tenant_id = $1 AND client_id = $2${lock ? " FOR UPDATE" : ""}
+    `, [tenantId, clientId])).rows[0];
+    if (row === undefined) repositoryFailure("client_not_found");
+    return clientFromRow(row);
+  }
+
+  async #credential(
+    client: PoolClient,
+    credentialId: string,
+    lock = false,
+  ): Promise<TenantStoredCredentialRecord> {
+    const row = (await client.query<DatabaseRow>(`
+      SELECT * FROM ${qualified(this.#configuration.schema, "credentials")}
+      WHERE credential_id = $1${lock ? " FOR UPDATE" : ""}
+    `, [credentialId])).rows[0];
+    if (row === undefined) repositoryFailure("credential_not_found");
+    return credentialFromRow(row);
+  }
+
+  async #operation(client: PoolClient, operationId: string): Promise<TenantAccessEventRecord> {
+    const row = (await client.query<DatabaseRow>(`
+      SELECT * FROM ${qualified(this.#configuration.schema, "access_events")}
+      WHERE event_id = $1
+    `, [operationId])).rows[0];
+    if (row === undefined) repositoryFailure("corrupt");
+    return eventFromRow(row);
+  }
+
+  async #deliveryAcknowledgedAt(
+    client: PoolClient,
+    credentialId: string,
+  ): Promise<string | null> {
+    const row = (await client.query<DatabaseRow>(`
+      SELECT delivery_acknowledged_at
+      FROM ${qualified(this.#configuration.schema, "credentials")}
+      WHERE credential_id = $1
+    `, [credentialId])).rows[0];
+    if (row === undefined) repositoryFailure("credential_not_found");
+    return nullableTimestamp(row, "delivery_acknowledged_at");
+  }
+
+  async #idempotent<T>(
+    client: PoolClient,
+    action: string,
+    idempotencyKey: string,
+    requestHash: string,
+    createdAt: string,
+    load: (resultId: string, operationId: string) => Promise<T>,
+    write: () => Promise<Readonly<{
+      resultId: string;
+      value: T;
+      operation: TenantAccessEventRecord;
+    }>>,
+  ): Promise<TenantAccessWriteResult<T>> {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [JSON.stringify(["access-gateway-idempotency/v1", action, idempotencyKey])],
+    );
+    const existing = (await client.query<DatabaseRow>(`
+      SELECT request_hash, result_id, operation_id
+      FROM ${qualified(this.#configuration.schema, "access_idempotency")}
+      WHERE action = $1 AND idempotency_key = $2
+      FOR UPDATE
+    `, [action, idempotencyKey])).rows[0];
+    if (existing !== undefined) {
+      if (text(existing, "request_hash") !== requestHash) {
+        repositoryFailure("idempotency_conflict");
+      }
+      return Object.freeze({
+        replayed: true,
+        value: await load(text(existing, "result_id"), text(existing, "operation_id")),
+        operation: await this.#operation(client, text(existing, "operation_id")),
+      });
+    }
+    const result = await write();
+    await client.query(`
+      INSERT INTO ${qualified(this.#configuration.schema, "access_idempotency")} (
+        action, idempotency_key, request_hash, result_id, operation_id, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+    `, [
+      action,
+      idempotencyKey,
+      requestHash,
+      result.resultId,
+      result.operation.eventId,
+      createdAt,
+    ]);
+    return Object.freeze({
+      replayed: false,
+      value: result.value,
+      operation: result.operation,
+    });
+  }
+
+  getState(): Promise<TenantAccessStateRecord> {
+    return this.#readSnapshot(async (client) => {
+      const tenantRows = await client.query<DatabaseRow>(`
+        SELECT * FROM ${qualified(this.#configuration.schema, "tenants")} ORDER BY tenant_id
+      `);
+      const clientRows = await client.query<DatabaseRow>(`
+        SELECT * FROM ${qualified(this.#configuration.schema, "clients")}
+        ORDER BY tenant_id, client_id
+      `);
+      const credentialRows = await client.query<DatabaseRow>(`
+        SELECT * FROM ${qualified(this.#configuration.schema, "credentials")}
+        ORDER BY created_at DESC, credential_id DESC
+      `);
+      const eventRows = await client.query<DatabaseRow>(`
+        SELECT * FROM ${qualified(this.#configuration.schema, "access_events")}
+        ORDER BY created_at DESC, event_id DESC LIMIT 256
+      `);
+      const deliveryAcknowledgements = Object.freeze(Object.fromEntries(
+        credentialRows.rows.flatMap((row) => {
+          const acknowledgedAt = nullableTimestamp(row, "delivery_acknowledged_at");
+          return acknowledgedAt === null ? [] : [[text(row, "credential_id"), acknowledgedAt]];
+        }),
+      ));
+      return Object.freeze({
+        tenants: Object.freeze(tenantRows.rows.map(tenantFromRow)),
+        clients: Object.freeze(clientRows.rows.map(clientFromRow)),
+        credentials: Object.freeze(credentialRows.rows.map(credentialFromRow)),
+        events: Object.freeze(eventRows.rows.map(eventFromRow)),
+        deliveryAcknowledgements,
+      });
+    });
+  }
+
+  createTenant(request: {
+    readonly tenant: TenantRecord;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<TenantRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "tenant.create",
+      request.idempotencyKey,
+      request.requestHash,
+      request.tenant.createdAt,
+      (resultId) => this.#tenant(client, resultId),
+      async () => {
+        const existing = await client.query(
+          `SELECT 1 FROM ${qualified(this.#configuration.schema, "tenants")} WHERE tenant_id = $1`,
+          [request.tenant.tenantId],
+        );
+        if (existing.rowCount !== 0) repositoryFailure("tenant_already_exists");
+        await client.query(`
+          INSERT INTO ${qualified(this.#configuration.schema, "tenants")} (
+            tenant_id, display_name, status, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5)
+        `, [
+          request.tenant.tenantId,
+          request.tenant.displayName,
+          request.tenant.status,
+          request.tenant.createdAt,
+          request.tenant.updatedAt,
+        ]);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: request.tenant.tenantId,
+          value: request.tenant,
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  setTenantStatus(request: {
+    readonly tenantId: string;
+    readonly status: TenantStatus;
+    readonly updatedAt: string;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<TenantRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "tenant.status",
+      request.idempotencyKey,
+      request.requestHash,
+      request.updatedAt,
+      (resultId) => this.#tenant(client, resultId),
+      async () => {
+        const tenant = await this.#tenant(client, request.tenantId, true);
+        if (tenant.status === request.status) repositoryFailure("tenant_status_unchanged");
+        await client.query(`
+          UPDATE ${qualified(this.#configuration.schema, "tenants")}
+          SET status = $1, updated_at = $2 WHERE tenant_id = $3
+        `, [request.status, request.updatedAt, request.tenantId]);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: request.tenantId,
+          value: await this.#tenant(client, request.tenantId),
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  setClientStatus(request: {
+    readonly tenantId: string;
+    readonly clientId: string;
+    readonly status: ClientStatus;
+    readonly updatedAt: string;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<ClientRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "client.status",
+      request.idempotencyKey,
+      request.requestHash,
+      request.updatedAt,
+      (resultId) => this.#client(client, request.tenantId, resultId),
+      async () => {
+        const tenant = await this.#tenant(client, request.tenantId, true);
+        if (request.status === "active" && tenant.status !== "active") {
+          repositoryFailure("tenant_not_active");
+        }
+        const existing = await this.#client(client, request.tenantId, request.clientId, true);
+        if (existing.status === request.status) repositoryFailure("client_status_unchanged");
+        await client.query(`
+          UPDATE ${qualified(this.#configuration.schema, "clients")}
+          SET status = $1, updated_at = $2
+          WHERE tenant_id = $3 AND client_id = $4
+        `, [request.status, request.updatedAt, request.tenantId, request.clientId]);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: request.clientId,
+          value: await this.#client(client, request.tenantId, request.clientId),
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  issueCredential(request: {
+    readonly credential: TenantStoredCredentialRecord;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<TenantStoredCredentialRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "credential.issue",
+      request.idempotencyKey,
+      request.requestHash,
+      request.credential.createdAt,
+      (resultId) => this.#credential(client, resultId),
+      async () => {
+        const tenant = await this.#tenant(client, request.credential.tenantId, true);
+        if (tenant.status !== "active") repositoryFailure("tenant_not_active");
+        const clientRow = (await client.query<DatabaseRow>(`
+          SELECT * FROM ${qualified(this.#configuration.schema, "clients")}
+          WHERE tenant_id = $1 AND client_id = $2 FOR UPDATE
+        `, [request.credential.tenantId, request.credential.clientId])).rows[0];
+        if (clientRow === undefined) {
+          await client.query(`
+            INSERT INTO ${qualified(this.#configuration.schema, "clients")} (
+              tenant_id, client_id, label, status, created_at, updated_at
+            ) VALUES ($1, $2, $3, 'active', $4, $4)
+          `, [
+            request.credential.tenantId,
+            request.credential.clientId,
+            request.credential.label,
+            request.credential.createdAt,
+          ]);
+          await insertEvent(client, this.#configuration.schema, Object.freeze({
+            eventId: `${request.event.eventId}_client_created`,
+            tenantId: request.credential.tenantId,
+            clientId: request.credential.clientId,
+            credentialId: null,
+            actorRef: request.event.actorRef,
+            action: "client.created",
+            reasonCode: "credential_issue_created_client",
+            createdAt: request.credential.createdAt,
+          }));
+        } else if (clientFromRow(clientRow).status !== "active") {
+          repositoryFailure("client_not_active");
+        }
+        await insertCredential(client, this.#configuration.schema, request.credential);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: request.credential.credentialId,
+          value: request.credential,
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  rotateCredential(request: {
+    readonly previousCredentialId: string;
+    readonly credential: TenantStoredCredentialRecord;
+    readonly revokedAt: string;
+    readonly nowSeconds: number;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<TenantStoredCredentialRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "credential.rotate",
+      request.idempotencyKey,
+      request.requestHash,
+      request.credential.createdAt,
+      (resultId) => this.#credential(client, resultId),
+      async () => {
+        const previous = await this.#credential(client, request.previousCredentialId, true);
+        if (previous.status !== "active") repositoryFailure("credential_not_active");
+        if (previous.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        if (await this.#deliveryAcknowledgedAt(client, previous.credentialId) === null) {
+          repositoryFailure("credential_delivery_pending");
+        }
+        if ((await this.#tenant(client, previous.tenantId, true)).status !== "active") {
+          repositoryFailure("tenant_not_active");
+        }
+        if ((await this.#client(client, previous.tenantId, previous.clientId, true)).status !== "active") {
+          repositoryFailure("client_not_active");
+        }
+        if (
+          request.credential.tenantId !== previous.tenantId ||
+          request.credential.clientId !== previous.clientId ||
+          request.credential.rotatedFromId !== previous.credentialId
+        ) {
+          repositoryFailure("corrupt");
+        }
+        await client.query(`
+          UPDATE ${qualified(this.#configuration.schema, "credentials")}
+          SET status = 'revoked', revoked_at = $1 WHERE credential_id = $2
+        `, [request.revokedAt, previous.credentialId]);
+        await insertCredential(client, this.#configuration.schema, request.credential);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: request.credential.credentialId,
+          value: request.credential,
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  revokeCredential(request: {
+    readonly credentialId: string;
+    readonly revokedAt: string;
+    readonly nowSeconds: number;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<TenantStoredCredentialRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "credential.revoke",
+      request.idempotencyKey,
+      request.requestHash,
+      request.revokedAt,
+      (resultId) => this.#credential(client, resultId),
+      async () => {
+        const credential = await this.#credential(client, request.credentialId, true);
+        if (credential.status !== "active") repositoryFailure("credential_not_active");
+        if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        await client.query(`
+          UPDATE ${qualified(this.#configuration.schema, "credentials")}
+          SET status = 'revoked', revoked_at = $1 WHERE credential_id = $2
+        `, [request.revokedAt, credential.credentialId]);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: credential.credentialId,
+          value: await this.#credential(client, credential.credentialId),
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  acknowledgeCredentialDelivery(request: {
+    readonly credentialId: string;
+    readonly nowSeconds: number;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<TenantStoredCredentialRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "credential.delivery_acknowledge",
+      request.idempotencyKey,
+      request.requestHash,
+      request.event.createdAt,
+      (resultId) => this.#credential(client, resultId),
+      async () => {
+        const credential = await this.#credential(client, request.credentialId, true);
+        if (credential.status !== "active") repositoryFailure("credential_not_active");
+        if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        if ((await this.#tenant(client, credential.tenantId, true)).status !== "active") {
+          repositoryFailure("tenant_not_active");
+        }
+        if ((await this.#client(client, credential.tenantId, credential.clientId, true)).status !== "active") {
+          repositoryFailure("client_not_active");
+        }
+        if (await this.#deliveryAcknowledgedAt(client, credential.credentialId) !== null) {
+          repositoryFailure("credential_delivery_acknowledged");
+        }
+        await client.query(`
+          UPDATE ${qualified(this.#configuration.schema, "credentials")}
+          SET delivery_acknowledged_at = $1 WHERE credential_id = $2
+        `, [request.event.createdAt, credential.credentialId]);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: credential.credentialId,
+          value: credential,
+          operation: request.event,
+        });
+      },
+    ));
+  }
+
+  findCredentialForAuthentication(credentialId: string): Promise<{
+    readonly tenant: TenantRecord;
+    readonly client: ClientRecord;
+    readonly credential: TenantStoredCredentialRecord;
+    readonly deliveryAcknowledgedAt: string | null;
+  } | null> {
+    return this.#readSnapshot(async (client) => {
+      const row = (await client.query<DatabaseRow>(`
+        SELECT
+          credential.*,
+          tenant.display_name AS authority_tenant_display_name,
+          tenant.status AS authority_tenant_status,
+          tenant.created_at AS authority_tenant_created_at,
+          tenant.updated_at AS authority_tenant_updated_at,
+          gateway_client.label AS authority_client_label,
+          gateway_client.status AS authority_client_status,
+          gateway_client.created_at AS authority_client_created_at,
+          gateway_client.updated_at AS authority_client_updated_at
+        FROM ${qualified(this.#configuration.schema, "credentials")} AS credential
+        JOIN ${qualified(this.#configuration.schema, "tenants")} AS tenant
+          ON tenant.tenant_id = credential.tenant_id
+        JOIN ${qualified(this.#configuration.schema, "clients")} AS gateway_client
+          ON gateway_client.tenant_id = credential.tenant_id
+         AND gateway_client.client_id = credential.client_id
+        WHERE credential.credential_id = $1
+      `, [credentialId])).rows[0];
+      if (row === undefined) return null;
+      const tenant = tenantFromRow({
+        tenant_id: row.tenant_id,
+        display_name: row.authority_tenant_display_name,
+        status: row.authority_tenant_status,
+        created_at: row.authority_tenant_created_at,
+        updated_at: row.authority_tenant_updated_at,
+      });
+      const gatewayClient = clientFromRow({
+        tenant_id: row.tenant_id,
+        client_id: row.client_id,
+        label: row.authority_client_label,
+        status: row.authority_client_status,
+        created_at: row.authority_client_created_at,
+        updated_at: row.authority_client_updated_at,
+      });
+      return Object.freeze({
+        tenant,
+        client: gatewayClient,
+        credential: credentialFromRow(row),
+        deliveryAcknowledgedAt: nullableTimestamp(row, "delivery_acknowledged_at"),
+      });
+    });
+  }
+
+  async markCredentialUsed(
+    credentialId: string,
+    usedAt: string,
+    nowSeconds: number,
+  ): Promise<boolean> {
+    const result = await this.#active().query(`
+      UPDATE ${qualified(this.#configuration.schema, "credentials")} AS credential
+      SET last_used_at = $1
+      FROM ${qualified(this.#configuration.schema, "tenants")} AS tenant,
+           ${qualified(this.#configuration.schema, "clients")} AS gateway_client
+      WHERE credential.credential_id = $2
+        AND credential.status = 'active'
+        AND credential.expires_at > $3
+        AND credential.delivery_acknowledged_at IS NOT NULL
+        AND tenant.tenant_id = credential.tenant_id
+        AND tenant.status = 'active'
+        AND gateway_client.tenant_id = credential.tenant_id
+        AND gateway_client.client_id = credential.client_id
+        AND gateway_client.status = 'active'
+    `, [usedAt, credentialId, nowSeconds]);
+    return result.rowCount === 1;
+  }
+
+  append(event: AuditEvent): Promise<void> {
+    return this.#active().query(`
+      INSERT INTO ${qualified(this.#configuration.schema, "gateway_audit")} (
+        audit_id, action, status, request_id, tenant_id, client_id, credential_id,
+        tool_names, request_hash, jti, reason_code, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
+    `, [
+      event.auditId,
+      event.action,
+      event.status,
+      event.requestId,
+      event.tenantId,
+      event.clientId,
+      event.credentialId,
+      JSON.stringify(event.toolNames),
+      event.requestHash,
+      event.jti,
+      event.reasonCode,
+      event.createdAt,
+    ]).then(() => undefined);
+  }
+
+  reserve(input: Readonly<{
+    tenantId: string;
+    clientId: string;
+    credentialId: string;
+    clientIp: string;
+    nowSeconds: number;
+  }>): Promise<boolean> {
+    if (!Number.isSafeInteger(input.nowSeconds) || input.nowSeconds < 0) {
+      return Promise.reject(new TypeError("Rate limit time is invalid."));
+    }
+    const bucketKeys = Object.freeze([
+      ["tenant", input.tenantId],
+      ["client", input.tenantId, input.clientId],
+      ["credential", input.credentialId],
+      ["ip", input.clientIp],
+    ].map((parts) => createHash("sha256")
+      .update(`access-gateway-rate/v2\u0000${parts.join("\u0000")}`, "utf8")
+      .digest("hex"))
+      .sort());
+    const windowStart = Math.floor(input.nowSeconds / 60) * 60;
+    return this.#transaction(async (client) => {
+      for (const bucketKey of bucketKeys) {
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [JSON.stringify(["access-gateway-rate/v1", bucketKey])],
+        );
+      }
+      await client.query(`
+        DELETE FROM ${qualified(this.#configuration.schema, "gateway_rate_windows")}
+        WHERE window_start < $1
+      `, [windowStart - 3_600]);
+      const rows = (await client.query<DatabaseRow>(`
+        SELECT bucket_key, request_count
+        FROM ${qualified(this.#configuration.schema, "gateway_rate_windows")}
+        WHERE window_start = $1 AND bucket_key = ANY($2::text[])
+        FOR UPDATE
+      `, [windowStart, bucketKeys])).rows;
+      if (rows.some((row) => integer(row, "request_count") >= this.#rateLimitPerMinute)) {
+        return false;
+      }
+      await client.query(`
+        INSERT INTO ${qualified(this.#configuration.schema, "gateway_rate_windows")} (
+          bucket_key, window_start, request_count
+        )
+        SELECT bucket_key, $2, 1 FROM unnest($1::text[]) AS bucket_key
+        ON CONFLICT (bucket_key, window_start) DO UPDATE
+        SET request_count = ${qualified(this.#configuration.schema, "gateway_rate_windows")}.request_count + 1
+      `, [bucketKeys, windowStart]);
+      return true;
+    });
+  }
+
+  async isRevoked(input: Readonly<{
+    tenantId: string;
+    clientId: string;
+    credentialId: string;
+    jti: string | null;
+  }>): Promise<boolean> {
+    const record = await this.findCredentialForAuthentication(input.credentialId);
+    return record === null ||
+      record.tenant.tenantId !== input.tenantId ||
+      record.client.clientId !== input.clientId ||
+      record.tenant.status !== "active" ||
+      record.client.status !== "active" ||
+      record.credential.status !== "active";
+  }
+
+  async health(): Promise<{ readonly ready: boolean; readonly auditCount: number }> {
+    try {
+      await this.#verify();
+      const count = (await this.#active().query<DatabaseRow>(`
+        SELECT COUNT(*) AS count FROM ${qualified(this.#configuration.schema, "gateway_audit")}
+      `)).rows[0];
+      return Object.freeze({ ready: true, auditCount: count === undefined ? 0 : integer(count, "count") });
+    } catch {
+      return Object.freeze({ ready: false, auditCount: 0 });
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    if (this.#ownsPool) await this.#pool.end();
+  }
+}

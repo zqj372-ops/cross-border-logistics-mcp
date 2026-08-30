@@ -32,6 +32,9 @@ const accessConsoleAssetSpecs = [
   { name: "app.js", source: resolve("apps/access-console/app.js") },
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
+const nodeEsmBanner = {
+  js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
+};
 
 rmSync("dist", { recursive: true, force: true });
 
@@ -54,6 +57,7 @@ await build({
   format: "esm",
   platform: "node",
   target: "node22",
+  banner: nodeEsmBanner,
   sourcemap: false,
   legalComments: "none",
 });
@@ -65,6 +69,7 @@ await build({
   format: "esm",
   platform: "node",
   target: "node22",
+  banner: nodeEsmBanner,
   sourcemap: false,
   legalComments: "none",
 });
@@ -76,6 +81,7 @@ await build({
   format: "esm",
   platform: "node",
   target: "node22",
+  banner: nodeEsmBanner,
   sourcemap: false,
   legalComments: "none",
 });
@@ -87,6 +93,7 @@ await build({
   format: "esm",
   platform: "node",
   target: "node22",
+  banner: nodeEsmBanner,
   sourcemap: false,
   legalComments: "none",
 });

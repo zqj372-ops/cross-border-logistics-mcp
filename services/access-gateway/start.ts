@@ -20,7 +20,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   initializeSqliteTenantAccessState,
-  SqliteTenantAccessStore,
   tenantAccessPaths,
 } from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
 import { TenantAccessService } from "../../src/logistics_mcp/control-plane/tenant-access-service";
@@ -41,9 +40,11 @@ import {
 import {
   initializeSqliteGatewayOperationalState,
   gatewayOperationalPaths,
-  SqliteGatewayOperationalStore,
   TenantAccessGatewayRepository,
 } from "./production-store";
+import { openGatewayStores } from "./store-runtime";
+
+export { migrateSqliteGatewayToPostgresFromEnvironment } from "./postgres-migration";
 
 const PROFILE = "single-node-candidate";
 const HEALTH_PATH = "/access/v1/healthz";
@@ -377,6 +378,7 @@ export function evaluateAccessGatewayReadiness(input: Readonly<{
   signingKeyCount: number;
   adminConfigured: boolean;
   adminReady: boolean;
+  databaseBackend?: "sqlite" | "postgresql";
 }>): Readonly<{
   httpStatus: 200 | 503;
   status: "manual_review" | "unavailable";
@@ -392,6 +394,9 @@ export function evaluateAccessGatewayReadiness(input: Readonly<{
   const idpBlockers = input.adminConfigured
     ? input.adminReady ? [] : ["enterprise_idp_unavailable"]
     : ["enterprise_idp_unconfigured"];
+  const databaseBlocker = input.databaseBackend === "postgresql"
+    ? "managed_database_qualification_pending"
+    : "managed_database_unconfigured";
   return Object.freeze({
     httpStatus: operationalReady ? 200 : 503,
     status: operationalReady ? "manual_review" : "unavailable",
@@ -399,7 +404,7 @@ export function evaluateAccessGatewayReadiness(input: Readonly<{
     blockers: Object.freeze([
       ...idpBlockers,
       "kms_signer_unconfigured",
-      "managed_database_unconfigured",
+      databaseBlocker,
     ]),
   });
 }
@@ -461,26 +466,25 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
     nowSeconds: () => clock.nowSeconds(),
     retentionSeconds: keyRetentionSeconds,
   });
-  const tenantStore = new SqliteTenantAccessStore({
+  const stores = await openGatewayStores({
+    environment: process.env,
     applicationRoot,
     instanceId,
     managementTenantId,
+    rateLimitPerMinute,
     ...(legacyPepperVersion === undefined
       ? {}
       : { legacyCredentialPepperVersion: legacyPepperVersion }),
   });
+  const tenantStore = stores.tenantStore;
   const unsupportedPepperVersion = (await tenantStore.getState()).credentials.find(
     (credential) => !pepper.supportsPepperVersion(credential.pepperVersion),
   )?.pepperVersion;
   if (unsupportedPepperVersion !== undefined) {
-    await tenantStore.close();
+    await stores.close();
     throw new Error("Stored credential pepper material is unavailable.");
   }
-  const operations = new SqliteGatewayOperationalStore({
-    applicationRoot,
-    instanceId,
-    rateLimitPerMinute,
-  });
+  const operations = stores.operationalStore;
   const credentials = new TenantAccessGatewayRepository({
     store: tenantStore,
     nowSeconds: () => clock.nowSeconds(),
@@ -575,6 +579,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
           signingKeyCount: jwks.keys.length,
           adminConfigured: admin.configured,
           adminReady: adminHealth.ready,
+          databaseBackend: stores.backend,
         });
         sendJson(response, readiness.httpStatus, {
           status: readiness.status,
@@ -583,6 +588,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
             profile: PROFILE,
             operational_ready: readiness.operationalReady,
             admin_idp_ready: adminHealth.ready,
+            database_backend: stores.backend,
             production_eligible: false,
             audit_count: operationHealth.auditCount,
           },
@@ -620,8 +626,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
         server.close((error) => error === undefined ? resolvePromise() : reject(error));
       });
       await Promise.all([
-        operations.close(),
-        tenantStore.close(),
+        stores.close(),
         "close" in admin.provider ? admin.provider.close() : Promise.resolve(),
       ]);
     },

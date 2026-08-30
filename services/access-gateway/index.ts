@@ -4,5 +4,8 @@ export * from "./contracts";
 export * from "./errors";
 export * from "./http";
 export * from "./ports";
+export * from "./postgres-migration";
+export * from "./postgres-store";
 export * from "./service";
+export * from "./store-runtime";
 export * from "./synthetic";

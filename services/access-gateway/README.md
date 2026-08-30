@@ -16,6 +16,9 @@ Bearer JWT/JWKS 验证入口。
   精确 email 和可选 `sub` 双重管理员映射；
 - 可部署的 `single-node-candidate` 进程、窄管理 API、Access Console、
   `/admin/` 标准入口和依赖聚合 readiness；
+- PostgreSQL tenant/client/Key/entitlement、幂等、审计和并发限流适配器；
+- SQLite v3 + operations v1 到 PostgreSQL 的显式事务迁移、全表计数、逻辑指纹读回和
+  幂等重跑；旧 SQLite 只保留为切换回滚源，不作为 PostgreSQL 运行时 fallback；
 - 显式 `synthetic-local-test` fixture 和现有 MCP verifier 互操作测试。
 
 `createProductionAccessGateway` 要求九个 `kind=production` provider 且拒绝 synthetic 或
@@ -23,7 +26,7 @@ Bearer JWT/JWKS 验证入口。
 或生产资格证明。
 
 当前 NO-GO 项：目标环境的 Cloudflare Access 应用/MFA 与真实登录回执、
-非导出 KMS/HSM 签名和 Secret Manager pepper、托管事务数据库、共享限流、集中审计/告警与
-吊销、Edge denylist、备份恢复、负载/告警/回滚演练及 staging 读回证据。
-`single-node-candidate` 仍使用本地 SQLite 与文件密钥，固定报告
-`production_eligible=false`；不得因为页面、API 或本地测试可用就声明为生产完成。
+非导出 KMS/HSM 签名和 Secret Manager pepper、数据库托管资格、集中审计/告警与
+吊销、Edge denylist、目标负载/告警演练及三类 Agent staging 读回证据。
+`single-node-candidate` 即使切到 PostgreSQL，仍使用文件签名密钥/pepper，并固定报告
+`production_eligible=false`；PostgreSQL 可用、页面可见或迁移指纹一致都不能替代剩余门禁。

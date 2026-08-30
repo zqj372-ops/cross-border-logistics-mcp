@@ -72,8 +72,25 @@ MFA、角色 owner 和真实登录回执仍是上线门禁。
 保持只读、非 root、无 Linux capabilities。
 
 SQLite 只用于当前单实例 T0 Runtime 的平台状态，不是 Unified Access Gateway 的生产
-tenant/client/Key 权威库。多实例、共享 Gateway DB、KMS、IdP 和集中审计仍必须由目标环境
-提供并完成独立恢复/故障验证。
+tenant/client/Key 权威库。Gateway 候选必须显式设置
+`ACCESS_GATEWAY_STORE_BACKEND=postgresql`，并从只读文件 Secret 读取数据库密码；连接失败、
+schema/instance/management tenant 不匹配或迁移指纹漂移时直接失败，不回退到 SQLite。
+
+从现有 Gateway SQLite 切换 PostgreSQL 时，先停止 Gateway 写入并保留原卷，再运行：
+
+```bash
+npm run migrate:access-gateway-postgres
+```
+
+迁移器只接受私有的 SQLite v3 tenant store 和 operations v1 store，在一个 PostgreSQL 事务中
+写入 tenant/client/credential/entitlement、幂等绑定、审计和限流窗口，再用全表计数与规范化
+SHA-256 逻辑指纹读回。相同源可以幂等重跑；已存在但不匹配的目标 schema 会失败闭合。
+切换与回滚步骤见
+[Access Gateway PostgreSQL 切换 Runbook](../docs/runbooks/access-gateway-postgres-cutover.md)。
+
+当前同宿主私有容器网络可以显式使用 `ACCESS_GATEWAY_POSTGRES_SSL_MODE=disable`；任何跨宿主或
+托管数据库必须改为 `verify-full` 并挂载获批 CA。自托管 PostgreSQL 仍不等于托管数据库资格，
+多实例、KMS、IdP、集中审计/吊销和目标环境恢复/故障验证仍须独立完成。
 
 当前单节点 Gateway 候选会把每个 credential 的 pepper 版本写入受保护的 SQLite 状态，并在
 同一持久卷的 `.secrets/credential-pepper-history.json` 中保留对应验证材料。轮换时必须同时更换
@@ -89,8 +106,9 @@ pepper bytes 和递增 `ACCESS_GATEWAY_PEPPER_VERSION`；禁止复用版本名�
 ## health 与 readiness
 
 - `GET /healthz` 只证明 Node 进程能响应；不用于 Compose 流量门禁。
-- `GET /readyz` 聚合 production profile、精确目录、reviewed Agent Pack、JWKS、SQLite
-  audit/idempotency/session 和 shutdown 状态。任一全局依赖失败返回非 2xx。
+- `GET /readyz` 聚合 production profile、精确目录、reviewed Agent Pack、JWKS、所选 Gateway
+  数据库的 audit/idempotency/session 和 shutdown 状态，并显式返回 `database_backend`。任一
+  全局依赖失败返回非 2xx。
 - Compose healthcheck 使用 `/readyz`，使不满足门禁的实例不接收流量。
 - fixture mode、fixture token、长期 API Key verifier、缺少 pack/catalog 或目录漂移不能进入
   production ready。
@@ -131,7 +149,8 @@ tenant 隔离、审计、备份恢复、目标负载、告警和前一镜像回�
 
 仓库内 smoke/load runner 会创建并随后停用合成 tenant/Key，所以只能在候选 staging 执行。
 除原有确认短语外，还必须分别显式设置 `DEPLOYMENT_SMOKE_ENVIRONMENT=staging` 或
-`DEPLOYMENT_LOAD_ENVIRONMENT=staging`；runner 会在打开权威 SQLite 前回读目标 `/readyz`，只有
+`DEPLOYMENT_LOAD_ENVIRONMENT=staging`；runner 会在打开显式配置的 Gateway Store 前回读目标
+`/readyz`，只有
 `profile=single-node-candidate`、`operational_ready=true` 且 `production_eligible=false` 才继续。
 
 在真实企业 IdP、TLS/Edge、KMS/Secret Manager、Unified Access Gateway、集中吊销和上述

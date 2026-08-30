@@ -14,11 +14,9 @@ import {
   tenantApiKeyToolNamesForScopes,
 } from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
 import type {
-  SqliteTenantAccessStore,
-} from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
-import type {
   ClientRecord as TenantStoreClientRecord,
   StoredCredentialRecord as TenantStoredCredentialRecord,
+  TenantAccessRepository,
   TenantAccessEventRecord,
   TenantAccessStateRecord,
   TenantRecord as TenantStoreRecord,
@@ -520,13 +518,13 @@ function gatewayOperation(event: TenantAccessEventRecord): OperationRecord {
 }
 
 export interface TenantAccessGatewayRepositoryOptions {
-  readonly store: SqliteTenantAccessStore;
+  readonly store: TenantAccessRepository;
   readonly nowSeconds?: () => number;
 }
 
 export class TenantAccessGatewayRepository implements CredentialRepository, RevocationRepository {
   readonly kind = "production" as const;
-  readonly #store: SqliteTenantAccessStore;
+  readonly #store: TenantAccessRepository;
   readonly #nowSeconds: () => number;
 
   constructor(options: TenantAccessGatewayRepositoryOptions) {
