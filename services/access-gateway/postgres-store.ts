@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
@@ -8,12 +8,14 @@ import {
   normalizeStoredTenantApiKeyScopes,
   type TenantApiKeyScope,
 } from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
+import { IDENTIFIER_PATTERN } from "../../src/logistics_mcp/control-plane/lexical-contracts";
 import type {
   ClientRecord,
   ClientStatus,
   StoredCredentialRecord as TenantStoredCredentialRecord,
   TenantAccessEventRecord,
   TenantAccessRepository,
+  TenantAccessResponseContext,
   TenantAccessStateRecord,
   TenantAccessWriteResult,
   TenantRecord,
@@ -29,9 +31,14 @@ import type {
   GatewayRecentIssue,
 } from "./operations-overview";
 import { isCanonicalGatewayTimestamp } from "./operations-overview";
-import type { GatewayAuditRepository, RateLimitRepository } from "./ports";
+import type {
+  GatewayAuditEvidenceReader,
+  GatewayAuditRepository,
+  GatewayAuditRequestEvidence,
+  RateLimitRepository,
+} from "./ports";
 
-export const POSTGRES_GATEWAY_SCHEMA_VERSION = 1 as const;
+export const POSTGRES_GATEWAY_SCHEMA_VERSION = 2 as const;
 
 const DEFAULT_CONNECTION_TIMEOUT_MILLIS = 5_000;
 const DEFAULT_IDLE_TIMEOUT_MILLIS = 30_000;
@@ -40,8 +47,28 @@ const DEFAULT_MAX_CONNECTIONS = 8;
 const MAX_SECRET_BYTES = 4_096;
 const SQL_IDENTIFIER_PATTERN = /^[a-z][a-z0-9_]{0,62}$/u;
 const PEPPER_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+const AUDIT_REQUEST_ID_PATTERN = /^req_[A-Za-z0-9_-]{8,128}$/u;
+const MAX_AUDIT_EVIDENCE_REQUEST_IDS = 32;
+const RESULT_SNAPSHOT_FORMAT = "mcp-tenant-access-result/v1" as const;
+const SNAPSHOT_BYTES_KEY = "__mcp_bytes_base64" as const;
 
 type DatabaseRow = Record<string, unknown>;
+type SnapshotEntityKind = "tenant" | "client" | "credential";
+
+type ResultSnapshotPayload = Readonly<{
+  readonly snapshot_format: typeof RESULT_SNAPSHOT_FORMAT;
+  readonly entity_kind: SnapshotEntityKind;
+  readonly entity: unknown;
+  readonly operation: unknown;
+  readonly snapshot: unknown;
+}>;
+
+type IdempotentWriteResult<T> = Readonly<{
+  readonly resultId: string;
+  readonly value: T;
+  readonly operation: TenantAccessEventRecord;
+  readonly snapshot: TenantAccessResponseContext;
+}>;
 
 export interface PostgresGatewayConfiguration {
   readonly backend: "postgresql";
@@ -363,6 +390,9 @@ CREATE TABLE ${table("access_idempotency")} (
   result_id text NOT NULL,
   operation_id text NOT NULL REFERENCES ${table("access_events")}(event_id),
   created_at timestamptz NOT NULL,
+  result_snapshot jsonb CHECK (
+    result_snapshot IS NULL OR jsonb_typeof(result_snapshot) = 'object'
+  ),
   PRIMARY KEY (action, idempotency_key)
 );
 
@@ -502,6 +532,420 @@ function scopes(row: DatabaseRow, key: string): readonly TenantApiKeyScope[] {
   return normalized;
 }
 
+function isPlainSnapshotObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function exactSnapshotObject(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (!isPlainSnapshotObject(value)) repositoryFailure("corrupt");
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) repositoryFailure("corrupt");
+  return value;
+}
+
+function snapshotString(value: unknown): string {
+  if (typeof value !== "string") repositoryFailure("corrupt");
+  return value;
+}
+
+function snapshotIdentifier(value: unknown): string {
+  const identifier = snapshotString(value);
+  if (!IDENTIFIER_PATTERN.test(identifier)) repositoryFailure("corrupt");
+  return identifier;
+}
+
+function snapshotNullableIdentifier(value: unknown): string | null {
+  return value === null ? null : snapshotIdentifier(value);
+}
+
+function snapshotTimestamp(value: unknown): string {
+  const candidate = snapshotString(value);
+  if (
+    !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$/u.test(candidate) ||
+    !Number.isFinite(Date.parse(candidate))
+  ) {
+    repositoryFailure("corrupt");
+  }
+  return candidate;
+}
+
+function snapshotNullableTimestamp(value: unknown): string | null {
+  return value === null ? null : snapshotTimestamp(value);
+}
+
+function snapshotStatus<T extends string>(value: unknown, allowed: readonly T[]): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) repositoryFailure("corrupt");
+  return value as T;
+}
+
+function snapshotBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) {
+    if (value.byteLength === 0) repositoryFailure("corrupt");
+    return new Uint8Array(value);
+  }
+  const tagged = exactSnapshotObject(value, [SNAPSHOT_BYTES_KEY]);
+  const encoded = snapshotString(tagged[SNAPSHOT_BYTES_KEY]);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
+    repositoryFailure("corrupt");
+  }
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.byteLength === 0 || decoded.toString("base64") !== encoded) {
+    repositoryFailure("corrupt");
+  }
+  return new Uint8Array(decoded);
+}
+
+function snapshotScopes(value: unknown): readonly TenantApiKeyScope[] {
+  if (!Array.isArray(value)) repositoryFailure("corrupt");
+  const normalized = normalizeStoredTenantApiKeyScopes(value);
+  if (normalized === null || JSON.stringify(normalized) !== JSON.stringify(value)) {
+    repositoryFailure("corrupt");
+  }
+  return normalized;
+}
+
+function snapshotEntityKind(action: string): SnapshotEntityKind {
+  switch (action) {
+    case "tenant.create":
+    case "tenant.status":
+      return "tenant";
+    case "client.status":
+      return "client";
+    case "credential.issue":
+    case "credential.rotate":
+    case "credential.revoke":
+    case "credential.delivery_acknowledge":
+      return "credential";
+    default:
+      repositoryFailure("corrupt");
+  }
+}
+
+function expectedSnapshotEventActions(action: string): readonly string[] {
+  switch (action) {
+    case "tenant.create":
+      return ["tenant.created"];
+    case "tenant.status":
+      return ["tenant.active", "tenant.suspended"];
+    case "client.status":
+      return ["client.active", "client.disabled"];
+    case "credential.issue":
+      return ["credential.issued"];
+    case "credential.rotate":
+      return ["credential.rotated"];
+    case "credential.revoke":
+      return ["credential.revoked"];
+    case "credential.delivery_acknowledge":
+      return ["credential.delivery_acknowledged"];
+    default:
+      repositoryFailure("corrupt");
+  }
+}
+
+function snapshotTenant(value: unknown): TenantRecord {
+  const entity = exactSnapshotObject(value, [
+    "tenantId", "displayName", "status", "createdAt", "updatedAt",
+  ]);
+  return Object.freeze({
+    tenantId: snapshotIdentifier(entity.tenantId),
+    displayName: snapshotString(entity.displayName),
+    status: snapshotStatus(entity.status, ["active", "suspended"] as const),
+    createdAt: snapshotTimestamp(entity.createdAt),
+    updatedAt: snapshotTimestamp(entity.updatedAt),
+  });
+}
+
+function snapshotClient(value: unknown): ClientRecord {
+  const entity = exactSnapshotObject(value, [
+    "clientId", "tenantId", "label", "status", "createdAt", "updatedAt",
+  ]);
+  return Object.freeze({
+    clientId: snapshotIdentifier(entity.clientId),
+    tenantId: snapshotIdentifier(entity.tenantId),
+    label: snapshotString(entity.label),
+    status: snapshotStatus(entity.status, ["active", "disabled"] as const),
+    createdAt: snapshotTimestamp(entity.createdAt),
+    updatedAt: snapshotTimestamp(entity.updatedAt),
+  });
+}
+
+function snapshotCredential(value: unknown): TenantStoredCredentialRecord {
+  const entity = exactSnapshotObject(value, [
+    "credentialId", "tenantId", "clientId", "label", "actorRole", "roles", "scopes",
+    "status", "keyPrefix", "secretLastFour", "secretSalt", "secretHash", "pepperVersion",
+    "createdAt", "expiresAt", "lastUsedAt", "revokedAt", "rotatedFromId",
+  ]);
+  const roles = entity.roles;
+  if (!Array.isArray(roles) || JSON.stringify(roles) !== '["service"]') {
+    repositoryFailure("corrupt");
+  }
+  const keyPrefix = snapshotString(entity.keyPrefix);
+  if (!/^lmcpk_[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(keyPrefix)) {
+    repositoryFailure("corrupt");
+  }
+  const secretLastFour = snapshotString(entity.secretLastFour);
+  if (!/^[A-Za-z0-9_-]{4}$/u.test(secretLastFour)) repositoryFailure("corrupt");
+  const pepperVersion = snapshotString(entity.pepperVersion);
+  if (!PEPPER_VERSION_PATTERN.test(pepperVersion)) repositoryFailure("corrupt");
+  const expiresAt = entity.expiresAt;
+  if (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < 1) {
+    repositoryFailure("corrupt");
+  }
+  return Object.freeze({
+    credentialId: snapshotIdentifier(entity.credentialId),
+    tenantId: snapshotIdentifier(entity.tenantId),
+    clientId: snapshotIdentifier(entity.clientId),
+    label: snapshotString(entity.label),
+    actorRole: snapshotStatus(entity.actorRole, ["service"] as const),
+    roles: Object.freeze(["service"] as const),
+    scopes: snapshotScopes(entity.scopes),
+    status: snapshotStatus(entity.status, ["active", "revoked"] as const),
+    keyPrefix,
+    secretLastFour,
+    secretSalt: snapshotBytes(entity.secretSalt),
+    secretHash: snapshotBytes(entity.secretHash),
+    pepperVersion,
+    createdAt: snapshotTimestamp(entity.createdAt),
+    expiresAt,
+    lastUsedAt: snapshotNullableTimestamp(entity.lastUsedAt),
+    revokedAt: snapshotNullableTimestamp(entity.revokedAt),
+    rotatedFromId: snapshotNullableIdentifier(entity.rotatedFromId),
+  });
+}
+
+function snapshotOperation(
+  value: unknown,
+  action: string,
+  resultId: string,
+  operationId: string,
+  createdAt: string,
+): TenantAccessEventRecord {
+  const operation = exactSnapshotObject(value, [
+    "eventId", "tenantId", "clientId", "credentialId", "actorRef", "action",
+    "reasonCode", "createdAt",
+  ]);
+  const operationAction = snapshotString(operation.action);
+  if (!expectedSnapshotEventActions(action).includes(operationAction)) {
+    repositoryFailure("corrupt");
+  }
+  const normalized = Object.freeze({
+    eventId: snapshotIdentifier(operation.eventId),
+    tenantId: snapshotIdentifier(operation.tenantId),
+    clientId: snapshotNullableIdentifier(operation.clientId),
+    credentialId: snapshotNullableIdentifier(operation.credentialId),
+    actorRef: snapshotIdentifier(operation.actorRef),
+    action: operationAction,
+    reasonCode: snapshotIdentifier(operation.reasonCode),
+    createdAt: snapshotTimestamp(operation.createdAt),
+  });
+  if (normalized.eventId !== operationId || normalized.createdAt !== createdAt) {
+    repositoryFailure("corrupt");
+  }
+  if (action === "tenant.create" || action === "tenant.status") {
+    if (
+      normalized.tenantId !== resultId ||
+      normalized.clientId !== null ||
+      normalized.credentialId !== null
+    ) {
+      repositoryFailure("corrupt");
+    }
+  } else if (action === "client.status") {
+    if (normalized.clientId !== resultId || normalized.credentialId !== null) {
+      repositoryFailure("corrupt");
+    }
+  } else if (normalized.credentialId !== resultId || normalized.clientId === null) {
+    repositoryFailure("corrupt");
+  }
+  return normalized;
+}
+
+function snapshotResponseContext(value: unknown): TenantAccessResponseContext {
+  const snapshot = exactSnapshotObject(value, [
+    "tenantStatus", "clientStatus", "deliveryAcknowledgedAt",
+  ]);
+  return Object.freeze({
+    tenantStatus: snapshot.tenantStatus === null
+      ? null
+      : snapshotStatus(snapshot.tenantStatus, ["active", "suspended"] as const),
+    clientStatus: snapshot.clientStatus === null
+      ? null
+      : snapshotStatus(snapshot.clientStatus, ["active", "disabled"] as const),
+    deliveryAcknowledgedAt: snapshotNullableTimestamp(snapshot.deliveryAcknowledgedAt),
+  });
+}
+
+function normalizedResultSnapshot(
+  value: unknown,
+  action: string,
+  resultId: string,
+  operationId: string,
+  createdAt: string,
+): Readonly<{
+  value: TenantRecord | ClientRecord | TenantStoredCredentialRecord;
+  operation: TenantAccessEventRecord;
+  snapshot: TenantAccessResponseContext;
+}> {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value) as unknown;
+    } catch {
+      repositoryFailure("corrupt");
+    }
+  }
+  const payload = exactSnapshotObject(parsed, [
+    "snapshot_format", "entity_kind", "entity", "operation", "snapshot",
+  ]) as unknown as ResultSnapshotPayload;
+  if (payload.snapshot_format !== RESULT_SNAPSHOT_FORMAT) repositoryFailure("corrupt");
+  const entityKind = payload.entity_kind;
+  if (entityKind !== snapshotEntityKind(action)) repositoryFailure("corrupt");
+  const operation = snapshotOperation(
+    payload.operation,
+    action,
+    resultId,
+    operationId,
+    createdAt,
+  );
+  const snapshot = snapshotResponseContext(payload.snapshot);
+  const entity = entityKind === "tenant"
+    ? snapshotTenant(payload.entity)
+    : entityKind === "client"
+      ? snapshotClient(payload.entity)
+      : snapshotCredential(payload.entity);
+  const entityId = entityKind === "tenant"
+    ? entity.tenantId
+    : entityKind === "client"
+      ? (entity as ClientRecord).clientId
+      : (entity as TenantStoredCredentialRecord).credentialId;
+  if (entityId !== resultId || operation.tenantId !== entity.tenantId) {
+    repositoryFailure("corrupt");
+  }
+  if (entityKind === "tenant") {
+    if (
+      snapshot.tenantStatus !== (entity as TenantRecord).status ||
+      snapshot.clientStatus !== null ||
+      snapshot.deliveryAcknowledgedAt !== null
+    ) {
+      repositoryFailure("corrupt");
+    }
+  } else if (entityKind === "client") {
+    const gatewayClient = entity as ClientRecord;
+    if (
+      operation.clientId !== gatewayClient.clientId ||
+      snapshot.tenantStatus === null ||
+      snapshot.clientStatus !== gatewayClient.status ||
+      snapshot.deliveryAcknowledgedAt !== null
+    ) {
+      repositoryFailure("corrupt");
+    }
+  } else {
+    const credential = entity as TenantStoredCredentialRecord;
+    if (
+      operation.clientId !== credential.clientId ||
+      operation.credentialId !== credential.credentialId ||
+      snapshot.tenantStatus === null ||
+      snapshot.clientStatus === null
+    ) {
+      repositoryFailure("corrupt");
+    }
+    if (
+      action === "credential.delivery_acknowledge" &&
+      snapshot.deliveryAcknowledgedAt !== operation.createdAt
+    ) {
+      repositoryFailure("corrupt");
+    }
+    if (
+      (action === "credential.issue" || action === "credential.rotate") &&
+      snapshot.deliveryAcknowledgedAt !== null
+    ) {
+      repositoryFailure("corrupt");
+    }
+  }
+  return Object.freeze({ value: entity, operation, snapshot });
+}
+
+function stringifyResultSnapshot(payload: ResultSnapshotPayload): string {
+  const json = JSON.stringify(payload, (_key: string, current: unknown): unknown => (
+    current instanceof Uint8Array
+      ? { [SNAPSHOT_BYTES_KEY]: Buffer.from(current).toString("base64") }
+      : current
+  ));
+  if (json === undefined) repositoryFailure("corrupt");
+  return json;
+}
+
+function decodeResultSnapshot<T>(
+  value: unknown,
+  action: string,
+  resultId: string,
+  operationId: string,
+  createdAt: string,
+): Readonly<{
+  value: T;
+  operation: TenantAccessEventRecord;
+  snapshot: TenantAccessResponseContext;
+}> {
+  const normalized = normalizedResultSnapshot(value, action, resultId, operationId, createdAt);
+  return Object.freeze({
+    value: normalized.value as T,
+    operation: normalized.operation,
+    snapshot: normalized.snapshot,
+  });
+}
+
+export function normalizeTenantAccessResultSnapshotJson(
+  value: unknown,
+  action: string,
+  resultId: string,
+  operationId: string,
+  createdAt: string,
+): string {
+  const normalized = normalizedResultSnapshot(value, action, resultId, operationId, createdAt);
+  return stringifyResultSnapshot({
+    snapshot_format: RESULT_SNAPSHOT_FORMAT,
+    entity_kind: snapshotEntityKind(action),
+    entity: normalized.value,
+    operation: normalized.operation,
+    snapshot: normalized.snapshot,
+  });
+}
+
+function serializeResultSnapshot<T>(
+  action: string,
+  resultId: string,
+  createdAt: string,
+  value: T,
+  operation: TenantAccessEventRecord,
+  snapshot: TenantAccessResponseContext,
+): string {
+  return normalizeTenantAccessResultSnapshotJson(
+    stringifyResultSnapshot({
+      snapshot_format: RESULT_SNAPSHOT_FORMAT,
+      entity_kind: snapshotEntityKind(action),
+      entity: value,
+      operation,
+      snapshot,
+    }),
+    action,
+    resultId,
+    operation.eventId,
+    createdAt,
+  );
+}
+
+function resultSnapshotContext(
+  tenantStatus: TenantStatus | null,
+  clientStatus: ClientStatus | null,
+  deliveryAcknowledgedAt: string | null,
+): TenantAccessResponseContext {
+  return Object.freeze({ tenantStatus, clientStatus, deliveryAcknowledgedAt });
+}
+
 function tenantFromRow(row: DatabaseRow): TenantRecord {
   const status = text(row, "status");
   if (status !== "active" && status !== "suspended") repositoryFailure("corrupt");
@@ -636,6 +1080,7 @@ export interface PostgresGatewayStoreOptions {
 export class PostgresGatewayStore implements
   TenantAccessRepository,
   GatewayAuditRepository,
+  GatewayAuditEvidenceReader,
   RateLimitRepository,
   GatewayOperationsReader {
   readonly kind = "production" as const;
@@ -726,6 +1171,43 @@ export class PostgresGatewayStore implements
     }
   }
 
+  async #auditWriteProbe(): Promise<void> {
+    const client = await this.#active().connect();
+    const auditId = `audit_health_probe_${randomBytes(16).toString("hex")}`;
+    const requestId = `req_health_probe_${randomBytes(16).toString("hex")}`;
+    let transactionStarted = false;
+    try {
+      await client.query("BEGIN");
+      transactionStarted = true;
+      await client.query(`SET LOCAL statement_timeout = '${this.#configuration.statementTimeoutMillis}ms'`);
+      await client.query(
+        `SET LOCAL idle_in_transaction_session_timeout = '${this.#configuration.statementTimeoutMillis}ms'`,
+      );
+      await client.query(`
+        INSERT INTO ${qualified(this.#configuration.schema, "gateway_audit")} (
+          audit_id, action, status, request_id, tenant_id, client_id, credential_id,
+          tool_names, request_hash, jti, reason_code, created_at
+        ) VALUES ($1, 'health.probe', 'success', $2, NULL, NULL, NULL,
+          '[]'::jsonb, 'health-probe', NULL, NULL, '1970-01-01T00:00:00.000Z')
+      `, [auditId, requestId]);
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+      const leftover = (await client.query<DatabaseRow>(`
+        SELECT COUNT(*) AS count
+        FROM ${qualified(this.#configuration.schema, "gateway_audit")}
+        WHERE audit_id = $1
+      `, [auditId])).rows[0];
+      if (leftover === undefined || integer(leftover, "count") !== 0) {
+        repositoryFailure("corrupt");
+      }
+    } catch (error) {
+      if (transactionStarted) await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async #tenant(client: PoolClient, tenantId: string, lock = false): Promise<TenantRecord> {
     const row = (await client.query<DatabaseRow>(`
       SELECT * FROM ${qualified(this.#configuration.schema, "tenants")}
@@ -762,15 +1244,6 @@ export class PostgresGatewayStore implements
     return credentialFromRow(row);
   }
 
-  async #operation(client: PoolClient, operationId: string): Promise<TenantAccessEventRecord> {
-    const row = (await client.query<DatabaseRow>(`
-      SELECT * FROM ${qualified(this.#configuration.schema, "access_events")}
-      WHERE event_id = $1
-    `, [operationId])).rows[0];
-    if (row === undefined) repositoryFailure("corrupt");
-    return eventFromRow(row);
-  }
-
   async #deliveryAcknowledgedAt(
     client: PoolClient,
     credentialId: string,
@@ -790,19 +1263,14 @@ export class PostgresGatewayStore implements
     idempotencyKey: string,
     requestHash: string,
     createdAt: string,
-    load: (resultId: string, operationId: string) => Promise<T>,
-    write: () => Promise<Readonly<{
-      resultId: string;
-      value: T;
-      operation: TenantAccessEventRecord;
-    }>>,
+    write: () => Promise<IdempotentWriteResult<T>>,
   ): Promise<TenantAccessWriteResult<T>> {
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [JSON.stringify(["access-gateway-idempotency/v1", action, idempotencyKey])],
     );
     const existing = (await client.query<DatabaseRow>(`
-      SELECT request_hash, result_id, operation_id
+      SELECT request_hash, result_id, operation_id, created_at, result_snapshot
       FROM ${qualified(this.#configuration.schema, "access_idempotency")}
       WHERE action = $1 AND idempotency_key = $2
       FOR UPDATE
@@ -811,17 +1279,36 @@ export class PostgresGatewayStore implements
       if (text(existing, "request_hash") !== requestHash) {
         repositoryFailure("idempotency_conflict");
       }
+      const resultId = text(existing, "result_id");
+      const operationId = text(existing, "operation_id");
+      const loaded = decodeResultSnapshot<T>(
+        existing.result_snapshot,
+        action,
+        resultId,
+        operationId,
+        timestamp(existing, "created_at"),
+      );
       return Object.freeze({
         replayed: true,
-        value: await load(text(existing, "result_id"), text(existing, "operation_id")),
-        operation: await this.#operation(client, text(existing, "operation_id")),
+        value: loaded.value,
+        operation: loaded.operation,
+        snapshot: loaded.snapshot,
       });
     }
     const result = await write();
+    const resultSnapshot = serializeResultSnapshot(
+      action,
+      result.resultId,
+      createdAt,
+      result.value,
+      result.operation,
+      result.snapshot,
+    );
     await client.query(`
       INSERT INTO ${qualified(this.#configuration.schema, "access_idempotency")} (
-        action, idempotency_key, request_hash, result_id, operation_id, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+        action, idempotency_key, request_hash, result_id, operation_id, created_at,
+        result_snapshot
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
     `, [
       action,
       idempotencyKey,
@@ -829,11 +1316,13 @@ export class PostgresGatewayStore implements
       result.resultId,
       result.operation.eventId,
       createdAt,
+      resultSnapshot,
     ]);
     return Object.freeze({
       replayed: false,
       value: result.value,
       operation: result.operation,
+      snapshot: result.snapshot,
     });
   }
 
@@ -882,7 +1371,6 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.tenant.createdAt,
-      (resultId) => this.#tenant(client, resultId),
       async () => {
         const existing = await client.query(
           `SELECT 1 FROM ${qualified(this.#configuration.schema, "tenants")} WHERE tenant_id = $1`,
@@ -905,6 +1393,7 @@ export class PostgresGatewayStore implements
           resultId: request.tenant.tenantId,
           value: request.tenant,
           operation: request.event,
+          snapshot: resultSnapshotContext(request.tenant.status, null, null),
         });
       },
     ));
@@ -924,7 +1413,6 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.updatedAt,
-      (resultId) => this.#tenant(client, resultId),
       async () => {
         const tenant = await this.#tenant(client, request.tenantId, true);
         if (tenant.status === request.status) repositoryFailure("tenant_status_unchanged");
@@ -933,10 +1421,12 @@ export class PostgresGatewayStore implements
           SET status = $1, updated_at = $2 WHERE tenant_id = $3
         `, [request.status, request.updatedAt, request.tenantId]);
         await insertEvent(client, this.#configuration.schema, request.event);
+        const value = await this.#tenant(client, request.tenantId);
         return Object.freeze({
           resultId: request.tenantId,
-          value: await this.#tenant(client, request.tenantId),
+          value,
           operation: request.event,
+          snapshot: resultSnapshotContext(value.status, null, null),
         });
       },
     ));
@@ -957,7 +1447,6 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.updatedAt,
-      (resultId) => this.#client(client, request.tenantId, resultId),
       async () => {
         const tenant = await this.#tenant(client, request.tenantId, true);
         if (request.status === "active" && tenant.status !== "active") {
@@ -971,10 +1460,12 @@ export class PostgresGatewayStore implements
           WHERE tenant_id = $3 AND client_id = $4
         `, [request.status, request.updatedAt, request.tenantId, request.clientId]);
         await insertEvent(client, this.#configuration.schema, request.event);
+        const value = await this.#client(client, request.tenantId, request.clientId);
         return Object.freeze({
           resultId: request.clientId,
-          value: await this.#client(client, request.tenantId, request.clientId),
+          value,
           operation: request.event,
+          snapshot: resultSnapshotContext(tenant.status, value.status, null),
         });
       },
     ));
@@ -992,7 +1483,6 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.credential.createdAt,
-      (resultId) => this.#credential(client, resultId),
       async () => {
         const tenant = await this.#tenant(client, request.credential.tenantId, true);
         if (tenant.status !== "active") repositoryFailure("tenant_not_active");
@@ -1030,6 +1520,7 @@ export class PostgresGatewayStore implements
           resultId: request.credential.credentialId,
           value: request.credential,
           operation: request.event,
+          snapshot: resultSnapshotContext(tenant.status, "active", null),
         });
       },
     ));
@@ -1050,7 +1541,6 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.credential.createdAt,
-      (resultId) => this.#credential(client, resultId),
       async () => {
         const previous = await this.#credential(client, request.previousCredentialId, true);
         if (previous.status !== "active") repositoryFailure("credential_not_active");
@@ -1058,10 +1548,17 @@ export class PostgresGatewayStore implements
         if (await this.#deliveryAcknowledgedAt(client, previous.credentialId) === null) {
           repositoryFailure("credential_delivery_pending");
         }
-        if ((await this.#tenant(client, previous.tenantId, true)).status !== "active") {
+        const tenant = await this.#tenant(client, previous.tenantId, true);
+        if (tenant.status !== "active") {
           repositoryFailure("tenant_not_active");
         }
-        if ((await this.#client(client, previous.tenantId, previous.clientId, true)).status !== "active") {
+        const gatewayClient = await this.#client(
+          client,
+          previous.tenantId,
+          previous.clientId,
+          true,
+        );
+        if (gatewayClient.status !== "active") {
           repositoryFailure("client_not_active");
         }
         if (
@@ -1081,6 +1578,7 @@ export class PostgresGatewayStore implements
           resultId: request.credential.credentialId,
           value: request.credential,
           operation: request.event,
+          snapshot: resultSnapshotContext(tenant.status, gatewayClient.status, null),
         });
       },
     ));
@@ -1100,20 +1598,36 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.revokedAt,
-      (resultId) => this.#credential(client, resultId),
       async () => {
         const credential = await this.#credential(client, request.credentialId, true);
         if (credential.status !== "active") repositoryFailure("credential_not_active");
         if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        const tenant = await this.#tenant(client, credential.tenantId, true);
+        const gatewayClient = await this.#client(
+          client,
+          credential.tenantId,
+          credential.clientId,
+          true,
+        );
+        const acknowledgedAt = await this.#deliveryAcknowledgedAt(
+          client,
+          credential.credentialId,
+        );
         await client.query(`
           UPDATE ${qualified(this.#configuration.schema, "credentials")}
           SET status = 'revoked', revoked_at = $1 WHERE credential_id = $2
         `, [request.revokedAt, credential.credentialId]);
         await insertEvent(client, this.#configuration.schema, request.event);
+        const value = await this.#credential(client, credential.credentialId);
         return Object.freeze({
           resultId: credential.credentialId,
-          value: await this.#credential(client, credential.credentialId),
+          value,
           operation: request.event,
+          snapshot: resultSnapshotContext(
+            tenant.status,
+            gatewayClient.status,
+            acknowledgedAt,
+          ),
         });
       },
     ));
@@ -1132,15 +1646,21 @@ export class PostgresGatewayStore implements
       request.idempotencyKey,
       request.requestHash,
       request.event.createdAt,
-      (resultId) => this.#credential(client, resultId),
       async () => {
         const credential = await this.#credential(client, request.credentialId, true);
         if (credential.status !== "active") repositoryFailure("credential_not_active");
         if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
-        if ((await this.#tenant(client, credential.tenantId, true)).status !== "active") {
+        const tenant = await this.#tenant(client, credential.tenantId, true);
+        if (tenant.status !== "active") {
           repositoryFailure("tenant_not_active");
         }
-        if ((await this.#client(client, credential.tenantId, credential.clientId, true)).status !== "active") {
+        const gatewayClient = await this.#client(
+          client,
+          credential.tenantId,
+          credential.clientId,
+          true,
+        );
+        if (gatewayClient.status !== "active") {
           repositoryFailure("client_not_active");
         }
         if (await this.#deliveryAcknowledgedAt(client, credential.credentialId) !== null) {
@@ -1155,6 +1675,11 @@ export class PostgresGatewayStore implements
           resultId: credential.credentialId,
           value: credential,
           operation: request.event,
+          snapshot: resultSnapshotContext(
+            tenant.status,
+            gatewayClient.status,
+            request.event.createdAt,
+          ),
         });
       },
     ));
@@ -1254,6 +1779,39 @@ export class PostgresGatewayStore implements
       event.reasonCode,
       event.createdAt,
     ]).then(() => undefined);
+  }
+
+  async readByRequestIds(input: Readonly<{
+    requestIds: readonly string[];
+  }>): Promise<readonly GatewayAuditRequestEvidence[]> {
+    const requestIds = input.requestIds;
+    if (
+      !Array.isArray(requestIds) ||
+      requestIds.length < 1 ||
+      requestIds.length > MAX_AUDIT_EVIDENCE_REQUEST_IDS ||
+      new Set(requestIds).size !== requestIds.length ||
+      requestIds.some((requestId) => (
+        typeof requestId !== "string" || !AUDIT_REQUEST_ID_PATTERN.test(requestId)
+      ))
+    ) {
+      throw new TypeError("Gateway audit evidence request is invalid.");
+    }
+    const requested = new Set(requestIds);
+    return this.#readSnapshot(async (client) => {
+      const rows = (await client.query<DatabaseRow>(`
+        SELECT request_id, COUNT(*) AS event_count
+        FROM ${qualified(this.#configuration.schema, "gateway_audit")}
+        WHERE request_id = ANY($1::text[])
+        GROUP BY request_id
+        ORDER BY request_id ASC
+      `, [requestIds])).rows;
+      return Object.freeze(rows.map((row): GatewayAuditRequestEvidence => {
+        const requestId = text(row, "request_id");
+        const eventCount = integer(row, "event_count");
+        if (!requested.has(requestId) || eventCount < 1) repositoryFailure("corrupt");
+        return Object.freeze({ requestId, eventCount });
+      }));
+    });
   }
 
   reserve(input: Readonly<{
@@ -1392,7 +1950,11 @@ export class PostgresGatewayStore implements
       const count = (await this.#active().query<DatabaseRow>(`
         SELECT COUNT(*) AS count FROM ${qualified(this.#configuration.schema, "gateway_audit")}
       `)).rows[0];
-      return Object.freeze({ ready: true, auditCount: count === undefined ? 0 : integer(count, "count") });
+      if (count === undefined) repositoryFailure("corrupt");
+      const auditCount = integer(count, "count");
+      if (auditCount < 0) repositoryFailure("corrupt");
+      await this.#auditWriteProbe();
+      return Object.freeze({ ready: true, auditCount });
     } catch {
       return Object.freeze({ ready: false, auditCount: 0 });
     }

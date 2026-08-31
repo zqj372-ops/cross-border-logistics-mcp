@@ -75,6 +75,17 @@ export interface GatewayAuditRepository extends ProviderIdentity {
   append(event: AuditEvent): Promise<void>;
 }
 
+export interface GatewayAuditRequestEvidence {
+  readonly requestId: string;
+  readonly eventCount: number;
+}
+
+export interface GatewayAuditEvidenceReader extends ProviderIdentity {
+  readByRequestIds(input: Readonly<{
+    requestIds: readonly string[];
+  }>): Promise<readonly GatewayAuditRequestEvidence[]>;
+}
+
 export interface GatewayClock extends ProviderIdentity {
   nowSeconds(): number;
 }

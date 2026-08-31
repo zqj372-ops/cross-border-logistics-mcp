@@ -9,8 +9,10 @@ import { tenantAccessPaths } from "../../src/logistics_mcp/control-plane/sqlite-
 import { canonicalJson } from "./canonical-json";
 import { gatewayOperationalPaths } from "./production-store";
 import {
+  POSTGRES_GATEWAY_SCHEMA_VERSION,
   createPostgresPool,
   initializePostgresGatewaySchema,
+  normalizeTenantAccessResultSnapshotJson,
   postgresConfigurationFromEnvironment,
   postgresQualifiedTable,
   type PostgresGatewayConfiguration,
@@ -75,6 +77,7 @@ interface MigrationIdempotency {
   readonly resultId: string;
   readonly operationId: string;
   readonly createdAt: string;
+  readonly resultSnapshotJson: string | null;
 }
 
 interface MigrationAudit {
@@ -201,7 +204,7 @@ function verifySqlite(database: DatabaseSync): void {
 }
 
 function inferOperationId(
-  idempotency: Omit<MigrationIdempotency, "operationId">,
+  idempotency: Omit<MigrationIdempotency, "operationId" | "resultSnapshotJson">,
   events: readonly MigrationEvent[],
 ): string {
   const actionNames: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -270,7 +273,14 @@ function fingerprintMaterial(snapshot: Omit<
       secretHash: Buffer.from(credential.secretHash).toString("base64"),
     })),
     events: snapshot.events,
-    idempotency: snapshot.idempotency,
+    idempotency: snapshot.idempotency.map((record) => ({
+      action: record.action,
+      idempotencyKey: record.idempotencyKey,
+      requestHash: record.requestHash,
+      resultId: record.resultId,
+      operationId: record.operationId,
+      createdAt: record.createdAt,
+    })),
     audits: snapshot.audits,
     rate_windows: snapshot.rateWindows,
   };
@@ -307,10 +317,13 @@ export function readSqliteGatewayMigrationSnapshot(input: Readonly<{
     const operationMeta = operationDatabase.prepare(`
       SELECT schema_version, store_id, instance_id FROM gateway_meta WHERE singleton = 1
     `).get() as SqliteRow | undefined;
+    const accessSchemaVersion = accessMeta === undefined
+      ? null
+      : integer(accessMeta, "schema_version");
     if (
       accessMeta === undefined ||
       operationMeta === undefined ||
-      integer(accessMeta, "schema_version") !== 3 ||
+      (accessSchemaVersion !== 3 && accessSchemaVersion !== 4) ||
       integer(operationMeta, "schema_version") !== 1 ||
       text(accessMeta, "instance_id") !== input.instanceId ||
       text(operationMeta, "instance_id") !== input.instanceId ||
@@ -407,7 +420,9 @@ export function readSqliteGatewayMigrationSnapshot(input: Readonly<{
       createdAt: text(row, "created_at"),
     })));
     const idempotency = Object.freeze((tenantDatabase.prepare(`
-      SELECT * FROM access_idempotency ORDER BY action, idempotency_key
+      SELECT action, idempotency_key, request_hash, result_id, created_at,
+        ${accessSchemaVersion === 4 ? "result_json" : "NULL AS result_json"}
+      FROM access_idempotency ORDER BY action, idempotency_key
     `).all() as SqliteRow[]).map((row): MigrationIdempotency => {
       const base = Object.freeze({
         action: text(row, "action"),
@@ -416,7 +431,21 @@ export function readSqliteGatewayMigrationSnapshot(input: Readonly<{
         resultId: text(row, "result_id"),
         createdAt: text(row, "created_at"),
       });
-      return Object.freeze({ ...base, operationId: inferOperationId(base, events) });
+      const operationId = inferOperationId(base, events);
+      const resultJson = nullableText(row, "result_json");
+      return Object.freeze({
+        ...base,
+        operationId,
+        resultSnapshotJson: resultJson === null
+          ? null
+          : normalizeTenantAccessResultSnapshotJson(
+              resultJson,
+              base.action,
+              base.resultId,
+              operationId,
+              base.createdAt,
+            ),
+      });
     }));
     const audits = Object.freeze((operationDatabase.prepare(`
       SELECT * FROM gateway_audit ORDER BY created_at, audit_id
@@ -620,14 +649,30 @@ async function readPostgresMigrationSnapshot(
   })));
   const idempotency = Object.freeze((await client.query<PostgresRow>(`
     SELECT * FROM ${table("access_idempotency")} ORDER BY action, idempotency_key
-  `)).rows.map((row): MigrationIdempotency => Object.freeze({
-    action: postgresText(row, "action"),
-    idempotencyKey: postgresText(row, "idempotency_key"),
-    requestHash: postgresText(row, "request_hash"),
-    resultId: postgresText(row, "result_id"),
-    operationId: postgresText(row, "operation_id"),
-    createdAt: postgresTimestamp(row, "created_at"),
-  })));
+  `)).rows.map((row): MigrationIdempotency => {
+    const action = postgresText(row, "action");
+    const resultId = postgresText(row, "result_id");
+    const operationId = postgresText(row, "operation_id");
+    const createdAt = postgresTimestamp(row, "created_at");
+    const resultSnapshot = row.result_snapshot;
+    return Object.freeze({
+      action,
+      idempotencyKey: postgresText(row, "idempotency_key"),
+      requestHash: postgresText(row, "request_hash"),
+      resultId,
+      operationId,
+      createdAt,
+      resultSnapshotJson: resultSnapshot === null || resultSnapshot === undefined
+        ? null
+        : normalizeTenantAccessResultSnapshotJson(
+            resultSnapshot,
+            action,
+            resultId,
+            operationId,
+            createdAt,
+          ),
+    });
+  }));
   const audits = Object.freeze((await client.query<PostgresRow>(`
     SELECT * FROM ${table("gateway_audit")} ORDER BY created_at, audit_id
   `)).rows.map((row): MigrationAudit => Object.freeze({
@@ -764,8 +809,9 @@ async function insertMigrationSnapshot(
   for (const record of snapshot.idempotency) {
     await client.query(`
       INSERT INTO ${table("access_idempotency")} (
-        action, idempotency_key, request_hash, result_id, operation_id, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+        action, idempotency_key, request_hash, result_id, operation_id, created_at,
+        result_snapshot
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
     `, [
       record.action,
       record.idempotencyKey,
@@ -773,6 +819,7 @@ async function insertMigrationSnapshot(
       record.resultId,
       record.operationId,
       record.createdAt,
+      record.resultSnapshotJson,
     ]);
   }
   for (const audit of snapshot.audits) {
@@ -805,6 +852,64 @@ async function insertMigrationSnapshot(
   }
 }
 
+export async function migratePostgresGatewaySchema(
+  client: PoolClient,
+  schema: string,
+): Promise<void> {
+  const metaTable = postgresQualifiedTable(schema, "gateway_meta");
+  const idempotencyTable = postgresQualifiedTable(schema, "access_idempotency");
+  const meta = (await client.query<PostgresRow>(`
+    SELECT schema_version FROM ${metaTable} WHERE singleton = true
+  `)).rows[0];
+  if (meta === undefined) throw new Error("PostgreSQL Access Gateway metadata is missing.");
+  const currentVersion = postgresInteger(meta, "schema_version");
+  if (currentVersion !== 1 && currentVersion !== POSTGRES_GATEWAY_SCHEMA_VERSION) {
+    throw new Error("PostgreSQL Access Gateway schema version is unsupported.");
+  }
+  await client.query(`
+    ALTER TABLE ${idempotencyTable}
+    ADD COLUMN IF NOT EXISTS result_snapshot jsonb CHECK (
+      result_snapshot IS NULL OR jsonb_typeof(result_snapshot) = 'object'
+    )
+  `);
+  if (currentVersion === 1) {
+    await client.query(`
+      ALTER TABLE ${metaTable}
+        DROP CONSTRAINT IF EXISTS gateway_meta_schema_version_check;
+      UPDATE ${metaTable}
+        SET schema_version = ${POSTGRES_GATEWAY_SCHEMA_VERSION}
+        WHERE singleton = true;
+      ALTER TABLE ${metaTable}
+        ADD CONSTRAINT gateway_meta_schema_version_check
+        CHECK (schema_version = ${POSTGRES_GATEWAY_SCHEMA_VERSION})
+    `);
+  }
+  const resultColumn = (await client.query<PostgresRow>(`
+    SELECT data_type
+    FROM information_schema.columns
+    WHERE table_schema = $1
+      AND table_name = 'access_idempotency'
+      AND column_name = 'result_snapshot'
+  `, [schema])).rows[0];
+  if (resultColumn === undefined || postgresText(resultColumn, "data_type") !== "jsonb") {
+    throw new Error("PostgreSQL Access Gateway result snapshot column is invalid.");
+  }
+}
+
+function assertResultSnapshotReadback(
+  source: readonly MigrationIdempotency[],
+  destination: readonly MigrationIdempotency[],
+): void {
+  const material = (records: readonly MigrationIdempotency[]) => records.map((record) => ({
+    action: record.action,
+    idempotency_key: record.idempotencyKey,
+    result_snapshot_json: record.resultSnapshotJson,
+  }));
+  if (canonicalJson(material(source)) !== canonicalJson(material(destination))) {
+    throw new Error("PostgreSQL migration result snapshot readback mismatch.");
+  }
+}
+
 async function existingMigrationSummary(
   client: PoolClient,
   configuration: PostgresGatewayConfiguration,
@@ -815,6 +920,7 @@ async function existingMigrationSummary(
     [configuration.schema],
   )).rows[0]?.exists === true;
   if (!namespace) return null;
+  await migratePostgresGatewaySchema(client, configuration.schema);
   const history = (await client.query<PostgresRow>(`
     SELECT source_fingerprint, destination_fingerprint
     FROM ${postgresQualifiedTable(configuration.schema, "migration_history")}
@@ -824,6 +930,7 @@ async function existingMigrationSummary(
     throw new Error("PostgreSQL Access Gateway schema is not an idempotent migration target.");
   }
   const destination = await readPostgresMigrationSnapshot(client, configuration);
+  assertResultSnapshotReadback(snapshot.idempotency, destination.idempotency);
   const destinationFingerprint = snapshotFingerprint(destination);
   if (
     destinationFingerprint !== snapshot.sourceFingerprint ||
@@ -878,6 +985,7 @@ export async function migrateSqliteGatewayToPostgres(input: Readonly<{
     });
     await insertMigrationSnapshot(client, input.configuration, snapshot);
     const destination = await readPostgresMigrationSnapshot(client, input.configuration);
+    assertResultSnapshotReadback(snapshot.idempotency, destination.idempotency);
     const destinationFingerprint = snapshotFingerprint(destination);
     const destinationCounts = snapshotCounts(destination);
     if (destinationFingerprint !== snapshot.sourceFingerprint) {

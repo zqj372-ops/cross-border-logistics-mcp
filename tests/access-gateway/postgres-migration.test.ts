@@ -2,12 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { PoolClient } from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  migratePostgresGatewaySchema,
   readSqliteGatewayMigrationSnapshot,
   summarizeGatewayMigrationSnapshot,
 } from "../../services/access-gateway/postgres-migration";
+import { POSTGRES_GATEWAY_SCHEMA_VERSION } from "../../services/access-gateway/postgres-store";
 import {
   SqliteGatewayOperationalStore,
   initializeSqliteGatewayOperationalState,
@@ -127,11 +130,54 @@ describe("SQLite to PostgreSQL migration snapshot", () => {
     expect(snapshot.idempotency.every(({ operationId }) => (
       snapshot.events.some(({ eventId }) => eventId === operationId)
     ))).toBe(true);
+    expect(snapshot.idempotency.every(({ resultSnapshotJson }) => (
+      typeof resultSnapshotJson === "string"
+    ))).toBe(true);
+    for (const record of snapshot.idempotency) {
+      const result = JSON.parse(record.resultSnapshotJson ?? "null") as {
+        readonly operation?: { readonly eventId?: unknown };
+      } | null;
+      expect(result?.operation?.eventId).toBe(record.operationId);
+    }
+    expect(snapshot.idempotency.map(({ resultSnapshotJson }) => resultSnapshotJson).join("\n"))
+      .not.toContain(issued.data.api_key);
     expect(snapshot.credentials[0]?.deliveryAcknowledgedAt).toBe("2027-01-15T08:00:00.000Z");
 
     const summary = summarizeGatewayMigrationSnapshot(snapshot);
     expect(summary.source_fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(summary.counts).toEqual(snapshot.counts);
     expect(JSON.stringify(summary)).not.toMatch(/secret|lmcpk_|jwt_00000001/u);
+  });
+
+  it("upgrades the PostgreSQL idempotency schema repeatably without reconstructing old rows", async () => {
+    let schemaVersion = 1;
+    let resultSnapshotColumn = false;
+    const queries: string[] = [];
+    const client = {
+      query: (queryText: string) => {
+        const sql = queryText.replace(/\s+/gu, " ").trim();
+        queries.push(sql);
+        if (sql.includes("SELECT schema_version")) {
+          return Promise.resolve({ rows: [{ schema_version: schemaVersion }] });
+        }
+        if (sql.includes("ADD COLUMN IF NOT EXISTS result_snapshot")) {
+          resultSnapshotColumn = true;
+        }
+        if (sql.includes("UPDATE") && sql.includes("gateway_meta")) {
+          schemaVersion = POSTGRES_GATEWAY_SCHEMA_VERSION;
+        }
+        if (sql.includes("information_schema.columns")) {
+          return Promise.resolve({ rows: resultSnapshotColumn ? [{ data_type: "jsonb" }] : [] });
+        }
+        return Promise.resolve({ rows: [] });
+      },
+    } as unknown as PoolClient;
+
+    await expect(migratePostgresGatewaySchema(client, "access_gateway")).resolves.toBeUndefined();
+    await expect(migratePostgresGatewaySchema(client, "access_gateway")).resolves.toBeUndefined();
+    expect(schemaVersion).toBe(POSTGRES_GATEWAY_SCHEMA_VERSION);
+    expect(resultSnapshotColumn).toBe(true);
+    expect(queries.filter((sql) => sql.includes("ADD COLUMN IF NOT EXISTS result_snapshot")))
+      .toHaveLength(2);
   });
 });
