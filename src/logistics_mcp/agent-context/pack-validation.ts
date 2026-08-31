@@ -103,7 +103,7 @@ const agentStandardPackSchema = z
   })
   .strict();
 
-const runtimeCallerModuleIds = ["cargo", "container", "freightcom-ltl"] as const;
+const runtimeCallerModuleIds = ["agent-access", "cargo", "container"] as const;
 
 const runtimeCallerEntitlements = Object.freeze({
   standardIds: Object.freeze([
@@ -111,6 +111,8 @@ const runtimeCallerEntitlements = Object.freeze({
     "platform.contracts",
     "agent-access.v0",
     "release-agent-adapters",
+    "t0-production-profile-v1",
+    "credential-exchange-v1",
   ]),
   ruleIds: Object.freeze([
     "AGENT-BOOT-001",
@@ -122,6 +124,14 @@ const runtimeCallerEntitlements = Object.freeze({
     "AGENT-RESOURCE-001",
     "RELEASE-ADAPTER-001",
     "RELEASE-ADAPTER-002",
+    "T0-PROFILE-001",
+    "T0-CATALOG-001",
+    "T0-READINESS-001",
+    "T0-AUTH-001",
+    "ACCESS-EXCHANGE-001",
+    "ACCESS-JWT-001",
+    "ACCESS-REVOKE-001",
+    "ACCESS-AUDIT-001",
   ]),
   contextScopes: Object.freeze([
     "bootstrap",
@@ -143,10 +153,10 @@ const runtimeCallerModuleEntitlements = Object.freeze({
     standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
     toolNames: Object.freeze(["container.plan_summary"]),
   }),
-  "freightcom-ltl": Object.freeze({
-    riskLevel: "T1",
-    standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
-    toolNames: Object.freeze(["quote.freightcom_ltl.preview"]),
+  "agent-access": Object.freeze({
+    riskLevel: "T0",
+    standardIds: Object.freeze(["module-runtime.v0", "platform.contracts", "agent-access.v0"]),
+    toolNames: Object.freeze(["system.agent_context.get"]),
   }),
 });
 

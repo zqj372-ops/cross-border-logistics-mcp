@@ -13,6 +13,6 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "apps/**/*.d.ts", "apps/**/*.d.mts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/**/*.d.ts", "apps/**/*.d.mts", "vitest.config.ts"],
   "exclude": ["node_modules"]
 }

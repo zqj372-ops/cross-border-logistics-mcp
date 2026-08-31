@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { AuthenticationError, type AuthClaims } from "../platform/context";
+import {
+  AuthenticationError,
+  parseExecutionContext,
+  type AuthClaims,
+} from "../platform/context";
+import { isExactT0ServiceIdentity } from "../platform/rbac";
 import {
   createFixturePlatformDependencies,
   createProductionPlatformAssembly,
@@ -29,6 +34,7 @@ import {
   registerModuleToolDefinitions,
   wrapModuleToolDefinitions,
   type ToolContractMap,
+  type ToolContract,
   type ToolDefinition,
   type ToolHandlerMap,
   type RuntimeActivationFacades,
@@ -41,6 +47,13 @@ import {
 import {
   CapabilityRegistry,
   ModuleHost,
+  assertExactStringSet,
+  T0_MODULE_DESCRIPTORS,
+  T0_PRODUCTION_MODULE_IDS,
+  T0_PRODUCTION_RESOURCE_URIS,
+  T0_PRODUCTION_TOOL_NAMES,
+  parseT0ProductionProfile,
+  type T0ProductionProfile,
 } from "../module-runtime";
 import {
   cargoModule,
@@ -51,6 +64,7 @@ import {
   FREIGHTCOM_RATE_CAPABILITY_VERSION,
 } from "../modules";
 import { createAgentAccessRuntime, type AgentAccessRuntime } from "../agent-context/runtime";
+import { CANONICAL_AGENT_RESOURCES } from "../agent-context/resources";
 import type {
   CustomsAdapter,
   FixtureAdapters,
@@ -61,9 +75,42 @@ import {
   type FixtureAdapterOptions,
 } from "../adapters/fixture-client";
 import {
-  createPhase1Bundle,
   type Phase1Bundle,
 } from "../adapters/phase1-bundle";
+import {
+  quoteSaveDraftInputSchema,
+  writeResultSchema,
+} from "../adapters/contracts";
+import {
+  canadaFinalMileInputSchema,
+  canadaFinalMileOutputValidator,
+  calculateCanadaFinalMile,
+} from "../domains/quote/canada-final-mile";
+import {
+  customsEstimateInputSchema,
+  customsEstimateOutputValidator,
+  estimateCanadaCustoms,
+} from "../domains/customs/ca-estimate";
+import {
+  customsSearchInputSchema,
+  customsSearchOutputValidator,
+  searchCanadaCustoms,
+} from "../domains/customs/ca-search";
+import {
+  knowledgeSearchInputSchema,
+  knowledgeSearchOutputValidator,
+  searchCuratedKnowledge,
+} from "../domains/knowledge/search-curated";
+import {
+  dataStatusInputSchema,
+  dataStatusOutputValidator,
+  getSystemDataStatus,
+} from "../domains/status/data-status";
+import {
+  reviewCreateTaskInputSchema,
+  reviewCreateTaskOutputValidator,
+  createReviewTask,
+} from "../domains/review/create-task";
 import {
   ExistingQuoteAdapter,
 } from "../adapters/quote/existing-quote-adapter";
@@ -141,6 +188,7 @@ export interface FixtureCompositionOptions extends GatewayCompositionOptions {
 export interface ProductionCompositionOptions
   extends Omit<GatewayCompositionOptions, "auditRepository" | "idempotencyRepository"> {
   readonly dataMode: "production";
+  readonly profile?: string;
   readonly auditRepository?: DurableAuditRepository;
   readonly idempotencyRepository?: DurableIdempotencyRepository;
   readonly tokenVerifier?: ProductionTokenVerifier;
@@ -152,6 +200,7 @@ export interface ProductionCompositionOptions
 export interface GatewayComposition {
   readonly mode: CompositionMode;
   readonly dataMode: CompositionMode;
+  readonly profile?: T0ProductionProfile;
   readonly adapters: FixtureAdapters;
   readonly bundle: Phase1Bundle;
   readonly handlers: ToolHandlerMap;
@@ -168,6 +217,10 @@ function failClosedAuthenticator(): AuthClaims {
   throw new AuthenticationError(
     "No production token verifier has been configured for this composition.",
   );
+}
+
+function isCompactJwt(token: string): boolean {
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(token);
 }
 
 function productionAdapters(
@@ -203,13 +256,98 @@ interface CompositionTools {
   readonly agentAccessRuntime: AgentAccessRuntime;
 }
 
+function fixtureInputRecord(input: unknown): Record<string, unknown> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new TypeError("The tool input must be an object after contract validation.");
+  }
+  return input as Record<string, unknown>;
+}
+
+function fixtureContract(
+  inputSchema: ToolContract["inputSchema"],
+  validateOutput: ToolContract["validateOutput"],
+): ToolContract {
+  return { inputSchema, validateOutput };
+}
+
+/**
+ * Keep the fixture bundle local to the fixture composition. Importing the
+ * legacy phase1-bundle module constructs a default fixture adapter bundle at
+ * module evaluation time, which would violate the production T0 boundary.
+ */
+function createFixturePhase1Bundle(adapters: FixtureAdapters): Phase1Bundle {
+  const handlers: Phase1Bundle["handlers"] = {
+    "knowledge.search_curated": (input) =>
+      searchCuratedKnowledge(adapters.knowledge, fixtureInputRecord(input)),
+    "system.get_data_status": (input) =>
+      getSystemDataStatus(adapters.status, fixtureInputRecord(input)),
+    "quote.canada_final_mile.calculate": (input, context, signal) =>
+      calculateCanadaFinalMile(adapters.quote, fixtureInputRecord(input), context, signal),
+    "customs.ca.search": (input, context, signal) =>
+      searchCanadaCustoms(adapters.customs, fixtureInputRecord(input), context, signal),
+    "customs.ca.estimate": (input, context, signal) =>
+      estimateCanadaCustoms(adapters.customs, fixtureInputRecord(input), context, signal),
+    "quote.save_draft": (input, _context, signal) => {
+      const value = fixtureInputRecord(input);
+      const writeContext = value.write_context;
+      const writeContextRecord =
+        typeof writeContext === "object" &&
+        writeContext !== null &&
+        !Array.isArray(writeContext)
+          ? writeContext as Record<string, unknown>
+          : null;
+      const mode = writeContextRecord?.operation_mode === "preview"
+        ? "preview"
+        : "commit";
+      return mode === "preview"
+        ? adapters.quote.previewDraft(value)
+        : adapters.quote.commitDraft(value, signal);
+    },
+    "review.create_task": (input, _context, signal) =>
+      createReviewTask(adapters.review, fixtureInputRecord(input), signal),
+  };
+
+  const contracts: Phase1Bundle["contracts"] = {
+    "knowledge.search_curated": fixtureContract(
+      knowledgeSearchInputSchema,
+      knowledgeSearchOutputValidator,
+    ),
+    "system.get_data_status": fixtureContract(
+      dataStatusInputSchema,
+      dataStatusOutputValidator,
+    ),
+    "quote.canada_final_mile.calculate": fixtureContract(
+      canadaFinalMileInputSchema,
+      canadaFinalMileOutputValidator,
+    ),
+    "customs.ca.search": fixtureContract(
+      customsSearchInputSchema,
+      customsSearchOutputValidator,
+    ),
+    "customs.ca.estimate": fixtureContract(
+      customsEstimateInputSchema,
+      customsEstimateOutputValidator,
+    ),
+    "quote.save_draft": fixtureContract(
+      quoteSaveDraftInputSchema,
+      (data) => writeResultSchema.parse(data),
+    ),
+    "review.create_task": fixtureContract(
+      reviewCreateTaskInputSchema,
+      reviewCreateTaskOutputValidator,
+    ),
+  };
+
+  return { handlers, contracts };
+}
+
 function compositionTools(
   adapters: FixtureAdapters,
   freightcomRateAdapter: FreightcomRatePort,
   configuredAgentAccessRuntime?: AgentAccessRuntime,
   runtimeActivation?: RuntimeActivationFacades,
 ): CompositionTools {
-  const bundle = createPhase1Bundle(adapters);
+  const bundle = createFixturePhase1Bundle(adapters);
   const calculatedQuoteDataSchema = quoteV2ResultSchema.options[0];
   const manualQuoteDataSchema = quoteV2ResultSchema.options[1];
   const quoteV2EnvelopeBranches = z.union([
@@ -332,6 +470,199 @@ function compositionTools(
   };
 }
 
+const emptyProductionAdapters = Object.freeze({}) as unknown as FixtureAdapters;
+
+function t0CompositionTools(
+  configuredAgentAccessRuntime?: AgentAccessRuntime,
+  runtimeActivation?: RuntimeActivationFacades,
+): CompositionTools {
+  const agentAccessRuntime = configuredAgentAccessRuntime ?? createAgentAccessRuntime();
+  const moduleHost = new ModuleHost({
+    capabilities: new CapabilityRegistry(),
+    modules: [
+      cargoModule,
+      containerModule,
+      createAgentAccessModule(agentAccessRuntime),
+    ],
+    trustedDescriptors: T0_MODULE_DESCRIPTORS,
+  });
+  moduleHost.mountSync();
+
+  const moduleEntries = moduleHost.catalog.list();
+  assertExactStringSet(
+    moduleHost.snapshot().modules.map((module) => module.module_id),
+    T0_PRODUCTION_MODULE_IDS,
+    "t0_module_set_invalid",
+  );
+  assertExactStringSet(
+    moduleEntries.map((entry) => entry.name),
+    T0_PRODUCTION_TOOL_NAMES,
+    "t0_tool_set_invalid",
+  );
+
+  const handlers: ToolHandlerMap = {
+    "cargo.calculate": cargoToolHandler,
+    "container.plan_summary": containerPlanSummaryHandler,
+  };
+  const contracts: ToolContractMap = {
+    "cargo.calculate": cargoToolContract,
+    "container.plan_summary": containerPlanSummaryToolContract,
+  };
+  const definitions = registerModuleToolDefinitions(moduleEntries);
+  const bundle = { handlers, contracts } as unknown as Phase1Bundle;
+  return {
+    bundle,
+    handlers,
+    contracts,
+    definitions:
+      runtimeActivation === undefined
+        ? definitions
+        : wrapModuleToolDefinitions(definitions, runtimeActivation),
+    moduleHost,
+    agentAccessRuntime,
+  };
+}
+
+interface T0ModuleSnapshot {
+  readonly module_id: string;
+  readonly version: string;
+  readonly risk_level: string;
+  readonly tool_names: readonly string[];
+}
+
+const t0ModuleStandardIds: Readonly<Record<string, readonly string[]>> = {
+  cargo: ["module-runtime.v0", "platform.contracts"],
+  container: ["module-runtime.v0", "platform.contracts"],
+  "agent-access": ["module-runtime.v0", "platform.contracts", "agent-access.v0"],
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseResourceJson(text: string): Record<string, unknown> {
+  const parsed = JSON.parse(text) as unknown;
+  if (!isRecord(parsed)) throw new Error("Agent resource JSON must be an object.");
+  return parsed;
+}
+
+function assertT0AgentResourceSet(
+  runtime: AgentAccessRuntime,
+  expectedModules: readonly T0ModuleSnapshot[],
+): readonly string[] {
+  assertExactStringSet(
+    CANONICAL_AGENT_RESOURCES.map((resource) => resource.uri),
+    T0_PRODUCTION_RESOURCE_URIS,
+    "t0_resource_set_invalid",
+  );
+  if (!runtime.available) return ["t0_agent_pack_unavailable"];
+
+  try {
+    const checkContext = parseExecutionContext({
+      tenant_id: "runtime.t0.check",
+      actor_id: "runtime.t0.check",
+      actor_role: "service",
+      roles: ["service"],
+      scopes: ["system:agent_context"],
+      client_id: "runtime.t0.check",
+      session_id: "runtime.t0.check",
+      expires_at: Math.floor(Date.now() / 1000) + 60,
+    });
+    const contents = new Map<string, string>();
+    for (const resource of CANONICAL_AGENT_RESOURCES) {
+      const content = runtime.readResource(resource.uri, checkContext);
+      if (
+        content.uri !== resource.uri ||
+        content.mimeType !== resource.mimeType ||
+        content.text.length === 0
+      ) {
+        throw new Error("Agent resource content does not match its canonical descriptor.");
+      }
+      contents.set(resource.uri, content.text);
+    }
+
+    const modulePayload = parseResourceJson(
+      contents.get("logistics://modules/catalog") ?? "",
+    );
+    if (!Array.isArray(modulePayload.modules)) {
+      throw new Error("The Agent module catalog is invalid.");
+    }
+    const actualModules = modulePayload.modules.filter(isRecord);
+    if (actualModules.length !== modulePayload.modules.length) {
+      throw new Error("The Agent module catalog contains an invalid module.");
+    }
+    assertExactStringSet(
+      actualModules.map((module) => typeof module.module_id === "string" ? module.module_id : ""),
+      expectedModules.map((module) => module.module_id),
+      "t0_agent_module_set_invalid",
+    );
+    for (const expected of expectedModules) {
+      const actual = actualModules.find((module) => module.module_id === expected.module_id);
+      if (
+        actual === undefined ||
+        actual.version !== expected.version ||
+        actual.risk_level !== expected.risk_level
+      ) {
+        throw new Error("The Agent module catalog identity does not match the mounted T0 module.");
+      }
+      if (!Array.isArray(actual.tool_names) || !Array.isArray(actual.standard_ids)) {
+        throw new Error("The Agent module catalog projection is incomplete.");
+      }
+      assertExactStringSet(
+        actual.tool_names.filter((name): name is string => typeof name === "string"),
+        expected.tool_names,
+        "t0_agent_module_tool_set_invalid",
+      );
+      if (actual.tool_names.some((name) => typeof name !== "string")) {
+        throw new Error("The Agent module catalog tool projection is invalid.");
+      }
+      const standardIds = t0ModuleStandardIds[expected.module_id];
+      if (standardIds === undefined) throw new Error("The T0 module standard set is not reviewed.");
+      assertExactStringSet(
+        actual.standard_ids.filter((standardId): standardId is string => typeof standardId === "string"),
+        standardIds,
+        "t0_agent_module_standard_set_invalid",
+      );
+      if (actual.standard_ids.some((standardId) => typeof standardId !== "string")) {
+        throw new Error("The Agent module catalog standard projection is invalid.");
+      }
+    }
+
+    const profilePayload = parseResourceJson(
+      contents.get("logistics://agent/profiles") ?? "",
+    );
+    if (!Array.isArray(profilePayload.profiles)) {
+      throw new Error("The Agent profile catalog is invalid.");
+    }
+    const runtimeProfile = profilePayload.profiles.find(
+      (profile): profile is Record<string, unknown> =>
+        isRecord(profile) && profile.profile_id === "runtime-caller",
+    );
+    if (
+      runtimeProfile === undefined ||
+      runtimeProfile.audience !== "caller" ||
+      runtimeProfile.content_mode !== "summary" ||
+      !Array.isArray(runtimeProfile.allowed_module_ids)
+    ) {
+      throw new Error("The runtime-caller Agent profile is not a reviewed T0 profile.");
+    }
+    const allowedModuleIds = runtimeProfile.allowed_module_ids.filter(
+      (moduleId): moduleId is string => typeof moduleId === "string",
+    );
+    assertExactStringSet(
+      allowedModuleIds,
+      expectedModules.map((module) => module.module_id),
+      "t0_agent_profile_module_set_invalid",
+    );
+    if (runtimeProfile.allowed_module_ids.some((moduleId) => typeof moduleId !== "string")) {
+      throw new Error("The runtime-caller Agent profile module projection is invalid.");
+    }
+    return [];
+  } catch {
+    return ["t0_agent_pack_mismatch"];
+  }
+}
+
 function runtimeActivationFacades(
   options: GatewayCompositionOptions,
 ): RuntimeActivationFacades | undefined {
@@ -362,6 +693,7 @@ function buildComposition(
   handler: McpHttpHandler,
   readiness: () => Promise<PlatformReadiness>,
   closeExtra: () => Promise<void> = () => Promise.resolve(),
+  profile?: T0ProductionProfile,
 ): GatewayComposition {
   if (options.dataMode !== mode) {
     throw new Error(
@@ -373,6 +705,7 @@ function buildComposition(
   return {
     mode,
     dataMode: mode,
+    ...(profile === undefined ? {} : { profile }),
     adapters,
     bundle: tools.bundle,
     handlers: tools.handlers,
@@ -471,6 +804,9 @@ export function createProductionComposition(
   if (options.dataMode !== "production") {
     throw new Error("Production adapters require DATA_MODE=production.");
   }
+  const profile = parseT0ProductionProfile(
+    Object.hasOwn(options, "profile") ? options.profile : "t0-v1",
+  );
   const runtimeActivation = runtimeActivationFacades(options);
 
   const productionPlatformOptions = {
@@ -497,32 +833,16 @@ export function createProductionComposition(
     "token_verifier",
     options.tokenVerifier,
   );
-  const adapterStatus = productionDependencyStatus(
-    "production_adapter_source",
-    "adapter_source",
-    options.adapterSource,
-  );
-  const providedAdapters = options.adapterSource?.adapters ?? productionAdapters();
-  const disabledQuote = new ExistingQuoteAdapter();
-  const providedQuote = providedAdapters.quote;
-  const adapters: FixtureAdapters = {
-    ...providedAdapters,
-    quote: providedQuote === undefined
-      ? disabledQuote
-      : {
-          calculate: (input, context, signal) =>
-            providedQuote.calculate(input, context, signal),
-          previewDraft: (input) => disabledQuote.previewDraft(input),
-          commitDraft: (input, signal) => disabledQuote.commitDraft(input, signal),
-          readDraft: (input) => disabledQuote.readDraft(input),
-        },
-    review: new ManualTaskAdapter(),
-  };
-  const tools = compositionTools(
-    adapters,
-    createFreightcomDisabledRateAdapter(),
-    options.agentAccessRuntime,
-    runtimeActivation,
+  const tools = t0CompositionTools(options.agentAccessRuntime, runtimeActivation);
+  const mountedModules = tools.moduleHost.snapshot().modules.map((module) => ({
+    module_id: module.module_id,
+    version: module.version,
+    risk_level: module.risk_level,
+    tool_names: module.tool_names,
+  }));
+  const agentResourceReasons = assertT0AgentResourceSet(
+    tools.agentAccessRuntime,
+    mountedModules,
   );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
@@ -540,7 +860,10 @@ export function createProductionComposition(
       ? ["platform_session_owner_missing"]
       : []),
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
-    ...(adapterStatus.valid ? [] : [adapterStatus.reason]),
+    ...(options.adapterSource === undefined
+      ? []
+      : ["production_non_t0_adapter_configured"]),
+    ...agentResourceReasons,
   ];
 
   const readiness = async (): Promise<PlatformReadiness> => {
@@ -548,7 +871,6 @@ export function createProductionComposition(
     const reasons = [...platformState.reasons, ...structuralReasons];
     const liveChecks = [
       verifierStatus.valid ? checkProductionHealth(options.tokenVerifier!, verifierStatus.unhealthyReason) : null,
-      adapterStatus.valid ? checkProductionHealth(options.adapterSource!, adapterStatus.unhealthyReason) : null,
     ].filter((check): check is Promise<string | null> => check !== null);
     const liveReasons = await Promise.all(liveChecks);
     reasons.push(...liveReasons.filter((reason): reason is string => reason !== null));
@@ -562,7 +884,18 @@ export function createProductionComposition(
       : createMcpHttpHandler({
           allowedOrigins,
           allowedHosts,
-          authenticate: (token) => options.tokenVerifier!.verify(token),
+          authenticate: async (token) => {
+            if (!isCompactJwt(token)) throw new AuthenticationError();
+            const claims = await options.tokenVerifier!.verify(token);
+            if (!isExactT0ServiceIdentity({
+              role: claims.actor_role,
+              roles: claims.roles,
+              scopes: claims.scopes,
+            })) {
+              throw new AuthenticationError();
+            }
+            return claims;
+          },
           ...(options.tokenPolicy === undefined ? {} : { tokenPolicy: options.tokenPolicy }),
           handlers: tools.handlers,
           contracts: tools.contracts,
@@ -581,7 +914,7 @@ export function createProductionComposition(
   return buildComposition(
     "production",
     options,
-    adapters,
+    emptyProductionAdapters,
     tools,
     handler,
     readiness,
@@ -592,15 +925,12 @@ export function createProductionComposition(
         typeof options.tokenVerifier.close !== "function"
           ? []
           : [options.tokenVerifier.close()]),
-        ...(options.adapterSource === undefined ||
-        typeof options.adapterSource.close !== "function"
-          ? []
-          : [options.adapterSource.close()]),
       ]);
       if (results.some((result) => result.status === "rejected")) {
         throw new Error("A production composition dependency could not be closed.");
       }
     },
+    profile,
   );
 }
 

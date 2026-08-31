@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/logistics-mcp/2026-08-27/admin-control/tenant-create-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tenant_id", "display_name"],
+  "properties": {
+    "schema_version": {"const": "2026-08-27.v1"},
+    "tenant_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "display_name": {"type": "string", "minLength": 1, "maxLength": 120}
+  }
+}

@@ -21,6 +21,17 @@ import {
   type SqliteControlStore,
   type SqliteReadbackRecoveryDriver,
 } from "../control-plane/sqlite-control-store";
+import {
+  SqliteTenantAccessStore,
+} from "../control-plane/sqlite-tenant-access-store";
+import {
+  SqlitePluginConfigStore,
+  type StoredPluginConfigValues,
+} from "../control-plane/plugin-config-store";
+import { createPluginConfigFatalFence } from "../control-plane/plugin-config-apply";
+import { PluginConfigService } from "../control-plane/plugin-config-service";
+import { TenantAccessError } from "../control-plane/tenant-access-errors";
+import { TenantAccessService } from "../control-plane/tenant-access-service";
 import type {
   ControlFinalResult,
   DeepReadonly,
@@ -33,6 +44,7 @@ import {
   CapabilityRegistry,
   ModuleHost,
   normalizeCapabilityRequirement,
+  parseT0ProductionProfile,
 } from "../module-runtime";
 import {
   cargoModule,
@@ -44,11 +56,13 @@ import {
 } from "../modules";
 import {
   createFixtureComposition,
-  createProductionApiAdapterSource,
   createProductionComposition,
   type GatewayComposition,
 } from "./composition";
-import type { ShortLivedTokenValidationOptions } from "../platform/security";
+import {
+  assertAllowedOutboundUrl,
+  type ShortLivedTokenValidationOptions,
+} from "../platform/security";
 import {
   createAdminStaticHandler,
   type AdminStaticHandler,
@@ -57,6 +71,16 @@ import {
   createAdminControlApiHandler,
   type AdminControlApiHandler,
 } from "./admin-control-api";
+import {
+  createAdminTenantAccessApiHandler,
+  type AdminTenantAccessApiHandler,
+  type TenantAccessAdminService,
+} from "./admin-tenant-access-api";
+import {
+  createAdminPluginConfigApiHandler,
+  type AdminPluginConfigApiHandler,
+  type PluginConfigAdminService,
+} from "./admin-plugin-config-api";
 import { createProductionTokenVerifier } from "./production-token-verifier";
 import {
   createFreightcomDisabledRateAdapter,
@@ -65,9 +89,11 @@ import {
 } from "../adapters/quote/freightcom-rate-adapter";
 import { DEFAULT_FREIGHTCOM_TEST_BASE_URL } from "../adapters/quote/freightcom-test-client";
 import type { FreightcomRatePort } from "../adapters/ports";
-import { createRiskCustomsApiAdapterFromEnvironment } from "../adapters/customs/riskcustoms-runtime";
+import { ManagedFreightcomConfigRuntime } from "./plugin-config-runtime";
 
 export { initializeSqliteControlState } from "../control-plane/sqlite-control-store";
+export { initializeSqliteTenantAccessState } from "../control-plane/sqlite-tenant-access-store";
+export { initializeSqlitePluginConfigState } from "../control-plane/plugin-config-store";
 
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
@@ -82,6 +108,9 @@ const MANAGED_PATH_SETTINGS = [
   "MCP_CONTROL_DB_PATH",
   "MCP_CONTROL_MARKER_PATH",
   "MCP_CONTROL_STATE_PATH",
+  "MCP_PLUGIN_CONFIG_DB_PATH",
+  "MCP_PLUGIN_CONFIG_MARKER_PATH",
+  "MCP_PLUGIN_CONFIG_STATE_PATH",
 ] as const;
 
 type RuntimeListen = (
@@ -156,7 +185,7 @@ export function createFixtureAuthenticatorFromEnvironment(
       actor_id: identity.actor_id,
       actor_role: "admin",
       roles: ["admin"],
-      scopes: ["platform:admin"],
+      scopes: ["platform:admin", "tenant:admin"],
       client_id: identity.client_id,
       session_id: identity.session_id,
       expires_at: Math.floor(Date.now() / 1000) + 15 * 60,
@@ -189,6 +218,7 @@ async function readiness(
         "MCP_JWT_ISSUER",
         "MCP_JWT_AUDIENCE",
         "MCP_JWKS_URL",
+        "MCP_RUNTIME_PROFILE",
         "MCP_STATE_DB_PATH",
         "MCP_INSTANCE_ID",
         "MCP_ALLOWED_ORIGINS",
@@ -395,7 +425,9 @@ interface ManagedFixtureRuntimeConfig {
   readonly managementTenantId: string;
   readonly allowedOrigins: readonly string[];
   readonly allowedHosts: readonly string[];
-  readonly authenticate: (token: string) => AuthClaims;
+  readonly authenticate: (
+    token: string,
+  ) => AuthClaims | Promise<AuthClaims>;
 }
 
 function managedFixtureRuntimeConfig(applicationRoot: string): ManagedFixtureRuntimeConfig {
@@ -680,7 +712,12 @@ async function recoverPriorBootReadbackAttempts(
 interface RuntimeResources {
   readonly composition: GatewayComposition;
   readonly controlStore?: SqliteControlStore;
+  readonly tenantAccessStore?: SqliteTenantAccessStore;
+  readonly pluginConfigStore?: SqlitePluginConfigStore;
+  readonly pluginConfigService?: PluginConfigService;
   readonly adminControlApi?: AdminControlApiHandler;
+  readonly adminTenantAccessApi?: AdminTenantAccessApiHandler;
+  readonly adminPluginConfigApi?: AdminPluginConfigApiHandler;
 }
 
 function rejectProductionAdminControlCall(): Promise<never> {
@@ -697,6 +734,34 @@ const PRODUCTION_DISABLED_ADMIN_CONTROL_SERVICE: ModuleControlService =
     reconcile: rejectProductionAdminControlCall,
   });
 
+function rejectTenantAccessCall(): Promise<never> {
+  return Promise.reject(new Error("Tenant Access is unavailable."));
+}
+
+const DISABLED_TENANT_ACCESS_SERVICE: TenantAccessAdminService = Object.freeze({
+  getState: rejectTenantAccessCall,
+  createTenant: rejectTenantAccessCall,
+  setTenantStatus: rejectTenantAccessCall,
+  setClientStatus: rejectTenantAccessCall,
+  issueCredential: rejectTenantAccessCall,
+  rotateCredential: rejectTenantAccessCall,
+  revokeCredential: rejectTenantAccessCall,
+  acknowledgeCredentialDelivery: rejectTenantAccessCall,
+});
+
+function rejectPluginConfigCall(): Promise<never> {
+  return Promise.reject(new Error("Plugin configuration is unavailable."));
+}
+
+const DISABLED_PLUGIN_CONFIG_SERVICE: PluginConfigAdminService = Object.freeze({
+  getState: rejectPluginConfigCall,
+  validateDraft: rejectPluginConfigCall,
+  createPreview: rejectPluginConfigCall,
+  decideApproval: rejectPluginConfigCall,
+  publish: rejectPluginConfigCall,
+  reconcile: rejectPluginConfigCall,
+});
+
 function createProductionAdminControlApi(): AdminControlApiHandler {
   return createAdminControlApiHandler({
     dataMode: "production",
@@ -711,6 +776,73 @@ function createProductionAdminControlApi(): AdminControlApiHandler {
   });
 }
 
+function createAdminPluginConfigApi(
+  dataMode: "fixtures" | "production",
+  service: PluginConfigAdminService,
+  authenticate: (
+    token: string,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  managementTenantId: string,
+  allowedOrigins: readonly string[],
+  allowedHosts: readonly string[],
+): AdminPluginConfigApiHandler {
+  return createAdminPluginConfigApiHandler({
+    dataMode,
+    service,
+    authenticate,
+    managementTenantId,
+    allowedOrigins,
+    allowedHosts,
+    allowLoopbackHttp: true,
+    maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
+    clock: () => new Date().toISOString(),
+  });
+}
+
+function createProductionAdminPluginConfigApi(): AdminPluginConfigApiHandler {
+  return createAdminPluginConfigApi(
+    "production",
+    DISABLED_PLUGIN_CONFIG_SERVICE,
+    rejectProductionAdminControlCall,
+    "production_plugin_config_disabled",
+    splitSetting("MCP_ALLOWED_ORIGINS", ""),
+    splitSetting("MCP_ALLOWED_HOSTS", ""),
+  );
+}
+
+function createAdminTenantAccessApi(
+  dataMode: "fixtures" | "production",
+  service: TenantAccessAdminService,
+  authenticate: (
+    token: string,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  managementTenantId: string,
+  allowedOrigins: readonly string[],
+  allowedHosts: readonly string[],
+): AdminTenantAccessApiHandler {
+  return createAdminTenantAccessApiHandler({
+    dataMode,
+    service,
+    authenticate,
+    managementTenantId,
+    allowedOrigins,
+    allowedHosts,
+    allowLoopbackHttp: true,
+    maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
+  });
+}
+
+function createProductionAdminTenantAccessApi(): AdminTenantAccessApiHandler {
+  return createAdminTenantAccessApi(
+    "production",
+    DISABLED_TENANT_ACCESS_SERVICE,
+    rejectProductionAdminControlCall,
+    "production_tenant_access_disabled",
+    splitSetting("MCP_ALLOWED_ORIGINS", ""),
+    splitSetting("MCP_ALLOWED_HOSTS", ""),
+  );
+}
+
 async function createManagedFixtureRuntime(
   applicationRoot: string,
 ): Promise<RuntimeResources & { readonly controlStore: SqliteControlStore }> {
@@ -723,6 +855,10 @@ async function createManagedFixtureRuntime(
   });
   const controlStore = opened.repository;
   let composition: GatewayComposition | undefined;
+  let tenantAccessStore: SqliteTenantAccessStore | undefined;
+  let pluginConfigStore: SqlitePluginConfigStore | undefined;
+  let pluginConfigService: PluginConfigService | undefined;
+  let pluginConfigRatePort: ManagedFreightcomConfigRuntime | undefined;
   try {
     await recoverPriorBootReadbackAttempts(controlStore, opened.recoveryDriver);
     const activationRestoreEvidence = await loadManagedActivationRestoreEvidence(
@@ -751,11 +887,62 @@ async function createManagedFixtureRuntime(
     if (!isDeepStrictEqual(restoredActivation, expectedActivation)) {
       throw new Error("Managed activation restore did not match persisted state.");
     }
+    let tenantAccessService: TenantAccessAdminService = DISABLED_TENANT_ACCESS_SERVICE;
+    let mcpAuthenticate = config.authenticate;
+    try {
+      tenantAccessStore = new SqliteTenantAccessStore({
+        applicationRoot: config.applicationRoot,
+        instanceId: config.instanceId,
+        managementTenantId: config.managementTenantId,
+      });
+      const service = new TenantAccessService(tenantAccessStore);
+      tenantAccessService = service;
+      mcpAuthenticate = async (token) => {
+        try {
+          return await config.authenticate(token);
+        } catch (error) {
+          if (!(error instanceof AuthenticationError)) throw error;
+          return service.verifyApiKey(token);
+        }
+      };
+    } catch (error) {
+      if (!(error instanceof TenantAccessError) || error.code !== "state_missing") {
+        throw error;
+      }
+    }
+    pluginConfigStore = new SqlitePluginConfigStore({
+      applicationRoot: config.applicationRoot,
+      instanceId: config.instanceId,
+      managementTenantId: config.managementTenantId,
+    });
+    const pluginConfigFatalFence = createPluginConfigFatalFence();
+    pluginConfigRatePort = new ManagedFreightcomConfigRuntime(
+      pluginConfigStore.getCurrent(),
+      (values) => createFreightcomRuntimeAdapterFromEnvironment(
+        readFreightcomKeychainSecret,
+        values,
+      ),
+      pluginConfigFatalFence,
+    );
+    pluginConfigService = new PluginConfigService({
+      store: pluginConfigStore,
+      applyPort: pluginConfigRatePort,
+      managementTenantId: config.managementTenantId,
+      previewTtlSeconds: 15 * 60,
+      ownerBootId: `boot_config_${randomUUID().replaceAll("-", "")}`,
+      clock: () => new Date().toISOString(),
+      idGenerator: (prefix) => `${prefix}_${randomUUID().replaceAll("-", "")}`,
+      fatalFence: pluginConfigFatalFence,
+    });
+    await pluginConfigService.recoverInterruptedAttempts();
     composition = makeComposition({
       managementTenantId: config.managementTenantId,
-      authenticate: config.authenticate,
+      authenticate: mcpAuthenticate,
       activation: assembly.activation,
       dispatch: assembly.dispatch,
+      ...(pluginConfigRatePort === undefined
+        ? {}
+        : { freightcomRateAdapter: pluginConfigRatePort }),
     });
     const adminControlApi = createAdminControlApiHandler({
       dataMode: "fixtures",
@@ -768,9 +955,36 @@ async function createManagedFixtureRuntime(
       maxBodyBytes: RUNTIME_MAX_BODY_BYTES,
       clock: () => new Date().toISOString(),
     });
-    return { composition, controlStore, adminControlApi };
+    const adminTenantAccessApi = createAdminTenantAccessApi(
+      "fixtures",
+      tenantAccessService,
+      config.authenticate,
+      config.managementTenantId,
+      config.allowedOrigins,
+      config.allowedHosts,
+    );
+    const adminPluginConfigApi = createAdminPluginConfigApi(
+      "fixtures",
+      pluginConfigService ?? DISABLED_PLUGIN_CONFIG_SERVICE,
+      config.authenticate,
+      config.managementTenantId,
+      config.allowedOrigins,
+      config.allowedHosts,
+    );
+    return {
+      composition,
+      controlStore,
+      ...(tenantAccessStore === undefined ? {} : { tenantAccessStore }),
+      ...(pluginConfigStore === undefined ? {} : { pluginConfigStore }),
+      ...(pluginConfigService === undefined ? {} : { pluginConfigService }),
+      adminControlApi,
+      adminTenantAccessApi,
+      adminPluginConfigApi,
+    };
   } catch (error) {
     await composition?.close().catch(() => undefined);
+    await pluginConfigStore?.close().catch(() => undefined);
+    await tenantAccessStore?.close().catch(() => undefined);
     await controlStore.close().catch(() => undefined);
     throw error;
   }
@@ -805,6 +1019,10 @@ async function readFreightcomKeychainSecret(
 
 export function createFreightcomTestAdapterFromEnvironment(
   readSecret: FreightcomKeychainReader = readFreightcomKeychainSecret,
+  runtimeConfig?: Pick<
+    StoredPluginConfigValues,
+    "requestTimeoutMs" | "pollIntervalMs" | "maxPollAttempts"
+  >,
 ): FreightcomRatePort | undefined {
   const setting = process.env.MCP_FREIGHTCOM_TEST_ENABLED?.trim();
   if (setting === undefined || setting === "" || setting === "false") return undefined;
@@ -830,17 +1048,21 @@ export function createFreightcomTestAdapterFromEnvironment(
       if (token.length === 0) throw new Error("Freightcom test credential is empty.");
       return { Authorization: token };
     },
-    maxPollAttempts: 12,
-    pollDelayMs: 750,
-    timeoutMs: 20_000,
+    maxPollAttempts: runtimeConfig?.maxPollAttempts ?? 12,
+    pollDelayMs: runtimeConfig?.pollIntervalMs ?? 750,
+    timeoutMs: runtimeConfig?.requestTimeoutMs ?? 20_000,
     maxResponseBytes: 2 * 1024 * 1024,
   });
 }
 
 export function createFreightcomRuntimeAdapterFromEnvironment(
   readSecret: FreightcomKeychainReader = readFreightcomKeychainSecret,
+  runtimeConfig?: Pick<
+    StoredPluginConfigValues,
+    "requestTimeoutMs" | "pollIntervalMs" | "maxPollAttempts"
+  >,
 ): FreightcomRatePort {
-  return createFreightcomTestAdapterFromEnvironment(readSecret) ??
+  return createFreightcomTestAdapterFromEnvironment(readSecret, runtimeConfig) ??
     createFreightcomDisabledRateAdapter();
 }
 
@@ -922,9 +1144,14 @@ async function handleRuntimeRequest(
   composition: GatewayComposition,
   adminUi: AdminStaticHandler,
   adminControlApi: AdminControlApiHandler | undefined,
+  adminTenantAccessApi: AdminTenantAccessApiHandler | undefined,
+  adminPluginConfigApi: AdminPluginConfigApiHandler | undefined,
+  pluginConfigReadiness: (() => readonly string[]) | undefined,
   trustedProxy: (address: string | undefined) => boolean,
 ): Promise<void> {
   if (adminControlApi?.handle(request, response)) return;
+  if (adminTenantAccessApi?.handle(request, response)) return;
+  if (adminPluginConfigApi?.handle(request, response)) return;
   if (adminUi.handle(request, response)) return;
   const path = (request.url ?? "/").split("?", 1)[0];
   if (request.method === "GET" && path === "/healthz") {
@@ -933,9 +1160,12 @@ async function handleRuntimeRequest(
   }
   if (request.method === "GET" && path === "/readyz") {
     const state = await readiness(composition);
-    json(response, state.ready ? 200 : 503, {
-      status: state.ready ? "ready" : "not_ready",
-      reasons: state.reasons,
+    const reasons = [...state.reasons, ...(pluginConfigReadiness?.() ?? [])];
+    const uniqueReasons = [...new Set(reasons)];
+    const ready = uniqueReasons.length === 0;
+    json(response, ready ? 200 : 503, {
+      status: ready ? "ready" : "not_ready",
+      reasons: uniqueReasons,
     });
     return;
   }
@@ -966,6 +1196,9 @@ async function handleRuntimeRequest(
 export interface RuntimeServerOptions {
   readonly adminUi?: AdminStaticHandler;
   readonly adminControlApi?: AdminControlApiHandler;
+  readonly adminTenantAccessApi?: AdminTenantAccessApiHandler;
+  readonly adminPluginConfigApi?: AdminPluginConfigApiHandler;
+  readonly pluginConfigReadiness?: () => readonly string[];
   readonly applicationRoot?: string;
   readonly trustedProxyAddresses?: readonly string[];
 }
@@ -1028,6 +1261,9 @@ export function createRuntimeServer(
         composition,
         adminUi,
         options.adminControlApi,
+        options.adminTenantAccessApi,
+        options.adminPluginConfigApi,
+        options.pluginConfigReadiness,
         trustedProxy,
       );
     },
@@ -1085,6 +1321,16 @@ async function closeRuntimeResources(
   } catch {
     failed = true;
   }
+  try {
+    await resources.tenantAccessStore?.close();
+  } catch {
+    failed = true;
+  }
+  try {
+    await resources.pluginConfigStore?.close();
+  } catch {
+    failed = true;
+  }
   if (failed) {
     throw new Error("The runtime could not close every resource cleanly.");
   }
@@ -1126,12 +1372,33 @@ export async function startRuntime(
       : {
           composition: makeComposition(),
           adminControlApi: createProductionAdminControlApi(),
+          adminTenantAccessApi: createProductionAdminTenantAccessApi(),
+          adminPluginConfigApi: createProductionAdminPluginConfigApi(),
         };
     server = createRuntimeServer(resources.composition, {
       applicationRoot,
       ...(resources.adminControlApi === undefined
         ? {}
         : { adminControlApi: resources.adminControlApi }),
+      ...(resources.adminTenantAccessApi === undefined
+        ? {}
+        : { adminTenantAccessApi: resources.adminTenantAccessApi }),
+      ...(resources.adminPluginConfigApi === undefined
+        ? {}
+        : { adminPluginConfigApi: resources.adminPluginConfigApi }),
+      ...(resources.pluginConfigStore === undefined || resources.pluginConfigService === undefined
+        ? {}
+        : {
+            pluginConfigReadiness: () => {
+              const health = resources!.pluginConfigStore!.health();
+              return Object.freeze([
+                ...health.reason_codes,
+                ...(resources!.pluginConfigService!.isFatal()
+                  ? ["plugin_config_runtime_fatal"]
+                  : []),
+              ]);
+            },
+          }),
     });
     close = closeOnce(() => closeRuntimeResources(server, resources!));
     await (options.listen ?? listenRuntime)(
@@ -1158,9 +1425,12 @@ function assertNoRuntimeArguments(): void {
 
 interface CompositionWiring {
   readonly managementTenantId?: string;
-  readonly authenticate?: (token: string) => AuthClaims;
+  readonly authenticate?: (
+    token: string,
+  ) => AuthClaims | Promise<AuthClaims>;
   readonly activation?: ActivationReadFacade;
   readonly dispatch?: ControlledDispatchFacade;
+  readonly freightcomRateAdapter?: FreightcomRatePort;
 }
 
 function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
@@ -1180,7 +1450,8 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     if (wiring.managementTenantId === undefined || wiring.authenticate === undefined) {
       throw new Error("Managed fixture composition requires explicit control identity.");
     }
-    const freightcomRateAdapter = createFreightcomRuntimeAdapterFromEnvironment();
+    const freightcomRateAdapter = wiring.freightcomRateAdapter ??
+      createFreightcomRuntimeAdapterFromEnvironment();
     return createFixtureComposition({
       dataMode: "fixtures",
       ...common,
@@ -1194,31 +1465,38 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     throw new Error("MCP_DATA_MODE must be explicitly set to production or fixtures.");
   }
   const tokenPolicy = tokenPolicyFromEnvironment();
+  const profileSetting = Object.hasOwn(process.env, "MCP_RUNTIME_PROFILE")
+    ? process.env.MCP_RUNTIME_PROFILE ?? ""
+    : "t0-v1";
+  const profile = parseT0ProductionProfile(profileSetting);
   const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
   const instanceId = process.env.MCP_INSTANCE_ID?.trim();
   const jwksUrl = process.env.MCP_JWKS_URL?.trim();
-  const outboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
+  const allowedOutboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
   const store =
     databasePath === undefined || databasePath.length === 0
       ? undefined
       : new SqliteProductionStore(databasePath);
+  if (jwksUrl !== undefined && jwksUrl.length > 0) {
+    if (allowedOutboundHosts.length !== 1) {
+      throw new Error("T0 production must allow exactly the configured JWKS host.");
+    }
+    assertAllowedOutboundUrl(jwksUrl, allowedOutboundHosts);
+  }
   const tokenVerifier =
     tokenPolicy === undefined ||
     jwksUrl === undefined ||
     jwksUrl.length === 0 ||
-    outboundHosts.length === 0
+    allowedOutboundHosts.length !== 1
       ? undefined
       : createProductionTokenVerifier({
           jwksUrl,
-          allowedHosts: outboundHosts,
+          allowedHosts: allowedOutboundHosts,
         });
-  const riskCustoms = createRiskCustomsApiAdapterFromEnvironment();
   return createProductionComposition({
     dataMode: "production",
+    profile,
     ...common,
-    adapterSource: createProductionApiAdapterSource(
-      riskCustoms === undefined ? {} : { customs: riskCustoms },
-    ),
     ...(store === undefined
       ? {}
       : {

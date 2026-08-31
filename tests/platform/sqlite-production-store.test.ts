@@ -178,6 +178,34 @@ describe("SQLite production store", () => {
     await expect(reopened.get(binding.sessionId)).resolves.toBeNull();
   });
 
+  it("prunes every expired durable session binding during health checks", async () => {
+    const path = databasePath();
+    let now = 1_000;
+    const store = track(new SqliteProductionStore(path, 100, () => now));
+    const binding = (sessionId: string, expiresAtMs: number) => ({
+      sessionId,
+      tenantId: "tenant_demo",
+      actorId: "actor_sales",
+      clientId: "client_demo",
+      authSessionId: "auth_001",
+      contextFingerprint: "sha256:fingerprint",
+      ownerId: "worker_001",
+      createdAtMs: 900,
+      expiresAtMs,
+    });
+    await store.put(binding("session_expired_unobserved", 2_000));
+    await store.put(binding("session_still_live", 3_000));
+
+    now = 2_000;
+    await expect(store.health()).resolves.toEqual({ ready: true });
+
+    const database = new DatabaseSync(path, { readOnly: true });
+    expect(database.prepare(
+      "SELECT session_id FROM session_bindings ORDER BY session_id",
+    ).all()).toEqual([{ session_id: "session_still_live" }]);
+    database.close();
+  });
+
   it("is safely closable more than once and becomes unhealthy when closed", async () => {
     const store = track(new SqliteProductionStore(databasePath()));
 

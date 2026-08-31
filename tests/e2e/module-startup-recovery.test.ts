@@ -25,7 +25,10 @@ import {
 } from "../../src/logistics_mcp/control-plane/service";
 import { ADMIN_CONTROL_SCHEMA_VERSION } from "../../src/logistics_mcp/control-plane/types";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
-import { startRuntime } from "../../src/logistics_mcp/server/start";
+import {
+  initializeSqlitePluginConfigState,
+  startRuntime,
+} from "../../src/logistics_mcp/server/start";
 
 const MANAGEMENT_TENANT_ID = "tenant_fixture";
 const INSTANCE_ID = "instance_fixture_001";
@@ -138,6 +141,11 @@ describe("module startup recovery", () => {
     try {
       configureManagedFixtureEnvironment();
       await initializeSqliteControlState({
+        applicationRoot,
+        instanceId: INSTANCE_ID,
+        managementTenantId: MANAGEMENT_TENANT_ID,
+      });
+      await initializeSqlitePluginConfigState({
         applicationRoot,
         instanceId: INSTANCE_ID,
         managementTenantId: MANAGEMENT_TENANT_ID,

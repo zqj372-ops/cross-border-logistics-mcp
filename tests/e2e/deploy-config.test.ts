@@ -42,6 +42,7 @@ describe("safe deployment artifacts", () => {
   it("defines a Node 22.13 multi-stage non-root image with a minimal runtime", () => {
     const dockerfile = read("deploy/Dockerfile");
     expect(dockerfile.match(/node:22\.13\.0-bookworm-slim/g)).toHaveLength(2);
+    expect(dockerfile.match(/node:22\.13\.0-bookworm-slim@sha256:f5a0871ab03b035c58bdb3007c3d177b001c2145c18e81817b71624dcf7d8bff/g)).toHaveLength(2);
     expect(dockerfile).toMatch(/FROM .* AS build/i);
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
@@ -58,6 +59,47 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).not.toMatch(/--import\s+tsx\/esm/);
     expect(dockerfile).toMatch(/CMD .*dist\/.*\.mjs/);
     expect(dockerfile).not.toMatch(/(?:sk|ghp_|AIza|BEGIN .* PRIVATE KEY)/i);
+  });
+
+  it("packages a fail-closed T0 deployment smoke without exposing credentials", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const packageJson = read("package.json");
+    const smoke = read("services/access-gateway/deployment-smoke.ts");
+
+    expect(build).toContain("services/access-gateway/deployment-smoke.ts");
+    expect(build).toContain("dist/services/access-gateway/deployment-smoke.mjs");
+    expect(packageJson).toContain("smoke:t0-deployment");
+    expect(smoke).toContain("DEPLOYMENT_SMOKE_CONFIRM");
+    expect(smoke).toContain("DEPLOYMENT_SMOKE_ENVIRONMENT");
+    expect(smoke).toContain("assertCandidateSyntheticWriteTarget");
+    expect(smoke).toContain("run-synthetic-write");
+    expect(smoke).toContain('name: "cargo.calculate"');
+    expect(smoke).toContain('name: "container.plan_summary"');
+    expect(smoke).toContain("revokeCredential");
+    expect(smoke).toContain("setTenantStatus");
+    expect(smoke).toContain("terminateSession");
+    expect(smoke).toContain("tenant_isolation_http_status");
+    expect(smoke).toContain("revoked_exchange_http_status");
+    expect(smoke).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
+  });
+
+  it("packages the bounded T0 deployment load runner", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const packageJson = read("package.json");
+    const load = read("services/access-gateway/deployment-load.ts");
+
+    expect(build).toContain("services/access-gateway/deployment-load.ts");
+    expect(build).toContain("dist/services/access-gateway/deployment-load.mjs");
+    expect(packageJson).toContain("load:t0-deployment");
+    expect(load).toContain("DEPLOYMENT_LOAD_CONFIRM");
+    expect(load).toContain("DEPLOYMENT_LOAD_ENVIRONMENT");
+    expect(load).toContain("assertCandidateSyntheticWriteTarget");
+    expect(load).toContain("run-synthetic-load");
+    expect(load).toContain("revokeCredential");
+    expect(load).toContain("setTenantStatus");
+    expect(load).toContain("terminateSession");
+    expect(load).toContain("readiness_failures");
+    expect(load).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
   });
 
   it("copies every registered Agent source into the image build stage", () => {
@@ -90,10 +132,10 @@ describe("safe deployment artifacts", () => {
     }
   });
 
-  it("wires the production JWKS verifier and durable state provider", () => {
+  it("wires the T0 production profile, JWKS verifier and durable state provider", () => {
     const start = read("src/logistics_mcp/server/start.ts");
-    const riskCustomsRuntime = read("src/logistics_mcp/adapters/customs/riskcustoms-runtime.ts");
     const deployReadme = read("deploy/README.md");
+    expect(start).toContain("MCP_RUNTIME_PROFILE");
     expect(start).toContain("MCP_JWT_ISSUER");
     expect(start).toContain("MCP_JWT_AUDIENCE");
     expect(start).toContain("tokenPolicy");
@@ -101,16 +143,20 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("resolve");
     expect(start).toContain("createProductionComposition");
     expect(start).toContain("createProductionTokenVerifier");
+    expect(start).toContain('splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "")');
+    expect(start).toContain("allowedHosts: allowedOutboundHosts");
+    expect(start).not.toContain("allowedHosts: [jwksHost]");
     expect(start).toContain("SqliteProductionStore");
-    expect(start).toContain("createRiskCustomsApiAdapterFromEnvironment");
-    expect(riskCustomsRuntime).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
-    expect(riskCustomsRuntime).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
-    expect(riskCustomsRuntime).toContain("MCP_ALLOWED_OUTBOUND_HOSTS");
-    expect(riskCustomsRuntime).toContain("O_NOFOLLOW");
-    expect(riskCustomsRuntime).not.toContain("readFileSync");
-    expect(riskCustomsRuntime).not.toMatch(/MCP_RISK_CUSTOMS_M2M_TOKEN\s*:/);
+    expect(start).not.toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(start).not.toContain("MCP_RISK_CUSTOMS_");
+    expect(start).toContain("return createProductionComposition({");
+    expect(start).toContain("profile,");
+    expect(start).toMatch(
+      /if \(mode === "fixtures"\)[\s\S]*createFreightcomRuntimeAdapterFromEnvironment\(\)[\s\S]*return createFixtureComposition/,
+    );
     expect(deployReadme).toContain("JWKS");
     expect(deployReadme).toContain("SQLite");
+    expect(deployReadme).toContain("3 个工具");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
@@ -122,6 +168,7 @@ describe("safe deployment artifacts", () => {
     expect(compose).toMatch(/healthcheck:/);
     for (const required of [
       "MCP_DATA_MODE",
+      "MCP_RUNTIME_PROFILE",
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
       "MCP_JWKS_URL",
@@ -145,20 +192,44 @@ describe("safe deployment artifacts", () => {
       expect(compose).toContain(required);
     }
     expect(env).toContain("https://issuer.example.invalid/");
+    expect(env).toContain("MCP_RUNTIME_PROFILE=t0-v1");
     expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
     expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
-    expect(compose).toContain("MCP_RISK_CUSTOMS_ENABLED");
-    expect(compose).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
-    expect(env).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
-    expect(env).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
+    expect(compose).not.toContain("MCP_RISK_CUSTOMS_");
+    expect(compose).not.toContain("MCP_FREIGHTCOM_");
+    expect(env).not.toContain("MCP_RISK_CUSTOMS_");
+    expect(env).not.toContain("MCP_FREIGHTCOM_");
     expect(riskCustomsOverride).toContain("/run/secrets/riskcustoms_m2m_token");
     expect(riskCustomsOverride).toContain("MCP_RISK_CUSTOMS_ALLOWED_TENANTS");
     expect(riskCustomsOverride).toContain("RISK_CUSTOMS_M2M_TOKEN_FILE");
     expect(compose).toContain("MCP_STATE_DB_PATH");
     expect(compose).toMatch(/\/var\/lib\/logistics-mcp/);
     expect(compose).toMatch(/volumes:/);
+    expect(compose).toContain('restart: "unless-stopped"');
+    expect(compose).toContain("/readyz");
+    expect(compose).not.toContain("fetch('http://127.0.0.1:8080/healthz')");
     expect(env).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
     expect(riskCustomsOverride).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+
+    for (const setting of [
+      "ACCESS_GATEWAY_ADMIN_IDENTITY_MODE",
+      "ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS",
+      "ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS",
+      "ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS",
+    ]) {
+      expect(compose).toContain(setting);
+      expect(env).toContain(setting);
+    }
+  });
+
+  it("documents the exact Cloudflare Access assertion-to-admin mapping boundary", () => {
+    const deployReadme = read("deploy/README.md");
+    expect(deployReadme).toContain("Cf-Access-Jwt-Assertion");
+    expect(deployReadme).toContain("cloudflare-access");
+    expect(deployReadme).toContain("ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS");
+    expect(deployReadme).toContain("ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS");
+    expect(deployReadme).toMatch(/service token[\s\S]*拒绝|拒绝[\s\S]*service token/iu);
+    expect(deployReadme).toContain("显式 email 映射");
   });
 
   it("sets runtime request and header timeout guards", () => {
@@ -169,13 +240,15 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("body_too_large");
   });
 
-  it("documents health/readiness and refuses fixture mode in production", () => {
+  it("documents T0 health/readiness and refuses fixture or business adapters in production", () => {
     const deployReadme = read("deploy/README.md");
     expect(deployReadme).toMatch(/health/i);
     expect(deployReadme).toMatch(/readiness/i);
     expect(deployReadme).toMatch(/ready=false/i);
     expect(deployReadme).toMatch(/RiskCustoms/i);
-    expect(deployReadme).toMatch(/fixtures.*production|production.*fixtures/i);
+    expect(deployReadme).toMatch(/不注册|未注册/);
+    expect(deployReadme).toContain("t0-v1");
+    expect(deployReadme).toMatch(/fixture[\s\S]*production|production[\s\S]*fixture/i);
   });
 
   it("documents Freightcom fixture initialization and activation before provider calls", () => {

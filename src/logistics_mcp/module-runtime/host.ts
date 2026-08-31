@@ -6,6 +6,13 @@ import {
 import { ModuleCatalog } from "./catalog";
 import { RegistrationLease } from "./lease";
 import { validateModuleManifest } from "./manifest";
+import {
+  assertExactStringSet,
+  assertModuleDescriptorMatchesManifest,
+  assertReviewedToolContractMatchesCatalogEntry,
+  validateModuleDescriptor,
+  type ModuleDescriptor,
+} from "./production";
 import type {
   ModuleDefinition,
   ModuleHostOptions,
@@ -18,6 +25,7 @@ export class ModuleHost {
   readonly catalog = new ModuleCatalog();
   readonly capabilities: CapabilityRegistry;
   private readonly modules: readonly ModuleDefinition[];
+  private readonly trustedDescriptors: ReadonlyMap<string, ModuleDescriptor>;
   private readonly leases: { readonly definition: ModuleDefinition; readonly lease: RegistrationLease }[] = [];
   private _status: ModuleHostStatus = "created";
   private mountPromise: Promise<void> | null = null;
@@ -33,6 +41,29 @@ export class ModuleHost {
     for (const module of this.modules) {
       validateModuleManifest(module.manifest);
     }
+    const descriptors = (options.trustedDescriptors ?? []).map(validateModuleDescriptor);
+    if (options.trustedDescriptors !== undefined) {
+      assertExactStringSet(
+        descriptors.map((descriptor) => descriptor.module_id),
+        ids,
+        "module_descriptor_set_mismatch",
+      );
+      for (const descriptor of descriptors) {
+        const module = this.modules.find(
+          (candidate) => candidate.manifest.module_id === descriptor.module_id,
+        );
+        if (module === undefined) {
+          throw new ModuleRuntimeError(
+            "module_descriptor_set_mismatch",
+            `No module is mounted for descriptor ${descriptor.module_id}.`,
+          );
+        }
+        assertModuleDescriptorMatchesManifest(descriptor, module.manifest);
+      }
+    }
+    this.trustedDescriptors = new Map(
+      descriptors.map((descriptor) => [descriptor.module_id, descriptor]),
+    );
   }
 
   get status(): ModuleHostStatus {
@@ -66,6 +97,7 @@ export class ModuleHost {
           throw new ModuleRuntimeError("mount_async", `Module ${module.manifest.module_id} requires asynchronous mounting.`);
         }
       }
+      this.assertTrustedToolSets();
       this._status = "mounted";
     } catch (error: unknown) {
       try {
@@ -88,6 +120,7 @@ export class ModuleHost {
         this.leases.push({ definition: module, lease });
         await module.mount(this.contextFor(module, lease));
       }
+      this.assertTrustedToolSets();
       this._status = "mounted";
     } catch (error: unknown) {
       await this.releaseLeases();
@@ -148,6 +181,32 @@ export class ModuleHost {
         },
       },
     };
+  }
+
+  private assertTrustedToolSets(): void {
+    for (const module of this.modules) {
+      const descriptor = this.trustedDescriptors.get(module.manifest.module_id);
+      if (descriptor === undefined) continue;
+      const actualToolNames = this.catalog
+        .list()
+        .filter((tool) => tool.module_id === module.manifest.module_id)
+        .map((tool) => tool.name);
+      assertExactStringSet(
+        actualToolNames,
+        descriptor.tool_names,
+        "module_descriptor_tool_set_mismatch",
+      );
+      for (const contract of descriptor.tool_contracts) {
+        const entry = this.catalog.get(contract.name);
+        if (entry === undefined || entry.module_id !== module.manifest.module_id) {
+          throw new ModuleRuntimeError(
+            "module_descriptor_tool_contract_mismatch",
+            `The reviewed tool contract is not mounted: ${contract.name}.`,
+          );
+        }
+        assertReviewedToolContractMatchesCatalogEntry(contract, entry);
+      }
+    }
   }
 
   async close(): Promise<void> {
@@ -211,16 +270,23 @@ export class ModuleHost {
   snapshot(): ModuleHostSnapshot {
     return {
       status: this._status,
-      modules: this.modules.map((module) => ({
-        module_id: module.manifest.module_id,
-        version: module.manifest.version,
-        risk_level: module.manifest.risk_level,
-        mounted: this.leases.some((entry) => entry.definition === module),
-        tool_names: this.catalog
-          .list()
-          .filter((tool) => tool.module_id === module.manifest.module_id)
-          .map((tool) => tool.name),
-      })),
+      modules: this.modules.map((module) => {
+        const descriptor = this.trustedDescriptors.get(module.manifest.module_id);
+        return {
+          module_id: module.manifest.module_id,
+          version: module.manifest.version,
+          risk_level: module.manifest.risk_level,
+          mounted: this.leases.some((entry) => entry.definition === module),
+          tool_names: this.catalog
+            .list()
+            .filter((tool) => tool.module_id === module.manifest.module_id)
+            .map((tool) => tool.name),
+          ...(descriptor === undefined ? {} : {
+            artifact_digest: descriptor.artifact_digest,
+            manifest_digest: descriptor.manifest_digest,
+          }),
+        };
+      }),
     };
   }
 }

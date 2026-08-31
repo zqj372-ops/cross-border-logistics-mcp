@@ -12,6 +12,7 @@ const expectedAdminFiles = [
   "control-plane.js",
   "fixture-data.js",
   "index.html",
+  "plugin-config.js",
   "styles.css",
   "vendor/adminlte/adminlte.min.css",
   "vendor/adminlte/adminlte.min.js",

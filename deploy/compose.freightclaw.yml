@@ -1,0 +1,23 @@
+services:
+  access-gateway:
+    image: "${LOGISTICS_MCP_IMAGE:?LOGISTICS_MCP_IMAGE is required}"
+    container_name: logistics-mcp-access-gateway
+    networks:
+      - freightclaw
+
+  logistics-mcp:
+    image: "${LOGISTICS_MCP_IMAGE:?LOGISTICS_MCP_IMAGE is required}"
+    container_name: logistics-mcp-runtime
+    networks:
+      - freightclaw
+
+volumes:
+  gateway_state:
+    name: logistics-mcp-gateway-state
+  mcp_state:
+    name: logistics-mcp-runtime-state
+
+networks:
+  freightclaw:
+    external: true
+    name: freightclaw-net

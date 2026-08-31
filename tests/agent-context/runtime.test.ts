@@ -23,6 +23,7 @@ import {
 import type { AgentStandardPack } from "../../src/logistics_mcp/agent-context/types";
 import { parseExecutionContext, type ExecutionContext } from "../../src/logistics_mcp/platform/context";
 import { getToolPolicy } from "../../src/logistics_mcp/platform/rbac";
+import { CANONICAL_AGENT_RESOURCES } from "../../src/logistics_mcp/agent-context/resources";
 
 const physicalTmpDir = realpathSync(tmpdir());
 
@@ -73,7 +74,16 @@ describe("Agent access runtime", () => {
     expect(runtime.available).toBe(true);
     expect(outcome.status).toBe("success");
     expect(() => agentContextDataSchema.parse(outcome.data)).not.toThrow();
-    expect(runtime.readResource("logistics://modules/catalog", context).text).toContain("cargo");
+    const catalog = JSON.parse(runtime.readResource("logistics://modules/catalog", context).text) as {
+      readonly modules: readonly { readonly module_id: string; readonly risk_level: string }[];
+    };
+    expect(catalog.modules.map((module) => module.module_id).sort()).toEqual([
+      "agent-access",
+      "cargo",
+      "container",
+    ]);
+    expect(catalog.modules.every((module) => module.risk_level === "T0")).toBe(true);
+    expect(runtime.readResource("logistics://modules/catalog", context).text).not.toContain("freightcom-ltl");
     expect(runtime.readResource("logistics://agent/profiles", context).text).toContain("runtime-caller");
   });
 
@@ -321,6 +331,50 @@ describe("Agent access runtime", () => {
       profileId: "runtime-caller",
       moduleId: null,
     });
+  });
+
+  it("authorizes each fixed resource with its own stable context scope and rejects scope denials", () => {
+    expect(CANONICAL_AGENT_RESOURCES.map((resource) => ({
+      resource_id: resource.resource_id,
+      context_scope: resource.context_scope,
+    }))).toEqual([
+      { resource_id: "agent.bootstrap", context_scope: "bootstrap" },
+      { resource_id: "standards.index", context_scope: "standards" },
+      { resource_id: "contracts.envelope.current", context_scope: "standards" },
+      { resource_id: "modules.catalog", context_scope: "module_catalog" },
+      { resource_id: "agent.profiles", context_scope: "release" },
+    ]);
+    const authorizationRequests: Array<{
+      readonly resourceId?: string;
+      readonly resourceUri?: string;
+      readonly contextScope?: string;
+    }> = [];
+    const context = executionContext("sales");
+    const runtime = createAgentAccessRuntime({
+      authorizeProfile: (request) => {
+        authorizationRequests.push(request);
+        return request.contextScope !== "module_catalog";
+      },
+    });
+
+    for (const resource of CANONICAL_AGENT_RESOURCES) {
+      if (resource.context_scope === "module_catalog") {
+        const error = captureRuntimeError(() => runtime.readResource(resource.uri, context));
+        expect(error.code).toBe("resource_not_authorized");
+      } else {
+        expect(runtime.readResource(resource.uri, context).uri).toBe(resource.uri);
+      }
+    }
+
+    expect(authorizationRequests.map((request) => ({
+      resourceId: request.resourceId,
+      resourceUri: request.resourceUri,
+      contextScope: request.contextScope,
+    }))).toEqual(CANONICAL_AGENT_RESOURCES.map((resource) => ({
+      resourceId: resource.resource_id,
+      resourceUri: resource.uri,
+      contextScope: resource.context_scope,
+    })));
   });
 
   it("fails closed when a resource request omits or spoofs its execution context", () => {

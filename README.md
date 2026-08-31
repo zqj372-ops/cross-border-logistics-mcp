@@ -13,18 +13,21 @@
 - AI 负责理解意图、补齐输入、选择工具和解释结果；金额、税率、Zone、重量、容量、状态和版本由确定性代码或上游权威系统决定。
 - Module Runtime v0 在启动时挂载静态可信模块，通过 manifest、capability、lease 和 catalog 暴露工具；远程安装、模型驱动写入和运行时 hot-plug 仍不是当前生产能力。
 - Agent Standard Access v0 为不同 Agent 角色提供 allowlisted profile、Standard Pack、固定 MCP resources 和只读 system.agent_context.get。
+- `t0-v1` production composition 在注册前把目录结构性收敛为 cargo、container、agent-access 三个静态模块、三个工具和五个固定资源；非 T0 handler/adapter 不构造。
 - Admin control-plane v1 只管理当前已挂载模块的 inventory、preview、四眼审批、activation policy 和 runtime exact readback；它不加载任意代码，也不拥有报价、关务或客户数据。
+- Tenant Access v1 在独立 store 中管理租户接入元数据与机器凭证；完整 Key 只显示一次，只保存带盐 hash、前缀和末四位。生产客户端必须先通过统一凭证网关把长期 Key 换成短期 JWT，再调用现有 MCP JWT 入口。
 - ready=false、版本缺失、响应冲突、超时和写后读回失败不会被 AI 或 fixture 静默补成 success。
 
 ## 一眼看懂：客户端如何进入受控工具
 
 ~~~mermaid
 flowchart LR
-  C["ChatGPT / Codex / 企业助手 / 内部工作台"] --> T["MCP transport\n身份 · tenant/RBAC · Schema\naudit · idempotency · session"]
+  C["ChatGPT / Codex / 企业助手 / 内部工作台"] --> G["企业 IdP / 统一凭证网关\nAPI Key -> 短期 JWT"]
+  G --> T["MCP transport\nJWT 身份 · tenant/RBAC · Schema\naudit · idempotency · session"]
   T --> H["Module Runtime v0\n静态可信模块 · capability · lease · catalog"]
   H --> L["本地确定性工具\ncargo · container"]
   H --> A["Agent Standard Access\nprofile · Standard Pack · MCP resources"]
-  T --> X["窄适配器\nquote · RiskCustoms · knowledge · review/status"]
+  T -. "fixture / 后续独立 profile；不属于 t0-v1" .-> X["窄适配器\nquote · RiskCustoms · knowledge · review/status"]
   X --> S["现有权威业务系统\n报价 · 关务 · 文档"]
   T -. "pending contract" .-> P["PDF / 文档 API"]
 ~~~
@@ -41,7 +44,10 @@ flowchart LR
 
 | 能力 | 当前状态 | 可调用边界 | 下一门禁 / 证据 |
 | --- | --- | --- | --- |
+| T0 MCP Runtime | **仓库实现与本地测试候选**：`t0-staging`/`t0-v1` 只构造 3 个静态模块、3 个工具和 5 个资源；模块 descriptor 同时绑定工具合同标识，Agent Pack/catalog 漂移和非 T0 adapter 注入失败闭合 | 只接受短期 RS256 JWT；JWKS 是唯一应用级出站 host；生产目录不含报价、关务、Freightcom 或写工具 | 真实 Edge/JWKS/持久库、staging exact smoke、镜像 digest 和真实演练仍待完成，当前仍是 NO-GO |
+| Unified Access Gateway / Access Console | **provider-neutral 候选已写入**：closed Schema、长期 Key→短 JWT、精确 T0 scope、RS256/JWKS 当前/前一 key、本地 synthetic 互操作、审计失败闭合和窄 Console 已有本地测试；production assembly 会拒绝缺失或 synthetic provider | synthetic 仅限 local contract test；MCP 仍拒绝长期 Key；Console 只呈现租户、客户端、Key、三个工具权限和 operation readback | real IdP、KMS/HSM、托管 DB、共享限流、集中审计/吊销、生产管理 API 和真实 Gateway 部署均待适配验证 |
 | Admin control-plane | **已本地验证（fixture HTTP）**：register → preview → 不同 actor approval → publish → activation `active_verified` 与 exact readback；同一 application root 重启后恢复已读回状态；prior-boot 未完成 attempt 在 listen 前收敛为 `unknown/manual_review`，未决 release 仍使启动 fail-closed | 仅本地受控 fixture/loopback；control POST 的 fixture 流程可走 `/packages/register`、`/deployments/preview`、`/approvals`、`/deployments/publish`、`/deployments/reconcile`；生产所有管理 POST 固定 HTTP 403 | 生产身份、多实例、制品签名/attestation、Deployment Evidence 和生产资格仍未上线；未决 release 只能由 operator reconcile，不把本地 readback 当生产证明 |
+| Tenant Access / API Key | **已本地验证（fixture HTTP + loopback MCP 诊断链路）**：租户创建/暂停、T0 工具精确授权、一次性签发、功能调整轮换、幂等重放 withheld、吊销、到期和脱敏 state | 仅 loopback fixture 可用 `lmcpk_...` 直连诊断；凭证固定 `service` 角色，`tools/list` 只暴露 `cargo.calculate`、`container.plan_summary`、`system.agent_context.get`；生产 MCP 实例只接受短期 JWT | 生产统一凭证网关、企业 IdP、TLS 网关、KMS/Secret Manager、限流、审计、集中吊销、备份恢复、负载、告警和回滚演练仍未完成；正式报价/关务/Freightcom/业务写操作不开放 |
 | cargo.calculate / container.plan_summary | **已本地验证**：本地确定性计算，返回单位、规则/数据版本、假设、warnings、blockers 和 trace | 可在 fixture/local composition 验证；container 是理论/可解释摘要，不是 3D 装柜承诺 | 继续保持契约、单位和重量证据约束 |
 | quote.canada_final_mile.calculate | **已本地验证（fake HTTP/local）**，但生产合同未获资格 | 生产路径保持 `unavailable` / fail-closed；不返回可发送报价 | 完成生产 API 合同、发布快照、staging 和 readback 验收 |
 | customs.ca.search | **已本地验证（fake HTTP/local）**：M2M status→query、服务端有界 secret-file、双 host allowlist、本地 tenant 精确白名单和发布身份失败闭合；生产工厂默认 disabled，仍未获生产资格 | 只有显式启用且 endpoint、专用/全局 host allowlist、tenant allowlist、secret 文件全部有效时才装配；`ready=false`、测试数据或发布身份冲突保持 `unavailable` / `manual_review` | 上游 Draft 候选合入、真实 endpoint/Bearer 与 token-to-tenant mapping、非测试 release、staging status→query 与脱敏工具读回 |
@@ -96,6 +102,8 @@ control DB、marker、root、`instance_id`、`management_tenant_id`、schema、p
 
 本地 Admin 页面只展示脱敏状态，回滚用语固定为“回滚到上一已读回版本（本地受控环境）”。fixture identity 只允许 loopback local。浏览器 password/token 只在内存中短暂存在，不进 URL、storage、cookie、日志或审计；生产 Admin POST 固定返回 HTTP 403 与 `status=blocked`，不能靠环境变量打开。
 
+Tenant Access 独立使用 `.runtime/mcp-tenant-access/access.sqlite`，不向模块控制 DB 加表。管理员在页面只配置租户、Key metadata 和当前 T0 内置工具权限；调整功能通过轮换完成，旧 Key 原子吊销，新 Key 进入 `pending_delivery`。只有安全交付确认并精确读回同一 `operation_id`、新凭证和工具清单后，loopback fixture 才可认证；`tools/list` 只返回被授权工具。租户暂停、凭证到期/轮换/吊销后立即认证失败。客户端不能提交 `tenant_id`、scope 或工具覆盖签发绑定，页面动作只服从服务端 `allowed_actions`。生产不接受长期 Key 直连 MCP 实例，必须经统一凭证网关换短期 JWT 后进入现有 JWT verifier。
+
 ## Agent 调用适配
 
 Agent 适配是“客户端如何接入同一事实源和安全边界”，不是为每个客户端复制一套业务规则。
@@ -114,26 +122,28 @@ flowchart TB
 | 客户端表面 | 模板 | Transport / auth 边界 | 重要限制 |
 | --- | --- | --- | --- |
 | ChatGPT Work | [deploy/clients/chatgpt.example.json](deploy/clients/chatgpt.example.json) | 由工作区管理员安装远程 MCP 插件；企业短期身份令牌由插件与企业身份平台配置 | 管理员接入清单，不可直接导入 |
-| Codex | [deploy/clients/codex.example.toml](deploy/clients/codex.example.toml) | MCP URL；LOGISTICS_MCP_BEARER_TOKEN 由企业身份平台注入；写工具审批模式为 writes | 使用前替换示例地址，不把 token 写入配置文件 |
+| Codex | [deploy/clients/codex.example.toml](deploy/clients/codex.example.toml) | MCP URL；LOGISTICS_MCP_BEARER_TOKEN 由企业身份平台注入；只声明三个 T0 工具 | 使用前替换示例地址，不把 token 写入配置文件 |
 | 企业助手 | [deploy/clients/enterprise-assistant.example.json](deploy/clients/enterprise-assistant.example.json) | Streamable HTTP；Bearer 短期令牌由企业身份平台提供 | 企业助手接入清单，不可直接导入 |
 
 三个模板都指向 runtime-caller profile、固定资源 URI 和 allowlisted tools。客户端不能提交 tenant/actor 身份、上游 token、任意 URL、密码或 secret；写工具仍需审批。
 
-当前 Agent 注册表包含 11 个标准、5 个 profile、4 个可信模块和 5 个固定 MCP resources。机器入口是 [docs/agent/index.json](docs/agent/index.json)；构建产物为 `dist/standards/agent-standard-pack.json`，运行时只读取该 pack；上下文工具是 `system.agent_context.get`。
+当前 Agent 注册表包含 13 个标准、5 个 profile、4 个登记模块和 5 个固定 MCP resources；`runtime-caller` 只投影 cargo、container、agent-access 三个 T0 模块。机器入口是 [docs/agent/index.json](docs/agent/index.json)；构建产物为 `dist/standards/agent-standard-pack.json`，运行时只读取该 pack；上下文工具是 `system.agent_context.get`。
 
 ## 工具与契约
 
-当前 Phase 1 保持九个业务工具，另有一个 T1 测试预览工具和一个 Agent 上下文工具：
+生产 `t0-v1` 只注册下表前三项。其余 Phase 1/T1 工具继续保留在源码和 fixture 回归轨道，
+但不属于 T0 生产目录：
 
-| 类别 | 工具 |
-| --- | --- |
-| 货物与装柜 | cargo.calculate、container.plan_summary |
-| 报价 | quote.canada_final_mile.calculate、quote.save_draft |
-| 关务 | customs.ca.search、customs.ca.estimate |
-| 状态与知识 | system.get_data_status、knowledge.search_curated |
-| 人工复核 | review.create_task |
-| Freightcom 测试报价 | quote.freightcom_ltl.preview |
-| Agent 上下文 | system.agent_context.get |
+| 发布边界 | 类别 | 工具 |
+| --- | --- | --- |
+| `t0-v1` | 货物 | cargo.calculate |
+| `t0-v1` | 装柜理论摘要 | container.plan_summary |
+| `t0-v1` | Agent 上下文 | system.agent_context.get |
+| fixture/后续独立发布 | 报价 | quote.canada_final_mile.calculate、quote.save_draft |
+| fixture/后续独立发布 | 关务 | customs.ca.search、customs.ca.estimate |
+| fixture/后续独立发布 | 状态与知识 | system.get_data_status、knowledge.search_curated |
+| fixture/后续独立发布 | 人工复核 | review.create_task |
+| fixture 测试 | Freightcom 测试预览 | quote.freightcom_ltl.preview |
 
 必须先读：
 
@@ -161,12 +171,13 @@ npm ci
 npm run validate:schemas
 npm run validate:agent-standards
 npm run validate:agent-adapters
+npm run test:access-gateway
 npm run build
 npm run init:control-fixture
 npm run start:fixture
 ~~~
 
-`docs/agent/index.json` 是 Agent 标准的机器入口；`validate:agent-standards` 校验它及 allowlist，`validate:agent-adapters` 校验三份客户端模板和固定资源，`build` 生成真实 runtime bundle 与 `dist/standards/agent-standard-pack.json`。`npm run init:control-fixture` 本身也会先调用 `npm run build`，随后显式初始化 control state；必须先成功执行，startup 不会隐式创建或修复 control DB/marker。`start:fixture` 再以 fixture 模式启动本地服务。若只演示 Freightcom 测试模块，可用 `npm run start:freightcom-test-mcp` 替代 `start:fixture`；该路径仍只产生人工复核结果，不具生产资格。另开一个终端执行：
+`docs/agent/index.json` 是 Agent 标准的机器入口；`validate:agent-standards` 校验它及 allowlist，`validate:agent-adapters` 校验三份客户端模板和固定资源，`build` 生成真实 runtime bundle 与 `dist/standards/agent-standard-pack.json`。`npm run init:control-fixture` 本身会先 build，随后显式初始化 control state、独立 Tenant Access state 和独立 Plugin Config state；startup 不会隐式创建、覆盖或修复它们。旧 checkout 已有 control state 但缺少后两者时，分别只运行一次 `npm run init:tenant-access-fixture` 与 `npm run init:plugin-config-fixture`。`start:fixture` 再以 fixture 模式启动本地服务。若只演示 Freightcom 测试模块，可用 `npm run start:freightcom-test-mcp` 替代 `start:fixture`；该路径仍只产生人工复核结果，不具生产资格。详细步骤见 [Tenant 与 API Key 本地演示 runbook](docs/runbooks/tenant-api-key-fixture.md)。另开一个终端执行：
 
 ~~~bash
 npm run verify:runtime
@@ -177,6 +188,8 @@ npm run verify:runtime
 | 地址 | 用途 | 边界 |
 | --- | --- | --- |
 | http://127.0.0.1:8080/admin/ | 中文脱敏 Admin 快照/本地控制面入口 | 只展示当前进程的 fixture/运行时信息；回滚文案为“回滚到上一已读回版本（本地受控环境）”，不代表生产控制台 |
+| http://127.0.0.1:8080/admin/?fixture=1#tenant-access | 租户与 API Key 本地演示 | 完整 Key 只显示一次；只配置 T0 内置工具权限；确认安全保存并精确读回 operation 后才可在 loopback fixture 调用，生产管理 POST 固定阻断 |
+| http://127.0.0.1:8080/admin/api/v1/access/state | Tenant Access 脱敏状态 | 返回租户、凭证前缀/末四位、交付/有效状态、允许动作和最近 operation，不返回完整 Key |
 | http://127.0.0.1:8080/admin/api/v1/control/state | control state read-only endpoint | loopback fixture；可读回 inventory、activation、preview/approval、release history 和 exact readback |
 | `/admin/api/v1/control/packages/register` 等 control POST | fixture-only 的登记、preview、审批、publish/reconcile API | fixture 可验证写后读回；生产对应管理 POST 固定 HTTP 403，不连接生产 |
 | http://127.0.0.1:8080/mcp | MCP Streamable HTTP 入口 | 本地假 token 为 local-fixture-token |
@@ -213,6 +226,8 @@ src/logistics_mcp/
 └── adapters/        Quote/RiskCustoms/knowledge/status/review 的窄适配与 fixture ports
 
 apps/admin/           中文脱敏只读 Admin 原型与 fixture 自检
+apps/access-console/  Unified Access Gateway 的窄租户接入前端候选
+services/access-gateway/ provider-neutral Key exchange、RS256/JWKS 与生产 fail-closed assembly
 deploy/               Docker、Compose、环境样例、客户端接入模板和 release 脚本
 docs/contracts/       统一包络、工具目录、权威矩阵、Schema 和示例
 docs/agent/           标准注册表、profile 和当前 workstream
@@ -224,6 +239,7 @@ tests/                platform、module-runtime、agent-context、domains、adap
 ## 安全与生产边界
 
 - 生产运行时由服务端注入 tenant/actor 和上游身份映射；客户端不能提交 token、base URL、密码或跨租户上下文。
+- 长期 API Key 不直接长期访问每个 MCP 实例；生产路径必须由企业 IdP/TLS 网关保护的统一凭证网关完成 KMS/Secret Manager 校验、限流、审计和集中吊销，再签发短期 JWT 调用现有 `/mcp`。
 - RiskCustoms M2M 凭据只允许由部署系统挂载的有界普通 secret 文件提供；专用 host、全局出站 allowlist 与本地 tenant 精确白名单必须同时通过，默认不启用，也不回退到浏览器 Cookie、Turnstile 或匿名查询；本地 tenant 白名单不替代上游授权映射。
 - control-plane 的 application root、control DB、marker、management tenant、schema 和 single-process lock 必须通过显式 initializer/兼容门建立并连续核对；startup 不隐式 create/repair。
 - 发布/回滚只操作已挂载模块的 activation policy；回滚通过新 revision 恢复上一份已读回 profile，不修改 target release 或事件历史。pre-control-plane image 不是 managed rollback target。
@@ -233,6 +249,7 @@ tests/                platform、module-runtime、agent-context、domains、adap
 - ready=false 的 RiskCustoms 结果只能进入 unavailable 或 manual_review；AI 不得把候选补成 confirmed，也不得补造税率。
 - 报价和关务数据的权威仍在既有系统；MCP 不在本地建立价格、Zone、关税或客户记录主表。
 - 组合测试通过不等于生产 API 获准启用；生产资格还需要真实合同、认证、tenant mapping、版本/发布证据、staging 读回和安全发布门禁。控制面 fixture 的 `active_verified` 只表示当前本地 runtime exact readback；它不是制品签名、生产授权或业务 API readiness。
+- 单区域上线前必须完成备份恢复、负载测试、告警演练和回滚演练；未完成前只能声明本地 fixture 已验证。
 
 ## 深入阅读
 
@@ -241,7 +258,10 @@ tests/                platform、module-runtime、agent-context、domains、adap
 - [产品实现说明](docs/product/2026-08-11-cross-border-logistics-mcp-product-implementation.md)
 - [后台控制台说明](docs/product/admin-console.md)
 - [Module Runtime + Agent Standard Access RFC](docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md)
+- [T0 Production Profile RFC](docs/rfcs/2026-08-27-t0-production-profile-v1.md)
+- [Credential Exchange RFC](docs/rfcs/2026-08-27-credential-exchange-v1.md)
 - [Module Runtime + Agent Standard Access 实施计划](docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md)
+- [T0 租户接入服务总规划](docs/superpowers/plans/2026-08-27-t0-tenant-access-production-service-plan.md)
 - [API-first 适配实施计划](docs/superpowers/plans/2026-08-12-api-first-integration-plan.md)
 
 ### Agent 与发布
@@ -252,6 +272,8 @@ tests/                platform、module-runtime、agent-context、domains、adap
 - [平台契约标准](docs/standards/platform-contracts.md)
 - [发布 Agent adapter 标准](docs/standards/release-agent-adapters.md)
 - [客户端接入 runbook](docs/runbooks/client-onboarding.md)
+- [T0 单区域发布 runbook](docs/runbooks/t0-release.md)
+- [T0 单区域回滚 runbook](docs/runbooks/t0-rollback.md)
 - [发布 runbook](docs/runbooks/release.md)
 - [安全门禁 runbook](docs/runbooks/security-gates.md)
 - [回滚 runbook](docs/runbooks/rollback.md)

@@ -11,8 +11,13 @@ describe("state-aware client examples", () => {
     expect(content).toContain("[mcp_servers.cross_border_logistics]");
     expect(content).toContain('url = "https://mcp.example.invalid/mcp"');
     expect(content).toContain('bearer_token_env_var = "LOGISTICS_MCP_BEARER_TOKEN"');
-    expect(content).toContain('default_tools_approval_mode = "writes"');
     expect(content).toContain("enabled_tools = [");
+    expect(content).toContain('"cargo.calculate"');
+    expect(content).toContain('"container.plan_summary"');
+    expect(content).toContain('"system.agent_context.get"');
+    expect(content).not.toMatch(/quote\.|customs\.|freightcom|save_draft|create_task|write_tools|approval/i);
+    expect(content).toContain("短期 JWT");
+    expect(content).toContain("待真实 staging 适配验证");
     expect(content).not.toMatch(/^(?:client|client_id|tenant_id|token|endpoint|tools|transport)\s*=/m);
   });
 
@@ -26,6 +31,14 @@ describe("state-aware client examples", () => {
       expect(parsed).not.toHaveProperty("client_id");
       expect(parsed).not.toHaveProperty("tenant_id");
       expect(parsed).not.toHaveProperty("authentication.token");
+      expect(parsed.allowed_tools).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      expect(JSON.stringify(parsed)).not.toMatch(/quote\.|customs\.|freightcom|save_draft|create_task|write_tools|approval/i);
+      expect(JSON.stringify(parsed)).toContain("短期 JWT");
+      expect(JSON.stringify(parsed)).toContain("待真实 staging 适配验证");
     }
   });
 
@@ -49,6 +62,8 @@ describe("state-aware client examples", () => {
     }
     expect(onboarding).toContain("sendable=false");
     expect(onboarding).toContain("theoretical_only=true");
-    expect(onboarding).toContain("system.get_data_status");
+    expect(onboarding).toContain("精确三项");
+    expect(onboarding).toContain("system.agent_context.get");
+    expect(onboarding).toContain("旧的九业务工具");
   });
 });

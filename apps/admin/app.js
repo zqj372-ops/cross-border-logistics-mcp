@@ -17,6 +17,15 @@ import {
   shouldRefreshControlStateAfterFailure,
   validateControlState,
 } from "./control-plane.js";
+import {
+  CONFIG_SCHEMA_VERSION,
+  ConfigPlaneError,
+  createPluginConfigClient,
+  hasExactConfigReadback,
+  validateConfigSpec,
+  validateConfigState,
+  validateConfigValues,
+} from "./plugin-config.js";
 
 const SNAPSHOT_OBJECT_FIELDS = ["tenant", "config", "actor", "health", "approvals"];
 const SNAPSHOT_ARRAY_FIELDS = ["clients", "roles", "tools", "sources", "audit"];
@@ -290,9 +299,9 @@ const VIEW_META = {
     description: "管理对话助手、开发助手和企业助手的身份信息；只显示登记状态，不显示原始凭证。",
   },
   modules: {
-    title: "模块中心",
-    eyebrow: "模块控制面",
-    description: "登记已部署模块，预览本地草稿，经过审批后发布并核对运行时读回。",
+    title: "插件与能力",
+    eyebrow: "能力运营控制面",
+    description: "安全调整一项内置能力，经过校验、预览、审批、发布和服务端精确读回。",
   },
   tools: {
     title: "工具权限",
@@ -340,10 +349,22 @@ const state = isBrowser
       controlDraftDirty: false,
       controlSelection: null,
       controlNotice: null,
+      configState: null,
+      configStateLoading: false,
+      configStatus: "needs_input",
+      configError: null,
+      configDraftValues: null,
+      configDraftDirty: false,
+      configPreview: null,
+      configApproval: null,
+      configExpectedReadback: null,
+      configReleaseId: null,
+      configNotice: null,
     }
   : null;
 
 const controlClient = isBrowser ? createControlPlaneClient() : null;
+const pluginConfigClient = isBrowser ? createPluginConfigClient() : null;
 
 const content = isBrowser ? document.querySelector("#content") : null;
 const liveRegion = isBrowser ? document.querySelector("#live-region") : null;
@@ -817,12 +838,187 @@ function controlNoticeMarkup() {
   return `<div class="callout callout-${escapeHtml(notice.kind)}" role="status"><div class="callout-head"><h2>${escapeHtml(notice.title)}</h2><span class="status-pill status-${mapped}">${escapeHtml(notice.label ?? CONTROL_STATUS_META[notice.status]?.label ?? "未返回")}</span></div><p>${escapeHtml(notice.detail)}</p></div>`;
 }
 
+const CONFIG_STATUS_META = Object.freeze({
+  readback_verified: { status: "success", label: "配置已读回" },
+  active_verified: { status: "success", label: "配置已读回" },
+  validated: { status: "success", label: "草稿已校验" },
+  previewed: { status: "needs_input", label: "预览已生成" },
+  approved: { status: "needs_input", label: "等待发布" },
+  published_pending_apply: { status: "needs_input", label: "等待应用" },
+  restarting: { status: "needs_input", label: "受控重启中" },
+  pending: { status: "needs_input", label: "待确认" },
+  needs_input: { status: "needs_input", label: "需要补充" },
+  manual_review: { status: "manual_review", label: "人工复核" },
+  blocked: { status: "blocked", label: "已阻断" },
+  unavailable: { status: "unavailable", label: "不可用" },
+  unknown: { status: "unavailable", label: "状态未知" },
+});
+
+export function configActionAllowed(configState, ...actions) {
+  return Array.isArray(configState?.allowed_actions)
+    && actions.some((action) => configState.allowed_actions.includes(action));
+}
+
+export function canApproveConfigChange(configState, preview, actorRef) {
+  return configActionAllowed(configState, "approve")
+    && isRecord(preview)
+    && typeof preview.preview_ref === "string"
+    && preview.preview_ref.trim() !== ""
+    && typeof preview.creator_actor_ref === "string"
+    && preview.creator_actor_ref.trim() !== ""
+    && typeof actorRef === "string"
+    && actorRef.trim() !== ""
+    && preview.creator_actor_ref !== actorRef;
+}
+
+function configStatusMarkup(status, label) {
+  const meta = CONFIG_STATUS_META[status] ?? { status: "empty", label: "未返回" };
+  return statusMarkup(meta.status, label ?? meta.label);
+}
+
+function configDigestDisplay(value) {
+  if (typeof value !== "string" || value.trim() === "") return "未返回";
+  return /^sha256:[0-9a-f]{64}$/u.test(value)
+    ? abbreviateDigest(value)
+    : "已记录（摘要隐藏）";
+}
+
+function configFieldLabel(field) {
+  return typeof field?.label === "string" && field.label.trim() !== "" ? field.label : "未命名参数";
+}
+
+function configFieldOptionLabel(field, value) {
+  if (field?.kind === "secret_slot") {
+    return value === undefined || value === null || value === "" ? "未绑定" : "已绑定（值隐藏）";
+  }
+  if (field?.kind === "boolean") return value === true ? "是" : value === false ? "否" : "未返回";
+  if (field?.kind === "enum") {
+    return field.options.find((option) => option.id === value)?.label ?? "未返回";
+  }
+  if (field?.kind === "integer") {
+    if (!Number.isSafeInteger(value)) return "未返回";
+    return `${value}${field.unit ? ` ${field.unit}` : ""}`;
+  }
+  return "未返回";
+}
+
+function configValueMap(values) {
+  return new Map(Array.isArray(values) ? values.map((item) => [item.field_id, item.value]) : []);
+}
+
+function renderConfigCurrentColumn(configState, spec) {
+  const values = configValueMap(configState.current.values);
+  return `<section class="config-column config-column-current" aria-labelledby="config-current-title"><div class="config-column-head"><span class="eyebrow">服务端事实</span><h3 id="config-current-title">当前已读回配置</h3><p>只展示最近一次由服务端返回的 deployment 配置。</p></div><dl class="config-values">${spec.fields.map((field) => `<div class="config-value-row"><dt>${escapeHtml(configFieldLabel(field))}</dt><dd>${escapeHtml(configFieldOptionLabel(field, values.get(field.field_id)))}</dd></div>`).join("")}</dl></section>`;
+}
+
+function renderConfigFieldControl(field, values) {
+  const value = values.get(field.field_id);
+  const id = `config-field-${field.field_id}`;
+  const describedBy = `${id}-help`;
+  const help = [field.description, field.unit ? `单位：${field.unit}` : "", field.minimum !== undefined ? `最小 ${field.minimum}` : "", field.maximum !== undefined ? `最大 ${field.maximum}` : ""].filter(Boolean).join(" · ");
+  let control;
+  if (field.kind === "boolean") {
+    control = `<input id="${escapeHtml(id)}" class="config-checkbox" type="checkbox" data-config-field="${escapeHtml(field.field_id)}" data-config-kind="boolean"${value === true ? " checked" : ""} aria-describedby="${escapeHtml(describedBy)}" />`;
+  } else if (field.kind === "integer") {
+    const min = field.minimum === undefined ? "" : ` min="${field.minimum}"`;
+    const max = field.maximum === undefined ? "" : ` max="${field.maximum}"`;
+    const inputValue = Number.isSafeInteger(value) ? ` value="${value}"` : "";
+    control = `<input id="${escapeHtml(id)}" class="config-input" type="number" step="1"${min}${max}${inputValue} data-config-field="${escapeHtml(field.field_id)}" data-config-kind="integer" aria-describedby="${escapeHtml(describedBy)}" />`;
+  } else {
+    control = `<select id="${escapeHtml(id)}" class="config-select" data-config-field="${escapeHtml(field.field_id)}" data-config-kind="${escapeHtml(field.kind)}" aria-describedby="${escapeHtml(describedBy)}"><option value="">请选择</option>${field.options.map((option) => `<option value="${escapeHtml(option.id)}"${value === option.id ? " selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select>`;
+  }
+  return `<div class="config-field"><label for="${escapeHtml(id)}">${escapeHtml(configFieldLabel(field))}</label>${control}<p id="${escapeHtml(describedBy)}" class="field-help">${escapeHtml(help || "由服务端字段规范约束")}</p></div>`;
+}
+
+function renderConfigDraftColumn(configState, spec, options) {
+  const values = configValueMap(options.draftValues ?? configState.current.values);
+  return `<section class="config-column config-column-draft" aria-labelledby="config-draft-title"><div class="config-column-head"><span class="eyebrow">页面草稿</span><h3 id="config-draft-title">期望变更草稿</h3><p>仅能填写服务端 ConfigSpec 声明的字段；草稿不会直接改变运行时。</p></div><div class="config-fields">${spec.fields.map((field) => renderConfigFieldControl(field, values)).join("")}</div></section>`;
+}
+
+function renderConfigMetadata(configState, statusOverride = null) {
+  const current = configState.current;
+  const reasons = configState.reason_codes.length === 0 ? "无" : `${configState.reason_codes.length} 项（详情由服务端返回）`;
+  return `<dl class="config-metadata"><div><dt>revision</dt><dd>${escapeHtml(String(current.revision))}</dd></div><div><dt>config_digest</dt><dd>${escapeHtml(configDigestDisplay(current.config_digest))}</dd></div><div><dt>module_generation</dt><dd>${escapeHtml(current.module_generation)}</dd></div><div><dt>状态</dt><dd>${configStatusMarkup(statusOverride ?? configState.status)}</dd></div><div><dt>reason_codes</dt><dd>${escapeHtml(reasons)}</dd></div><div><dt>checked_at</dt><dd>${escapeHtml(configState.checked_at)}</dd></div></dl>`;
+}
+
+function configWorkflowActions(configState, options) {
+  const preview = options.preview ?? configState.latest_preview ?? null;
+  const approval = options.approval ?? configState.latest_approval ?? null;
+  const actorRef = options.actorRef;
+  const buttons = [];
+  if (configActionAllowed(configState, "validate", "validate_draft")) {
+    buttons.push(`<button class="button button-secondary" type="button" data-config-action="validate">校验配置草稿</button>`);
+  }
+  if (configActionAllowed(configState, "preview", "create_preview")) {
+    buttons.push(`<button class="button button-secondary" type="button" data-config-action="preview">生成配置预览</button>`);
+  }
+  if (canApproveConfigChange(configState, preview, actorRef)) {
+    buttons.push(`<button class="button button-secondary" type="button" data-config-action="approve">不同管理员审批</button>`);
+  }
+  if (configActionAllowed(configState, "publish") && typeof preview?.preview_ref === "string" && typeof approval?.approval_id === "string") {
+    buttons.push(`<button class="button button-primary" type="button" data-config-action="publish">发布并读回</button>`);
+  }
+  const releaseId = options.releaseId ?? configState.latest_readback?.release_id;
+  if (configActionAllowed(configState, "reconcile") && typeof releaseId === "string") {
+    buttons.push(`<button class="button button-secondary" type="button" data-config-action="reconcile">重新读回</button>`);
+  }
+  if (configActionAllowed(configState, "rollback")) {
+    buttons.push(`<button class="button button-secondary" type="button" data-config-action="rollback">回滚到上一已读回版本（本地受控环境）</button>`);
+  }
+  return buttons.length === 0
+    ? `<p class="field-help config-action-empty">当前没有服务端允许的配置动作。</p>`
+    : `<div class="button-row config-action-row">${buttons.join("")}</div>`;
+}
+
+function renderConfigQualification(moduleId) {
+  if (moduleId !== "freightcom-ltl") return "";
+  return `<div class="config-qualification" role="note"><span class="status-stamp status-stamp-warning">测试能力</span><span class="status-stamp status-stamp-warning">T1</span><span class="status-stamp status-stamp-warning">人工复核</span><span class="status-stamp status-stamp-blocked">未获生产资格</span><p>任何配置读回都不会改变 Freightcom 的测试环境、人工复核和 production_eligible=false 边界。</p></div>`;
+}
+
+export function renderPluginConfigWorkspace(configState, options = {}) {
+  const validatedState = validateConfigState(configState);
+  const spec = validateConfigSpec(validatedState.config_spec);
+  const moduleLabel = validatedState.module_id === "freightcom-ltl" ? "Freightcom LTL 测试插件" : validatedState.module_id;
+  const displayedStatus = options.statusOverride ?? validatedState.status;
+  const header = `<div class="config-workbench-head"><div><span class="eyebrow">P1.5 · 受控配置</span><h2 id="plugin-config-title">${escapeHtml(moduleLabel)}</h2><p>只作用于 deployment；配置变化必须经过校验、预览、不同管理员审批、发布和精确读回。</p></div>${configStatusMarkup(displayedStatus)}</div>${renderConfigQualification(validatedState.module_id)}`;
+  if (spec === null || spec.fields.length === 0) {
+    return `<section class="panel plugin-config-workspace" aria-labelledby="plugin-config-title">${header}<div class="config-empty-state">${statusMarkup("empty", "无可调整参数")}<h3>本插件没有可调整的运行参数</h3><p>服务端没有返回有效 ConfigSpec。页面不会创建价格、Zone、分泡规则、容量或生产开关。</p></div>${renderConfigMetadata(validatedState, displayedStatus)}</section>`;
+  }
+  return `<section class="panel plugin-config-workspace" aria-labelledby="plugin-config-title">${header}<div class="config-two-column">${renderConfigCurrentColumn(validatedState, spec)}${renderConfigDraftColumn(validatedState, spec, options)}</div>${renderConfigMetadata(validatedState, displayedStatus)}<div class="config-route-ledger" aria-label="配置发布航路"><span class="route-ledger-label">配置航路</span><span>草稿</span><span>校验</span><span>预览</span><span>不同管理员审批</span><span>发布</span><span>受控重启</span><span>读回</span></div>${renderConfigNotice(options.notice)}${configWorkflowActions(validatedState, options)}</section>`;
+}
+
+function renderConfigNotice(notice) {
+  if (!isRecord(notice)) return "";
+  const status = CONFIG_STATUS_META[notice.status]?.status ?? "neutral";
+  return `<div class="callout callout-${notice.kind === "warning" ? "warning" : "info"} config-notice" role="status" aria-live="polite"><div class="callout-head"><h3>${escapeHtml(notice.title)}</h3>${statusMarkup(status, notice.label)}</div><p>${escapeHtml(notice.detail)}</p></div>`;
+}
+
+function renderPluginConfigPanel() {
+  if (state.configStateLoading) {
+    return `<section class="panel plugin-config-workspace" aria-labelledby="plugin-config-title" aria-busy="true"><div class="config-workbench-head"><div><span class="eyebrow">P1.5 · 受控配置</span><h2 id="plugin-config-title">配置状态</h2><p>正在读取服务端 ConfigSpec 与 exact readback。</p></div>${statusMarkup("loading")}</div><div class="config-empty-state">${statusMarkup("loading", "正在读取")}<p>没有服务端返回前不生成表单，也不显示假配置。</p></div></section>`;
+  }
+  if (state.configState) {
+    return renderPluginConfigWorkspace(state.configState, {
+      actorRef: state.configState?.actor_ref,
+      draftValues: state.configDraftValues,
+      preview: state.configPreview,
+      approval: state.configApproval,
+      notice: state.configNotice,
+      releaseId: state.configReleaseId,
+      statusOverride: state.configStatus === "readback_verified" || state.configStatus === "active_verified"
+        ? null
+        : state.configStatus,
+    });
+  }
+  return `<section class="panel plugin-config-workspace" aria-labelledby="plugin-config-title"><div class="config-workbench-head"><div><span class="eyebrow">P1.5 · 受控配置</span><h2 id="plugin-config-title">配置状态</h2><p>读取服务端 ConfigSpec 后，页面才会展示获准参数。</p></div>${configStatusMarkup(state.configStatus)}</div><div class="config-empty-state">${statusMarkup(state.configStatus, state.configStatus === "needs_input" ? "需要绑定身份" : "状态不可用")}<h3>暂时不能读取受控配置</h3><p>${escapeHtml(state.configError ?? "请先绑定控制面身份；页面不会使用本地默认值或任意配置表单。")}</p></div></section>`;
+}
+
 function renderControlIdentityPanel() {
   const fixture = state.mode === "fixture" && isFixtureIdentityVisible(window.location.search);
   const actions = fixture
     ? `<div class="identity-actions"><button class="button button-primary" type="button" data-control-action="fixture-identity" data-identity="local_operator">本地演示申请人</button><button class="button button-secondary" type="button" data-control-action="fixture-identity" data-identity="local_approver">本地演示审批人</button></div><p class="field-help">只有 fixture=1 的本地路径显示演示身份；按钮不显示凭证值。</p>`
     : `<button class="button button-primary" type="button" data-control-action="open-identity">输入模块作用域身份</button><p class="field-help">身份只保留在本次页面会话的 API client 中；不写入存储、地址栏、页面文本或日志。</p>`;
-  const bound = state.controlActor ? `<p class="bound-identity">当前身份：<strong>${escapeHtml(state.controlActor.label)}</strong>。控制面状态仍需重新读取。</p>` : "";
+  const bound = state.controlActor ? `<p class="bound-identity">当前身份：<strong>${escapeHtml(state.controlActor.label)}</strong>。控制面状态仍需重新读取。</p><button class="button button-secondary" type="button" data-control-action="clear-identity">清除当前身份</button>` : "";
   const error = state.controlError ? `<p class="field-help">${escapeHtml(state.controlError)}</p>` : "";
   return `<section class="panel identity-panel" aria-labelledby="identity-panel-title"><div class="card-head"><div><h2 id="identity-panel-title">绑定控制面身份</h2><p>模块清单、预览和发布状态只接受服务端控制面读回；旧 snapshot 不替代这里的权限边界。</p></div>${controlStatusMarkup(state.controlStatus)}</div>${bound}${error}${actions}</section>`;
 }
@@ -918,12 +1114,13 @@ function renderControlActions(data) {
   return `<section class="panel control-actions-panel" aria-labelledby="control-actions-title"><div class="card-head"><div><h2 id="control-actions-title">本地受控操作</h2><p>保存草稿只留在当前页面；服务端失败或人工复核时保留原状态。</p></div>${controlStatusMarkup(state.controlStatus)}</div><div class="button-row control-action-row"><button class="button button-secondary" type="button" data-control-action="save-draft">保存草稿</button><button class="button button-secondary" type="button" data-control-action="register"${registerDisabled}>登记选中模块</button><button class="button button-secondary" type="button" data-control-action="generate-preview"${disabled("generatePreview")}>生成预览</button><button class="button button-secondary" type="button" data-control-action="submit-approval"${disabled("submitApproval")}>提交审批</button><button class="button button-primary" type="button" data-control-action="publish"${disabled("publish")}>发布并读回</button><button class="button button-secondary" type="button" data-control-action="reconcile"${disabled("reconcile")}>重新读回</button><button class="button button-secondary" type="button" data-control-action="rollback"${disabled("rollback")}>回滚到上一已读回版本（本地受控环境）</button></div></section>`;
 }
 
-function renderModuleCenter(data) {
+function renderModuleCenter() {
   const controlData = state.controlState;
   return `${pageHeader("modules", `<button class="button button-secondary" type="button" data-control-action="refresh">重新读取</button>`)}
     <div class="callout callout-warning external-authority-warning" role="alert"><div class="callout-head"><h2>外部权威系统</h2>${controlStatusMarkup("manual_review", "固定提醒")}</div><p>报价、关务与客户数据仍由外部权威系统管理</p></div>
     ${controlNoticeMarkup()}
     ${renderControlIdentityPanel()}
+    ${renderPluginConfigPanel()}
     ${state.controlStateLoading ? `<section class="panel loading-panel" aria-live="polite">${statusMarkup("loading")}<h2>正在读取模块控制面</h2><p>只读取服务端状态；未返回前不显示假激活状态。</p></section>` : controlData ? `${renderControlReleaseRail(controlData)}${renderControlStatusCards(controlData)}<div class="module-workspace">${renderControlModuleTable(controlData)}${renderControlInspector(controlData)}</div><div class="control-detail-grid">${renderControlPreview(controlData)}${renderControlReleaseTrail(controlData)}</div>${renderControlActions(controlData)}` : ""}`;
 }
 
@@ -1118,7 +1315,7 @@ function renderArchitecture(data) {
 
 function renderView() {
   if (state.loading) return renderLoading();
-  if (state.view === "modules") return renderModuleCenter(state.data);
+  if (state.view === "modules") return renderModuleCenter();
   if (state.error) return renderError();
   if (!state.data) return renderError();
   switch (state.view) {
@@ -1273,6 +1470,13 @@ function controlIdempotencyKey() {
   return `admin-ui-${suffix}`;
 }
 
+function configIdempotencyKey() {
+  const suffix = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${state.controlActor?.actor ?? "session"}`;
+  return `admin-config-ui-${suffix}`;
+}
+
 function setControlState(controlState) {
   state.controlState = validateControlState(controlState);
   if (!state.controlDraftDirty) {
@@ -1297,6 +1501,7 @@ async function loadControlState({ announce = false, preserveNotice = false } = {
     setControlState(await controlClient.getControlState());
     state.controlStatus = "complete";
     if (!preserveNotice) state.controlNotice = null;
+    if (state.view === "modules") void loadPluginConfigState({ preserveNotice });
     return true;
   } catch (error) {
     const failure = controlErrorNotice(error, "读取模块控制面");
@@ -1306,6 +1511,340 @@ async function loadControlState({ announce = false, preserveNotice = false } = {
   } finally {
     state.controlStateLoading = false;
     render(announce);
+  }
+}
+
+function configErrorNotice(error, actionLabel) {
+  const status = error instanceof ConfigPlaneError && CONFIG_STATUS_META[error.status]
+    ? error.status
+    : "unavailable";
+  const detail = status === "manual_review"
+    ? `${actionLabel}返回结果无法精确确认；页面保留人工复核状态并重新读取。`
+    : status === "blocked"
+      ? `${actionLabel}已被服务端阻断；没有把操作显示为成功。`
+      : `${actionLabel}未完成；没有把浏览器草稿显示为运行时配置。`;
+  return { status, detail };
+}
+
+function selectedConfigModuleId() {
+  const selected = controlSelectedModule(state.controlState);
+  return typeof selected?.module_id === "string" ? selected.module_id : null;
+}
+
+function cloneConfigValues(values) {
+  return Array.isArray(values) ? values.map((value) => ({ ...value })) : [];
+}
+
+function resetPluginConfigState(status = "needs_input", error = null) {
+  state.configState = null;
+  state.configStateLoading = false;
+  state.configStatus = status;
+  state.configError = error;
+  state.configDraftValues = null;
+  state.configDraftDirty = false;
+  state.configPreview = null;
+  state.configApproval = null;
+  state.configExpectedReadback = null;
+  state.configReleaseId = null;
+}
+
+async function loadPluginConfigState({ announce = false, preserveNotice = false } = {}) {
+  if (!pluginConfigClient || !state.controlActor) {
+    resetPluginConfigState("needs_input", "请先绑定控制面身份；配置凭证只保留在当前页面内存。");
+    if (!preserveNotice) state.configNotice = null;
+    render(announce);
+    return false;
+  }
+  const moduleId = selectedConfigModuleId();
+  if (moduleId === null) {
+    resetPluginConfigState("unavailable", "服务端没有返回可选择的插件模块。");
+    if (!preserveNotice) state.configNotice = null;
+    render(announce);
+    return false;
+  }
+  state.configStateLoading = true;
+  state.configError = null;
+  render();
+  try {
+    const loaded = validateConfigState(await pluginConfigClient.getState(moduleId));
+    if (loaded.module_id !== moduleId) {
+      throw new ConfigPlaneError("配置状态与当前插件不匹配。", {
+        status: "manual_review",
+        reasonCodes: ["config_module_mismatch"],
+      });
+    }
+    if (selectedConfigModuleId() !== moduleId) {
+      throw new ConfigPlaneError("配置读取期间插件选择发生变化。", {
+        status: "manual_review",
+        reasonCodes: ["config_selection_changed"],
+      });
+    }
+    state.configState = loaded;
+    state.configStatus = loaded.status;
+    if (!state.configDraftDirty) state.configDraftValues = cloneConfigValues(loaded.current.values);
+    state.configPreview = loaded.latest_preview ?? null;
+    state.configApproval = loaded.latest_approval ?? null;
+    state.configReleaseId = loaded.latest_readback?.release_id ?? state.configReleaseId;
+    state.configExpectedReadback = null;
+    state.configError = null;
+    if (!preserveNotice) state.configNotice = null;
+    return true;
+  } catch (error) {
+    const failure = configErrorNotice(error, "读取插件配置");
+    resetPluginConfigState(failure.status, failure.detail);
+    return false;
+  } finally {
+    state.configStateLoading = false;
+    render(announce);
+  }
+}
+
+function configInputForField(fieldId) {
+  return [...document.querySelectorAll("[data-config-field]")]
+    .find((candidate) => candidate.dataset.configField === fieldId) ?? null;
+}
+
+function readPluginConfigDraftValues(configState) {
+  const spec = validateConfigSpec(configState.config_spec);
+  if (spec === null) return [];
+  return spec.fields.map((field) => {
+    const input = configInputForField(field.field_id);
+    if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLSelectElement)) {
+      throw new Error(`配置字段 ${field.field_id} 未渲染。`);
+    }
+    const value = field.kind === "boolean"
+      ? input.checked
+      : field.kind === "integer"
+        ? Number(input.value)
+        : input.value;
+    return { field_id: field.field_id, kind: field.kind, value };
+  });
+}
+
+function configActionIdentity(result) {
+  if (!isRecord(result)) return null;
+  const identity = {
+    revision: result.revision,
+    config_digest: result.config_digest,
+    module_generation: result.module_generation,
+  };
+  return Number.isSafeInteger(identity.revision)
+    && identity.revision >= 0
+    && typeof identity.config_digest === "string"
+    && typeof identity.module_generation === "string"
+    ? identity
+    : null;
+}
+
+async function runPluginConfigOperation(label, operation, {
+  expectedReadback = null,
+  expectedReadbackFromResult = false,
+  resetDraft = false,
+} = {}) {
+  if (state.configStateLoading || !pluginConfigClient) return;
+  state.configStateLoading = true;
+  state.configStatus = "pending";
+  state.configNotice = {
+    kind: "info",
+    status: "pending",
+    title: `${label}进行中`,
+    detail: "正在等待服务端结果；运行时状态不会提前变化。",
+    label: "等待服务端",
+  };
+  render(true);
+  try {
+    const result = await operation();
+    const operationExpectedReadback = expectedReadback
+      ?? (expectedReadbackFromResult ? configActionIdentity(result) : null);
+    if (typeof result?.release_id === "string") state.configReleaseId = result.release_id;
+    const readbackOk = await loadPluginConfigState({ preserveNotice: true });
+    if (!readbackOk || state.configState === null) return;
+    if (operationExpectedReadback !== null) {
+      if (hasExactConfigReadback(operationExpectedReadback, state.configState)) {
+        if (resetDraft) state.configDraftDirty = false;
+        state.configExpectedReadback = operationExpectedReadback;
+        state.configStatus = "readback_verified";
+        state.configNotice = {
+          kind: "info",
+          status: "readback_verified",
+          title: "配置已读回",
+          detail: `revision ${operationExpectedReadback.revision}、config_digest 和 module_generation 均与服务端运行时读回一致。`,
+          label: "配置已读回",
+        };
+      } else if (["published_pending_apply", "restarting", "pending"].includes(state.configState.status)) {
+        state.configExpectedReadback = operationExpectedReadback;
+        state.configStatus = state.configState.status;
+        state.configNotice = {
+          kind: "info",
+          status: state.configState.status,
+          title: `${label}等待受控读回`,
+          detail: "服务端已返回待应用或重启状态；页面不会提前显示配置已生效，请使用服务端允许的重新读回动作。",
+          label: CONFIG_STATUS_META[state.configState.status]?.label ?? "待确认",
+        };
+      } else {
+        state.configStatus = "manual_review";
+        state.configExpectedReadback = operationExpectedReadback;
+        state.configNotice = {
+          kind: "warning",
+          status: "manual_review",
+          title: `${label}未完成精确读回`,
+          detail: "服务端返回了结果，但 revision、config_digest 或 module_generation 未与运行时读回完全匹配。",
+          label: "人工复核",
+        };
+      }
+    } else {
+      state.configStatus = state.configState.status;
+      state.configNotice = {
+        kind: "info",
+        status: state.configState.status,
+        title: `${label}已返回`,
+        detail: "已重新读取服务端状态；HTTP 成功、审批或发布返回本身不等于运行时配置已生效。",
+        label: "等待精确读回",
+      };
+    }
+    void result;
+  } catch (error) {
+    const failure = configErrorNotice(error, label);
+    state.configStatus = failure.status;
+    state.configNotice = {
+      kind: "warning",
+      status: failure.status,
+      title: `${label}未完成`,
+      detail: failure.detail,
+      label: CONFIG_STATUS_META[failure.status]?.label ?? "未完成",
+    };
+    if (failure.status === "manual_review" || failure.status === "blocked") {
+      const refreshed = await loadPluginConfigState({ preserveNotice: true });
+      if (refreshed) state.configStatus = failure.status;
+    }
+  } finally {
+    state.configStateLoading = false;
+    render(true);
+  }
+}
+
+async function handlePluginConfigAction(target) {
+  const action = target.dataset.configAction;
+  if (!action || !state.configState || !state.controlActor) return;
+  const configState = state.configState;
+  if (!configActionAllowed(configState, action, action === "validate" ? "validate_draft" : action === "preview" ? "create_preview" : action)) {
+    state.configNotice = {
+      kind: "warning",
+      status: "blocked",
+      title: "动作未获服务端授权",
+      detail: "页面只服从当前 config state 的 allowed_actions，没有自行推断可执行操作。",
+      label: "已阻断",
+    };
+    render(true);
+    return;
+  }
+  if (action === "rollback") {
+    state.configStatus = "manual_review";
+    state.configNotice = {
+      kind: "warning",
+      status: "manual_review",
+      title: "回滚目标未返回",
+      detail: "服务端允许回滚，但没有返回可验证的受控目标；页面未猜测 release 标识，也未发送替代请求。",
+      label: "人工复核",
+    };
+    render(true);
+    return;
+  }
+
+  let draftValues;
+  try {
+    draftValues = readPluginConfigDraftValues(configState);
+    validateConfigValues(draftValues, configState.config_spec);
+  } catch (error) {
+    state.configStatus = "needs_input";
+    state.configNotice = {
+      kind: "warning",
+      status: "needs_input",
+      title: "草稿未通过本地闭合校验",
+      detail: error instanceof Error ? error.message : "字段值无效；没有发送请求。",
+      label: "需要补充",
+    };
+    render(true);
+    return;
+  }
+
+  const draftRequest = {
+    schema_version: CONFIG_SCHEMA_VERSION,
+    module_id: configState.module_id,
+    base_revision: configState.current.revision,
+    values: draftValues,
+  };
+  if (action === "validate" || action === "validate_draft") {
+    await runPluginConfigOperation("校验配置草稿", () => pluginConfigClient.validateDraft(draftRequest, configIdempotencyKey()));
+    return;
+  }
+  if (action === "preview" || action === "create_preview") {
+    await runPluginConfigOperation("生成配置预览", () => pluginConfigClient.createPreview(draftRequest, configIdempotencyKey()));
+    return;
+  }
+  if (action === "approve") {
+    const preview = state.configPreview ?? configState.latest_preview;
+    const actorRef = configState.actor_ref;
+    if (!canApproveConfigChange(configState, preview, actorRef)) {
+      state.configStatus = "blocked";
+      state.configNotice = {
+        kind: "warning",
+        status: "blocked",
+        title: "审批门禁未满足",
+        detail: "审批人必须是服务端允许的不同身份；创建人不能审批自己的预览。",
+        label: "已阻断",
+      };
+      render(true);
+      return;
+    }
+    await runPluginConfigOperation("审批配置预览", () => pluginConfigClient.decideApproval({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      preview_ref: preview.preview_ref,
+      decision: "approve",
+      reason_code: "admin_ui_config_approval",
+    }, configIdempotencyKey()));
+    return;
+  }
+  if (action === "publish") {
+    const preview = state.configPreview ?? configState.latest_preview;
+    const approval = state.configApproval ?? configState.latest_approval;
+    if (!isRecord(preview) || !isRecord(approval) || preview.preview_ref !== approval.preview_ref) {
+      state.configStatus = "blocked";
+      state.configNotice = {
+        kind: "warning",
+        status: "blocked",
+        title: "发布门禁未满足",
+        detail: "发布必须引用同一服务端预览和不同管理员审批记录。",
+        label: "已阻断",
+      };
+      render(true);
+      return;
+    }
+    await runPluginConfigOperation("发布配置", () => pluginConfigClient.publish({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      preview_ref: preview.preview_ref,
+      approval_id: approval.approval_id,
+    }, configIdempotencyKey()), { expectedReadbackFromResult: true, resetDraft: true });
+    return;
+  }
+  if (action === "reconcile") {
+    const releaseId = state.configReleaseId ?? configState.latest_readback?.release_id;
+    if (typeof releaseId !== "string") {
+      state.configStatus = "manual_review";
+      state.configNotice = {
+        kind: "warning",
+        status: "manual_review",
+        title: "无法重新读回",
+        detail: "服务端没有返回可验证的 release 标识；页面未猜测目标。",
+        label: "人工复核",
+      };
+      render(true);
+      return;
+    }
+    await runPluginConfigOperation("重新读回配置", () => pluginConfigClient.reconcile({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      release_id: releaseId,
+    }, configIdempotencyKey()), { expectedReadbackFromResult: true });
   }
 }
 
@@ -1335,8 +1874,9 @@ function closeIdentityDialog() {
 }
 
 function bindControlIdentity(identity) {
-  if (!controlClient || !identity) return;
+  if (!controlClient || !pluginConfigClient || !identity) return;
   controlClient.setToken(identity.token);
+  pluginConfigClient.setToken(identity.token);
   state.controlActor = {
     ...(typeof identity.actor === "string" ? { actor: identity.actor } : {}),
     label: identity.label,
@@ -1347,8 +1887,26 @@ function bindControlIdentity(identity) {
   state.controlDraftModules = null;
   state.controlDraftDirty = false;
   state.controlNotice = null;
+  resetPluginConfigState("pending", null);
+  state.configNotice = null;
   closeIdentityDialog();
   void loadControlState({ announce: true });
+}
+
+function clearControlIdentity() {
+  controlClient?.clearToken();
+  pluginConfigClient?.clearToken();
+  state.controlActor = null;
+  state.controlState = null;
+  state.controlStatus = "needs_input";
+  state.controlError = null;
+  state.controlDraftModules = null;
+  state.controlDraftDirty = false;
+  state.controlSelection = null;
+  state.controlNotice = null;
+  resetPluginConfigState("needs_input", "请先绑定控制面身份；配置凭证只保留在当前页面内存。");
+  state.configNotice = null;
+  render(true);
 }
 
 function submitControlIdentity() {
@@ -1406,6 +1964,10 @@ async function handleControlAction(target) {
     openIdentityDialog();
     return;
   }
+  if (action === "clear-identity") {
+    clearControlIdentity();
+    return;
+  }
   if (action === "fixture-identity") {
     const identity = FIXTURE_IDENTITIES.find((item) => item.actor === target.dataset.identity);
     if (state.mode === "fixture" && isFixtureIdentityVisible(window.location.search)) bindControlIdentity(identity);
@@ -1415,7 +1977,10 @@ async function handleControlAction(target) {
     const module = controlModuleFromKey(state.controlState, target.dataset.moduleId, target.dataset.moduleVersion);
     if (module) {
       state.controlSelection = controlModuleKey(module);
+      resetPluginConfigState("pending", null);
+      state.configNotice = null;
       render(true);
+      void loadPluginConfigState({ announce: true });
       queueMicrotask(() => target.focus());
     }
     return;
@@ -1539,6 +2104,10 @@ if (isBrowser) {
 document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target.closest("button, a") : null;
   if (!target) return;
+  if (target.dataset.configAction) {
+    void handlePluginConfigAction(target);
+    return;
+  }
   if (target.dataset.controlAction) {
     void handleControlAction(target);
     return;
@@ -1550,6 +2119,7 @@ document.addEventListener("click", (event) => {
     window.history.replaceState(null, "", `#${view}`);
     render(true);
     focusMain();
+    if (view === "modules" && state.controlActor && state.controlState) void loadPluginConfigState({ announce: true });
     return;
   }
 
@@ -1587,6 +2157,17 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("change", (event) => {
   const target = event.target;
+  if (target instanceof HTMLInputElement && target.matches("[data-config-field]")
+    || target instanceof HTMLSelectElement && target.matches("[data-config-field]")) {
+    state.configDraftDirty = true;
+    try {
+      if (state.configState) state.configDraftValues = readPluginConfigDraftValues(state.configState);
+    } catch {
+      state.configDraftValues = null;
+    }
+    liveRegion.textContent = "配置草稿已在当前页面内存中更新，运行时尚未改变";
+    return;
+  }
   if (!(target instanceof HTMLSelectElement) || !target.matches("[data-role-filter]")) return;
   state.roleFilter = target.value;
   render();
@@ -1596,6 +2177,7 @@ window.addEventListener("hashchange", () => {
   state.view = getViewFromHash();
   render(true);
   focusMain();
+  if (state.view === "modules" && state.controlActor && state.controlState) void loadPluginConfigState({ announce: true });
 });
 
 dialog.addEventListener("cancel", (event) => {
@@ -1611,6 +2193,11 @@ document.querySelector("#identity-form")?.addEventListener("submit", (event) => 
 identityDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeIdentityDialog();
+});
+
+window.addEventListener("pagehide", () => {
+  controlClient?.clearToken();
+  pluginConfigClient?.clearToken();
 });
 
 render();

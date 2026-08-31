@@ -39,8 +39,10 @@ import {
   type SessionRuntimeRegistry,
 } from "../platform/session-runtime";
 import {
+  agentContextToolName,
   CrossTenantAccessError,
   ForbiddenError,
+  toolVisibleForContext,
 } from "../platform/rbac";
 import {
   IdempotencyConflictError,
@@ -658,6 +660,7 @@ function registerMcpTools(
   const missingContractInputSchema = z.object({}).catchall(z.unknown());
   const outputSchema = envelopeSchema.meta({ $schema: JSON_SCHEMA_2020_12 });
   for (const definition of definitions) {
+    if (!toolVisibleForContext(context, definition.name)) continue;
     server.registerTool(
       definition.name,
       {
@@ -821,10 +824,15 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       allowedHosts: [...options.allowedHosts],
       allowedOrigins: [...options.allowedOrigins],
       enableDnsRebindingProtection: true,
-      onsessionclosed: (closedSessionId) => {
+      onsessionclosed: async (closedSessionId) => {
         createdSessionIds.delete(closedSessionId);
-        void sessions.delete(closedSessionId).catch(() => undefined);
-        void sessionBindingStore?.delete(closedSessionId).catch(() => undefined);
+        const results = await Promise.allSettled([
+          sessions.delete(closedSessionId),
+          sessionBindingStore?.delete(closedSessionId),
+        ]);
+        if (results.some((result) => result.status === "rejected")) {
+          throw new Error("The MCP session could not be terminated durably.");
+        }
       },
     });
     const server = new McpServer(
@@ -841,7 +849,10 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       idempotencyRepository,
       requestSignals,
     );
-    if (options.agentAccessRuntime !== undefined) {
+    if (
+      options.agentAccessRuntime !== undefined
+      && toolVisibleForContext(context, agentContextToolName)
+    ) {
       registerAgentResources(server, options.agentAccessRuntime, context);
     }
     const runtime: SessionRuntimeHandle = { transport, server };

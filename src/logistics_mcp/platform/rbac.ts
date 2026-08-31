@@ -23,6 +23,33 @@ export const agentContextToolName = "system.agent_context.get" as const;
 export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
 type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName;
 
+export const tenantApiKeyToolNames = Object.freeze([
+  "cargo.calculate",
+  "container.plan_summary",
+  agentContextToolName,
+] as const);
+
+export type TenantApiKeyToolName = (typeof tenantApiKeyToolNames)[number];
+export type TenantApiKeyToolScope = `tool:${TenantApiKeyToolName}`;
+
+const tenantApiKeyToolNameSet = new Set<string>(tenantApiKeyToolNames);
+
+export function tenantApiKeyScopeForToolName(
+  toolName: TenantApiKeyToolName,
+): TenantApiKeyToolScope {
+  return `tool:${toolName}`;
+}
+
+export function tenantApiKeyToolNameFromScope(
+  scope: string,
+): TenantApiKeyToolName | null {
+  if (!scope.startsWith("tool:")) return null;
+  const toolName = scope.slice("tool:".length);
+  return tenantApiKeyToolNameSet.has(toolName)
+    ? toolName as TenantApiKeyToolName
+    : null;
+}
+
 type ToolPolicy = {
   readonly permission: string;
   readonly kind: "read" | "write";
@@ -87,6 +114,51 @@ function hasScope(context: ExecutionContext, permission: string): boolean {
   );
 }
 
+function usesExactToolEntitlements(context: ExecutionContext): boolean {
+  return context.scopes.some((scope) => scope.startsWith("tool:"));
+}
+
+function hasExactToolEntitlement(context: ExecutionContext, toolName: string): boolean {
+  return tenantApiKeyToolNameSet.has(toolName)
+    && context.scopes.includes(`tool:${toolName}`);
+}
+
+export function isExactT0ServiceIdentity(input: Readonly<{
+  readonly role: unknown;
+  readonly roles: unknown;
+  readonly scopes: unknown;
+}>): boolean {
+  return input.role === "service"
+    && Array.isArray(input.roles)
+    && input.roles.length === 1
+    && input.roles[0] === "service"
+    && Array.isArray(input.scopes)
+    && input.scopes.length > 0
+    && input.scopes.every((scope): scope is string => typeof scope === "string")
+    && new Set(input.scopes).size === input.scopes.length
+    && input.scopes.every((scope) => tenantApiKeyToolNameFromScope(scope) !== null);
+}
+
+function assertT0ServiceScopeBoundary(context: ExecutionContext): void {
+  // The production credential-exchange contract issues T0 JWTs only as a
+  // service identity. A tool:* entitlement marks that context as T0; legacy
+  // service-to-service contexts without tool entitlements remain governed by
+  // their existing business scope. The production composition separately
+  // requires every incoming identity to be an exact T0 service identity.
+  if (context.role !== "service" || !usesExactToolEntitlements(context)) return;
+  if (!isExactT0ServiceIdentity(context)) {
+    throw new ForbiddenError("The authenticated scope cannot be used for the T0 production profile.");
+  }
+}
+
+export function toolVisibleForContext(
+  context: ExecutionContext,
+  toolName: string,
+): boolean {
+  assertT0ServiceScopeBoundary(context);
+  return !usesExactToolEntitlements(context) || hasExactToolEntitlement(context, toolName);
+}
+
 export function assertTenantScope(
   context: ExecutionContext,
   targetTenantId = context.tenantId,
@@ -102,6 +174,7 @@ export function authorizeTool(
   targetTenantId = context.tenantId,
 ): true {
   assertTenantScope(context, targetTenantId);
+  assertT0ServiceScopeBoundary(context);
 
   if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");
@@ -110,7 +183,11 @@ export function authorizeTool(
   if (!context.roles.some((role) => policy.roles.includes(role))) {
     throw new ForbiddenError("The authenticated role cannot use this tool.");
   }
-  if (!hasScope(context, policy.permission)) {
+  if (
+    usesExactToolEntitlements(context)
+      ? !hasExactToolEntitlement(context, toolName)
+      : !hasScope(context, policy.permission)
+  ) {
     throw new ForbiddenError("The authenticated scope cannot use this tool.");
   }
 

@@ -757,6 +757,12 @@ export class SqliteProductionStore
       const ready = schemaVersion(this.database) === SCHEMA_VERSION;
       if (!ready) return { ready: false };
       verifySchema(this.database);
+      const now = this.now();
+      this.transaction(() => {
+        const database = this.openDatabase();
+        database.prepare("DELETE FROM session_bindings WHERE expires_at_ms <= ?").run(now);
+        database.prepare("DELETE FROM idempotency_records WHERE expires_at <= ?").run(now);
+      });
       this.database.exec("BEGIN IMMEDIATE; ROLLBACK");
       return { ready: true };
     } catch {

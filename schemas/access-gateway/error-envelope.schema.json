@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.logistics-mcp.invalid/access-gateway/error-envelope.schema.json",
+  "title": "Unified Access Gateway error envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "data", "code", "request_id"],
+  "properties": {
+    "schema_version": {
+      "const": "2026-08-27.v1"
+    },
+    "status": {
+      "enum": ["needs_input", "blocked", "unavailable"]
+    },
+    "data": {
+      "type": "null"
+    },
+    "code": {
+      "enum": [
+        "invalid_request",
+        "authentication_failed",
+        "tool_entitlement_denied",
+        "rate_limited",
+        "access_gateway_unavailable"
+      ]
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^req_[A-Za-z0-9_-]{8,128}$"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": { "const": "needs_input" },
+        "code": { "const": "invalid_request" }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "blocked" },
+        "code": {
+          "enum": ["authentication_failed", "tool_entitlement_denied", "rate_limited"]
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "unavailable" },
+        "code": { "const": "access_gateway_unavailable" }
+      }
+    }
+  ]
+}

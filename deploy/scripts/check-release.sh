@@ -15,6 +15,11 @@ test -s "$ROOT_DIR/deploy/compose.yml"
 test -s "$ROOT_DIR/deploy/env.example"
 test -s "$ROOT_DIR/docs/runbooks/release.md"
 test -s "$ROOT_DIR/docs/runbooks/rollback.md"
+test -s "$ROOT_DIR/docs/rfcs/2026-08-27-t0-production-profile-v1.md"
+test -s "$ROOT_DIR/docs/rfcs/2026-08-27-credential-exchange-v1.md"
+test -s "$ROOT_DIR/docs/runbooks/t0-release.md"
+test -s "$ROOT_DIR/docs/runbooks/t0-rollback.md"
+test -s "$ROOT_DIR/docs/runbooks/t0-single-region-evidence.template.md"
 
 node docs/contracts/quote-v2-contract.test.mjs
 

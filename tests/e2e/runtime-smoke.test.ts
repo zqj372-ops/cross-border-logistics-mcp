@@ -234,6 +234,10 @@ describe("built runtime smoke", () => {
       expect(first.status).toBe(0);
       expect(existsSync(resolve(stateDirectory, "control.sqlite"))).toBe(true);
       expect(existsSync(resolve(stateDirectory, "control-identity.json"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-tenant-access/access.sqlite"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-tenant-access/access-identity.json"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-plugin-config/config.sqlite"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-plugin-config/config-identity.json"))).toBe(true);
 
       const second = spawnSync(process.execPath, [realWrapper], {
         cwd: "/tmp",
@@ -387,7 +391,7 @@ describe("built runtime smoke", () => {
       expect(readinessBody.reasons).toEqual(["fixture_mode_not_production_ready"]);
       const admin = await fetch(`http://127.0.0.1:${port}/admin/?fixture=1`);
       expect(admin.status).toBe(200);
-      expect(await admin.text()).toContain("跨境物流控制台");
+      expect(await admin.text()).toContain("跨境物流 Agent 能力运营");
       const adminSnapshot = await fetch(`http://127.0.0.1:${port}/admin/api/v1/snapshot`);
       expect(adminSnapshot.status).toBe(200);
       expect(await adminSnapshot.json()).toMatchObject({

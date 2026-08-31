@@ -3,23 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="跨境物流控制台：管理客户端、权限、数据来源状态、审批和审计。" />
-    <title>跨境物流控制台</title>
+    <meta name="description" content="跨境物流 Agent 能力运营：安全调整内置能力，并用服务端读回证明生效。" />
+    <title>跨境物流 Agent 能力运营</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div id="app" data-state="loading">
       <header class="topbar">
-        <a class="brand" href="#overview" aria-label="跨境物流控制台首页">
+        <a class="brand" href="#overview" aria-label="跨境物流 Agent 能力运营首页">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" role="img">
               <path d="M6 7.5h20v5H6zM6 15h13v5H6zM6 22.5h20v2H6z" fill="currentColor" />
             </svg>
           </span>
           <span>
-            <span class="brand-title">跨境物流平台</span>
-            <span class="brand-subtitle">控制台</span>
+            <span class="brand-title">FreightClaw</span>
+            <span class="brand-subtitle">能力运营</span>
           </span>
         </a>
         <div class="topbar-context" aria-label="当前上下文">
@@ -32,7 +32,7 @@
             <span id="environment-badge" class="status-pill status-neutral">未连接</span>
           </div>
           <div class="context-item context-version">
-            <span class="context-label">配置版本</span>
+            <span class="context-label">当前配置</span>
             <strong id="config-version">—</strong>
           </div>
           <div class="context-item actor-item">
@@ -46,13 +46,13 @@
       <div class="app-layout">
         <aside class="sidebar" aria-label="控制台导航区域">
           <div class="sidebar-heading">
-            <span class="eyebrow">平台控制面</span>
-            <span class="muted">只管理接入与发布边界</span>
+            <span class="eyebrow">能力航路账本</span>
+            <span class="muted">只管理接入、配置与发布边界</span>
           </div>
           <nav aria-label="控制台主导航">
             <ul id="primary-nav" class="nav-list">
               <li><button class="nav-item is-active" type="button" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true"></span><span>总览</span></button></li>
-              <li><button class="nav-item" type="button" data-view="modules"><span class="nav-icon" aria-hidden="true"></span><span>模块中心</span></button></li>
+              <li><button class="nav-item" type="button" data-view="modules"><span class="nav-icon" aria-hidden="true"></span><span>插件与能力</span><span class="sr-only">模块中心</span></button></li>
               <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"></span><span>Agent 接入</span></button></li>
               <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"></span><span>适配器状态</span></button></li>
               <li><button class="nav-item" type="button" data-view="approvals"><span class="nav-icon" aria-hidden="true"></span><span>审批与发布</span></button></li>
@@ -62,7 +62,7 @@
           </nav>
           <div class="sidebar-note">
             <span class="icon-wrap" aria-hidden="true"></span>
-            <p>报价、关税和装柜数据仍在原系统。本页只展示引用、权限、状态和审批。</p>
+            <p>报价、关税和装柜数据仍在原系统。本页只调整获准能力，并以服务端读回为准。</p>
           </div>
         </aside>
 
@@ -79,7 +79,7 @@
       </div>
 
       <footer class="app-footer">
-        <span>控制台范围：接入、适配器、模块草稿、审批边界和审计状态</span>
+        <span>运营范围：插件能力、受控配置、接入、审批边界和审计状态</span>
         <span id="footer-mode">未连接正式后台</span>
       </footer>
     </div>

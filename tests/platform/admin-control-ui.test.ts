@@ -17,9 +17,99 @@ import {
   shouldRefreshControlStateAfterFailure,
   validateControlState,
 } from "../../apps/admin/control-plane.js";
+import {
+  CONFIG_SCHEMA_VERSION,
+  createPluginConfigClient,
+  hasExactConfigReadback,
+  validateConfigSpec,
+  validateConfigState,
+  validateConfigValues,
+} from "../../apps/admin/plugin-config.js";
+import {
+  canApproveConfigChange,
+  renderPluginConfigWorkspace,
+} from "../../apps/admin/app.js";
 
 const descriptorDigest = `sha256:${"a".repeat(64)}`;
 const PREVIEW_ACTIVE_NOW_MS = Date.parse("2026-08-26T00:02:00Z");
+
+const freightConfigSpec = {
+  spec_id: "freightcom-test",
+  version: "v1",
+  scope: "deployment",
+  restart_policy: "controlled_restart",
+  fields: [
+    {
+      field_id: "timeout_seconds",
+      kind: "integer",
+      label: "请求超时",
+      description: "测试请求的最长等待时间。",
+      unit: "秒",
+      minimum: 1,
+      maximum: 60,
+      required: true,
+    },
+    {
+      field_id: "poll_interval_seconds",
+      kind: "integer",
+      label: "轮询间隔",
+      description: "测试状态查询之间的间隔。",
+      unit: "秒",
+      minimum: 1,
+      maximum: 30,
+      required: true,
+    },
+    {
+      field_id: "max_attempts",
+      kind: "integer",
+      label: "最大轮询次数",
+      description: "测试状态查询的最大次数。",
+      unit: "次",
+      minimum: 1,
+      maximum: 30,
+      required: true,
+    },
+    {
+      field_id: "egress_profile",
+      kind: "enum",
+      label: "出站档位",
+      description: "仅选择部署端批准的测试档位。",
+      options: [{ id: "egress_test_primary", label: "测试固定主机" }],
+      required: true,
+    },
+    {
+      field_id: "secret_slot",
+      kind: "secret_slot",
+      label: "凭证槽位",
+      description: "只绑定已批准的测试凭证槽位。",
+      options: [{ id: "secret_test_a", label: "测试凭证 A" }],
+      required: true,
+    },
+  ],
+} as const;
+
+const freightConfigState = {
+  schema_version: CONFIG_SCHEMA_VERSION,
+  module_id: "freightcom-ltl",
+  actor_ref: "actor-approver",
+  config_spec: freightConfigSpec,
+  current: {
+    revision: 7,
+    config_digest: "config-digest-7",
+    module_generation: "freightcom-generation-7",
+    values: [
+      { field_id: "timeout_seconds", kind: "integer", value: 10 },
+      { field_id: "poll_interval_seconds", kind: "integer", value: 1 },
+      { field_id: "max_attempts", kind: "integer", value: 10 },
+      { field_id: "egress_profile", kind: "enum", value: "egress_test_primary" },
+      { field_id: "secret_slot", kind: "secret_slot", value: "secret_test_a" },
+    ],
+  },
+  status: "readback_verified",
+  reason_codes: [],
+  checked_at: "2026-08-31T10:00:00Z",
+  allowed_actions: ["validate", "preview", "approve", "publish", "reconcile", "rollback"],
+} as const;
 
 function availabilityAtPreviewTime(
   input: Omit<Parameters<typeof actionAvailability>[0], "nowMs">,
@@ -1419,5 +1509,218 @@ describe("admin control-plane model boundary", () => {
     expect(css).toContain("prefers-reduced-motion");
     expect(css).toContain("overflow-x: auto");
     expect(css).not.toMatch(/linear-gradient|radial-gradient|backdrop-filter/);
+  });
+
+  it("validates a closed ConfigSpec and typed value array", () => {
+    expect(validateConfigSpec(freightConfigSpec)).toEqual(freightConfigSpec);
+    expect(validateConfigValues(freightConfigState.current.values, freightConfigSpec)).toEqual(
+      freightConfigState.current.values,
+    );
+
+    expect(() => validateConfigSpec({
+      ...freightConfigSpec,
+      fields: [...freightConfigSpec.fields, freightConfigSpec.fields[0]],
+    })).toThrow();
+    expect(() => validateConfigSpec({
+      ...freightConfigSpec,
+      fields: [{ ...freightConfigSpec.fields[0], kind: "string" }],
+    })).toThrow();
+    expect(() => validateConfigValues([
+      ...freightConfigState.current.values,
+      { field_id: "not_allowlisted", kind: "integer", value: 1 },
+    ], freightConfigSpec)).toThrow();
+    expect(() => validateConfigValues([
+      { field_id: "timeout_seconds", kind: "boolean", value: true },
+    ], freightConfigSpec)).toThrow();
+    expect(() => validateConfigValues([
+      freightConfigState.current.values[0],
+      freightConfigState.current.values[0],
+    ], freightConfigSpec)).toThrow();
+    expect(() => validateConfigValues([
+      { field_id: "egress_profile", kind: "enum", value: "https://private.invalid" },
+    ], freightConfigSpec)).toThrow();
+  });
+
+  it("renders an empty no-ConfigSpec state and a two-column allowlisted workspace", () => {
+    const withoutSpec = {
+      ...freightConfigState,
+      config_spec: null,
+      current: { ...freightConfigState.current, values: [] },
+      allowed_actions: [],
+    } as const;
+    expect(validateConfigState(withoutSpec)).toEqual(withoutSpec);
+    const emptyMarkup = renderPluginConfigWorkspace(withoutSpec);
+    expect(emptyMarkup).toContain("本插件没有可调整的运行参数");
+    expect(emptyMarkup).not.toContain("data-config-field");
+
+    const markup = renderPluginConfigWorkspace(freightConfigState);
+    expect(markup).toContain("config-column-current");
+    expect(markup).toContain("config-column-draft");
+    expect(markup).toContain('data-config-field="timeout_seconds"');
+    expect(markup).toContain("测试固定主机");
+    expect(markup).toContain("测试凭证 A");
+    expect(markup).not.toContain("https://");
+    expect(markup).not.toContain("Bearer");
+    expect(markup).not.toContain("secret-value");
+  });
+
+  it("requires server actions and a different identity for approval", () => {
+    const preview = {
+      preview_ref: "preview-config-1",
+      creator_actor_ref: "actor-admin",
+    } as const;
+    expect(canApproveConfigChange(freightConfigState, preview, "actor-admin")).toBe(false);
+    expect(canApproveConfigChange(freightConfigState, preview, "actor-approver")).toBe(true);
+    expect(canApproveConfigChange({ ...freightConfigState, allowed_actions: [] }, preview, "actor-approver"))
+      .toBe(false);
+    expect(canApproveConfigChange(freightConfigState, null, "actor-approver")).toBe(false);
+  });
+
+  it("only treats an exact post-publish readback as configuration applied", () => {
+    const expected = {
+      revision: 8,
+      config_digest: "config-digest-8",
+      module_generation: "freightcom-generation-8",
+    } as const;
+    const observed = {
+      ...freightConfigState,
+      current: {
+        ...freightConfigState.current,
+        revision: 8,
+        config_digest: "config-digest-8",
+        module_generation: "freightcom-generation-8",
+      },
+      status: "readback_verified",
+      reason_codes: [],
+    } as const;
+    expect(hasExactConfigReadback(expected, observed)).toBe(true);
+    expect(hasExactConfigReadback(expected, {
+      ...observed,
+      current: { ...observed.current, module_generation: "freightcom-generation-other" },
+    })).toBe(false);
+    expect(hasExactConfigReadback(expected, { ...observed, status: "manual_review" })).toBe(false);
+    expect(hasExactConfigReadback(expected, { ...observed, reason_codes: ["readback_unknown"] })).toBe(false);
+  });
+
+  it("uses the fixed config API paths and keeps credentials in the client closure", async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const client = createPluginConfigClient({
+      fetchImpl: (url: RequestInfo | URL, init?: RequestInit) => {
+        const requestedUrl = requestUrl(url);
+        requests.push({ url: requestedUrl, init: init ?? {} });
+        const actionData = requestedUrl.endsWith("/drafts/validate")
+          ? {
+              kind: "config_validation",
+              status: "validated",
+              reason_codes: [],
+              validation_ref: "validation-config-1",
+            }
+          : requestedUrl.endsWith("/previews")
+            ? {
+                kind: "config_preview",
+                preview_ref: "preview-config-1",
+                creator_actor_ref: "actor-admin",
+                revision: 7,
+                config_digest: "config-digest-7",
+                module_generation: "freightcom-generation-7",
+                expires_at: "2026-08-31T11:00:00Z",
+                status: "previewed",
+              }
+            : requestedUrl.endsWith("/approvals")
+              ? {
+                  kind: "config_approval",
+                  approval_id: "approval-config-1",
+                  preview_ref: "preview-config-1",
+                  approver_actor_ref: "actor-approver",
+                  decision: "approve",
+                  status: "approved",
+                }
+              : requestedUrl.endsWith("/releases/publish")
+                ? {
+                    kind: "config_release",
+                    release_id: "release-config-1",
+                    revision: 8,
+                    config_digest: "config-digest-8",
+                    module_generation: "freightcom-generation-8",
+                    status: "published_pending_apply",
+                  }
+                : requestedUrl.endsWith("/releases/reconcile")
+                  ? {
+                      kind: "config_reconcile",
+                      release_id: "release-config-1",
+                      revision: 8,
+                      config_digest: "config-digest-8",
+                      module_generation: "freightcom-generation-8",
+                      status: "readback_verified",
+                      reason_codes: [],
+                      checked_at: "2026-08-31T10:05:00Z",
+                    }
+                  : freightConfigState;
+        return Promise.resolve(new Response(JSON.stringify(actionData), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }));
+      },
+    });
+    client.setToken("config-module-token");
+    await client.getState();
+    await client.validateDraft({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      module_id: "freightcom-ltl",
+      base_revision: 7,
+      values: freightConfigState.current.values,
+    }, "config-validate");
+    await client.createPreview({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      module_id: "freightcom-ltl",
+      base_revision: 7,
+      values: freightConfigState.current.values,
+    }, "config-preview");
+    await client.decideApproval({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      preview_ref: "preview-config-1",
+      decision: "approve",
+      reason_code: "admin_ui_config_approval",
+    }, "config-approval");
+    await client.publish({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      preview_ref: "preview-config-1",
+      approval_id: "approval-config-1",
+    }, "config-publish");
+    await client.reconcile({
+      schema_version: CONFIG_SCHEMA_VERSION,
+      release_id: "release-config-1",
+    }, "config-reconcile");
+
+    expect(requests.map((request) => request.url)).toEqual([
+      "/admin/api/v1/config/state",
+      "/admin/api/v1/config/drafts/validate",
+      "/admin/api/v1/config/previews",
+      "/admin/api/v1/config/approvals",
+      "/admin/api/v1/config/releases/publish",
+      "/admin/api/v1/config/releases/reconcile",
+    ]);
+    for (const [index, request] of requests.entries()) {
+      const headers = new Headers(request.init.headers);
+      expect(request.init.credentials).toBe("omit");
+      expect(headers.get("authorization")).toBe("Bearer config-module-token");
+      if (index > 0) expect(headers.get("idempotency-key")).toBeTruthy();
+      expect(request.url).not.toContain("config-module-token");
+    }
+    const source = await readFile(new URL("../../apps/admin/plugin-config.js", import.meta.url), "utf8");
+    expect(source).not.toMatch(/localStorage|sessionStorage|document\.cookie|console\.(?:log|error|warn)/);
+    expect(source).not.toContain("config-module-token");
+    expect(client.clearToken()).toBeUndefined();
+  });
+
+  it("keeps Freightcom visibly test-only even when configuration is read back", () => {
+    const markup = renderPluginConfigWorkspace({
+      ...freightConfigState,
+      module_id: "freightcom-ltl",
+    });
+    expect(markup).toContain("测试");
+    expect(markup).toContain("T1");
+    expect(markup).toContain("人工复核");
+    expect(markup).toContain("未获生产资格");
   });
 });

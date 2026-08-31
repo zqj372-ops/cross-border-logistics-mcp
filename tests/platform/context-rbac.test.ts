@@ -12,6 +12,8 @@ import {
   authorizeTool,
   getToolPolicy,
   phaseOneToolNames,
+  tenantApiKeyToolNames,
+  toolVisibleForContext,
 } from "../../src/logistics_mcp/platform/rbac";
 
 const claims = (role: AuthClaims["actor_role"]): AuthClaims => ({
@@ -157,6 +159,67 @@ describe("platform context and RBAC", () => {
     expect(() => authorizeTool(withoutScope, "quote.freightcom_ltl.preview")).toThrow(
       ForbiddenError,
     );
+  });
+
+  it("uses exact API-key tool scopes without inheriting sibling tools", () => {
+    const exact = parseExecutionContext({
+      ...claims("service"),
+      scopes: ["tool:cargo.calculate"],
+    });
+
+    expect(tenantApiKeyToolNames).toContain("cargo.calculate");
+    expect([...tenantApiKeyToolNames]).toEqual([
+      "cargo.calculate",
+      "container.plan_summary",
+      "system.agent_context.get",
+    ]);
+    expect(tenantApiKeyToolNames).not.toContain("quote.canada_final_mile.calculate");
+    expect(tenantApiKeyToolNames).not.toContain("customs.ca.search");
+    expect(tenantApiKeyToolNames).not.toContain("quote.freightcom_ltl.preview");
+    expect(authorizeTool(exact, "cargo.calculate")).toBe(true);
+    expect(toolVisibleForContext(exact, "cargo.calculate")).toBe(true);
+    expect(toolVisibleForContext(exact, "quote.canada_final_mile.calculate")).toBe(false);
+    expect(() => authorizeTool(exact, "quote.canada_final_mile.calculate")).toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it.each([
+    ["platform admin mixed with exact scope", ["tool:cargo.calculate", "platform:admin"]],
+    ["legacy broad scope mixed with exact scope", ["tool:cargo.calculate", "quote:calculate"]],
+    ["non-T0 exact scope mixed with exact scope", ["tool:cargo.calculate", "tool:quote.canada_final_mile.calculate"]],
+    ["duplicate exact scope", ["tool:cargo.calculate", "tool:cargo.calculate"]],
+  ])("rejects invalid T0 service JWT scopes: %s", (label, scopes) => {
+    if (label === "duplicate exact scope") {
+      expect(() => parseExecutionContext({
+        ...claims("service"),
+        scopes,
+      })).toThrow(AuthenticationError);
+      return;
+    }
+    const context = parseExecutionContext({
+      ...claims("service"),
+      scopes,
+    });
+
+    expect(() => authorizeTool(context, "cargo.calculate")).toThrow(ForbiddenError);
+    expect(() => toolVisibleForContext(context, "cargo.calculate")).toThrow(ForbiddenError);
+  });
+
+  it("keeps an explicit non-T0 legacy business context on broad scope behavior", () => {
+    const salesContext = parseExecutionContext({
+      ...claims("sales"),
+      scopes: ["quote:calculate"],
+    });
+    const serviceContext = parseExecutionContext({
+      ...claims("service"),
+      scopes: ["tariff:read"],
+    });
+
+    expect(authorizeTool(salesContext, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(toolVisibleForContext(salesContext, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(authorizeTool(serviceContext, "customs.ca.search")).toBe(true);
+    expect(toolVisibleForContext(serviceContext, "customs.ca.search")).toBe(true);
   });
 
   it("rejects inherited tool-policy names without disclosing the input", () => {
