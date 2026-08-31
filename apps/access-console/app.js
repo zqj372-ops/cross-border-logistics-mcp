@@ -7,6 +7,7 @@ const T0_TOOLS = Object.freeze([
 ]);
 
 const elements = Object.freeze({
+  statusCard: document.getElementById("status-card"),
   statusDot: document.getElementById("status-dot"),
   statusTitle: document.getElementById("status-title"),
   statusDetail: document.getElementById("status-detail"),
@@ -16,9 +17,11 @@ const elements = Object.freeze({
   credentials: document.getElementById("credentials"),
   operations: document.getElementById("operations"),
   overviewMetrics: document.getElementById("overview-metrics"),
+  overviewGenerated: document.getElementById("overview-generated"),
   readiness: document.getElementById("readiness"),
   recentIssues: document.getElementById("recent-issues"),
   agentOnboarding: document.getElementById("agent-onboarding"),
+  routeQualification: document.getElementById("route-qualification"),
   oneTimePanel: document.getElementById("one-time-panel"),
   oneTimeKey: document.getElementById("one-time-key"),
 });
@@ -38,6 +41,8 @@ function text(value) {
 }
 
 function setStatus(kind, title, detail) {
+  elements.statusCard.dataset.state = kind;
+  elements.statusCard.setAttribute("aria-busy", kind === "working" ? "true" : "false");
   elements.statusDot.className = `status-dot ${kind}`;
   elements.statusTitle.textContent = title;
   elements.statusDetail.textContent = detail;
@@ -98,6 +103,7 @@ async function readinessApi() {
 
 function row(label, value) {
   const paragraph = document.createElement("p");
+  paragraph.className = "record-row";
   const strong = document.createElement("strong");
   strong.textContent = `${label}：`;
   paragraph.append(strong, document.createTextNode(text(value)));
@@ -123,6 +129,7 @@ function renderEmpty(target) {
 function metric(label, value, tone = "neutral") {
   const article = document.createElement("article");
   article.className = `metric ${tone}`;
+  article.dataset.tone = tone;
   const count = document.createElement("strong");
   count.textContent = Number.isSafeInteger(value) ? String(value) : "—";
   const caption = document.createElement("span");
@@ -135,6 +142,9 @@ function renderOverview(payload) {
   const data = payload?.data;
   const access = data?.access_state;
   const activity = data?.gateway_activity;
+  elements.overviewGenerated.textContent = typeof data?.generated_at === "string"
+    ? `脱敏快照 · ${data.generated_at}`
+    : "24 小时脱敏快照时间不可用";
   elements.overviewMetrics.replaceChildren(
     metric("有效租户", access?.tenants?.active, "positive"),
     metric("有效调用方", access?.clients?.active, "positive"),
@@ -161,6 +171,7 @@ function renderOverview(payload) {
     for (const issue of issues) {
       const article = document.createElement("article");
       article.className = "record issue-record";
+      article.dataset.state = text(issue.status);
       article.append(
         row("状态", issue.status),
         row("动作", issue.action),
@@ -178,7 +189,7 @@ function renderOverview(payload) {
     renderEmpty(elements.agentOnboarding);
   } else {
     const article = document.createElement("article");
-    article.className = "record";
+    article.className = "record onboarding-record";
     article.append(
       row("客户端", onboarding.supported_clients.join("、")),
       row("换取短期 JWT", onboarding.token_exchange_path),
@@ -204,19 +215,52 @@ function renderOverview(payload) {
   }
 }
 
+function readinessItem(label, value, state, wide = false) {
+  const item = document.createElement("div");
+  item.className = `readiness-item${wide ? " wide" : ""}`;
+  item.dataset.state = state;
+  const caption = document.createElement("span");
+  caption.textContent = label;
+  const strong = document.createElement("strong");
+  strong.textContent = value;
+  item.append(caption, strong);
+  return item;
+}
+
 function renderReadiness(payload) {
   elements.readiness.replaceChildren();
   const data = payload?.data;
-  const article = document.createElement("article");
-  article.className = "record";
-  article.append(
-    row("运行状态", data?.operational_ready === true ? "ready" : "not ready"),
-    row("企业身份", data?.admin_idp_ready === true ? "ready" : "pending"),
-    row("数据库", data?.database_backend),
-    row("生产资格", data?.production_eligible === true ? "eligible" : "not eligible"),
-    row("阻断项", Array.isArray(payload?.blockers) ? payload.blockers.join("、") : "—"),
+  const grid = document.createElement("div");
+  grid.className = "readiness-grid";
+  const productionEligible = data?.production_eligible === true;
+  elements.routeQualification.textContent = productionEligible
+    ? "生产资格已读回"
+    : "待真实 staging 验证";
+  grid.append(
+    readinessItem(
+      "运行状态",
+      data?.operational_ready === true ? "READY" : "NOT READY",
+      data?.operational_ready === true ? "ready" : "pending",
+    ),
+    readinessItem(
+      "企业身份",
+      data?.admin_idp_ready === true ? "READY" : "PENDING",
+      data?.admin_idp_ready === true ? "ready" : "pending",
+    ),
+    readinessItem("数据库", text(data?.database_backend), "neutral"),
+    readinessItem(
+      "生产资格",
+      productionEligible ? "ELIGIBLE" : "NOT ELIGIBLE",
+      productionEligible ? "ready" : "not-eligible",
+    ),
+    readinessItem(
+      "阻断项",
+      Array.isArray(payload?.blockers) ? payload.blockers.join("、") || "无" : "—",
+      "neutral",
+      true,
+    ),
   );
-  elements.readiness.append(article);
+  elements.readiness.append(grid);
 }
 
 function renderTenants(records) {
@@ -228,6 +272,7 @@ function renderTenants(records) {
   for (const tenant of records) {
     const article = document.createElement("article");
     article.className = "record";
+    article.dataset.state = text(tenant.status);
     article.append(
       row("名称", tenant.display_name),
       row("状态", tenant.status),
@@ -257,6 +302,7 @@ function renderCredentials(records) {
   for (const credential of records) {
     const article = document.createElement("article");
     article.className = "record";
+    article.dataset.state = text(credential.effective_status);
     article.append(
       row("名称", credential.label),
       row("状态", credential.effective_status),
@@ -294,6 +340,7 @@ function renderClients(records) {
   for (const client of records) {
     const article = document.createElement("article");
     article.className = "record";
+    article.dataset.state = text(client.status);
     article.append(
       row("名称", client.label),
       row("状态", client.status),
@@ -329,6 +376,7 @@ function renderOperations(records) {
   for (const operation of records) {
     const article = document.createElement("article");
     article.className = "record operation-record";
+    article.dataset.state = text(operation.status);
     article.append(
       row("动作", operation.action),
       row("流转", `${text(operation.from_status)} → ${text(operation.to_status)}`),
