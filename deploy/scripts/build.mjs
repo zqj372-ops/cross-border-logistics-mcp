@@ -39,6 +39,12 @@ const nodeEsmBanner = {
 
 rmSync("dist", { recursive: true, force: true });
 
+execFileSync(process.execPath, [
+  "--import",
+  "tsx/esm",
+  "src/logistics_mcp/module-runtime/artifact-attestation.ts",
+], { stdio: "inherit" });
+
 if ([...adminSourcePaths, ...accessConsoleSourcePaths].some((path) => {
   try {
     return !statSync(path).isFile();

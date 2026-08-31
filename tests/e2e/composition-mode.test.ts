@@ -926,9 +926,14 @@ describe("gateway composition modes", () => {
         "agent-access",
       ]);
       expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
-        "sha256:4a3125f1a305aa1d68b7a10616fcdcefe172e8e6aea310317a63cdb38eab6ef4",
-        "sha256:f06ef7053f07b264a214cc5022f77f51794fb730dfa6df99169df4a835472bc4",
-        "sha256:93c40b3def7a5ddf256267d11527f193e515460cbc197be83c5c5d7873bdfa8f",
+        "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
+        "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
+        "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
+      ]);
+      expect(composition.moduleHost.snapshot().modules.map(({ artifact_digest }) => artifact_digest)).toEqual([
+        "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
+        "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
+        "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
       ]);
       expect(Object.keys(composition.handlers).sort()).toEqual([
         "cargo.calculate",

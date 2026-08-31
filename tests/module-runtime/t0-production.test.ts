@@ -10,6 +10,7 @@ import {
   toolContractDigest,
   validateModuleDescriptor,
 } from "../../src/logistics_mcp/module-runtime";
+import { computeT0ModuleArtifactDigests } from "../../src/logistics_mcp/module-runtime/artifact-attestation";
 import { cargoModule } from "../../src/logistics_mcp/modules";
 
 describe("T0 production module descriptors", () => {
@@ -30,6 +31,7 @@ describe("T0 production module descriptors", () => {
     ]);
 
     for (const descriptor of T0_MODULE_DESCRIPTORS) {
+      expect(descriptor.artifact_digest).toMatch(/^sha256:[a-f0-9]{64}$/u);
       expect(descriptor.manifest_digest).toMatch(/^sha256:[a-f0-9]{64}$/u);
       expect(validateModuleDescriptor(descriptor)).toEqual(descriptor);
     }
@@ -56,6 +58,17 @@ describe("T0 production module descriptors", () => {
         input_schema_id: "urn:logistics-mcp:cargo.calculate:changed",
       }],
     })).toThrow(ModuleRuntimeError);
+  });
+
+  it("binds each reviewed descriptor to reproducible implementation, validator, and schema bytes", async () => {
+    const actual = await computeT0ModuleArtifactDigests();
+
+    expect(Object.fromEntries(
+      T0_MODULE_DESCRIPTORS.map((descriptor) => [
+        descriptor.module_id,
+        descriptor.artifact_digest,
+      ]),
+    )).toEqual(actual);
   });
 
   it("fails closed when the reviewed descriptor set or mounted tool set drifts", () => {

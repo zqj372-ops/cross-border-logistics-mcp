@@ -281,7 +281,10 @@ export class ModuleHost {
             .list()
             .filter((tool) => tool.module_id === module.manifest.module_id)
             .map((tool) => tool.name),
-          ...(descriptor === undefined ? {} : { manifest_digest: descriptor.manifest_digest }),
+          ...(descriptor === undefined ? {} : {
+            artifact_digest: descriptor.artifact_digest,
+            manifest_digest: descriptor.manifest_digest,
+          }),
         };
       }),
     };

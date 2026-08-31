@@ -112,6 +112,7 @@ export interface ModuleHostSnapshot {
     readonly risk_level: ModuleRiskLevel;
     readonly mounted: boolean;
     readonly tool_names: readonly string[];
+    readonly artifact_digest?: `sha256:${string}`;
     readonly manifest_digest?: `sha256:${string}`;
   }[];
 }

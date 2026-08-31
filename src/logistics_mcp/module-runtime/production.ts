@@ -44,6 +44,7 @@ export interface ModuleDescriptor {
   readonly tool_contracts: readonly ReviewedToolContractDescriptor[];
   readonly required_capabilities: readonly CapabilityRequirementInput[];
   readonly optional_capabilities: readonly CapabilityRequirementInput[];
+  readonly artifact_digest: `sha256:${string}`;
   readonly manifest_digest: `sha256:${string}`;
 }
 
@@ -89,6 +90,7 @@ const moduleDescriptorSchema = z.object({
   tool_contracts: z.array(toolContractDescriptorSchema).min(1),
   required_capabilities: z.array(capabilitySchema),
   optional_capabilities: z.array(capabilitySchema),
+  artifact_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
   manifest_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
 }).strict();
 
@@ -151,7 +153,7 @@ function canonicalToolContracts(
 }
 
 function canonicalManifestPayload(
-  descriptor: Pick<ModuleDescriptor, "module_id" | "version" | "risk_level" | "tool_names" | "tool_contracts" | "required_capabilities" | "optional_capabilities">,
+  descriptor: Pick<ModuleDescriptor, "module_id" | "version" | "risk_level" | "tool_names" | "tool_contracts" | "required_capabilities" | "optional_capabilities" | "artifact_digest">,
 ): Record<string, unknown> {
   return {
     module_id: descriptor.module_id,
@@ -161,11 +163,12 @@ function canonicalManifestPayload(
     tool_contracts: canonicalToolContracts(descriptor.tool_contracts),
     required_capabilities: normalizedCapabilities(descriptor.required_capabilities),
     optional_capabilities: normalizedCapabilities(descriptor.optional_capabilities),
+    artifact_digest: descriptor.artifact_digest,
   };
 }
 
 export function moduleManifestDigest(
-  descriptor: Pick<ModuleDescriptor, "module_id" | "version" | "risk_level" | "tool_names" | "tool_contracts" | "required_capabilities" | "optional_capabilities">,
+  descriptor: Pick<ModuleDescriptor, "module_id" | "version" | "risk_level" | "tool_names" | "tool_contracts" | "required_capabilities" | "optional_capabilities" | "artifact_digest">,
 ): `sha256:${string}` {
   const serialized = JSON.stringify(canonicalManifestPayload(descriptor));
   return `sha256:${createHash("sha256").update(serialized, "utf8").digest("hex")}`;
@@ -220,10 +223,11 @@ export function validateModuleDescriptor(input: unknown): ModuleDescriptor {
       "Required and optional capabilities must be disjoint.",
     );
   }
-  if (moduleManifestDigest(descriptor) !== descriptor.manifest_digest) {
+  const actualManifestDigest = moduleManifestDigest(descriptor);
+  if (actualManifestDigest !== descriptor.manifest_digest) {
     throw descriptorError(
       "module_descriptor_digest_mismatch",
-      "The static module descriptor digest does not match its normalized manifest.",
+      `The static module descriptor digest does not match its normalized manifest for ${descriptor.module_id}: expected ${descriptor.manifest_digest}, received ${actualManifestDigest}.`,
     );
   }
   return descriptor;
@@ -242,6 +246,7 @@ export function assertModuleDescriptorMatchesManifest(
     tool_contracts: descriptor.tool_contracts,
     required_capabilities: manifest.required_capabilities,
     optional_capabilities: manifest.optional_capabilities,
+    artifact_digest: descriptor.artifact_digest,
   });
   if (
     descriptorPayload.module_id !== manifestPayload.module_id ||
@@ -336,7 +341,8 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    manifest_digest: "sha256:4a3125f1a305aa1d68b7a10616fcdcefe172e8e6aea310317a63cdb38eab6ef4",
+    artifact_digest: "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
+    manifest_digest: "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
   }),
   Object.freeze({
     module_id: "container",
@@ -355,7 +361,8 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    manifest_digest: "sha256:f06ef7053f07b264a214cc5022f77f51794fb730dfa6df99169df4a835472bc4",
+    artifact_digest: "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
+    manifest_digest: "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
   }),
   Object.freeze({
     module_id: "agent-access",
@@ -374,7 +381,8 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    manifest_digest: "sha256:93c40b3def7a5ddf256267d11527f193e515460cbc197be83c5c5d7873bdfa8f",
+    artifact_digest: "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
+    manifest_digest: "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
   }),
 ]);
 
