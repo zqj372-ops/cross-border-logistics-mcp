@@ -256,7 +256,12 @@ describe("admin static runtime boundary", () => {
       createAdminStaticHandler({ enabledSetting: "true", staticDir: directory }),
     );
     try {
-      for (const path of ["/admin/secret.txt", "/admin/%2e%2e/%2e%2e/etc/passwd", "/admin/app.js/extra"]) {
+      for (const path of [
+        "/admin/secret.txt",
+        "/admin/plugin-config.js",
+        "/admin/%2e%2e/%2e%2e/etc/passwd",
+        "/admin/app.js/extra",
+      ]) {
         const response = await fetch(`${baseUrl}${path}`);
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({ status: "blocked" });

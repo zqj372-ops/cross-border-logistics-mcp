@@ -1,33 +1,42 @@
 :root {
   color-scheme: light;
-  --ink: #182635;
-  --ink-soft: #334557;
-  --muted: #5e7082;
-  --quiet: #5e7082;
-  --canvas: #f3f6f8;
+  --harbor-ink: #0B222B;
+  --channel-blue: #17556B;
+  --safety-orange: #E9672B;
+  --release-green: #2D7A62;
+  --inspection-amber: #D39A32;
+  --manifest-paper: #F2F5F2;
+  --ink: var(--harbor-ink);
+  --ink-soft: #27434c;
+  --muted: #5d7075;
+  --quiet: #5d7075;
+  --canvas: var(--manifest-paper);
   --surface: #ffffff;
-  --surface-soft: #f8fafb;
-  --line: #dce4ea;
-  --line-strong: #c5d1da;
-  --brand: #1f64d8;
-  --brand-dark: #1649a6;
-  --brand-soft: #eaf1ff;
-  --success: #146541;
-  --success-soft: #e9f5ee;
-  --warning: #815c13;
-  --warning-soft: #fff4d9;
+  --surface-soft: #f8faf8;
+  --line: #d5dfdc;
+  --line-strong: #b8c9c4;
+  --brand: var(--channel-blue);
+  --brand-dark: var(--harbor-ink);
+  --brand-soft: #e5eff0;
+  --success: var(--release-green);
+  --success-soft: #e7f1ec;
+  --warning: #78550f;
+  --warning-soft: #fff2d7;
   --danger: #9e303b;
   --danger-soft: #fcebed;
-  --info: #175d85;
-  --info-soft: #e7f1f8;
-  --neutral-soft: #edf1f4;
-  --radius: 12px;
-  --radius-small: 8px;
+  --info: var(--channel-blue);
+  --info-soft: #e5eff0;
+  --neutral-soft: #e9efed;
+  --radius: 6px;
+  --radius-small: 3px;
   --content-width: 1440px;
-  --focus: #126b9a;
-  --navy: #0d2038;
-  --navy-soft: #173352;
-  --navy-line: #294866;
+  --focus: var(--safety-orange);
+  --navy: var(--harbor-ink);
+  --navy-soft: #123b49;
+  --navy-line: #2b5f70;
+  --display-font: "Avenir Next Condensed", "DIN Condensed", "PingFang SC", sans-serif;
+  --body-font: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --utility-font: "SFMono-Regular", Menlo, "PingFang SC", monospace;
 }
 
 * {
@@ -46,7 +55,7 @@ body {
   overflow-x: hidden;
   background: var(--canvas);
   color: var(--ink);
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--body-font);
   font-size: 16px;
   line-height: 1.55;
 }
@@ -2018,5 +2027,377 @@ dialog:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* P1.5 capability ledger */
+.page-header h1,
+.card-head h2,
+.card-head h3,
+.loading-panel h1,
+.error-panel h1,
+.empty-state h2,
+.detail-dialog h2,
+.plugin-config-workspace h2,
+.plugin-config-workspace h3 {
+  font-family: var(--display-font);
+  letter-spacing: 0.01em;
+}
+
+.status-pill,
+.status-stamp {
+  border-radius: 2px;
+}
+
+.utility-text,
+.config-metadata,
+.config-route-ledger,
+.config-column-head .eyebrow {
+  font-family: var(--utility-font);
+}
+
+.plugin-config-workspace {
+  position: relative;
+  overflow: hidden;
+  margin-top: 20px;
+  border-color: var(--line-strong);
+  box-shadow: 0 5px 16px rgba(11, 34, 43, 0.08);
+}
+
+.config-workbench-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.config-workbench-head h2 {
+  margin: 5px 0 0;
+  color: var(--harbor-ink);
+  font-size: clamp(24px, 3vw, 32px);
+}
+
+.config-workbench-head p,
+.config-column-head p {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.config-two-column {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin-top: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.config-two-column::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.config-column {
+  min-width: 0;
+  padding: 4px 24px 8px 0;
+}
+
+.config-column-draft {
+  padding-right: 0;
+  padding-left: 24px;
+}
+
+.config-column-head h3 {
+  margin: 5px 0 0;
+  color: var(--harbor-ink);
+  font-size: 21px;
+}
+
+.config-values,
+.config-fields {
+  display: grid;
+  gap: 0;
+  margin: 18px 0 0;
+}
+
+.config-value-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 54px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+}
+
+.config-value-row dt,
+.config-value-row dd {
+  margin: 0;
+}
+
+.config-value-row dt {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.config-value-row dd {
+  overflow-wrap: anywhere;
+  color: var(--harbor-ink);
+  font-weight: 750;
+}
+
+.config-field {
+  display: grid;
+  gap: 6px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+
+.config-field label {
+  color: var(--harbor-ink);
+  font-weight: 750;
+}
+
+.config-input,
+.config-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--harbor-ink);
+}
+
+.config-input:hover,
+.config-select:hover {
+  border-color: var(--channel-blue);
+}
+
+.config-checkbox {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--channel-blue);
+}
+
+.field-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.config-metadata {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.config-metadata div {
+  min-width: 0;
+}
+
+.config-metadata dt {
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.config-metadata dd {
+  min-height: 22px;
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--harbor-ink);
+}
+
+.config-route-ledger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.config-route-ledger span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.config-route-ledger span:not(:last-child)::after {
+  margin: 0 9px;
+  color: var(--safety-orange);
+  content: "→";
+}
+
+.config-route-ledger .route-ledger-label {
+  color: var(--channel-blue);
+  font-weight: 800;
+}
+
+.config-action-row {
+  margin-top: 18px;
+}
+
+.config-action-row .button {
+  flex: 0 1 auto;
+}
+
+.config-action-empty {
+  margin-top: 18px;
+}
+
+.config-notice {
+  margin-top: 18px;
+}
+
+.config-qualification {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 16px;
+  padding: 11px 12px;
+  border-left: 3px solid var(--inspection-amber);
+  background: var(--warning-soft);
+}
+
+.config-qualification p {
+  flex-basis: 100%;
+  margin: 3px 0 0;
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.status-stamp {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  font-family: var(--utility-font);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.status-stamp-warning {
+  color: var(--warning);
+}
+
+.status-stamp-blocked {
+  color: var(--danger);
+}
+
+.config-empty-state {
+  display: grid;
+  max-width: 720px;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 24px 0;
+  border-top: 1px solid var(--line);
+}
+
+.config-empty-state h3,
+.config-empty-state p {
+  margin: 0;
+}
+
+.config-empty-state h3 {
+  color: var(--harbor-ink);
+  font-size: 20px;
+}
+
+.config-empty-state p {
+  color: var(--muted);
+}
+
+@media (max-width: 860px) {
+  .config-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .config-two-column::before {
+    top: 50%;
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: auto;
+    height: 1px;
+  }
+
+  .config-column,
+  .config-column-draft {
+    padding: 4px 0 22px;
+  }
+
+  .config-column-draft {
+    padding-top: 28px;
+  }
+}
+
+@media (max-width: 390px) {
+  .main-content {
+    padding: 20px 12px 36px;
+  }
+
+  .topbar {
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .topbar-context {
+    gap: 8px;
+  }
+
+  .config-workbench-head,
+  .config-route-ledger {
+    align-items: flex-start;
+  }
+
+  .config-workbench-head {
+    display: grid;
+    gap: 12px;
+  }
+
+  .config-column {
+    padding-right: 0;
+  }
+
+  .config-value-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 9px 0;
+  }
+
+  .config-route-ledger span:not(:last-child)::after {
+    margin: 0 5px;
+  }
+
+  .config-metadata {
+    grid-template-columns: 1fr 1fr;
+    gap: 11px;
+  }
+
+  .config-action-row .button {
+    flex: 1 1 100%;
   }
 }

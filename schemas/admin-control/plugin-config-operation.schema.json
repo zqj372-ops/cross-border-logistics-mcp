@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.invalid/schemas/admin-control/plugin-config-operation.schema.json",
+  "title": "Plugin configuration operation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "action", "request_id", "status", "data", "reason_codes", "replayed"],
+  "properties": {
+    "schema_version": { "const": "2026-08-31.v1" },
+    "action": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "request_id": { "$ref": "#/$defs/identifier" },
+    "status": { "enum": ["success", "manual_review", "blocked", "unavailable"] },
+    "data": {
+      "anyOf": [
+        { "$ref": "#/$defs/validation" },
+        { "$ref": "#/$defs/preview" },
+        { "$ref": "#/$defs/approval" },
+        { "$ref": "#/$defs/release" },
+        { "$ref": "#/$defs/reconciliation" },
+        { "type": "null" }
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+    },
+    "replayed": { "type": "boolean" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^mcp-plugin-config-hash/v1/[a-z_]+/sha256:[a-f0-9]{64}$"
+    },
+    "timestamp": { "type": "string", "minLength": 20, "maxLength": 64 },
+    "typedValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field_id", "kind", "value"],
+          "properties": {
+            "field_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+            "kind": { "const": "integer" },
+            "value": { "type": "integer" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field_id", "kind", "value"],
+          "properties": {
+            "field_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+            "kind": { "const": "boolean" },
+            "value": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field_id", "kind", "value"],
+          "properties": {
+            "field_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+            "kind": { "enum": ["enum", "secret_slot"] },
+            "value": { "$ref": "#/$defs/identifier" }
+          }
+        }
+      ]
+    },
+    "readback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readback_id", "release_id", "revision", "config_digest", "module_generation", "status", "checked_at"],
+      "properties": {
+        "readback_id": { "$ref": "#/$defs/identifier" },
+        "release_id": { "$ref": "#/$defs/identifier" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "config_digest": { "$ref": "#/$defs/hash" },
+        "module_generation": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "status": { "enum": ["verified", "mismatch", "unknown"] },
+        "checked_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "validation_id", "module_id", "base_revision", "config_digest", "values", "restart_policy", "validation_status"],
+      "properties": {
+        "kind": { "const": "validation" },
+        "validation_id": { "$ref": "#/$defs/identifier" },
+        "module_id": { "const": "freightcom-ltl" },
+        "base_revision": { "type": "integer", "minimum": 0 },
+        "config_digest": { "$ref": "#/$defs/hash" },
+        "values": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/typedValue" } },
+        "restart_policy": { "const": "controlled_restart" },
+        "validation_status": { "enum": ["validated", "blocked"] }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "preview_ref", "module_id", "intent", "base_revision", "config_digest", "changed_field_ids", "expires_at", "restart_policy"],
+      "properties": {
+        "kind": { "const": "preview" },
+        "preview_ref": { "$ref": "#/$defs/identifier" },
+        "module_id": { "const": "freightcom-ltl" },
+        "intent": { "enum": ["change", "rollback"] },
+        "base_revision": { "type": "integer", "minimum": 0 },
+        "config_digest": { "$ref": "#/$defs/hash" },
+        "changed_field_ids": { "type": "array", "maxItems": 5, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" } },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "restart_policy": { "const": "controlled_restart" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "approval_id", "preview_ref", "decision", "approver_actor_id", "decided_at"],
+      "properties": {
+        "kind": { "const": "approval" },
+        "approval_id": { "$ref": "#/$defs/identifier" },
+        "preview_ref": { "$ref": "#/$defs/identifier" },
+        "decision": { "enum": ["approve", "reject"] },
+        "approver_actor_id": { "$ref": "#/$defs/identifier" },
+        "decided_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "release_id", "revision", "config_digest", "release_state", "readback"],
+      "properties": {
+        "kind": { "const": "release" },
+        "release_id": { "$ref": "#/$defs/identifier" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "config_digest": { "$ref": "#/$defs/hash" },
+        "release_state": { "enum": ["published_pending_apply", "applying", "restarting", "readback_verified", "manual_review", "blocked", "unavailable", "superseded"] },
+        "readback": { "anyOf": [{ "$ref": "#/$defs/readback" }, { "type": "null" }] }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "release_id", "revision", "status", "readback"],
+      "properties": {
+        "kind": { "const": "reconciliation" },
+        "release_id": { "$ref": "#/$defs/identifier" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["readback_verified", "mismatch", "unknown", "blocked", "unavailable"] },
+        "readback": { "anyOf": [{ "$ref": "#/$defs/readback" }, { "type": "null" }] }
+      }
+    }
+  }
+}
