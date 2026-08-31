@@ -185,7 +185,6 @@ describe("platform context and RBAC", () => {
   });
 
   it.each([
-    ["missing exact tool scope", ["quote:calculate"]],
     ["platform admin mixed with exact scope", ["tool:cargo.calculate", "platform:admin"]],
     ["legacy broad scope mixed with exact scope", ["tool:cargo.calculate", "quote:calculate"]],
     ["non-T0 exact scope mixed with exact scope", ["tool:cargo.calculate", "tool:quote.canada_final_mile.calculate"]],
@@ -208,13 +207,19 @@ describe("platform context and RBAC", () => {
   });
 
   it("keeps an explicit non-T0 legacy business context on broad scope behavior", () => {
-    const context = parseExecutionContext({
+    const salesContext = parseExecutionContext({
       ...claims("sales"),
       scopes: ["quote:calculate"],
     });
+    const serviceContext = parseExecutionContext({
+      ...claims("service"),
+      scopes: ["tariff:read"],
+    });
 
-    expect(authorizeTool(context, "quote.canada_final_mile.calculate")).toBe(true);
-    expect(toolVisibleForContext(context, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(authorizeTool(salesContext, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(toolVisibleForContext(salesContext, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(authorizeTool(serviceContext, "customs.ca.search")).toBe(true);
+    expect(toolVisibleForContext(serviceContext, "customs.ca.search")).toBe(true);
   });
 
   it("rejects inherited tool-policy names without disclosing the input", () => {

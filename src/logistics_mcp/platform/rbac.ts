@@ -141,10 +141,11 @@ export function isExactT0ServiceIdentity(input: Readonly<{
 
 function assertT0ServiceScopeBoundary(context: ExecutionContext): void {
   // The production credential-exchange contract issues T0 JWTs only as a
-  // service identity. Keep the broader role-based fixture behavior for
-  // explicitly non-T0 contexts, but never let a service JWT enter T0 RBAC
-  // with a legacy, administrative, or non-T0 scope.
-  if (context.role !== "service") return;
+  // service identity. A tool:* entitlement marks that context as T0; legacy
+  // service-to-service contexts without tool entitlements remain governed by
+  // their existing business scope. The production composition separately
+  // requires every incoming identity to be an exact T0 service identity.
+  if (context.role !== "service" || !usesExactToolEntitlements(context)) return;
   if (!isExactT0ServiceIdentity(context)) {
     throw new ForbiddenError("The authenticated scope cannot be used for the T0 production profile.");
   }
