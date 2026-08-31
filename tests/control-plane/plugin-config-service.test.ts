@@ -110,7 +110,7 @@ async function harness(
     module_generation: observed.module_generation ?? `generation_${input.revision}`,
     values: observed.values,
   }));
-  const service = new PluginConfigService(({
+  const service = new PluginConfigService({
     store,
     applyPort: { apply, readback },
     managementTenantId: "tenant_fixture",
@@ -118,7 +118,7 @@ async function harness(
     clock: () => now,
     idGenerator: (prefix: string) => `${prefix}_${String(++counter).padStart(3, "0")}`,
     ...(fatalFence === undefined ? {} : { fatalFence }),
-  }) as unknown as ConstructorParameters<typeof PluginConfigService>[0]);
+  });
   return {
     store,
     service,

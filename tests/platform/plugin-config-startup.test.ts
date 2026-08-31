@@ -56,7 +56,7 @@ describe("managed fixture plugin configuration startup", () => {
 
       await expect(startRuntime({
         applicationRoot,
-        listen: async () => {
+        listen: () => {
           throw new Error("listen must not be reached without plugin config state");
         },
       })).rejects.toMatchObject({

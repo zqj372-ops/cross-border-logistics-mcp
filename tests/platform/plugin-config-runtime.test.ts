@@ -183,9 +183,8 @@ describe("managed Freightcom plugin config runtime", () => {
         throw error;
       }),
     };
-    const adapter: FreightcomRatePort = {
-      requestRate: vi.fn(() => Promise.resolve(result("must-not-run"))),
-    };
+    const requestRate = vi.fn(() => Promise.resolve(result("must-not-run")));
+    const adapter: FreightcomRatePort = { requestRate };
     const RuntimeWithFence = ManagedFreightcomConfigRuntime as unknown as new (
       currentRecord: PluginConfigCurrentRecord,
       adapterFactory: () => FreightcomRatePort,
@@ -196,6 +195,6 @@ describe("managed Freightcom plugin config runtime", () => {
 
     await expect(runtime.requestRate({})).rejects.toThrow();
     expect(fatalFence.tripFatal).toHaveBeenCalledTimes(1);
-    expect(adapter.requestRate).not.toHaveBeenCalled();
+    expect(requestRate).not.toHaveBeenCalled();
   });
 });
