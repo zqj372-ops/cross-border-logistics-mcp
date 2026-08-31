@@ -34,9 +34,11 @@ import type {
   StoredCredentialRecord,
   TenantAccessEventRecord,
   TenantAccessRepository,
+  TenantAccessResponseContext,
   TenantAccessStateRecord,
   TenantRecord,
 } from "./tenant-access-repository";
+import type { TenantAccessWriteResult } from "./tenant-access-repository";
 import { TenantAccessRepositoryError } from "./tenant-access-repository";
 
 export { TENANT_ACCESS_SCHEMA_VERSION } from "./tenant-access-contracts";
@@ -214,7 +216,14 @@ function tenantDto(value: TenantRecord): TenantDto {
   });
 }
 
-function clientDto(value: ClientRecord): ClientDto {
+function clientDto(
+  value: ClientRecord,
+  tenantStatus: TenantRecord["status"] = "active",
+): ClientDto {
+  const allowedActions: TenantAccessClientAction[] = [];
+  if (tenantStatus === "active") {
+    allowedActions.push(value.status === "active" ? "disable" : "enable");
+  }
   return Object.freeze({
     client_id: value.clientId,
     tenant_id: value.tenantId,
@@ -222,10 +231,34 @@ function clientDto(value: ClientRecord): ClientDto {
     status: value.status,
     created_at: value.createdAt,
     updated_at: value.updatedAt,
-    allowed_actions: Object.freeze([
-      value.status === "active" ? "disable" : "enable",
-    ] as const),
+    allowed_actions: Object.freeze(allowedActions),
   });
+}
+
+function operationTimeSeconds(operation: TenantAccessEventRecord): number {
+  const milliseconds = Date.parse(operation.createdAt);
+  if (!Number.isFinite(milliseconds)) {
+    throw new TenantAccessError("schema_mismatch");
+  }
+  return Math.floor(milliseconds / 1_000);
+}
+
+function responseContextForResult<T>(
+  result: TenantAccessWriteResult<T>,
+  fallback: TenantAccessResponseContext,
+): TenantAccessResponseContext {
+  if (result.snapshot !== undefined) return result.snapshot;
+  if (result.replayed) throw new TenantAccessError("schema_mismatch");
+  return fallback;
+}
+
+function acknowledgementMapForContext(
+  credentialId: string,
+  context: TenantAccessResponseContext,
+): Readonly<Record<string, string>> {
+  return context.deliveryAcknowledgedAt === null
+    ? Object.freeze({})
+    : Object.freeze({ [credentialId]: context.deliveryAcknowledgedAt });
 }
 
 function deliveryAcknowledgedAt(
@@ -523,7 +556,11 @@ export class TenantAccessService {
       data: Object.freeze({
         available_tools: TENANT_API_KEY_TOOL_CATALOG,
         tenants: Object.freeze(state.tenants.map(tenantDto)),
-        clients: Object.freeze(state.clients.map(clientDto)),
+        clients: Object.freeze(state.clients.map((value) => {
+          const tenant = tenantsById.get(value.tenantId);
+          if (tenant === undefined) throw new TenantAccessError("schema_mismatch");
+          return clientDto(value, tenant.status);
+        })),
         credentials: Object.freeze(state.credentials.map((value) => {
           const tenant = tenantsById.get(value.tenantId);
           const client = clientsById.get(`${value.tenantId}\u0000${value.clientId}`);
@@ -651,6 +688,15 @@ export class TenantAccessService {
       throw new TenantAccessError("management_tenant_forbidden");
     }
     const idempotencyKey = validateIdempotencyKey(rawIdempotencyKey);
+    let currentTenantStatus: TenantRecord["status"] | null = null;
+    try {
+      const state = await this.#repository.getState();
+      const tenant = state.tenants.find((value) => value.tenantId === tenantId);
+      currentTenantStatus = tenant?.status ?? null;
+    } catch (error) {
+      if (error instanceof TenantAccessError) throw error;
+      mapRepositoryError(error);
+    }
     const now = timestamp(this.#clock());
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId,
@@ -675,12 +721,20 @@ export class TenantAccessService {
           request,
         }),
       });
+      const responseContext = responseContextForResult(result, {
+        tenantStatus: currentTenantStatus,
+        clientStatus: result.value.status,
+        deliveryAcknowledgedAt: null,
+      });
+      if (responseContext.tenantStatus === null) {
+        throw new TenantAccessError("schema_mismatch");
+      }
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: "success",
         replayed: result.replayed,
         data: Object.freeze({
-          client: clientDto(result.value),
+          client: clientDto(result.value, responseContext.tenantStatus),
           operation: operationDto(result.operation, Object.freeze({})),
         }),
         reason_codes: Object.freeze([]),
@@ -748,17 +802,24 @@ export class TenantAccessService {
           action: "credential.issue",
           actor: context.actorId,
           request: { ...request, tool_names: toolNames },
-        }),
-      });
+          }),
+        });
       const replayed = result.replayed;
-      const replayState = replayed ? await this.#repository.getState() : null;
-      const acknowledgements = replayState?.deliveryAcknowledgements ?? Object.freeze({});
-      const tenantStatus = replayState?.tenants.find((tenant) => (
-        tenant.tenantId === result.value.tenantId
-      ))?.status ?? "active";
-      const clientStatus = replayState?.clients.find((client) => (
-        client.tenantId === result.value.tenantId && client.clientId === result.value.clientId
-      ))?.status ?? "active";
+      const responseContext = responseContextForResult(result, {
+        tenantStatus: "active",
+        clientStatus: "active",
+        deliveryAcknowledgedAt: null,
+      });
+      if (responseContext.tenantStatus === null || responseContext.clientStatus === null) {
+        throw new TenantAccessError("schema_mismatch");
+      }
+      const acknowledgements = acknowledgementMapForContext(
+        result.value.credentialId,
+        responseContext,
+      );
+      const responseNowSeconds = replayed
+        ? operationTimeSeconds(result.operation)
+        : nowSeconds;
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: replayed ? "manual_review" : "success",
@@ -770,9 +831,9 @@ export class TenantAccessService {
         data: Object.freeze({
           credential: credentialDto(
             result.value,
-            nowSeconds,
-            tenantStatus,
-            clientStatus,
+            responseNowSeconds,
+            responseContext.tenantStatus,
+            responseContext.clientStatus,
             acknowledgements,
           ),
           api_key: replayed ? null : `lmcpk_${credentialId}_${secret}`,
@@ -804,13 +865,6 @@ export class TenantAccessService {
     const previous = state.credentials.find((value) => value.credentialId === credentialId);
     if (previous === undefined) throw new TenantAccessError("credential_not_found");
     const nowSeconds = this.#clock();
-    if (previous.expiresAt <= nowSeconds) throw new TenantAccessError("credential_expired");
-    if (deliveryAcknowledgedAt(
-      previous.credentialId,
-      state.deliveryAcknowledgements,
-    ) === null) {
-      throw new TenantAccessError("credential_delivery_pending");
-    }
     const now = timestamp(nowSeconds);
     const nextCredentialId = this.#idGenerator("key");
     const secret = this.#secretGenerator();
@@ -867,9 +921,18 @@ export class TenantAccessService {
       const client = state.clients.find((value) => (
         value.tenantId === result.value.tenantId && value.clientId === result.value.clientId
       ));
-      if (tenant === undefined || client === undefined) {
+      const responseContext = responseContextForResult(result, {
+        tenantStatus: tenant?.status ?? null,
+        clientStatus: client?.status ?? null,
+        deliveryAcknowledgedAt: null,
+      });
+      if (responseContext.tenantStatus === null || responseContext.clientStatus === null) {
         throw new TenantAccessError("schema_mismatch");
       }
+      const acknowledgements = acknowledgementMapForContext(
+        result.value.credentialId,
+        responseContext,
+      );
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: replayed ? "manual_review" : "success",
@@ -881,13 +944,13 @@ export class TenantAccessService {
         data: Object.freeze({
           credential: credentialDto(
             result.value,
-            nowSeconds,
-            tenant.status,
-            client.status,
-            state.deliveryAcknowledgements,
+            replayed ? operationTimeSeconds(result.operation) : nowSeconds,
+            responseContext.tenantStatus,
+            responseContext.clientStatus,
+            acknowledgements,
           ),
           api_key: replayed ? null : `lmcpk_${nextCredentialId}_${secret}`,
-          operation: operationDto(result.operation, state.deliveryAcknowledgements),
+          operation: operationDto(result.operation, acknowledgements),
         }),
         reason_codes: Object.freeze(replayed ? ["credential_secret.withheld"] : []),
       });
@@ -915,7 +978,6 @@ export class TenantAccessService {
     }
     const existing = state.credentials.find((value) => value.credentialId === credentialId);
     if (existing === undefined) throw new TenantAccessError("credential_not_found");
-    if (existing.expiresAt <= nowSeconds) throw new TenantAccessError("credential_expired");
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: existing.tenantId,
       clientId: existing.clientId,
@@ -935,15 +997,25 @@ export class TenantAccessService {
           credential_id: credentialId,
           actor: context.actorId,
           request,
-        }),
-      });
+          }),
+        });
+      const replayed = result.replayed;
       const tenant = state.tenants.find((value) => value.tenantId === result.value.tenantId);
       const client = state.clients.find((value) => (
         value.tenantId === result.value.tenantId && value.clientId === result.value.clientId
       ));
-      if (tenant === undefined || client === undefined) {
+      const responseContext = responseContextForResult(result, {
+        tenantStatus: tenant?.status ?? null,
+        clientStatus: client?.status ?? null,
+        deliveryAcknowledgedAt: state.deliveryAcknowledgements[existing.credentialId] ?? null,
+      });
+      if (responseContext.tenantStatus === null || responseContext.clientStatus === null) {
         throw new TenantAccessError("schema_mismatch");
       }
+      const acknowledgements = acknowledgementMapForContext(
+        result.value.credentialId,
+        responseContext,
+      );
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: "success",
@@ -951,12 +1023,12 @@ export class TenantAccessService {
         data: Object.freeze({
           credential: credentialDto(
             result.value,
-            nowSeconds,
-            tenant.status,
-            client.status,
-            state.deliveryAcknowledgements,
+            replayed ? operationTimeSeconds(result.operation) : nowSeconds,
+            responseContext.tenantStatus,
+            responseContext.clientStatus,
+            acknowledgements,
           ),
-          operation: operationDto(result.operation, state.deliveryAcknowledgements),
+          operation: operationDto(result.operation, acknowledgements),
         }),
         reason_codes: Object.freeze([]),
       });
@@ -984,15 +1056,10 @@ export class TenantAccessService {
     }
     const existing = state.credentials.find((value) => value.credentialId === credentialId);
     if (existing === undefined) throw new TenantAccessError("credential_not_found");
-    if (existing.status !== "active") throw new TenantAccessError("credential_not_active");
-    if (existing.expiresAt <= nowSeconds) throw new TenantAccessError("credential_expired");
     const tenant = state.tenants.find((value) => value.tenantId === existing.tenantId);
     const client = state.clients.find((value) => (
       value.tenantId === existing.tenantId && value.clientId === existing.clientId
     ));
-    if (tenant === undefined || client === undefined) {
-      throw new TenantAccessError("schema_mismatch");
-    }
     const event = createEvent(this.#idGenerator, context, now, {
       tenantId: existing.tenantId,
       clientId: existing.clientId,
@@ -1013,10 +1080,19 @@ export class TenantAccessService {
           request,
         }),
       });
-      const acknowledgements = Object.freeze({
-        ...state.deliveryAcknowledgements,
-        [result.value.credentialId]: result.operation.createdAt,
+      const replayed = result.replayed;
+      const responseContext = responseContextForResult(result, {
+        tenantStatus: tenant?.status ?? null,
+        clientStatus: client?.status ?? null,
+        deliveryAcknowledgedAt: result.operation.createdAt,
       });
+      if (responseContext.tenantStatus === null || responseContext.clientStatus === null) {
+        throw new TenantAccessError("schema_mismatch");
+      }
+      const acknowledgements = acknowledgementMapForContext(
+        result.value.credentialId,
+        responseContext,
+      );
       return Object.freeze({
         schema_version: TENANT_ACCESS_SCHEMA_VERSION,
         status: "success",
@@ -1024,9 +1100,9 @@ export class TenantAccessService {
         data: Object.freeze({
           credential: credentialDto(
             result.value,
-            nowSeconds,
-            tenant.status,
-            client.status,
+            replayed ? operationTimeSeconds(result.operation) : nowSeconds,
+            responseContext.tenantStatus,
+            responseContext.clientStatus,
             acknowledgements,
           ),
           operation: operationDto(result.operation, acknowledgements),

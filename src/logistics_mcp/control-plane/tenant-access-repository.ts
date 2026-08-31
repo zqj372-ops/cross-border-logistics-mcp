@@ -61,10 +61,18 @@ export interface TenantAccessStateRecord {
   readonly deliveryAcknowledgements: Readonly<Record<string, string>>;
 }
 
+export type TenantAccessResponseContext = Readonly<{
+  readonly tenantStatus: TenantStatus | null;
+  readonly clientStatus: ClientStatus | null;
+  readonly deliveryAcknowledgedAt: string | null;
+}>;
+
 export type TenantAccessWriteResult<T> = Readonly<{
   replayed: boolean;
   value: T;
   operation: TenantAccessEventRecord;
+  /** Legacy adapters may omit this until their immutable replay migration lands. */
+  snapshot?: TenantAccessResponseContext;
 }>;
 
 export type TenantAccessRepositoryErrorCode =

@@ -15,6 +15,9 @@ import {
   TENANT_ACCESS_SCHEMA_VERSION,
   TENANT_API_KEY_TOOL_CATALOG,
 } from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
+import type { TenantAccessRepository } from "../../src/logistics_mcp/control-plane/tenant-access-repository";
+import { TenantAccessService } from "../../src/logistics_mcp/control-plane/tenant-access-service";
+import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
 
 const schemaDir = resolve(import.meta.dirname, "../../schemas/admin-control");
 const schemas = {
@@ -94,7 +97,7 @@ describe("Tenant Access Draft 2020-12 contracts", () => {
     }
   });
 
-  it("validates redacted state and one-time credential envelopes", () => {
+  it("validates actual redacted service state and one-time credential envelopes", async () => {
     const ajv = new Ajv2020({ strict: true, allErrors: true });
     const validate = ajv.compile(readSchema("tenant-access-envelope.schema.json"));
     const tenant = {
@@ -126,18 +129,72 @@ describe("Tenant Access Draft 2020-12 contracts", () => {
       revoked_at: null,
       rotated_from_id: null,
     };
+    const client = {
+      client_id: "codex_ops",
+      tenant_id: "tenant_demo_a",
+      label: "运营 Codex",
+      status: "active",
+      created_at: "2026-08-27T00:00:00.000Z",
+      updated_at: "2026-08-27T00:00:00.000Z",
+      allowed_actions: ["disable"],
+    };
     const state = {
       schema_version: TENANT_ACCESS_SCHEMA_VERSION,
       status: "success",
       data: {
         available_tools: TENANT_API_KEY_TOOL_CATALOG,
         tenants: [tenant],
+        clients: [client],
         credentials: [credential],
         operations: [],
       },
       reason_codes: [],
     };
     expect(validate(state), JSON.stringify(validate.errors)).toBe(true);
+    const repository = {
+      managementTenantId: "tenant_management",
+      getState: () => Promise.resolve(Object.freeze({
+        tenants: Object.freeze([{
+          tenantId: "tenant_demo_a",
+          displayName: "北美演示租户",
+          status: "active" as const,
+          createdAt: "2026-08-27T00:00:00.000Z",
+          updatedAt: "2026-08-27T00:00:00.000Z",
+        }]),
+        clients: Object.freeze([{
+          clientId: "codex_ops",
+          tenantId: "tenant_demo_a",
+          label: "运营 Codex",
+          status: "active" as const,
+          createdAt: "2026-08-27T00:00:00.000Z",
+          updatedAt: "2026-08-27T00:00:00.000Z",
+        }]),
+        credentials: Object.freeze([]),
+        events: Object.freeze([]),
+        deliveryAcknowledgements: Object.freeze({}),
+      })),
+    } as unknown as TenantAccessRepository;
+    const actualState = await new TenantAccessService(repository).getState(parseExecutionContext({
+      tenant_id: "tenant_management",
+      actor_id: "contract_operator",
+      actor_role: "admin",
+      roles: ["admin"],
+      scopes: ["platform:admin", "tenant:admin"],
+      client_id: "contract_test",
+      session_id: "contract_test_session",
+      expires_at: 1_802_505_600,
+    }));
+    expect(validate(actualState), JSON.stringify(validate.errors)).toBe(true);
+    expect(actualState.data.clients).toEqual([client]);
+    expect(validate({
+      ...state,
+      data: {
+        available_tools: state.data.available_tools,
+        tenants: state.data.tenants,
+        credentials: state.data.credentials,
+        operations: state.data.operations,
+      },
+    }), "state must require the clients projection").toBe(false);
 
     const issued = {
       schema_version: TENANT_ACCESS_SCHEMA_VERSION,
@@ -149,6 +206,7 @@ describe("Tenant Access Draft 2020-12 contracts", () => {
         operation: {
           operation_id: "event_00000001",
           tenant_id: "tenant_demo_a",
+          client_id: "codex_ops",
           credential_id: "key_00000001",
           actor_ref: "admin_operator:admin_console",
           action: "credential.issue",

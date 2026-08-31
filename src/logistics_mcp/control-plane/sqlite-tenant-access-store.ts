@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -21,6 +22,7 @@ import type {
   StoredCredentialRecord,
   TenantAccessEventRecord,
   TenantAccessRepository,
+  TenantAccessResponseContext,
   TenantAccessStateRecord,
   TenantAccessWriteResult,
   TenantRecord,
@@ -38,7 +40,10 @@ const MARKER_MODE = 0o400;
 const MARKER_FORMAT = "mcp-tenant-access-identity/v1" as const;
 const LEGACY_DATABASE_SCHEMA_VERSION = 1 as const;
 const CLIENT_DATABASE_SCHEMA_VERSION = 2 as const;
-const DATABASE_SCHEMA_VERSION = 3 as const;
+const PEPPER_DATABASE_SCHEMA_VERSION = 3 as const;
+const DATABASE_SCHEMA_VERSION = 4 as const;
+const RESULT_SNAPSHOT_FORMAT = "mcp-tenant-access-result/v1" as const;
+const SNAPSHOT_BYTES_KEY = "__mcp_bytes_base64" as const;
 
 const SCHEMA_SQL = `
 CREATE TABLE access_meta (
@@ -107,6 +112,7 @@ CREATE TABLE access_idempotency (
   request_hash TEXT NOT NULL,
   result_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  result_json TEXT NOT NULL,
   PRIMARY KEY (action, idempotency_key)
 ) STRICT;
 
@@ -137,6 +143,7 @@ interface Marker {
   readonly schema_version:
     | typeof LEGACY_DATABASE_SCHEMA_VERSION
     | typeof CLIENT_DATABASE_SCHEMA_VERSION
+    | typeof PEPPER_DATABASE_SCHEMA_VERSION
     | typeof DATABASE_SCHEMA_VERSION;
   readonly access_store_id: string;
   readonly application_root: string;
@@ -146,6 +153,33 @@ interface Marker {
 }
 
 type SqlRow = Record<string, SQLInputValue>;
+
+type ResultSnapshotMetadata = TenantAccessResponseContext;
+
+type SnapshotEntityKind = "tenant" | "client" | "credential";
+
+type IdempotentWriteResult<T> = Readonly<{
+  readonly resultId: string;
+  readonly value: T;
+  readonly operation: TenantAccessEventRecord;
+  readonly snapshot: ResultSnapshotMetadata;
+}>;
+
+type ResultSnapshotPayload = Readonly<{
+  readonly snapshot_format: typeof RESULT_SNAPSHOT_FORMAT;
+  readonly entity_kind: SnapshotEntityKind;
+  readonly entity: unknown;
+  readonly operation: unknown;
+  readonly snapshot: unknown;
+}>;
+
+function makeSnapshotMetadata(
+  tenantStatus: TenantStatus | null,
+  clientStatus: ClientStatus | null,
+  deliveryAcknowledgedAt: string | null,
+): ResultSnapshotMetadata {
+  return Object.freeze({ tenantStatus, clientStatus, deliveryAcknowledgedAt });
+}
 
 function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER_PATTERN.test(value);
@@ -241,6 +275,7 @@ function readMarker(path: string): Marker {
       value.marker_format !== MARKER_FORMAT ||
       (value.schema_version !== LEGACY_DATABASE_SCHEMA_VERSION &&
         value.schema_version !== CLIENT_DATABASE_SCHEMA_VERSION &&
+        value.schema_version !== PEPPER_DATABASE_SCHEMA_VERSION &&
         value.schema_version !== DATABASE_SCHEMA_VERSION) ||
       !isIdentifier(value.access_store_id) ||
       typeof value.application_root !== "string" ||
@@ -324,6 +359,373 @@ function repositoryFailure(
   code: ConstructorParameters<typeof TenantAccessRepositoryError>[0],
 ): never {
   throw new TenantAccessRepositoryError(code);
+}
+
+function isPlainSnapshotObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function exactSnapshotObject(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (!isPlainSnapshotObject(value)) repositoryFailure("corrupt");
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) repositoryFailure("corrupt");
+  return value;
+}
+
+function snapshotString(value: unknown): string {
+  if (typeof value !== "string") repositoryFailure("corrupt");
+  return value;
+}
+
+function snapshotIdentifier(value: unknown): string {
+  const identifier = snapshotString(value);
+  if (!isIdentifier(identifier)) repositoryFailure("corrupt");
+  return identifier;
+}
+
+function snapshotNullableIdentifier(value: unknown): string | null {
+  if (value === null) return null;
+  return snapshotIdentifier(value);
+}
+
+function snapshotTimestamp(value: unknown): string {
+  const timestamp = snapshotString(value);
+  if (
+    !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$/u.test(timestamp) ||
+    !Number.isFinite(Date.parse(timestamp))
+  ) {
+    repositoryFailure("corrupt");
+  }
+  return timestamp;
+}
+
+function snapshotNullableTimestamp(value: unknown): string | null {
+  if (value === null) return null;
+  return snapshotTimestamp(value);
+}
+
+function snapshotStatus<T extends string>(value: unknown, allowed: readonly T[]): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) repositoryFailure("corrupt");
+  return value as T;
+}
+
+function snapshotBytes(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.byteLength === 0) {
+    repositoryFailure("corrupt");
+  }
+  return new Uint8Array(value);
+}
+
+function snapshotScopes(value: unknown): readonly TenantApiKeyScope[] {
+  if (!Array.isArray(value)) repositoryFailure("corrupt");
+  const scopes = normalizeStoredTenantApiKeyScopes(value);
+  if (scopes === null || JSON.stringify(scopes) !== JSON.stringify(value)) {
+    repositoryFailure("corrupt");
+  }
+  return scopes;
+}
+
+function snapshotEntityKind(action: string): SnapshotEntityKind {
+  switch (action) {
+    case "tenant.create":
+    case "tenant.status":
+      return "tenant";
+    case "client.status":
+      return "client";
+    case "credential.issue":
+    case "credential.rotate":
+    case "credential.revoke":
+    case "credential.delivery_acknowledge":
+      return "credential";
+    default:
+      repositoryFailure("corrupt");
+  }
+}
+
+function expectedEventActions(action: string): readonly string[] {
+  switch (action) {
+    case "tenant.create":
+      return ["tenant.created"];
+    case "tenant.status":
+      return ["tenant.active", "tenant.suspended"];
+    case "client.status":
+      return ["client.active", "client.disabled"];
+    case "credential.issue":
+      return ["credential.issued"];
+    case "credential.rotate":
+      return ["credential.rotated"];
+    case "credential.revoke":
+      return ["credential.revoked"];
+    case "credential.delivery_acknowledge":
+      return ["credential.delivery_acknowledged"];
+    default:
+      repositoryFailure("corrupt");
+  }
+}
+
+function snapshotTenant(value: unknown): TenantRecord {
+  const entity = exactSnapshotObject(value, [
+    "tenantId", "displayName", "status", "createdAt", "updatedAt",
+  ]);
+  return Object.freeze({
+    tenantId: snapshotIdentifier(entity.tenantId),
+    displayName: snapshotString(entity.displayName),
+    status: snapshotStatus(entity.status, ["active", "suspended"] as const),
+    createdAt: snapshotTimestamp(entity.createdAt),
+    updatedAt: snapshotTimestamp(entity.updatedAt),
+  });
+}
+
+function snapshotClient(value: unknown): ClientRecord {
+  const entity = exactSnapshotObject(value, [
+    "clientId", "tenantId", "label", "status", "createdAt", "updatedAt",
+  ]);
+  return Object.freeze({
+    clientId: snapshotIdentifier(entity.clientId),
+    tenantId: snapshotIdentifier(entity.tenantId),
+    label: snapshotString(entity.label),
+    status: snapshotStatus(entity.status, ["active", "disabled"] as const),
+    createdAt: snapshotTimestamp(entity.createdAt),
+    updatedAt: snapshotTimestamp(entity.updatedAt),
+  });
+}
+
+function snapshotCredential(value: unknown): StoredCredentialRecord {
+  const entity = exactSnapshotObject(value, [
+    "credentialId", "tenantId", "clientId", "label", "actorRole", "roles", "scopes",
+    "status", "keyPrefix", "secretLastFour", "secretSalt", "secretHash", "pepperVersion",
+    "createdAt", "expiresAt", "lastUsedAt", "revokedAt", "rotatedFromId",
+  ]);
+  const roles = entity.roles;
+  if (!Array.isArray(roles) || JSON.stringify(roles) !== '["service"]') {
+    repositoryFailure("corrupt");
+  }
+  const secretLastFour = snapshotString(entity.secretLastFour);
+  if (!/^[A-Za-z0-9_-]{4}$/u.test(secretLastFour)) repositoryFailure("corrupt");
+  const keyPrefix = snapshotString(entity.keyPrefix);
+  if (!/^lmcpk_[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(keyPrefix)) {
+    repositoryFailure("corrupt");
+  }
+  const expiresAt = entity.expiresAt;
+  if (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < 1) {
+    repositoryFailure("corrupt");
+  }
+  return Object.freeze({
+    credentialId: snapshotIdentifier(entity.credentialId),
+    tenantId: snapshotIdentifier(entity.tenantId),
+    clientId: snapshotIdentifier(entity.clientId),
+    label: snapshotString(entity.label),
+    actorRole: snapshotStatus(entity.actorRole, ["service"] as const),
+    roles: Object.freeze(["service"] as const),
+    scopes: snapshotScopes(entity.scopes),
+    status: snapshotStatus(entity.status, ["active", "revoked"] as const),
+    keyPrefix,
+    secretLastFour,
+    secretSalt: snapshotBytes(entity.secretSalt),
+    secretHash: snapshotBytes(entity.secretHash),
+    pepperVersion: (() => {
+      const pepperVersion = snapshotString(entity.pepperVersion);
+      if (!isPepperVersion(pepperVersion)) repositoryFailure("corrupt");
+      return pepperVersion;
+    })(),
+    createdAt: snapshotTimestamp(entity.createdAt),
+    expiresAt,
+    lastUsedAt: snapshotNullableTimestamp(entity.lastUsedAt),
+    revokedAt: snapshotNullableTimestamp(entity.revokedAt),
+    rotatedFromId: snapshotNullableIdentifier(entity.rotatedFromId),
+  });
+}
+
+function snapshotOperation(
+  value: unknown,
+  action: string,
+  resultId: string,
+  createdAt: string,
+): TenantAccessEventRecord {
+  const operation = exactSnapshotObject(value, [
+    "eventId", "tenantId", "clientId", "credentialId", "actorRef", "action",
+    "reasonCode", "createdAt",
+  ]);
+  const operationAction = snapshotString(operation.action);
+  if (!expectedEventActions(action).includes(operationAction)) repositoryFailure("corrupt");
+  const normalized = Object.freeze({
+    eventId: snapshotIdentifier(operation.eventId),
+    tenantId: snapshotIdentifier(operation.tenantId),
+    clientId: snapshotNullableIdentifier(operation.clientId),
+    credentialId: snapshotNullableIdentifier(operation.credentialId),
+    actorRef: snapshotIdentifier(operation.actorRef),
+    action: operationAction,
+    reasonCode: snapshotIdentifier(operation.reasonCode),
+    createdAt: snapshotTimestamp(operation.createdAt),
+  });
+  if (normalized.createdAt !== createdAt) repositoryFailure("corrupt");
+  if (action === "tenant.create" || action === "tenant.status") {
+    if (normalized.clientId !== null || normalized.credentialId !== null) {
+      repositoryFailure("corrupt");
+    }
+  } else if (action === "client.status") {
+    if (normalized.clientId !== resultId || normalized.credentialId !== null) {
+      repositoryFailure("corrupt");
+    }
+  } else if (normalized.credentialId !== resultId || normalized.clientId === null) {
+    repositoryFailure("corrupt");
+  }
+  return normalized;
+}
+
+function snapshotMetadata(value: unknown): ResultSnapshotMetadata {
+  const metadata = exactSnapshotObject(value, [
+    "tenantStatus", "clientStatus", "deliveryAcknowledgedAt",
+  ]);
+  return Object.freeze({
+    tenantStatus: metadata.tenantStatus === null
+      ? null
+      : snapshotStatus(metadata.tenantStatus, ["active", "suspended"] as const),
+    clientStatus: metadata.clientStatus === null
+      ? null
+      : snapshotStatus(metadata.clientStatus, ["active", "disabled"] as const),
+    deliveryAcknowledgedAt: snapshotNullableTimestamp(metadata.deliveryAcknowledgedAt),
+  });
+}
+
+function snapshotPayload(
+  value: unknown,
+  action: string,
+  resultId: string,
+  createdAt: string,
+): {
+  readonly value: TenantRecord | ClientRecord | StoredCredentialRecord;
+  readonly operation: TenantAccessEventRecord;
+  readonly snapshot: ResultSnapshotMetadata;
+} {
+  const payload = exactSnapshotObject(value, [
+    "snapshot_format", "entity_kind", "entity", "operation", "snapshot",
+  ]) as unknown as ResultSnapshotPayload;
+  if (payload.snapshot_format !== RESULT_SNAPSHOT_FORMAT) repositoryFailure("corrupt");
+  const entityKind = payload.entity_kind;
+  if (entityKind !== snapshotEntityKind(action)) repositoryFailure("corrupt");
+  const normalizedOperation = snapshotOperation(payload.operation, action, resultId, createdAt);
+  const normalizedSnapshot = snapshotMetadata(payload.snapshot);
+  const normalizedValue = entityKind === "tenant"
+    ? snapshotTenant(payload.entity)
+    : entityKind === "client"
+      ? snapshotClient(payload.entity)
+      : snapshotCredential(payload.entity);
+  const normalizedEntityId = entityKind === "tenant"
+    ? normalizedValue.tenantId
+    : entityKind === "client"
+      ? (normalizedValue as ClientRecord).clientId
+      : (normalizedValue as StoredCredentialRecord).credentialId;
+  if (normalizedEntityId !== resultId || normalizedOperation.tenantId !== normalizedValue.tenantId) {
+    repositoryFailure("corrupt");
+  }
+  if (entityKind === "tenant") {
+    if (
+      normalizedOperation.clientId !== null ||
+      normalizedOperation.credentialId !== null ||
+      normalizedSnapshot.tenantStatus !== (normalizedValue as TenantRecord).status ||
+      normalizedSnapshot.clientStatus !== null ||
+      normalizedSnapshot.deliveryAcknowledgedAt !== null
+    ) repositoryFailure("corrupt");
+  } else if (entityKind === "client") {
+    const client = normalizedValue as ClientRecord;
+    if (
+      normalizedOperation.clientId !== client.clientId ||
+      normalizedOperation.credentialId !== null ||
+      normalizedSnapshot.tenantStatus === null ||
+      normalizedSnapshot.clientStatus !== client.status ||
+      normalizedSnapshot.deliveryAcknowledgedAt !== null
+    ) repositoryFailure("corrupt");
+  } else {
+    const credential = normalizedValue as StoredCredentialRecord;
+    if (
+      normalizedOperation.clientId !== credential.clientId ||
+      normalizedOperation.credentialId !== credential.credentialId ||
+      normalizedSnapshot.tenantStatus === null ||
+      normalizedSnapshot.clientStatus === null
+    ) repositoryFailure("corrupt");
+    if (action === "credential.delivery_acknowledge") {
+      if (normalizedSnapshot.deliveryAcknowledgedAt !== normalizedOperation.createdAt) {
+        repositoryFailure("corrupt");
+      }
+    } else if (action === "credential.issue" || action === "credential.rotate") {
+      if (normalizedSnapshot.deliveryAcknowledgedAt !== null) repositoryFailure("corrupt");
+    }
+  }
+  return {
+    value: normalizedValue,
+    operation: normalizedOperation,
+    snapshot: normalizedSnapshot,
+  };
+}
+
+function snapshotReviver(_key: string, value: unknown): unknown {
+  if (!isPlainSnapshotObject(value)) return value;
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== SNAPSHOT_BYTES_KEY) return value;
+  const encoded = value[SNAPSHOT_BYTES_KEY];
+  if (typeof encoded !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
+    return value;
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.toString("base64") !== encoded) return value;
+  return new Uint8Array(bytes);
+}
+
+function snapshotReplacer(_key: string, value: unknown): unknown {
+  return value instanceof Uint8Array
+    ? { [SNAPSHOT_BYTES_KEY]: Buffer.from(value).toString("base64") }
+    : value;
+}
+
+function decodeResultSnapshot<T>(
+  json: string,
+  action: string,
+  resultId: string,
+  createdAt: string,
+): {
+  readonly value: T;
+  readonly operation: TenantAccessEventRecord;
+  readonly snapshot: ResultSnapshotMetadata;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json, snapshotReviver) as unknown;
+  } catch {
+    repositoryFailure("corrupt");
+  }
+  const normalized = snapshotPayload(parsed, action, resultId, createdAt);
+  return {
+    value: normalized.value as T,
+    operation: normalized.operation,
+    snapshot: normalized.snapshot,
+  };
+}
+
+function serializeResultSnapshot<T>(
+  action: string,
+  resultId: string,
+  createdAt: string,
+  value: T,
+  operation: TenantAccessEventRecord,
+  snapshot: ResultSnapshotMetadata,
+): string {
+  const payload = {
+    snapshot_format: RESULT_SNAPSHOT_FORMAT,
+    entity_kind: snapshotEntityKind(action),
+    entity: value,
+    operation,
+    snapshot,
+  } satisfies ResultSnapshotPayload;
+  const json = JSON.stringify(payload, snapshotReplacer);
+  if (json === undefined) repositoryFailure("corrupt");
+  decodeResultSnapshot<T>(json, action, resultId, createdAt);
+  return json;
 }
 
 function tenantFromRow(row: SqlRow): TenantRecord {
@@ -597,6 +999,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     if (
       databaseVersion !== LEGACY_DATABASE_SCHEMA_VERSION &&
       databaseVersion !== CLIENT_DATABASE_SCHEMA_VERSION &&
+      databaseVersion !== PEPPER_DATABASE_SCHEMA_VERSION &&
       databaseVersion !== DATABASE_SCHEMA_VERSION
     ) {
       throw new TenantAccessError("schema_mismatch");
@@ -605,7 +1008,8 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       throw new TenantAccessError("schema_mismatch");
     }
     if (
-      databaseVersion !== DATABASE_SCHEMA_VERSION &&
+      (databaseVersion === LEGACY_DATABASE_SCHEMA_VERSION ||
+        databaseVersion === CLIENT_DATABASE_SCHEMA_VERSION) &&
       this.#legacyCredentialPepperVersion === undefined
     ) {
       throw new TenantAccessError("invalid_options");
@@ -625,7 +1029,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       }
       this.#database.exec("BEGIN IMMEDIATE");
       try {
-        this.#database.exec(`
+          this.#database.exec(`
           CREATE TABLE clients (
             tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
             client_id TEXT NOT NULL,
@@ -696,6 +1100,24 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         }
         throw error;
       }
+      databaseVersion = PEPPER_DATABASE_SCHEMA_VERSION;
+    }
+    if (databaseVersion === PEPPER_DATABASE_SCHEMA_VERSION) {
+      this.#database.exec("BEGIN IMMEDIATE");
+      try {
+        this.#database.exec(`
+          ALTER TABLE access_idempotency ADD COLUMN result_json TEXT;
+          UPDATE access_meta SET schema_version = 4 WHERE singleton = 1;
+        `);
+        this.#database.exec("COMMIT");
+      } catch (error) {
+        try {
+          this.#database.exec("ROLLBACK");
+        } catch {
+          // Preserve the migration error.
+        }
+        throw error;
+      }
     }
     if (this.#marker.schema_version !== DATABASE_SCHEMA_VERSION) {
       const nextMarker: Marker = Object.freeze({
@@ -742,6 +1164,8 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       .map((value) => expectText(value, "name"));
     const credentialColumns = (this.#database.prepare("PRAGMA table_info(credentials)").all() as SqlRow[])
       .map((value) => expectText(value, "name"));
+    const idempotencyColumns = (this.#database.prepare("PRAGMA table_info(access_idempotency)").all() as SqlRow[])
+      .map((value) => expectText(value, "name"));
     if (
       JSON.stringify(clientColumns) !== JSON.stringify([
         "tenant_id", "client_id", "label", "status", "created_at", "updated_at",
@@ -755,6 +1179,9 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         "scopes_json", "status", "key_prefix", "secret_last_four", "secret_salt",
         "secret_hash", "created_at", "expires_at", "last_used_at", "revoked_at",
         "rotated_from_id", "pepper_version",
+      ]) ||
+      JSON.stringify(idempotencyColumns) !== JSON.stringify([
+        "action", "idempotency_key", "request_hash", "result_id", "created_at", "result_json",
       ])
     ) {
       throw new TenantAccessError("schema_mismatch");
@@ -784,44 +1211,50 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     idempotencyKey: string,
     requestHash: string,
     createdAt: string,
-    load: (resultId: string, createdAt: string) => {
-      readonly value: T;
-      readonly operation: TenantAccessEventRecord;
-    },
-    write: () => {
-      readonly resultId: string;
-      readonly value: T;
-      readonly operation: TenantAccessEventRecord;
-    },
+    write: () => IdempotentWriteResult<T>,
   ): TenantAccessWriteResult<T> {
     const existing = database.prepare(`
-      SELECT request_hash, result_id, created_at FROM access_idempotency
+      SELECT request_hash, result_id, created_at, result_json FROM access_idempotency
       WHERE action = ? AND idempotency_key = ?
     `).get(action, idempotencyKey) as SqlRow | undefined;
     if (existing !== undefined) {
       if (expectText(existing, "request_hash") !== requestHash) {
         repositoryFailure("idempotency_conflict");
       }
-      const loaded = load(
-        expectText(existing, "result_id"),
-        expectText(existing, "created_at"),
+      const resultId = expectText(existing, "result_id");
+      const createdAt = expectText(existing, "created_at");
+      const loaded = decodeResultSnapshot<T>(
+        expectText(existing, "result_json"),
+        action,
+        resultId,
+        createdAt,
       );
       return Object.freeze({
         replayed: true,
         value: loaded.value,
         operation: loaded.operation,
+        snapshot: loaded.snapshot,
       });
     }
     const result = write();
+    const resultJson = serializeResultSnapshot(
+      action,
+      result.resultId,
+      createdAt,
+      result.value,
+      result.operation,
+      result.snapshot,
+    );
     database.prepare(`
       INSERT INTO access_idempotency (
-        action, idempotency_key, request_hash, result_id, created_at
-      ) VALUES (?, ?, ?, ?, ?)
-    `).run(action, idempotencyKey, requestHash, result.resultId, createdAt);
+        action, idempotency_key, request_hash, result_id, created_at, result_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(action, idempotencyKey, requestHash, result.resultId, createdAt, resultJson);
     return Object.freeze({
       replayed: false,
       value: result.value,
       operation: result.operation,
+      snapshot: result.snapshot,
     });
   }
 
@@ -845,45 +1278,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
     `).get(tenantId, clientId) as SqlRow | undefined;
     if (row === undefined) repositoryFailure("client_not_found");
     return clientFromRow(row);
-  }
-
-  #operationEvent(
-    database: DatabaseSync,
-    template: TenantAccessEventRecord,
-    resultId: string,
-    createdAt: string,
-  ): TenantAccessEventRecord {
-    const credentialId = template.credentialId === null ? null : resultId;
-    const clientId = template.clientId === null
-      ? null
-      : template.credentialId === null
-        ? resultId
-        : template.clientId;
-    const rows = database.prepare(`
-      SELECT * FROM access_events
-      WHERE tenant_id = ?
-        AND action = ?
-        AND created_at = ?
-        AND (
-          (? IS NULL AND credential_id IS NULL)
-          OR credential_id = ?
-        )
-        AND (
-          (? IS NULL AND client_id IS NULL)
-          OR client_id = ?
-        )
-      ORDER BY event_id
-    `).all(
-      template.tenantId,
-      template.action,
-      createdAt,
-      credentialId,
-      credentialId,
-      clientId,
-      clientId,
-    ) as SqlRow[];
-    if (rows.length !== 1 || rows[0] === undefined) repositoryFailure("corrupt");
-    return eventFromRow(rows[0]);
   }
 
   #deliveryAcknowledgedAt(database: DatabaseSync, credentialId: string): string | null {
@@ -943,10 +1337,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.tenant.createdAt,
-      (resultId, createdAt) => ({
-        value: this.#tenant(database, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const exists = database.prepare("SELECT 1 AS present FROM tenants WHERE tenant_id = ?")
           .get(request.tenant.tenantId);
@@ -966,6 +1356,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: request.tenant.tenantId,
           value: request.tenant,
           operation: request.event,
+          snapshot: makeSnapshotMetadata(request.tenant.status, null, null),
         };
       },
     )));
@@ -985,10 +1376,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.updatedAt,
-      (resultId, createdAt) => ({
-        value: this.#tenant(database, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const tenant = this.#tenant(database, request.tenantId);
         if (tenant.status === request.status) repositoryFailure("tenant_status_unchanged");
@@ -999,6 +1386,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: request.tenantId,
           value: this.#tenant(database, request.tenantId),
           operation: request.event,
+          snapshot: makeSnapshotMetadata(request.status, null, null),
         };
       },
     )));
@@ -1019,10 +1407,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.updatedAt,
-      (resultId, createdAt) => ({
-        value: this.#client(database, request.tenantId, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const tenant = this.#tenant(database, request.tenantId);
         if (request.status === "active" && tenant.status !== "active") {
@@ -1039,6 +1423,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: request.clientId,
           value: this.#client(database, request.tenantId, request.clientId),
           operation: request.event,
+          snapshot: makeSnapshotMetadata(tenant.status, request.status, null),
         };
       },
     )));
@@ -1056,10 +1441,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.credential.createdAt,
-      (resultId, createdAt) => ({
-        value: this.#credential(database, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const tenant = this.#tenant(database, request.credential.tenantId);
         if (tenant.status !== "active") repositoryFailure("tenant_not_active");
@@ -1097,6 +1478,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: request.credential.credentialId,
           value: request.credential,
           operation: request.event,
+          snapshot: makeSnapshotMetadata("active", "active", null),
         };
       },
     )));
@@ -1117,10 +1499,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.credential.createdAt,
-      (resultId, createdAt) => ({
-        value: this.#credential(database, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const previous = this.#credential(database, request.previousCredentialId);
         if (previous.status !== "active") repositoryFailure("credential_not_active");
@@ -1130,7 +1508,8 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
         }
         const tenant = this.#tenant(database, previous.tenantId);
         if (tenant.status !== "active") repositoryFailure("tenant_not_active");
-        if (this.#client(database, previous.tenantId, previous.clientId).status !== "active") {
+        const client = this.#client(database, previous.tenantId, previous.clientId);
+        if (client.status !== "active") {
           repositoryFailure("client_not_active");
         }
         if (
@@ -1150,6 +1529,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: request.credential.credentialId,
           value: request.credential,
           operation: request.event,
+          snapshot: makeSnapshotMetadata(tenant.status, client.status, null),
         };
       },
     )));
@@ -1169,14 +1549,16 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.revokedAt,
-      (resultId, createdAt) => ({
-        value: this.#credential(database, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const credential = this.#credential(database, request.credentialId);
         if (credential.status !== "active") repositoryFailure("credential_not_active");
         if (credential.expiresAt <= request.nowSeconds) repositoryFailure("credential_expired");
+        const tenant = this.#tenant(database, credential.tenantId);
+        const client = this.#client(database, credential.tenantId, credential.clientId);
+        const deliveryAcknowledgedAt = this.#deliveryAcknowledgedAt(
+          database,
+          credential.credentialId,
+        );
         database.prepare(`
           UPDATE credentials SET status = 'revoked', revoked_at = ?
           WHERE credential_id = ?
@@ -1186,6 +1568,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: credential.credentialId,
           value: this.#credential(database, credential.credentialId),
           operation: request.event,
+          snapshot: makeSnapshotMetadata(tenant.status, client.status, deliveryAcknowledgedAt),
         };
       },
     )));
@@ -1204,10 +1587,6 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
       request.idempotencyKey,
       request.requestHash,
       request.event.createdAt,
-      (resultId, createdAt) => ({
-        value: this.#credential(database, resultId),
-        operation: this.#operationEvent(database, request.event, resultId, createdAt),
-      }),
       () => {
         const credential = this.#credential(database, request.credentialId);
         if (credential.status !== "active") repositoryFailure("credential_not_active");
@@ -1226,6 +1605,7 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           resultId: credential.credentialId,
           value: credential,
           operation: request.event,
+          snapshot: makeSnapshotMetadata("active", "active", request.event.createdAt),
         };
       },
     )));

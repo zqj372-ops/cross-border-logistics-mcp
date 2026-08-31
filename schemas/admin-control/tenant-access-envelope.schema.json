@@ -11,6 +11,7 @@
       "oneOf": [
         {"$ref": "#/$defs/state_data"},
         {"$ref": "#/$defs/tenant_data"},
+        {"$ref": "#/$defs/client_data"},
         {"$ref": "#/$defs/credential_metadata_data"},
         {"$ref": "#/$defs/credential_data"},
         {"type": "null"}
@@ -82,6 +83,39 @@
         }
       ]
     },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["client_id", "tenant_id", "label", "status", "created_at", "updated_at", "allowed_actions"],
+      "properties": {
+        "client_id": {"$ref": "#/$defs/identifier"},
+        "tenant_id": {"$ref": "#/$defs/identifier"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "status": {"enum": ["active", "disabled"]},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "updated_at": {"$ref": "#/$defs/timestamp"},
+        "allowed_actions": {
+          "type": "array",
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["disable", "enable"]}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "active"}}, "required": ["status"]},
+          "then": {"properties": {"allowed_actions": {"const": ["disable"]}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "disabled"}}, "required": ["status"]},
+          "then": {"properties": {
+            "allowed_actions": {
+              "oneOf": [{"const": ["enable"]}, {"const": []}]
+            }
+          }}
+        }
+      ]
+    },
     "credential": {
       "type": "object",
       "additionalProperties": false,
@@ -108,7 +142,7 @@
         "status": {"enum": ["active", "expired", "revoked"]},
         "delivery_status": {"enum": ["pending", "acknowledged"]},
         "delivery_acknowledged_at": {"$ref": "#/$defs/nullable_timestamp"},
-        "effective_status": {"enum": ["pending_delivery", "active", "tenant_suspended", "expired", "revoked"]},
+        "effective_status": {"enum": ["pending_delivery", "active", "tenant_suspended", "client_disabled", "expired", "revoked"]},
         "allowed_actions": {
           "type": "array",
           "maxItems": 3,
@@ -157,6 +191,14 @@
           }}
         },
         {
+          "if": {"properties": {"effective_status": {"const": "client_disabled"}}, "required": ["effective_status"]},
+          "then": {"properties": {
+            "status": {"const": "active"},
+            "delivery_status": {"const": "acknowledged"},
+            "allowed_actions": {"const": ["revoke"]}
+          }}
+        },
+        {
           "if": {"properties": {"effective_status": {"const": "expired"}}, "required": ["effective_status"]},
           "then": {"properties": {"status": {"const": "expired"}, "allowed_actions": {"const": []}}}
         },
@@ -182,25 +224,26 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "operation_id", "tenant_id", "credential_id", "actor_ref", "action",
+        "operation_id", "tenant_id", "client_id", "credential_id", "actor_ref", "action",
         "from_status", "to_status", "status", "reason_code", "created_at"
       ],
       "properties": {
         "operation_id": {"$ref": "#/$defs/identifier"},
         "tenant_id": {"$ref": "#/$defs/identifier"},
+        "client_id": {"$ref": "#/$defs/nullable_identifier"},
         "credential_id": {"$ref": "#/$defs/nullable_identifier"},
         "actor_ref": {"$ref": "#/$defs/identifier"},
         "action": {
           "enum": [
-            "tenant.create", "tenant.activate", "tenant.suspend", "credential.issue",
+            "tenant.create", "tenant.activate", "tenant.suspend", "client.create", "client.enable", "client.disable", "credential.issue",
             "credential.delivery_acknowledge", "credential.rotate", "credential.revoke"
           ]
         },
         "from_status": {
-          "enum": ["absent", "active", "suspended", "pending_delivery", "tenant_suspended", "expired", "revoked"]
+          "enum": ["absent", "active", "disabled", "suspended", "pending_delivery", "tenant_suspended", "expired", "revoked"]
         },
         "to_status": {
-          "enum": ["absent", "active", "suspended", "pending_delivery", "tenant_suspended", "expired", "revoked"]
+          "enum": ["absent", "active", "disabled", "suspended", "pending_delivery", "tenant_suspended", "expired", "revoked"]
         },
         "status": {"const": "success"},
         "reason_code": {"$ref": "#/$defs/identifier"},
@@ -218,6 +261,18 @@
         {"properties": {
           "action": {"const": "tenant.suspend"}, "credential_id": {"type": "null"},
           "from_status": {"const": "active"}, "to_status": {"const": "suspended"}
+        }},
+        {"properties": {
+          "action": {"const": "client.create"}, "client_id": {"$ref": "#/$defs/identifier"},
+          "credential_id": {"type": "null"}, "from_status": {"const": "absent"}, "to_status": {"const": "active"}
+        }},
+        {"properties": {
+          "action": {"const": "client.enable"}, "client_id": {"$ref": "#/$defs/identifier"},
+          "credential_id": {"type": "null"}, "from_status": {"const": "disabled"}, "to_status": {"const": "active"}
+        }},
+        {"properties": {
+          "action": {"const": "client.disable"}, "client_id": {"$ref": "#/$defs/identifier"},
+          "credential_id": {"type": "null"}, "from_status": {"const": "active"}, "to_status": {"const": "disabled"}
         }},
         {"properties": {
           "action": {"const": "credential.issue"}, "credential_id": {"$ref": "#/$defs/identifier"},
@@ -240,7 +295,7 @@
     "state_data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["available_tools", "tenants", "credentials", "operations"],
+      "required": ["available_tools", "tenants", "clients", "credentials", "operations"],
       "properties": {
         "available_tools": {
           "type": "array",
@@ -250,6 +305,7 @@
           "items": {"$ref": "#/$defs/tool_catalog_entry"}
         },
         "tenants": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/tenant"}},
+        "clients": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/client"}},
         "credentials": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/credential"}},
         "operations": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/operation"}}
       }
@@ -260,6 +316,15 @@
       "required": ["tenant", "operation"],
       "properties": {
         "tenant": {"$ref": "#/$defs/tenant"},
+        "operation": {"$ref": "#/$defs/operation"}
+      }
+    },
+    "client_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["client", "operation"],
+      "properties": {
+        "client": {"$ref": "#/$defs/client"},
         "operation": {"$ref": "#/$defs/operation"}
       }
     },

@@ -319,7 +319,7 @@ describe("Tenant Access SQLite store and service", () => {
       clientId: null,
     }));
     expect(migratedState.credentials[0]?.pepperVersion).toBe("pepper-legacy-v1");
-    expect(JSON.parse(readFileSync(paths.markerPath, "utf8"))).toMatchObject({ schema_version: 3 });
+    expect(JSON.parse(readFileSync(paths.markerPath, "utf8"))).toMatchObject({ schema_version: 4 });
     await migrated.close();
 
     const reopened = new SqliteTenantAccessStore({
@@ -352,6 +352,137 @@ describe("Tenant Access SQLite store and service", () => {
       },
       "idem_create_tenant_0001",
     )).rejects.toMatchObject({ code: "idempotency_conflict" });
+  });
+
+  it("replays the first immutable tenant result after later state changes", async () => {
+    const { service } = await serviceFixture();
+    await createTenant(service);
+
+    const first = await service.setTenantStatus(
+      adminContext(),
+      "tenant_demo_a",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "suspended",
+        reason_code: "operator_suspended",
+      },
+      "idem_suspend_tenant_0001",
+    );
+    await service.setTenantStatus(
+      adminContext(),
+      "tenant_demo_a",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "active",
+        reason_code: "operator_reactivated",
+      },
+      "idem_activate_tenant_0001",
+    );
+
+    const replay = await service.setTenantStatus(
+      adminContext(),
+      "tenant_demo_a",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "suspended",
+        reason_code: "operator_suspended",
+      },
+      "idem_suspend_tenant_0001",
+    );
+
+    expect(replay.replayed).toBe(true);
+    expect(replay.data.tenant).toEqual(first.data.tenant);
+    expect(replay.data.operation).toEqual(first.data.operation);
+    expect(Object.isFrozen(replay.data.tenant)).toBe(true);
+    expect(Object.isFrozen(replay.data.operation)).toBe(true);
+  });
+
+  it("replays immutable client and rotated-credential results after later transitions", async () => {
+    const { service } = await serviceFixture();
+    await createTenant(service);
+    const issued = await issueCredential(service, "idem_snapshot_issue_0001");
+
+    const disabled = await service.setClientStatus(
+      adminContext(),
+      "tenant_demo_a",
+      "codex_ops",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "disabled",
+        reason_code: "operator_disabled",
+      },
+      "idem_snapshot_client_disable_0001",
+    );
+    await service.setClientStatus(
+      adminContext(),
+      "tenant_demo_a",
+      "codex_ops",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "active",
+        reason_code: "operator_reenabled",
+      },
+      "idem_snapshot_client_enable_0001",
+    );
+    const disabledReplay = await service.setClientStatus(
+      adminContext(),
+      "tenant_demo_a",
+      "codex_ops",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "disabled",
+        reason_code: "operator_disabled",
+      },
+      "idem_snapshot_client_disable_0001",
+    );
+    expect(disabledReplay.replayed).toBe(true);
+    expect(disabledReplay.data).toEqual(disabled.data);
+
+    await acknowledgeCredential(
+      service,
+      issued.data.credential.credential_id,
+      "idem_snapshot_ack_original_0001",
+    );
+    const rotationRequest = {
+      schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+      tool_names: ["system.agent_context.get"],
+      expires_in_seconds: 86_400,
+      reason_code: "snapshot_rotation",
+    } as const;
+    const rotated = await service.rotateCredential(
+      adminContext(),
+      issued.data.credential.credential_id,
+      rotationRequest,
+      "idem_snapshot_rotate_0001",
+    );
+    await acknowledgeCredential(
+      service,
+      rotated.data.credential.credential_id,
+      "idem_snapshot_ack_rotated_0001",
+    );
+    await service.revokeCredential(
+      adminContext(),
+      rotated.data.credential.credential_id,
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        reason_code: "operator_revoked",
+      },
+      "idem_snapshot_revoke_rotated_0001",
+    );
+    const rotatedReplay = await service.rotateCredential(
+      adminContext(),
+      issued.data.credential.credential_id,
+      rotationRequest,
+      "idem_snapshot_rotate_0001",
+    );
+    expect(rotatedReplay).toMatchObject({
+      status: "manual_review",
+      replayed: true,
+      secret_delivery: { status: "withheld" },
+      data: { api_key: null },
+    });
+    expect(rotatedReplay.data.credential).toEqual(rotated.data.credential);
+    expect(rotatedReplay.data.operation).toEqual(rotated.data.operation);
   });
 
   it("reveals an API key once, stores no plaintext, and authenticates into existing claims", async () => {
@@ -661,6 +792,40 @@ describe("Tenant Access SQLite store and service", () => {
     await expect(service.verifyApiKey(issued.data.api_key)).resolves.toMatchObject({
       client_id: "codex_ops",
     });
+  });
+
+  it("does not offer a disabled client an enable action while its tenant is suspended", async () => {
+    const { service } = await serviceFixture();
+    await createTenant(service);
+    await issueCredential(service, "idem_issue_client_state_0001");
+    await service.setClientStatus(
+      adminContext(),
+      "tenant_demo_a",
+      "codex_ops",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "disabled",
+        reason_code: "operator_disabled",
+      },
+      "idem_disable_client_state_0001",
+    );
+    await service.setTenantStatus(
+      adminContext(),
+      "tenant_demo_a",
+      {
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "suspended",
+        reason_code: "operator_suspended",
+      },
+      "idem_suspend_client_state_0001",
+    );
+
+    const state = await service.getState(adminContext());
+    expect(state.data.clients).toContainEqual(expect.objectContaining({
+      client_id: "codex_ops",
+      status: "disabled",
+      allowed_actions: [],
+    }));
   });
 
   it("keeps delivery state authoritative after the acknowledgement event leaves the 256-row view", async () => {
