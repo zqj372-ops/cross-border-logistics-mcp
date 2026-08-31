@@ -123,10 +123,38 @@ function hasExactToolEntitlement(context: ExecutionContext, toolName: string): b
     && context.scopes.includes(`tool:${toolName}`);
 }
 
+export function isExactT0ServiceIdentity(input: Readonly<{
+  readonly role: unknown;
+  readonly roles: unknown;
+  readonly scopes: unknown;
+}>): boolean {
+  return input.role === "service"
+    && Array.isArray(input.roles)
+    && input.roles.length === 1
+    && input.roles[0] === "service"
+    && Array.isArray(input.scopes)
+    && input.scopes.length > 0
+    && input.scopes.every((scope): scope is string => typeof scope === "string")
+    && new Set(input.scopes).size === input.scopes.length
+    && input.scopes.every((scope) => tenantApiKeyToolNameFromScope(scope) !== null);
+}
+
+function assertT0ServiceScopeBoundary(context: ExecutionContext): void {
+  // The production credential-exchange contract issues T0 JWTs only as a
+  // service identity. Keep the broader role-based fixture behavior for
+  // explicitly non-T0 contexts, but never let a service JWT enter T0 RBAC
+  // with a legacy, administrative, or non-T0 scope.
+  if (context.role !== "service") return;
+  if (!isExactT0ServiceIdentity(context)) {
+    throw new ForbiddenError("The authenticated scope cannot be used for the T0 production profile.");
+  }
+}
+
 export function toolVisibleForContext(
   context: ExecutionContext,
   toolName: string,
 ): boolean {
+  assertT0ServiceScopeBoundary(context);
   return !usesExactToolEntitlements(context) || hasExactToolEntitlement(context, toolName);
 }
 
@@ -145,6 +173,7 @@ export function authorizeTool(
   targetTenantId = context.tenantId,
 ): true {
   assertTenantScope(context, targetTenantId);
+  assertT0ServiceScopeBoundary(context);
 
   if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");

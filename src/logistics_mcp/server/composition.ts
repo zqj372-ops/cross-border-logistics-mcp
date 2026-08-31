@@ -5,6 +5,7 @@ import {
   parseExecutionContext,
   type AuthClaims,
 } from "../platform/context";
+import { isExactT0ServiceIdentity } from "../platform/rbac";
 import {
   createFixturePlatformDependencies,
   createProductionPlatformAssembly,
@@ -883,9 +884,17 @@ export function createProductionComposition(
       : createMcpHttpHandler({
           allowedOrigins,
           allowedHosts,
-          authenticate: (token) => {
+          authenticate: async (token) => {
             if (!isCompactJwt(token)) throw new AuthenticationError();
-            return options.tokenVerifier!.verify(token);
+            const claims = await options.tokenVerifier!.verify(token);
+            if (!isExactT0ServiceIdentity({
+              role: claims.actor_role,
+              roles: claims.roles,
+              scopes: claims.scopes,
+            })) {
+              throw new AuthenticationError();
+            }
+            return claims;
           },
           ...(options.tokenPolicy === undefined ? {} : { tokenPolicy: options.tokenPolicy }),
           handlers: tools.handlers,

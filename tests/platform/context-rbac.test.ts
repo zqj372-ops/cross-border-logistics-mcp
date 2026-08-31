@@ -184,6 +184,39 @@ describe("platform context and RBAC", () => {
     );
   });
 
+  it.each([
+    ["missing exact tool scope", ["quote:calculate"]],
+    ["platform admin mixed with exact scope", ["tool:cargo.calculate", "platform:admin"]],
+    ["legacy broad scope mixed with exact scope", ["tool:cargo.calculate", "quote:calculate"]],
+    ["non-T0 exact scope mixed with exact scope", ["tool:cargo.calculate", "tool:quote.canada_final_mile.calculate"]],
+    ["duplicate exact scope", ["tool:cargo.calculate", "tool:cargo.calculate"]],
+  ])("rejects invalid T0 service JWT scopes: %s", (label, scopes) => {
+    if (label === "duplicate exact scope") {
+      expect(() => parseExecutionContext({
+        ...claims("service"),
+        scopes,
+      })).toThrow(AuthenticationError);
+      return;
+    }
+    const context = parseExecutionContext({
+      ...claims("service"),
+      scopes,
+    });
+
+    expect(() => authorizeTool(context, "cargo.calculate")).toThrow(ForbiddenError);
+    expect(() => toolVisibleForContext(context, "cargo.calculate")).toThrow(ForbiddenError);
+  });
+
+  it("keeps an explicit non-T0 legacy business context on broad scope behavior", () => {
+    const context = parseExecutionContext({
+      ...claims("sales"),
+      scopes: ["quote:calculate"],
+    });
+
+    expect(authorizeTool(context, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(toolVisibleForContext(context, "quote.canada_final_mile.calculate")).toBe(true);
+  });
+
   it("rejects inherited tool-policy names without disclosing the input", () => {
     const context = parseExecutionContext(claims("sales"));
     const expectedMessage = "The requested MCP tool is not allowlisted.";

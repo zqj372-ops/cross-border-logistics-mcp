@@ -134,10 +134,14 @@ describe("production platform runtime", () => {
     const now = Math.floor(Date.now() / 1000);
     const token = await new SignJWT({
       tenant_id: "tenant_demo_a",
-      actor_id: "admin_demo",
-      actor_role: "admin",
-      roles: ["admin"],
-      scopes: ["platform:admin"],
+      actor_id: "service_demo",
+      actor_role: "service",
+      roles: ["service"],
+      scopes: [
+        "tool:cargo.calculate",
+        "tool:container.plan_summary",
+        "tool:system.agent_context.get",
+      ],
       client_id: "codex-production-test",
       session_id: "auth-session-production-test",
     })
@@ -145,6 +149,22 @@ describe("production platform runtime", () => {
       .setIssuer("https://identity.example.invalid/")
       .setAudience("logistics-mcp")
       .setSubject("sales_demo")
+      .setIssuedAt(now)
+      .setExpirationTime(now + 300)
+      .sign(keys.privateKey);
+    const broadAdminToken = await new SignJWT({
+      tenant_id: "tenant_demo_a",
+      actor_id: "admin_demo",
+      actor_role: "admin",
+      roles: ["admin"],
+      scopes: ["platform:admin"],
+      client_id: "misconfigured-production-admin",
+      session_id: "auth-session-broad-admin",
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "production-test-key" })
+      .setIssuer("https://identity.example.invalid/")
+      .setAudience("logistics-mcp")
+      .setSubject("admin_demo")
       .setIssuedAt(now)
       .setExpirationTime(now + 300)
       .sign(keys.privateKey);
@@ -205,6 +225,26 @@ describe("production platform runtime", () => {
       }),
     });
     expect(longKey.status).toBe(401);
+    const broadAdmin = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${broadAdminToken}`,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "x-forwarded-proto": "https",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "broad-admin",
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "broad-admin", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(broadAdmin.status).toBe(401);
     const client = new Client({ name: "production-runtime-test", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(
       new URL(`http://127.0.0.1:${port}/mcp`),
