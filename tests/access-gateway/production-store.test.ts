@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -48,6 +49,108 @@ afterEach(() => {
 });
 
 describe("production gateway SQLite providers", () => {
+  it("reports ready only after a rollback-only audit write probe and leaves no event", async () => {
+    const applicationRoot = root();
+    await initializeSqliteGatewayOperationalState({
+      applicationRoot,
+      instanceId: "gateway_01",
+    });
+    const operations = new SqliteGatewayOperationalStore({
+      applicationRoot,
+      instanceId: "gateway_01",
+    });
+    try {
+      await expect(operations.health()).resolves.toEqual({ ready: true, auditCount: 0 });
+    } finally {
+      await operations.close();
+    }
+    const readback = new DatabaseSync(gatewayOperationalPaths(applicationRoot).databasePath, {
+      readOnly: true,
+    });
+    expect(readback.prepare("SELECT COUNT(*) AS count FROM gateway_audit").get()).toEqual({
+      count: 0,
+    });
+    readback.close();
+  });
+
+  it("fails readiness when the audit write probe is rejected without leaving an event", async () => {
+    const applicationRoot = root();
+    await initializeSqliteGatewayOperationalState({
+      applicationRoot,
+      instanceId: "gateway_01",
+    });
+    const operations = new SqliteGatewayOperationalStore({
+      applicationRoot,
+      instanceId: "gateway_01",
+    });
+    const database = new DatabaseSync(gatewayOperationalPaths(applicationRoot).databasePath);
+    try {
+      database.exec(`
+        CREATE TRIGGER audit_write_block
+        BEFORE INSERT ON gateway_audit
+        BEGIN
+          SELECT RAISE(ABORT, 'audit store is read-only');
+        END;
+      `);
+      await expect(operations.health()).resolves.toEqual({ ready: false, auditCount: 0 });
+    } finally {
+      database.close();
+      await operations.close();
+    }
+    const readback = new DatabaseSync(gatewayOperationalPaths(applicationRoot).databasePath, {
+      readOnly: true,
+    });
+    expect(readback.prepare("SELECT COUNT(*) AS count FROM gateway_audit").get()).toEqual({
+      count: 0,
+    });
+    readback.close();
+  });
+
+  it("reads exactly the requested audit request IDs without exposing audit contents", async () => {
+    const applicationRoot = root();
+    await initializeSqliteGatewayOperationalState({
+      applicationRoot,
+      instanceId: "gateway_01",
+    });
+    const operations = new SqliteGatewayOperationalStore({
+      applicationRoot,
+      instanceId: "gateway_01",
+    });
+    const append = (auditId: string, requestId: string) => operations.append({
+      auditId,
+      action: "token.exchange",
+      status: "success",
+      requestId,
+      tenantId: "tenant_hidden",
+      clientId: "client_hidden",
+      credentialId: "credential_hidden",
+      toolNames: ["cargo.calculate"],
+      requestHash: `sha256:v1:${"a".repeat(64)}`,
+      jti: "jwt_hidden",
+      reasonCode: null,
+      createdAt: "2027-01-15T08:00:00.000Z",
+    });
+    try {
+      await append("audit_previous_0001", "req_smoke_previous_0001");
+      await append("audit_run_a_0001", "req_smoke_run_0001_a");
+      await append("audit_run_b_0001", "req_smoke_run_0001_b");
+      await append("audit_run_c_0001", "req_smoke_run_0001_revoked");
+      await expect(operations.readByRequestIds({
+        requestIds: [
+          "req_smoke_run_0001_a",
+          "req_smoke_run_0001_b",
+          "req_smoke_run_0001_revoked",
+        ],
+      })).resolves.toEqual([
+        { requestId: "req_smoke_run_0001_a", eventCount: 1 },
+        { requestId: "req_smoke_run_0001_b", eventCount: 1 },
+        { requestId: "req_smoke_run_0001_revoked", eventCount: 1 },
+      ]);
+    } finally {
+      await operations.close();
+    }
+  });
+
   it("persists redacted credentials, audit and shared rate reservations", async () => {
     const applicationRoot = root();
     const pepperPath = join(applicationRoot, "pepper");

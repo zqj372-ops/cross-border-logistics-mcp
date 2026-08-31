@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertDeploymentSmokeAuditEvidence,
   runDeterministicSmokeCalls,
   runT0DeploymentSmoke,
 } from "../../services/access-gateway/deployment-smoke";
+import type { GatewayAuditEvidenceReader } from "../../services/access-gateway/ports";
 import { calculateCargo } from "../../src/logistics_mcp/domains/cargo/service";
 import { planContainerSummary } from "../../src/logistics_mcp/domains/container/service";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
@@ -20,6 +22,34 @@ describe("T0 deployment smoke safety", () => {
     await expect(runT0DeploymentSmoke()).rejects.toThrow(
       "DEPLOYMENT_SMOKE_ENVIRONMENT must equal staging.",
     );
+  });
+
+  it("requires one audit event for every request ID from this run", async () => {
+    const requestIds = [
+      "req_smoke_run_0001_a",
+      "req_smoke_run_0001_b",
+      "req_smoke_run_0001_revoked",
+    ] as const;
+    const readByRequestIds = vi.fn(() => Promise.resolve([
+      { requestId: requestIds[0], eventCount: 1 },
+      { requestId: requestIds[1], eventCount: 1 },
+      { requestId: requestIds[2], eventCount: 1 },
+    ]));
+    const reader: GatewayAuditEvidenceReader = {
+      kind: "production",
+      readByRequestIds,
+    };
+    await expect(assertDeploymentSmokeAuditEvidence(reader, requestIds)).resolves.toEqual(requestIds);
+    expect(readByRequestIds).toHaveBeenCalledWith({ requestIds });
+
+    const lifetimeOnlyReader: GatewayAuditEvidenceReader = {
+      kind: "production",
+      readByRequestIds: vi.fn(() => Promise.resolve([
+        { requestId: "req_smoke_previous_0001", eventCount: 3 },
+      ])),
+    };
+    await expect(assertDeploymentSmokeAuditEvidence(lifetimeOnlyReader, requestIds))
+      .rejects.toThrow("Deployment smoke audit evidence is incomplete.");
   });
 
   it("calls both deterministic tools with representative inputs that really succeed", async () => {

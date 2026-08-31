@@ -34,6 +34,8 @@ import type {
 } from "./contracts";
 import type {
   CredentialExchangeRecord,
+  GatewayAuditEvidenceReader,
+  GatewayAuditRequestEvidence,
   CredentialRepository,
   GatewayAuditRepository,
   RateLimitRepository,
@@ -51,6 +53,8 @@ const DATABASE_MODE = 0o600;
 const MARKER_MODE = 0o400;
 const SCHEMA_VERSION = 1;
 const MARKER_FORMAT = "access-gateway-operations/v1";
+const AUDIT_REQUEST_ID_PATTERN = /^req_[A-Za-z0-9_-]{8,128}$/u;
+const MAX_AUDIT_EVIDENCE_REQUEST_IDS = 32;
 
 const SCHEMA_SQL = `
 CREATE TABLE gateway_meta (
@@ -226,6 +230,7 @@ export interface SqliteGatewayOperationalStoreOptions {
 
 export class SqliteGatewayOperationalStore implements
   GatewayAuditRepository,
+  GatewayAuditEvidenceReader,
   RateLimitRepository,
   GatewayOperationsReader {
   readonly kind = "production" as const;
@@ -305,6 +310,48 @@ export class SqliteGatewayOperationalStore implements
       event.createdAt,
     );
     return Promise.resolve();
+  }
+
+  readByRequestIds(input: Readonly<{
+    requestIds: readonly string[];
+  }>): Promise<readonly GatewayAuditRequestEvidence[]> {
+    const requestIds = input.requestIds;
+    if (
+      !Array.isArray(requestIds) ||
+      requestIds.length < 1 ||
+      requestIds.length > MAX_AUDIT_EVIDENCE_REQUEST_IDS ||
+      new Set(requestIds).size !== requestIds.length ||
+      requestIds.some((requestId) => (
+        typeof requestId !== "string" || !AUDIT_REQUEST_ID_PATTERN.test(requestId)
+      ))
+    ) {
+      return Promise.reject(new TypeError("Gateway audit evidence request is invalid."));
+    }
+    const database = this.#active();
+    const placeholders = requestIds.map(() => "?").join(", ");
+    const parameters: SQLInputValue[] = requestIds.map((requestId: string): SQLInputValue => requestId);
+    const rows = database.prepare(`
+      SELECT request_id, COUNT(*) AS event_count
+      FROM gateway_audit
+      WHERE request_id IN (${placeholders})
+      GROUP BY request_id
+      ORDER BY request_id ASC
+    `).all(...parameters) as SqlRow[];
+    const evidence = rows.map((row): GatewayAuditRequestEvidence => {
+      if (
+        typeof row.request_id !== "string" ||
+        typeof row.event_count !== "number" ||
+        !Number.isSafeInteger(row.event_count) ||
+        row.event_count < 1
+      ) {
+        throw new TypeError("Gateway audit request evidence is invalid.");
+      }
+      return Object.freeze({
+        requestId: row.request_id,
+        eventCount: row.event_count,
+      });
+    });
+    return Promise.resolve(Object.freeze(evidence));
   }
 
   reserve(input: Readonly<{
@@ -441,15 +488,56 @@ export class SqliteGatewayOperationalStore implements
   }
 
   health(): Promise<{ readonly ready: boolean; readonly auditCount: number }> {
-    const database = this.#active();
-    const quickCheck = database.prepare("PRAGMA quick_check").get() as SqlRow | undefined;
-    const count = database.prepare("SELECT COUNT(*) AS count FROM gateway_audit").get() as
-      | SqlRow
-      | undefined;
-    return Promise.resolve(Object.freeze({
-      ready: quickCheck !== undefined && Object.values(quickCheck)[0] === "ok",
-      auditCount: typeof count?.count === "number" ? count.count : 0,
-    }));
+    try {
+      const database = this.#active();
+      const quickCheck = database.prepare("PRAGMA quick_check").get() as SqlRow | undefined;
+      const count = database.prepare("SELECT COUNT(*) AS count FROM gateway_audit").get() as
+        | SqlRow
+        | undefined;
+      if (
+        quickCheck === undefined ||
+        Object.values(quickCheck)[0] !== "ok" ||
+        typeof count?.count !== "number" ||
+        !Number.isSafeInteger(count.count) ||
+        count.count < 0
+      ) {
+        return Promise.resolve(Object.freeze({ ready: false, auditCount: 0 }));
+      }
+
+      const probeId = `audit_health_probe_${randomBytes(16).toString("hex")}`;
+      let transactionStarted = false;
+      try {
+        database.exec("BEGIN IMMEDIATE");
+        transactionStarted = true;
+        database.prepare(`
+          INSERT INTO gateway_audit (
+            audit_id, action, status, request_id, tenant_id, client_id,
+            credential_id, tool_names_json, request_hash, jti, reason_code, created_at
+          ) VALUES (?, 'health.probe', 'success', ?, NULL, NULL, NULL, '[]',
+            'health-probe', NULL, NULL, '1970-01-01T00:00:00.000Z')
+        `).run(probeId, probeId);
+        database.exec("ROLLBACK");
+        transactionStarted = false;
+      } catch (error) {
+        if (transactionStarted) {
+          try {
+            database.exec("ROLLBACK");
+          } catch {
+            // Preserve the failed readiness result.
+          }
+        }
+        throw error;
+      }
+      const leftover = database.prepare(
+        "SELECT COUNT(*) AS count FROM gateway_audit WHERE audit_id = ?",
+      ).get(probeId) as SqlRow | undefined;
+      if (leftover?.count !== 0) {
+        return Promise.resolve(Object.freeze({ ready: false, auditCount: 0 }));
+      }
+      return Promise.resolve(Object.freeze({ ready: true, auditCount: count.count }));
+    } catch {
+      return Promise.resolve(Object.freeze({ ready: false, auditCount: 0 }));
+    }
   }
 
   close(): Promise<void> {

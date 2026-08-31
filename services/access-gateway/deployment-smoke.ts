@@ -15,6 +15,7 @@ import {
 import { TENANT_API_KEY_TOOL_NAMES } from "../../src/logistics_mcp/control-plane/tenant-access-contracts";
 import { FileSecretPepperProvider } from "./production-crypto";
 import { assertCandidateSyntheticWriteTarget } from "./deployment-safety";
+import type { GatewayAuditEvidenceReader } from "./ports";
 import { openGatewayStores } from "./store-runtime";
 
 const CONFIRMATION = "run-synthetic-write";
@@ -38,7 +39,7 @@ export interface DeploymentSmokeSummary {
   readonly deterministic_call_status: "success";
   readonly tenant_isolation_http_status: 403;
   readonly revoked_exchange_http_status: 401;
-  readonly gateway_audit_count: number;
+  readonly gateway_audit_request_ids: readonly string[];
   readonly cleanup: Readonly<{
     credentials: "revoked";
     tenants: "suspended";
@@ -64,14 +65,6 @@ function stringField(value: JsonRecord, field: string, label: string): string {
     throw new Error(`${label} is invalid.`);
   }
   return selected;
-}
-
-function positiveIntegerField(value: JsonRecord, field: string, label: string): number {
-  const selected = value[field];
-  if (!Number.isSafeInteger(selected) || (selected as number) < 0) {
-    throw new Error(`${label} is invalid.`);
-  }
-  return selected as number;
 }
 
 function baseUrlFromEnvironment(): URL {
@@ -102,14 +95,15 @@ async function exchange(
   apiKey: string,
   runId: string,
   sequence: string,
-): Promise<Readonly<{ status: number; accessToken: string | null }>> {
+): Promise<Readonly<{ status: number; accessToken: string | null; requestId: string }>> {
+  const requestId = `req_smoke_${runId}_${sequence}`;
   const response = await fetch(new URL("access/v1/token/exchange", baseUrl), {
     method: "POST",
     headers: {
       authorization: `ApiKey ${apiKey}`,
       "content-type": "application/json",
       origin: baseUrl.origin,
-      "x-request-id": `req_smoke_${runId}_${sequence}`,
+      "x-request-id": requestId,
     },
     body: JSON.stringify({
       schema_version: "2026-08-27.v1",
@@ -119,14 +113,22 @@ async function exchange(
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const payload = await jsonResponse(response, "token exchange response");
-  if (response.status !== 200) return Object.freeze({ status: response.status, accessToken: null });
+  if (response.status !== 200) {
+    if (stringField(payload, "request_id", "token exchange request ID") !== requestId) {
+      throw new Error("Token exchange request ID drifted.");
+    }
+    return Object.freeze({ status: response.status, accessToken: null, requestId });
+  }
   if (payload.status !== "success") throw new Error("Token exchange did not succeed.");
   const data = asRecord(payload.data, "token exchange data");
+  if (stringField(data, "request_id", "token exchange request ID") !== requestId) {
+    throw new Error("Token exchange request ID drifted.");
+  }
   const accessToken = stringField(data, "access_token", "access token");
   if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(accessToken)) {
     throw new Error("Access token is invalid.");
   }
-  return Object.freeze({ status: response.status, accessToken });
+  return Object.freeze({ status: response.status, accessToken, requestId });
 }
 
 function sorted(values: readonly string[]): readonly string[] {
@@ -256,6 +258,21 @@ export async function runDeterministicSmokeCalls(
   return Object.freeze(["cargo.calculate", "container.plan_summary"] as const);
 }
 
+export async function assertDeploymentSmokeAuditEvidence(
+  reader: GatewayAuditEvidenceReader,
+  requestIds: readonly string[],
+): Promise<readonly string[]> {
+  const expected = sorted(requestIds);
+  const evidence = await reader.readByRequestIds({ requestIds });
+  const actual = sorted(evidence
+    .filter(({ eventCount }) => eventCount === 1)
+    .map(({ requestId }) => requestId));
+  if (!equalStrings(actual, expected) || evidence.length !== expected.length) {
+    throw new Error("Deployment smoke audit evidence is incomplete.");
+  }
+  return expected;
+}
+
 async function tenantIsolationStatus(
   baseUrl: URL,
   accessToken: string,
@@ -275,17 +292,6 @@ async function tenantIsolationStatus(
   });
   await response.arrayBuffer();
   return response.status;
-}
-
-async function gatewayAuditCount(baseUrl: URL): Promise<number> {
-  const response = await fetch(new URL("access/v1/readyz", baseUrl), {
-    redirect: "error",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (response.status !== 200) throw new Error("Access Gateway readiness failed.");
-  const payload = await jsonResponse(response, "Access Gateway readiness response");
-  const data = asRecord(payload.data, "Access Gateway readiness data");
-  return positiveIntegerField(data, "audit_count", "Access Gateway audit count");
 }
 
 export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
@@ -359,6 +365,7 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
   let summary: DeploymentSmokeSummary | null = null;
 
   try {
+    const auditEvidenceReader = stores.auditEvidenceReader;
     for (const [index, tenantId] of tenantIds.entries()) {
       const marker = index === 0 ? "a" : "b";
       await service.createTenant(admin, {
@@ -472,8 +479,11 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
     ) {
       throw new Error("Deployment smoke cleanup readback failed.");
     }
-    const auditCount = await gatewayAuditCount(baseUrl);
-    if (auditCount < 3) throw new Error("Access Gateway audit evidence is incomplete.");
+    const auditRequestIds = await assertDeploymentSmokeAuditEvidence(auditEvidenceReader, [
+      firstExchange.requestId,
+      secondExchange.requestId,
+      revokedExchange.requestId,
+    ]);
     completed = true;
     summary = Object.freeze({
       status: "success",
@@ -484,7 +494,7 @@ export async function runT0DeploymentSmoke(): Promise<DeploymentSmokeSummary> {
       deterministic_call_status: deterministicCallStatus,
       tenant_isolation_http_status: 403,
       revoked_exchange_http_status: 401,
-      gateway_audit_count: auditCount,
+      gateway_audit_request_ids: auditRequestIds,
       cleanup: Object.freeze({ credentials: "revoked", tenants: "suspended" }),
     });
   } catch (error) {

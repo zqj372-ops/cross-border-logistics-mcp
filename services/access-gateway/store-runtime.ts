@@ -2,7 +2,11 @@ import type { TenantAccessRepository } from "../../src/logistics_mcp/control-pla
 import {
   SqliteTenantAccessStore,
 } from "../../src/logistics_mcp/control-plane/sqlite-tenant-access-store";
-import type { GatewayAuditRepository, RateLimitRepository } from "./ports";
+import type {
+  GatewayAuditEvidenceReader,
+  GatewayAuditRepository,
+  RateLimitRepository,
+} from "./ports";
 import {
   PostgresGatewayStore,
   postgresConfigurationFromEnvironment,
@@ -14,6 +18,7 @@ export type GatewayStoreBackend = "sqlite" | "postgresql";
 
 export interface GatewayOperationalStore extends
   GatewayAuditRepository,
+  GatewayAuditEvidenceReader,
   RateLimitRepository,
   GatewayOperationsReader {
   health(): Promise<{ readonly ready: boolean; readonly auditCount: number }>;
@@ -24,6 +29,7 @@ export interface OpenGatewayStoresResult {
   readonly backend: GatewayStoreBackend;
   readonly tenantStore: TenantAccessRepository;
   readonly operationalStore: GatewayOperationalStore;
+  readonly auditEvidenceReader: GatewayAuditEvidenceReader;
   close(): Promise<void>;
 }
 
@@ -62,6 +68,7 @@ export async function openGatewayStores(input: Readonly<{
       backend,
       tenantStore: store,
       operationalStore: store,
+      auditEvidenceReader: store,
       close: () => store.close(),
     });
   }
@@ -87,6 +94,7 @@ export async function openGatewayStores(input: Readonly<{
       backend,
       tenantStore,
       operationalStore,
+      auditEvidenceReader: operationalStore,
       close: async () => {
         if (closed) return;
         closed = true;

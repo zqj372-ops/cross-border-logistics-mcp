@@ -9,6 +9,7 @@ import { AccessGatewayError } from "./errors";
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
 const EXCHANGE_PATH = "/access/v1/token/exchange";
 const JWKS_PATH = "/.well-known/jwks.json";
+const HEADER_AUTHENTICATION_FAILURE_API_KEY = "invalid-header-authentication";
 
 export interface AccessGatewayHttpOptions {
   readonly gateway: AccessGateway;
@@ -141,14 +142,28 @@ async function readBody(request: IncomingMessage, maxBodyBytes: number): Promise
   }
 }
 
-function apiKey(request: IncomingMessage): string {
+function apiKey(request: IncomingMessage): string | null {
   if (countRawHeader(request, "authorization") !== 1) {
-    throw new AccessGatewayError("authentication_failed");
+    return null;
   }
   const authorization = request.headers.authorization;
   const match = typeof authorization === "string" ? /^ApiKey ([^\s]+)$/u.exec(authorization) : null;
-  if (match === null) throw new AccessGatewayError("authentication_failed");
-  return match[1]!;
+  return match?.[1] ?? null;
+}
+
+async function auditHeaderAuthenticationFailure(
+  options: AccessGatewayHttpOptions,
+  body: unknown,
+  clientIp: string,
+  requestId: string,
+): Promise<never> {
+  await options.gateway.exchangeToken({
+    apiKey: HEADER_AUTHENTICATION_FAILURE_API_KEY,
+    body,
+    clientIp,
+    requestId,
+  });
+  throw new AccessGatewayError("authentication_failed");
 }
 
 async function handleExchange(
@@ -164,10 +179,15 @@ async function handleExchange(
     assertBoundary(request, options, true);
     const key = apiKey(request);
     const body = await readBody(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
+    const sourceClientIp = clientIp(request, options);
+    if (key === null) {
+      await auditHeaderAuthenticationFailure(options, body, sourceClientIp, currentRequestId);
+      throw new AccessGatewayError("authentication_failed");
+    }
     const result = await options.gateway.exchangeToken({
       apiKey: key,
       body,
-      clientIp: clientIp(request, options),
+      clientIp: sourceClientIp,
       requestId: currentRequestId,
     });
     sendJson(response, 200, result);
