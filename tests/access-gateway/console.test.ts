@@ -43,6 +43,9 @@ describe("narrow Access Console boundary", () => {
     expect(app).toMatch(/tool_names/iu);
     expect(app).toMatch(/operation_id/iu);
     expect(app).toMatch(/readback_not_verified/iu);
+    expect(app).toMatch(
+      /async function acknowledgeDelivery[\s\S]*await post[\s\S]*payload !== null[\s\S]*pendingCredentialId === credentialId[\s\S]*hideOneTimeKey\(\)/u,
+    );
     expect(app).toMatch(/total_audit_events/iu);
     expect(app).toMatch(/recent_issues/iu);
     expect(app).toMatch(/supported_clients/iu);

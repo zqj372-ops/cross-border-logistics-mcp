@@ -477,11 +477,13 @@ function setClientStatus(tenantId, clientId, status) {
   );
 }
 
-function acknowledgeDelivery(credentialId) {
-  return post(`/credentials/${encodeURIComponent(credentialId)}/acknowledge-delivery`, {
+async function acknowledgeDelivery(credentialId) {
+  const payload = await post(`/credentials/${encodeURIComponent(credentialId)}/acknowledge-delivery`, {
     schema_version: SCHEMA_VERSION,
     reason_code: "operator_confirmed_secure_storage",
   }, "Key 交付已确认");
+  if (payload !== null && pendingCredentialId === credentialId) hideOneTimeKey();
+  return payload;
 }
 
 function rotateCredential(credentialId) {
