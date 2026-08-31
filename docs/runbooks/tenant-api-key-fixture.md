@@ -21,18 +21,20 @@ npm run init:control-fixture
 npm run start:fixture
 ```
 
-`init:control-fixture` 会显式创建两个互不混用的状态目录：
+`init:control-fixture` 会显式创建三个互不混用的状态目录：
 
 ```text
 .runtime/mcp-instance-state/   模块控制面
 .runtime/mcp-tenant-access/    租户与客户端凭证
+.runtime/mcp-plugin-config/    内置插件配置与发布读回
 ```
 
 startup 不会隐式创建、替换或修复它们。如果 checkout 已经存在旧的 control state，但尚未建立
-Tenant Access state，只运行一次：
+Tenant Access state 或 Plugin Config state，分别只运行一次缺少的 initializer：
 
 ```bash
 npm run init:tenant-access-fixture
+npm run init:plugin-config-fixture
 ```
 
 初始化命令不是 reset 命令；状态已经存在时会失败，不会覆盖或删除已有数据。
@@ -118,6 +120,8 @@ loopback fixture 证明状态机，不得声明生产可用。
 - 租户暂停、凭证吊销或到期：外部统一返回认证失败，不泄露具体原因。
 - Tenant Access state 缺失：固定管理员 token 和旧 fixture MCP 路径仍可启动，但租户管理与 Key
   认证保持不可用；运行显式 initializer 后重启。
+- Plugin Config state 缺失：runtime 在监听前失败闭合；运行显式 Plugin Config initializer 后再启动，
+  不得以默认值或内存状态绕过持久化配置读回。
 - state marker、身份、权限或 schema 漂移：startup fail closed；不要手工编辑 SQLite/marker，先
   保留证据并按受控迁移或回滚处理。
 

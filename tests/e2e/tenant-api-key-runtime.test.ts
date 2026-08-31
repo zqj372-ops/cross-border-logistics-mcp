@@ -129,6 +129,11 @@ describe("Tenant API key through the loopback fixture runtime", () => {
         instanceId: INSTANCE_ID,
         managementTenantId: MANAGEMENT_TENANT_ID,
       });
+      await start.initializeSqlitePluginConfigState({
+        applicationRoot,
+        instanceId: INSTANCE_ID,
+        managementTenantId: MANAGEMENT_TENANT_ID,
+      });
       runtime = await start.startRuntime({ applicationRoot });
 
       const created = await accessRequest(baseUrl, "/admin/api/v1/access/tenants", {

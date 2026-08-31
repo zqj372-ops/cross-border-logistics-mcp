@@ -34,6 +34,7 @@ import {
 import {
   createFixtureAuthenticatorFromEnvironment,
   initializeSqliteControlState,
+  initializeSqlitePluginConfigState,
   startRuntime,
 } from "../../src/logistics_mcp/server/start";
 import { openSqliteControlStore } from "../../src/logistics_mcp/control-plane/sqlite-control-store";
@@ -703,6 +704,11 @@ describe("gateway composition modes", () => {
         instanceId: "instance_fixture_001",
         managementTenantId: "tenant_fixture",
       });
+      await initializeSqlitePluginConfigState({
+        applicationRoot,
+        instanceId: "instance_fixture_001",
+        managementTenantId: "tenant_fixture",
+      });
 
       let listenCalls = 0;
       runtime = await startRuntime({
@@ -822,6 +828,8 @@ describe("gateway composition modes", () => {
     expect(initializerSource).not.toContain("process.cwd");
     expect(initializerSource).not.toContain("process.env");
     expect(initializerSource).toContain("initializeSqliteControlState");
+    expect(initializerSource).toContain("initializeSqliteTenantAccessState");
+    expect(initializerSource).toContain("initializeSqlitePluginConfigState");
   });
 
   it("keeps source health local and omitted API adapters fail closed", async () => {

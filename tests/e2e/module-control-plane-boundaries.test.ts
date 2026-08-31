@@ -196,6 +196,11 @@ async function withRuntime<T>(
         instanceId: INSTANCE_ID,
         managementTenantId: MANAGEMENT_TENANT_ID,
       });
+      await startModule.initializeSqlitePluginConfigState({
+        applicationRoot,
+        instanceId: INSTANCE_ID,
+        managementTenantId: MANAGEMENT_TENANT_ID,
+      });
     }
     runtime = await startModule.startRuntime({ applicationRoot });
     expect(existsSync(productionDatabasePath)).toBe(mode === "production");

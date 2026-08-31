@@ -329,6 +329,11 @@ describe("module control-plane restart persistence over real HTTP", () => {
         instanceId: INSTANCE_ID,
         managementTenantId: MANAGEMENT_TENANT_ID,
       });
+      await firstStartModule.initializeSqlitePluginConfigState({
+        applicationRoot,
+        instanceId: INSTANCE_ID,
+        managementTenantId: MANAGEMENT_TENANT_ID,
+      });
       runtime = await firstStartModule.startRuntime({ applicationRoot });
 
       const published = await publishVerifiedCargo(firstBaseUrl);

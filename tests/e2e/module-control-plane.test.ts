@@ -128,6 +128,11 @@ describe("module control plane over the fixture HTTP runtime", () => {
         instanceId: INSTANCE_ID,
         managementTenantId: MANAGEMENT_TENANT_ID,
       });
+      await startModule.initializeSqlitePluginConfigState({
+        applicationRoot,
+        instanceId: INSTANCE_ID,
+        managementTenantId: MANAGEMENT_TENANT_ID,
+      });
       runtime = await startModule.startRuntime({ applicationRoot });
 
       const baseUrl = allowedOrigin;

@@ -8,6 +8,7 @@ const BUILT_START_ENTRY = "dist/src/logistics_mcp/server/start.mjs";
 const INITIALIZER_EXPORTS = [
   "initializeSqliteControlState",
   "initializeSqliteTenantAccessState",
+  "initializeSqlitePluginConfigState",
 ];
 
 /**
@@ -49,8 +50,11 @@ async function loadOfficialInitializer(root) {
 
 export async function initializeFixtureControlState() {
   const root = applicationRoot();
-  const [initializeSqliteControlState, initializeSqliteTenantAccessState] =
-    await loadOfficialInitializer(root);
+  const [
+    initializeSqliteControlState,
+    initializeSqliteTenantAccessState,
+    initializeSqlitePluginConfigState,
+  ] = await loadOfficialInitializer(root);
 
   // The official initializer owns the fixed paths, permissions, schema, and
   // cryptographically random control_db_id. This wrapper only supplies the
@@ -61,6 +65,11 @@ export async function initializeFixtureControlState() {
     managementTenantId: FIXTURE_MANAGEMENT_TENANT_ID,
   });
   await initializeSqliteTenantAccessState({
+    applicationRoot: root,
+    instanceId: FIXTURE_INSTANCE_ID,
+    managementTenantId: FIXTURE_MANAGEMENT_TENANT_ID,
+  });
+  await initializeSqlitePluginConfigState({
     applicationRoot: root,
     instanceId: FIXTURE_INSTANCE_ID,
     managementTenantId: FIXTURE_MANAGEMENT_TENANT_ID,

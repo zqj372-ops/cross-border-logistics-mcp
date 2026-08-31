@@ -234,6 +234,10 @@ describe("built runtime smoke", () => {
       expect(first.status).toBe(0);
       expect(existsSync(resolve(stateDirectory, "control.sqlite"))).toBe(true);
       expect(existsSync(resolve(stateDirectory, "control-identity.json"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-tenant-access/access.sqlite"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-tenant-access/access-identity.json"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-plugin-config/config.sqlite"))).toBe(true);
+      expect(existsSync(resolve(realpathSync(layout), ".runtime/mcp-plugin-config/config-identity.json"))).toBe(true);
 
       const second = spawnSync(process.execPath, [realWrapper], {
         cwd: "/tmp",
