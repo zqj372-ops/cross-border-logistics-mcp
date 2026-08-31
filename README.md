@@ -177,7 +177,7 @@ npm run init:control-fixture
 npm run start:fixture
 ~~~
 
-`docs/agent/index.json` 是 Agent 标准的机器入口；`validate:agent-standards` 校验它及 allowlist，`validate:agent-adapters` 校验三份客户端模板和固定资源，`build` 生成真实 runtime bundle 与 `dist/standards/agent-standard-pack.json`。`npm run init:control-fixture` 本身会先 build，随后显式初始化 control state 和独立 Tenant Access state；startup 不会隐式创建、覆盖或修复它们。旧 checkout 已有 control state 但没有 Tenant Access state 时，只运行一次 `npm run init:tenant-access-fixture`。`start:fixture` 再以 fixture 模式启动本地服务。若只演示 Freightcom 测试模块，可用 `npm run start:freightcom-test-mcp` 替代 `start:fixture`；该路径仍只产生人工复核结果，不具生产资格。详细步骤见 [Tenant 与 API Key 本地演示 runbook](docs/runbooks/tenant-api-key-fixture.md)。另开一个终端执行：
+`docs/agent/index.json` 是 Agent 标准的机器入口；`validate:agent-standards` 校验它及 allowlist，`validate:agent-adapters` 校验三份客户端模板和固定资源，`build` 生成真实 runtime bundle 与 `dist/standards/agent-standard-pack.json`。`npm run init:control-fixture` 本身会先 build，随后显式初始化 control state、独立 Tenant Access state 和独立 Plugin Config state；startup 不会隐式创建、覆盖或修复它们。旧 checkout 已有 control state 但缺少后两者时，分别只运行一次 `npm run init:tenant-access-fixture` 与 `npm run init:plugin-config-fixture`。`start:fixture` 再以 fixture 模式启动本地服务。若只演示 Freightcom 测试模块，可用 `npm run start:freightcom-test-mcp` 替代 `start:fixture`；该路径仍只产生人工复核结果，不具生产资格。详细步骤见 [Tenant 与 API Key 本地演示 runbook](docs/runbooks/tenant-api-key-fixture.md)。另开一个终端执行：
 
 ~~~bash
 npm run verify:runtime
