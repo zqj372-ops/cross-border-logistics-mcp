@@ -25,6 +25,40 @@ export type PluginConfigApplyObservation = Readonly<{
   reason_code: string | null;
 }>;
 
+/**
+ * Narrow fatal capability shared by the config service, managed adapter and
+ * request-readiness boundary. The mutation coordinator itself stays private
+ * to the control-plane assembly.
+ */
+export interface PluginConfigFatalFence {
+  readonly isFatal: () => boolean;
+  readonly tripFatal: (error: unknown) => never;
+}
+
+export class PluginConfigRuntimeFatalError extends Error {
+  readonly code = "fatal" as const;
+
+  constructor() {
+    super("plugin_config_runtime_fatal");
+    this.name = "PluginConfigRuntimeFatalError";
+    Object.setPrototypeOf(this, new.target.prototype);
+    Object.freeze(this);
+  }
+}
+
+export function createPluginConfigFatalFence(): PluginConfigFatalFence {
+  let fatalError: PluginConfigRuntimeFatalError | undefined;
+  const fence: PluginConfigFatalFence = {
+    isFatal: () => fatalError !== undefined,
+    tripFatal: (error: unknown): never => {
+      void error;
+      fatalError ??= new PluginConfigRuntimeFatalError();
+      throw fatalError;
+    },
+  };
+  return Object.freeze(fence);
+}
+
 export interface PluginConfigApplyPort {
   readonly apply: (input: PluginConfigApplyInput) => Promise<PluginConfigApplyObservation>;
   readonly readback?: (input: Readonly<{

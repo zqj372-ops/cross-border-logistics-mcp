@@ -5,6 +5,10 @@ import type {
   PluginConfigApplyInput,
   PluginConfigApplyObservation,
   PluginConfigApplyPort,
+  PluginConfigFatalFence,
+} from "../control-plane/plugin-config-apply";
+import {
+  createPluginConfigFatalFence,
 } from "../control-plane/plugin-config-apply";
 import {
   validatePluginConfigValues,
@@ -36,6 +40,7 @@ implements FreightcomRatePort, PluginConfigApplyPort {
   #configDigest: string;
   #moduleGeneration: string;
   #values: readonly PluginConfigTypedValue[];
+  readonly #fatalFence: PluginConfigFatalFence;
   #inFlight = 0;
   #drainWaiters: Array<() => void> = [];
   #barrier: Promise<void> | null = null;
@@ -45,8 +50,10 @@ implements FreightcomRatePort, PluginConfigApplyPort {
   constructor(
     current: PluginConfigCurrentRecord,
     adapterFactory: FreightcomConfigAdapterFactory,
+    fatalFence: PluginConfigFatalFence = createPluginConfigFatalFence(),
   ) {
     this.#adapterFactory = adapterFactory;
+    this.#fatalFence = fatalFence;
     const values = storedPluginConfigValues(current.values);
     this.#adapter = adapterFactory(values);
     this.#releaseId = current.activeReleaseId;
@@ -57,7 +64,9 @@ implements FreightcomRatePort, PluginConfigApplyPort {
   }
 
   async requestRate(input: unknown, signal?: AbortSignal) {
+    this.#assertHealthy();
     while (this.#barrier !== null) await this.#barrier;
+    this.#assertHealthy();
     const adapter = this.#adapter;
     this.#inFlight += 1;
     try {
@@ -74,6 +83,7 @@ implements FreightcomRatePort, PluginConfigApplyPort {
 
   apply(input: PluginConfigApplyInput): Promise<PluginConfigApplyObservation> {
     return this.#exclusive(async () => {
+      this.#assertHealthy();
       if (input.module_id !== "freightcom-ltl") {
         return this.#unavailable("blocked", "plugin_config_not_supported");
       }
@@ -91,7 +101,7 @@ implements FreightcomRatePort, PluginConfigApplyPort {
       ) {
         return this.#observation("readback_verified", null);
       }
-      if (input.revision !== this.#revision + 1) {
+      if (!Number.isSafeInteger(input.revision) || input.revision <= this.#revision) {
         return this.#unavailable("blocked", "runtime_revision_conflict");
       }
       this.#openBarrier();
@@ -163,6 +173,12 @@ implements FreightcomRatePort, PluginConfigApplyPort {
       values: Object.freeze(this.#values.map((value) => Object.freeze({ ...value }))),
       reason_code: reasonCode,
     });
+  }
+
+  #assertHealthy(): void {
+    if (this.#fatalFence.isFatal()) {
+      this.#fatalFence.tripFatal(new Error("plugin_config_runtime_fatal"));
+    }
   }
 
   #unavailable(

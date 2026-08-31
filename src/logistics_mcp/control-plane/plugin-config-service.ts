@@ -5,7 +5,9 @@ import type { ExecutionContext } from "../platform/context";
 import type {
   PluginConfigApplyObservation,
   PluginConfigApplyPort,
+  PluginConfigFatalFence,
 } from "./plugin-config-apply";
+import { createPluginConfigFatalFence } from "./plugin-config-apply";
 import {
   configDigestForValues,
   freightcomLtlConfigSpec,
@@ -55,6 +57,7 @@ export interface PluginConfigServiceOptions {
   readonly ownerBootId?: string;
   readonly clock?: () => string;
   readonly idGenerator?: (prefix: string) => string;
+  readonly fatalFence?: PluginConfigFatalFence;
 }
 
 export class PluginConfigServiceFatalError extends Error {
@@ -220,6 +223,7 @@ export class PluginConfigService {
   readonly #ownerBootId: string;
   readonly #clock: () => string;
   readonly #idGenerator: (prefix: string) => string;
+  readonly #fatalFence: PluginConfigFatalFence;
   #tail: Promise<void> = Promise.resolve();
   #fatal = false;
 
@@ -238,10 +242,11 @@ export class PluginConfigService {
     this.#ownerBootId = options.ownerBootId ?? id("boot_config");
     this.#clock = options.clock ?? (() => new Date().toISOString());
     this.#idGenerator = options.idGenerator ?? id;
+    this.#fatalFence = options.fatalFence ?? createPluginConfigFatalFence();
   }
 
   isFatal(): boolean {
-    return this.#fatal;
+    return this.#fatal || this.#fatalFence.isFatal();
   }
 
   async recoverInterruptedAttempts(): Promise<void> {
@@ -277,7 +282,7 @@ export class PluginConfigService {
       throw new Error("plugin_config_authorization_failed");
     }
     if (moduleId !== "freightcom-ltl") return unsupportedState(moduleId);
-    if (this.#fatal) throw new PluginConfigServiceFatalError();
+    if (this.isFatal()) throw new PluginConfigServiceFatalError();
     const snapshot = this.#store.getSnapshot();
     const latestRelease = snapshot.latestRelease;
     const latestReadback = snapshot.latestReadback;
@@ -547,7 +552,7 @@ export class PluginConfigService {
       if (preview.baseRevision !== this.#store.getCurrent().revision) {
         return actionResponse("decide_approval", writeMeta.request_id, "blocked", null, ["base_revision_stale"]);
       }
-      if (this.#store.getSnapshot().latestApproval?.previewRef === preview.previewRef) {
+      if (this.#store.getApprovalForPreview(preview.previewRef) !== null) {
         return actionResponse("decide_approval", writeMeta.request_id, "blocked", null, ["approval_already_recorded"]);
       }
       const approvalId = this.#idGenerator("approval_config");
@@ -560,15 +565,22 @@ export class PluginConfigService {
         approver_actor_id: context.actorId,
         decided_at: now,
       }, []);
-      this.#store.recordApproval({
-        approvalId,
-        previewRef: preview.previewRef,
-        decision: parsed.decision,
-        approverActorId: context.actorId,
-        decidedAt: now,
-        reasonCode: parsed.reason_code,
-      }, this.#identity("decide_approval", writeMeta, requestHash, approvalId, now), response,
-      this.#event(context.actorId, "decide_approval", approvalId, "success", "approval_recorded", now));
+      try {
+        this.#store.recordApproval({
+          approvalId,
+          previewRef: preview.previewRef,
+          decision: parsed.decision,
+          approverActorId: context.actorId,
+          decidedAt: now,
+          reasonCode: parsed.reason_code,
+        }, this.#identity("decide_approval", writeMeta, requestHash, approvalId, now), response,
+        this.#event(context.actorId, "decide_approval", approvalId, "success", "approval_recorded", now));
+      } catch (error) {
+        if (error instanceof PluginConfigStoreError && error.code === "state_conflict") {
+          return actionResponse("decide_approval", writeMeta.request_id, "blocked", null, ["approval_already_recorded"]);
+        }
+        throw error;
+      }
       return response;
     });
   }
@@ -621,7 +633,7 @@ export class PluginConfigService {
         releaseId: this.#idGenerator("release_config"),
         previewRef: preview.previewRef,
         approvalId: approval.approvalId,
-        revision: current.revision + 1,
+        revision: this.#store.nextReleaseRevision(),
         intent: preview.intent,
         configDigest: preview.configDigest,
         state: "published_pending_apply",
@@ -825,6 +837,11 @@ export class PluginConfigService {
       this.#store.finalizePublish(finalization);
     } catch (error) {
       this.#fatal = true;
+      try {
+        this.#fatalFence.tripFatal(error);
+      } catch (fenceError) {
+        throw new PluginConfigServiceFatalError({ cause: fenceError });
+      }
       throw new PluginConfigServiceFatalError({ cause: error });
     }
     return response;
@@ -835,7 +852,7 @@ export class PluginConfigService {
     context: ExecutionContext,
     requestId: string,
   ): PluginConfigOperationResponse | null {
-    if (this.#fatal) throw new PluginConfigServiceFatalError();
+    if (this.isFatal()) throw new PluginConfigServiceFatalError();
     return validContext(context, this.#managementTenantId)
       ? null
       : actionResponse(action, requestId, "blocked", null, ["plugin_config_authorization_failed"]);

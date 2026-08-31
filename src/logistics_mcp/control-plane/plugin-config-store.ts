@@ -31,6 +31,7 @@ const DATABASE_MODE = 0o600;
 const MARKER_MODE = 0o400;
 const MARKER_FORMAT = "mcp-plugin-config-identity/v1" as const;
 const DATABASE_SCHEMA_VERSION = 1 as const;
+const APPROVAL_PREVIEW_UNIQUE_INDEX = "config_approvals_preview_ref_unique" as const;
 
 const TABLES = [
   "config_apply_attempts",
@@ -180,6 +181,8 @@ CREATE TABLE config_events (
 CREATE INDEX config_events_time_idx ON config_events(occurred_at DESC, sequence DESC);
 CREATE INDEX config_attempts_phase_idx ON config_apply_attempts(phase, created_at);
 CREATE INDEX config_readbacks_release_idx ON config_readbacks(release_id, checked_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS ${APPROVAL_PREVIEW_UNIQUE_INDEX}
+  ON config_approvals(preview_ref);
 `;
 
 type SqlRow = Record<string, SQLInputValue>;
@@ -789,6 +792,26 @@ function insertEvent(
   );
 }
 
+function nextReleaseRevision(database: DatabaseSync): number {
+  const row = database.prepare(
+    "SELECT COALESCE(MAX(revision), 0) AS value FROM config_releases",
+  ).get() as SqlRow | undefined;
+  if (row === undefined) fail("corrupt");
+  const revision = expectInteger(row, "value");
+  if (revision >= Number.MAX_SAFE_INTEGER) fail("state_conflict");
+  return revision + 1;
+}
+
+function hasApprovalPreviewUniqueIndex(database: DatabaseSync): boolean {
+  const indexes = database.prepare("PRAGMA index_list('config_approvals')").all() as SqlRow[];
+  const index = indexes.find((row) => row.name === APPROVAL_PREVIEW_UNIQUE_INDEX);
+  if (index === undefined || index.unique !== 1) return false;
+  const columns = database.prepare(
+    `PRAGMA index_info(${APPROVAL_PREVIEW_UNIQUE_INDEX})`,
+  ).all() as SqlRow[];
+  return columns.length === 1 && columns[0]?.seqno === 0 && columns[0]?.name === "preview_ref";
+}
+
 export function initializeSqlitePluginConfigState(
   rawOptions: PluginConfigStoreOptions,
 ): Promise<void> {
@@ -826,31 +849,42 @@ export function initializeSqlitePluginConfigState(
     database.exec("PRAGMA journal_mode = WAL");
     database.exec("PRAGMA synchronous = FULL");
     database.exec("PRAGMA trusted_schema = OFF");
-    database.exec(SCHEMA_SQL);
-    database.prepare(`
-      INSERT INTO config_meta (
-        singleton, schema_version, config_store_id, instance_id, management_tenant_id
-      ) VALUES (1, ?, ?, ?, ?)
-    `).run(
-      DATABASE_SCHEMA_VERSION,
-      marker.config_store_id,
-      options.instanceId,
-      options.managementTenantId,
-    );
-    database.prepare(`
-      INSERT INTO plugin_current (
-        singleton, module_id, revision, config_digest, module_generation,
-        request_timeout_ms, poll_interval_ms, max_poll_attempts,
-        egress_profile_id, credential_slot_id, active_release_id, checked_at
-      ) VALUES (1, 'freightcom-ltl', 0, ?, ?, ?, ?, ?, ?, ?, 'bootstrap_config', ?)
-    `).run(
-      digest,
-      generationFor(0, digest),
-      ...bindValues(defaults),
-      now,
-    );
-    const quickCheck = database.prepare("PRAGMA quick_check").get() as SqlRow | undefined;
-    if (quickCheck === undefined || Object.values(quickCheck)[0] !== "ok") fail("schema_mismatch");
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database.exec(SCHEMA_SQL);
+      database.prepare(`
+        INSERT INTO config_meta (
+          singleton, schema_version, config_store_id, instance_id, management_tenant_id
+        ) VALUES (1, ?, ?, ?, ?)
+      `).run(
+        DATABASE_SCHEMA_VERSION,
+        marker.config_store_id,
+        options.instanceId,
+        options.managementTenantId,
+      );
+      database.prepare(`
+        INSERT INTO plugin_current (
+          singleton, module_id, revision, config_digest, module_generation,
+          request_timeout_ms, poll_interval_ms, max_poll_attempts,
+          egress_profile_id, credential_slot_id, active_release_id, checked_at
+        ) VALUES (1, 'freightcom-ltl', 0, ?, ?, ?, ?, ?, ?, ?, 'bootstrap_config', ?)
+      `).run(
+        digest,
+        generationFor(0, digest),
+        ...bindValues(defaults),
+        now,
+      );
+      const quickCheck = database.prepare("PRAGMA quick_check").get() as SqlRow | undefined;
+      if (quickCheck === undefined || Object.values(quickCheck)[0] !== "ok") fail("schema_mismatch");
+      database.exec("COMMIT");
+    } catch (error) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // Preserve the initialization error.
+      }
+      throw error;
+    }
     database.close();
     database = undefined;
     chmodSync(stagingDatabase, DATABASE_MODE);
@@ -945,6 +979,29 @@ export class SqlitePluginConfigStore {
     const quickCheck = database.prepare("PRAGMA quick_check").get() as SqlRow | undefined;
     if (quickCheck === undefined || Object.values(quickCheck)[0] !== "ok") fail("schema_mismatch");
     currentFromRow(database.prepare("SELECT * FROM plugin_current WHERE singleton = 1").get() as SqlRow);
+    if (!hasApprovalPreviewUniqueIndex(database)) {
+      this.#createApprovalPreviewUniqueIndex();
+    }
+  }
+
+  #createApprovalPreviewUniqueIndex(): void {
+    const database = this.#database;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS ${APPROVAL_PREVIEW_UNIQUE_INDEX}
+          ON config_approvals(preview_ref)
+      `);
+      database.exec("COMMIT");
+    } catch (error) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // Preserve the failed migration error.
+      }
+      fail("schema_mismatch", error);
+    }
+    if (!hasApprovalPreviewUniqueIndex(database)) fail("schema_mismatch");
   }
 
   #transaction<T>(operation: (database: DatabaseSync) => T): T {
@@ -969,6 +1026,10 @@ export class SqlitePluginConfigStore {
       .get() as SqlRow | undefined;
     if (row === undefined) fail("corrupt");
     return currentFromRow(row);
+  }
+
+  nextReleaseRevision(): number {
+    return nextReleaseRevision(this.#active());
   }
 
   getSnapshot(): PluginConfigStoreSnapshot {
@@ -1088,22 +1149,38 @@ export class SqlitePluginConfigStore {
     response: PluginConfigOperationResponse,
     event: Omit<PluginConfigEventRecord, "sequence">,
   ): void {
-    this.#transaction((database) => {
-      database.prepare(`
-        INSERT INTO config_approvals (
-          approval_id, preview_ref, decision, approver_actor_id, decided_at, reason_code
-        ) VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        record.approvalId,
-        record.previewRef,
-        record.decision,
-        record.approverActorId,
-        record.decidedAt,
-        record.reasonCode,
-      );
-      this.#insertIdempotency(database, identity, response);
-      insertEvent(database, event);
-    });
+    try {
+      this.#transaction((database) => {
+        database.prepare(`
+          INSERT INTO config_approvals (
+            approval_id, preview_ref, decision, approver_actor_id, decided_at, reason_code
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          record.approvalId,
+          record.previewRef,
+          record.decision,
+          record.approverActorId,
+          record.decidedAt,
+          record.reasonCode,
+        );
+        this.#insertIdempotency(database, identity, response);
+        insertEvent(database, event);
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(
+        "UNIQUE constraint failed: config_approvals.preview_ref",
+      )) {
+        fail("state_conflict", error);
+      }
+      throw error;
+    }
+  }
+
+  getApprovalForPreview(previewRef: string): PluginConfigApprovalRecord | null {
+    const row = this.#active().prepare(
+      "SELECT * FROM config_approvals WHERE preview_ref = ?",
+    ).get(previewRef) as SqlRow | undefined;
+    return row === undefined ? null : approvalFromRow(row);
   }
 
   getApproval(approvalId: string): PluginConfigApprovalRecord {
@@ -1143,7 +1220,10 @@ export class SqlitePluginConfigStore {
         .get() as SqlRow | undefined;
       if (currentRow === undefined) fail("corrupt");
       const current = currentFromRow(currentRow);
-      if (input.release.revision !== current.revision + 1) fail("state_conflict");
+      const nextRevision = nextReleaseRevision(database);
+      if (input.release.revision !== nextRevision || input.release.revision <= current.revision) {
+        fail("state_conflict");
+      }
       const preview = database.prepare("SELECT * FROM config_previews WHERE preview_ref = ?")
         .get(input.release.previewRef) as SqlRow | undefined;
       if (preview === undefined || previewFromRow(preview).consumed) fail("state_conflict");

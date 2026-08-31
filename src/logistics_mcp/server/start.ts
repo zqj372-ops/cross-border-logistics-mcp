@@ -25,10 +25,10 @@ import {
   SqliteTenantAccessStore,
 } from "../control-plane/sqlite-tenant-access-store";
 import {
-  PluginConfigStoreError,
   SqlitePluginConfigStore,
   type StoredPluginConfigValues,
 } from "../control-plane/plugin-config-store";
+import { createPluginConfigFatalFence } from "../control-plane/plugin-config-apply";
 import { PluginConfigService } from "../control-plane/plugin-config-service";
 import { TenantAccessError } from "../control-plane/tenant-access-errors";
 import { TenantAccessService } from "../control-plane/tenant-access-service";
@@ -910,34 +910,31 @@ async function createManagedFixtureRuntime(
         throw error;
       }
     }
-    try {
-      pluginConfigStore = new SqlitePluginConfigStore({
-        applicationRoot: config.applicationRoot,
-        instanceId: config.instanceId,
-        managementTenantId: config.managementTenantId,
-      });
-      pluginConfigRatePort = new ManagedFreightcomConfigRuntime(
-        pluginConfigStore.getCurrent(),
-        (values) => createFreightcomRuntimeAdapterFromEnvironment(
-          readFreightcomKeychainSecret,
-          values,
-        ),
-      );
-      pluginConfigService = new PluginConfigService({
-        store: pluginConfigStore,
-        applyPort: pluginConfigRatePort,
-        managementTenantId: config.managementTenantId,
-        previewTtlSeconds: 15 * 60,
-        ownerBootId: `boot_config_${randomUUID().replaceAll("-", "")}`,
-        clock: () => new Date().toISOString(),
-        idGenerator: (prefix) => `${prefix}_${randomUUID().replaceAll("-", "")}`,
-      });
-      await pluginConfigService.recoverInterruptedAttempts();
-    } catch (error) {
-      if (!(error instanceof PluginConfigStoreError) || error.code !== "state_missing") {
-        throw error;
-      }
-    }
+    pluginConfigStore = new SqlitePluginConfigStore({
+      applicationRoot: config.applicationRoot,
+      instanceId: config.instanceId,
+      managementTenantId: config.managementTenantId,
+    });
+    const pluginConfigFatalFence = createPluginConfigFatalFence();
+    pluginConfigRatePort = new ManagedFreightcomConfigRuntime(
+      pluginConfigStore.getCurrent(),
+      (values) => createFreightcomRuntimeAdapterFromEnvironment(
+        readFreightcomKeychainSecret,
+        values,
+      ),
+      pluginConfigFatalFence,
+    );
+    pluginConfigService = new PluginConfigService({
+      store: pluginConfigStore,
+      applyPort: pluginConfigRatePort,
+      managementTenantId: config.managementTenantId,
+      previewTtlSeconds: 15 * 60,
+      ownerBootId: `boot_config_${randomUUID().replaceAll("-", "")}`,
+      clock: () => new Date().toISOString(),
+      idGenerator: (prefix) => `${prefix}_${randomUUID().replaceAll("-", "")}`,
+      fatalFence: pluginConfigFatalFence,
+    });
+    await pluginConfigService.recoverInterruptedAttempts();
     composition = makeComposition({
       managementTenantId: config.managementTenantId,
       authenticate: mcpAuthenticate,

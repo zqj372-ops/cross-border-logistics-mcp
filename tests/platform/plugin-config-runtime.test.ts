@@ -130,7 +130,7 @@ describe("managed Freightcom plugin config runtime", () => {
     await expect(runtime.apply({
       module_id: "freightcom-ltl",
       release_id: "release_config_bad",
-      revision: 2,
+      revision: 0,
       config_digest: configDigestForValues(values(18_000)),
       values: values(18_000),
       restart_policy: "controlled_restart",
@@ -148,5 +148,54 @@ describe("managed Freightcom plugin config runtime", () => {
     })).resolves.toMatchObject({ status: "blocked", reason_code: "config_values_invalid" });
     expect(factory).toHaveBeenCalledTimes(1);
     expect(runtime.snapshot().revision).toBe(0);
+  });
+
+  it("accepts a strictly newer unused revision after a skipped release", async () => {
+    const factory = vi.fn((): FreightcomRatePort => ({
+      requestRate: () => Promise.resolve(result("safe")),
+    }));
+    const runtime = new ManagedFreightcomConfigRuntime(current(), factory);
+    const desired = values(18_000);
+    const digest = configDigestForValues(desired);
+
+    await expect(runtime.apply({
+      module_id: "freightcom-ltl",
+      release_id: "release_config_skipped",
+      revision: 2,
+      config_digest: digest,
+      values: desired,
+      restart_policy: "controlled_restart",
+    })).resolves.toMatchObject({
+      status: "readback_verified",
+      revision: 2,
+      release_id: "release_config_skipped",
+    });
+    expect(runtime.snapshot().revision).toBe(2);
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks request dispatch after the shared fatal fence trips", async () => {
+    let fatal = false;
+    const fatalFence = {
+      isFatal: () => fatal,
+      tripFatal: vi.fn((error: unknown): never => {
+        fatal = true;
+        throw error;
+      }),
+    };
+    const adapter: FreightcomRatePort = {
+      requestRate: vi.fn(() => Promise.resolve(result("must-not-run"))),
+    };
+    const RuntimeWithFence = ManagedFreightcomConfigRuntime as unknown as new (
+      currentRecord: PluginConfigCurrentRecord,
+      adapterFactory: () => FreightcomRatePort,
+      fence: typeof fatalFence,
+    ) => ManagedFreightcomConfigRuntime;
+    const runtime = new RuntimeWithFence(current(), () => adapter, fatalFence);
+    fatal = true;
+
+    await expect(runtime.requestRate({})).rejects.toThrow();
+    expect(fatalFence.tripFatal).toHaveBeenCalledTimes(1);
+    expect(adapter.requestRate).not.toHaveBeenCalled();
   });
 });

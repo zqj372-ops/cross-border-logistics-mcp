@@ -64,8 +64,14 @@ interface Harness {
   readonly close: () => Promise<void>;
 }
 
+interface TestFatalFence {
+  readonly isFatal: () => boolean;
+  readonly tripFatal: (error: unknown) => never;
+}
+
 async function harness(
   initialObservation?: PluginConfigApplyObservation,
+  fatalFence?: TestFatalFence,
 ): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "mcp-plugin-config-service-"));
   roots.push(root);
@@ -104,14 +110,15 @@ async function harness(
     module_generation: observed.module_generation ?? `generation_${input.revision}`,
     values: observed.values,
   }));
-  const service = new PluginConfigService({
+  const service = new PluginConfigService(({
     store,
     applyPort: { apply, readback },
     managementTenantId: "tenant_fixture",
     ownerBootId: "boot_service_test",
     clock: () => now,
-    idGenerator: (prefix) => `${prefix}_${String(++counter).padStart(3, "0")}`,
-  });
+    idGenerator: (prefix: string) => `${prefix}_${String(++counter).padStart(3, "0")}`,
+    ...(fatalFence === undefined ? {} : { fatalFence }),
+  }) as unknown as ConstructorParameters<typeof PluginConfigService>[0]);
   return {
     store,
     service,
@@ -150,15 +157,17 @@ function operationData<K extends NonNullable<PluginConfigOperationResponse["data
 async function approvedPreview(
   service: PluginConfigService,
   values = changedValues(),
+  suffix = "",
 ): Promise<{ readonly previewRef: string; readonly approvalId: string }> {
   const applicant = context("actor_applicant");
   const approver = context("actor_approver");
+  const operationMeta = (name: string) => meta(suffix === "" ? name : `${name}_${suffix}`);
   const validation = await service.validateDraft(applicant, {
     schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
     module_id: "freightcom-ltl",
     base_revision: 0,
     values,
-  }, meta("validate"));
+  }, operationMeta("validate"));
   expect(validation.status).toBe("success");
   const preview = await service.createPreview(applicant, {
     schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
@@ -166,7 +175,7 @@ async function approvedPreview(
     intent: "change",
     base_revision: 0,
     values,
-  }, meta("preview"));
+  }, operationMeta("preview"));
   const previewData = operationData(preview, "preview");
   const sameActor = await service.decideApproval(applicant, {
     schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
@@ -174,7 +183,7 @@ async function approvedPreview(
     preview_ref: previewData.preview_ref,
     decision: "approve",
     reason_code: "operator_approved",
-  }, meta("same_actor"));
+  }, operationMeta("same_actor"));
   expect(sameActor).toMatchObject({ status: "blocked", reason_codes: ["four_eyes_required"] });
   const approval = await service.decideApproval(approver, {
     schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
@@ -182,7 +191,7 @@ async function approvedPreview(
     preview_ref: previewData.preview_ref,
     decision: "approve",
     reason_code: "operator_approved",
-  }, meta("approval"));
+  }, operationMeta("approval"));
   const approvalData = operationData(approval, "approval");
   const duplicateApproval = await service.decideApproval(context("actor_backup_approver"), {
     schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
@@ -190,7 +199,7 @@ async function approvedPreview(
     preview_ref: previewData.preview_ref,
     decision: "approve",
     reason_code: "operator_approved",
-  }, meta("duplicate_approval"));
+  }, operationMeta("duplicate_approval"));
   expect(duplicateApproval).toMatchObject({
     status: "blocked",
     reason_codes: ["approval_already_recorded"],
@@ -291,6 +300,77 @@ describe("plugin configuration service", () => {
     }
   });
 
+  it("checks approval uniqueness by preview rather than only the latest approval", async () => {
+    const runtime = await harness();
+    try {
+      const first = await approvedPreview(runtime.service);
+      await approvedPreview(runtime.service, changedValues(17_000), "second");
+
+      const duplicate = await runtime.service.decideApproval(context("actor_third_approver"), {
+        schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
+        module_id: "freightcom-ltl",
+        preview_ref: first.previewRef,
+        decision: "approve",
+        reason_code: "operator_approved",
+      }, meta("approval_repeat_original"));
+      expect(duplicate).toMatchObject({
+        status: "blocked",
+        reason_codes: ["approval_already_recorded"],
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("does not reuse a revision consumed by an unavailable release", async () => {
+    const runtime = await harness({
+      status: "unavailable",
+      release_id: null,
+      revision: null,
+      config_digest: null,
+      module_generation: null,
+      values: null,
+      reason_code: "adapter_unavailable",
+    });
+    try {
+      const first = await approvedPreview(runtime.service);
+      const firstPublished = await runtime.service.publish(context("actor_applicant"), {
+        schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
+        module_id: "freightcom-ltl",
+        preview_ref: first.previewRef,
+        approval_id: first.approvalId,
+      }, meta("publish_unavailable"));
+      expect(firstPublished).toMatchObject({ status: "unavailable" });
+      expect(operationData(firstPublished, "release")).toMatchObject({ revision: 1 });
+      expect(runtime.store.getCurrent().revision).toBe(0);
+
+      runtime.setReadback({
+        status: "readback_verified",
+        release_id: null,
+        revision: null,
+        config_digest: null,
+        module_generation: null,
+        values: null,
+        reason_code: null,
+      });
+      const second = await approvedPreview(runtime.service, changedValues(17_000), "second");
+      const secondPublished = await runtime.service.publish(context("actor_applicant"), {
+        schema_version: PLUGIN_CONFIG_SCHEMA_VERSION,
+        module_id: "freightcom-ltl",
+        preview_ref: second.previewRef,
+        approval_id: second.approvalId,
+      }, meta("publish_after_unavailable"));
+      expect(secondPublished).toMatchObject({ status: "success" });
+      expect(operationData(secondPublished, "release")).toMatchObject({
+        revision: 2,
+        release_state: "readback_verified",
+      });
+      expect(runtime.store.getCurrent().revision).toBe(2);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("withdraws publish from allowed actions when an approved preview expires", async () => {
     const runtime = await harness();
     try {
@@ -371,7 +451,15 @@ describe("plugin configuration service", () => {
   });
 
   it("trips fatal when runtime mutation succeeds but durable finalization fails", async () => {
-    const runtime = await harness();
+    let fatal = false;
+    const fatalFence: TestFatalFence = {
+      isFatal: () => fatal,
+      tripFatal: vi.fn((error: unknown): never => {
+        fatal = true;
+        throw error;
+      }),
+    };
+    const runtime = await harness(undefined, fatalFence);
     try {
       const workflow = await approvedPreview(runtime.service);
       vi.spyOn(runtime.store, "finalizePublish").mockImplementation(() => {
@@ -385,6 +473,7 @@ describe("plugin configuration service", () => {
       }, meta("publish_fatal"))).rejects.toBeInstanceOf(PluginConfigServiceFatalError);
       expect(runtime.apply).toHaveBeenCalledTimes(1);
       expect(runtime.service.isFatal()).toBe(true);
+      expect(fatalFence.tripFatal).toHaveBeenCalledTimes(1);
       await expect(runtime.service.getState(context("actor_applicant")))
         .rejects.toBeInstanceOf(PluginConfigServiceFatalError);
     } finally {

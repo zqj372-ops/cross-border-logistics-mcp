@@ -1,6 +1,7 @@
 import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,6 +24,7 @@ import {
 } from "../../src/logistics_mcp/control-plane/plugin-config-store";
 
 const roots: string[] = [];
+const APPROVAL_PREVIEW_UNIQUE_INDEX = "config_approvals_preview_ref_unique";
 const options = (applicationRoot: string) => ({
   applicationRoot,
   instanceId: "instance_fixture_001",
@@ -89,6 +91,100 @@ describe("SQLite plugin configuration store", () => {
 
     chmodSync(paths.markerPath, 0o600);
     expect(errorCode(() => new SqlitePluginConfigStore(options(root)))).toBe("permission_mismatch");
+  });
+
+  it("adds the approval preview index when opening an existing schema", async () => {
+    const root = temporaryRoot();
+    await initializeSqlitePluginConfigState(options(root));
+    const paths = pluginConfigPaths(root);
+    const legacy = new DatabaseSync(paths.databasePath, {
+      allowExtension: false,
+      enableDoubleQuotedStringLiterals: false,
+    });
+    legacy.exec(`DROP INDEX ${APPROVAL_PREVIEW_UNIQUE_INDEX}`);
+    legacy.close();
+
+    const reopened = new SqlitePluginConfigStore(options(root));
+    await reopened.close();
+
+    const checked = new DatabaseSync(paths.databasePath, {
+      allowExtension: false,
+      enableDoubleQuotedStringLiterals: false,
+    });
+    const index = checked.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?",
+    ).get(APPROVAL_PREVIEW_UNIQUE_INDEX) as { readonly name?: unknown } | undefined;
+    expect(index?.name).toBe(APPROVAL_PREVIEW_UNIQUE_INDEX);
+    const unique = checked.prepare(
+      "PRAGMA index_list('config_approvals')",
+    ).all() as Array<{ readonly name?: unknown; readonly unique?: unknown }>;
+    expect(unique).toContainEqual(expect.objectContaining({
+      name: APPROVAL_PREVIEW_UNIQUE_INDEX,
+      unique: 1,
+    }));
+    expect(unique.filter((entry) => (
+      entry.unique === 1 && entry.name !== APPROVAL_PREVIEW_UNIQUE_INDEX
+    )).map((entry) => entry.name)).toEqual(["sqlite_autoindex_config_approvals_1"]);
+    checked.close();
+  });
+
+  it("fails closed and rolls back index creation when a legacy schema has duplicate approvals", async () => {
+    const root = temporaryRoot();
+    await initializeSqlitePluginConfigState(options(root));
+    const paths = pluginConfigPaths(root);
+    const digest = configDigestForValues(FREIGHTCOM_LTL_DEFAULT_CONFIG_VALUES);
+    const legacy = new DatabaseSync(paths.databasePath, {
+      allowExtension: false,
+      enableDoubleQuotedStringLiterals: false,
+    });
+    legacy.exec(`DROP INDEX ${APPROVAL_PREVIEW_UNIQUE_INDEX}`);
+    legacy.prepare(`
+      INSERT INTO config_previews (
+        preview_ref, intent, base_revision, target_release_id, config_digest,
+        request_timeout_ms, poll_interval_ms, max_poll_attempts,
+        egress_profile_id, credential_slot_id, changed_field_ids_json,
+        expires_at, creator_actor_id, consumed, created_at
+      ) VALUES (?, 'change', 0, NULL, ?, 20000, 750, 12,
+        'freightcom_test_fixed', 'freightcom_test_credential', '[]', ?, ?, 0, ?)
+    `).run(
+      "preview_legacy_duplicate",
+      digest,
+      "2026-08-31T00:15:00.000Z",
+      "actor_applicant",
+      "2026-08-31T00:00:00.000Z",
+    );
+    const insertApproval = legacy.prepare(`
+      INSERT INTO config_approvals (
+        approval_id, preview_ref, decision, approver_actor_id, decided_at, reason_code
+      ) VALUES (?, ?, 'approve', ?, ?, 'operator_approved')
+    `);
+    insertApproval.run(
+      "approval_legacy_duplicate_001",
+      "preview_legacy_duplicate",
+      "actor_approver",
+      "2026-08-31T00:01:00.000Z",
+    );
+    insertApproval.run(
+      "approval_legacy_duplicate_002",
+      "preview_legacy_duplicate",
+      "actor_backup_approver",
+      "2026-08-31T00:02:00.000Z",
+    );
+    legacy.close();
+
+    expect(errorCode(() => new SqlitePluginConfigStore(options(root)))).toBe("schema_mismatch");
+
+    const checked = new DatabaseSync(paths.databasePath, {
+      allowExtension: false,
+      enableDoubleQuotedStringLiterals: false,
+    });
+    expect(checked.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?",
+    ).get(APPROVAL_PREVIEW_UNIQUE_INDEX)).toBeUndefined();
+    expect(checked.prepare(
+      "SELECT COUNT(*) AS count FROM config_approvals WHERE preview_ref = ?",
+    ).get("preview_legacy_duplicate")).toMatchObject({ count: 2 });
+    checked.close();
   });
 
   it("persists the closed preview, approval, release and unfinished attempt without applying", async () => {
@@ -194,6 +290,42 @@ describe("SQLite plugin configuration store", () => {
         occurredAt: approval.decidedAt,
       },
     );
+    expect(() => store.recordApproval(
+      {
+        ...approval,
+        approvalId: "approval_config_store_duplicate",
+        approverActorId: "actor_backup_approver",
+        decidedAt: "2026-08-31T00:01:30.000Z",
+      },
+      {
+        action: "decide_approval",
+        idempotencyKey: "idem_approval_store_duplicate",
+        requestHash: "mcp-plugin-config-hash/v1/request/sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        resultId: "approval_config_store_duplicate",
+        createdAt: "2026-08-31T00:01:30.000Z",
+      },
+      {
+        ...approvalResponse,
+        request_id: "request_approval_store_duplicate",
+        data: {
+          kind: "approval",
+          approval_id: "approval_config_store_duplicate",
+          preview_ref: approval.previewRef,
+          decision: "approve",
+          approver_actor_id: "actor_backup_approver",
+          decided_at: "2026-08-31T00:01:30.000Z",
+        },
+      },
+      {
+        eventId: "event_approval_store_duplicate",
+        actorId: "actor_backup_approver",
+        action: "decide_approval",
+        objectRef: "approval_config_store_duplicate",
+        status: "success",
+        reasonCode: "approval_recorded",
+        occurredAt: "2026-08-31T00:01:30.000Z",
+      },
+    )).toThrow();
 
     const release: PluginConfigReleaseRecord = {
       ...values,
