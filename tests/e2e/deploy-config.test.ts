@@ -220,6 +220,20 @@ describe("safe deployment artifacts", () => {
       expect(compose).toContain(setting);
       expect(env).toContain(setting);
     }
+    for (const setting of [
+      "ACCESS_GATEWAY_CRYPTO_BACKEND",
+      "ACCESS_GATEWAY_OCI_AUTH_MODE",
+      "ACCESS_GATEWAY_OCI_REGION",
+      "ACCESS_GATEWAY_OCI_KMS_KEY_ID",
+      "ACCESS_GATEWAY_OCI_KMS_CURRENT_KEY_VERSION_ID",
+      "ACCESS_GATEWAY_OCI_KMS_PREVIOUS_KEY_VERSION_ID",
+      "ACCESS_GATEWAY_OCI_KMS_CRYPTO_ENDPOINT",
+      "ACCESS_GATEWAY_OCI_KMS_MANAGEMENT_ENDPOINT",
+      "ACCESS_GATEWAY_OCI_PEPPER_SECRET_ID",
+    ]) {
+      expect(compose).toContain(setting);
+      expect(env).toContain(setting);
+    }
   });
 
   it("documents the exact Cloudflare Access assertion-to-admin mapping boundary", () => {
