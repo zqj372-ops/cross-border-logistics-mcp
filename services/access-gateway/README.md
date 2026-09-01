@@ -19,7 +19,7 @@ Bearer JWT/JWKS 验证入口。
 - 受管理管理员保护的 `/admin/api/v1/access/overview`，从 SQLite/PostgreSQL 读取固定 24 小时
   五状态计数、最多 20 条脱敏异常和 Agent 接入清单，不返回租户/Client/credential/request hash/JTI；
 - PostgreSQL tenant/client/Key/entitlement、幂等、审计和并发限流适配器；
-- OCI SDK `instance-principal` 认证、Virtual Vault 命名版本 pepper 读取、RSA KMS
+- OCI SDK `instance-principal` 认证、Virtual Vault 确定性版本 pepper 读取、RSA KMS
   非导出 RS256 签名、当前/前一公钥 JWKS 和启动签名自校验；
 - SQLite v3 + operations v1 到 PostgreSQL 的显式事务迁移、全表计数、逻辑指纹读回和
   幂等重跑；旧 SQLite 只保留为切换回滚源，不作为 PostgreSQL 运行时 fallback；
@@ -41,7 +41,7 @@ Bearer JWT/JWKS 验证入口。
 该后端只允许 Compute 实例主体认证，不读取 OCI 用户 API Key，不导出 JWT 私钥，也不允许
 与文件密钥配置混用。启动时先从 KMS Management Endpoint 读取指定 key version 的 RSA 公钥，
 再通过 Crypto Endpoint 对固定消息做一次签名并在进程内验签；任何 key/key version/算法或签名
-不一致都会失败闭合。pepper 按数据库中实际引用的版本名从 Secret Retrieval API 精确读取，
+不一致都会失败闭合。pepper 按数据库中实际引用的版本选择器从 Secret Retrieval API 精确读取，
 当前版本还必须带 `CURRENT` stage。
 
 必须同时设置：
@@ -58,8 +58,11 @@ ACCESS_GATEWAY_OCI_KMS_MANAGEMENT_ENDPOINT=<vault management endpoint>
 ACCESS_GATEWAY_OCI_PEPPER_SECRET_ID=<pepper secret OCID>
 ```
 
-`ACCESS_GATEWAY_PEPPER_VERSION` 必须等于 OCI Secret 的当前 `versionName`；数据库中仍引用旧
-pepper 时，旧版本必须继续保留为可按名称读取的 Secret version。OCI 侧至少需要一个默认
+手工内容 Secret 可令 `ACCESS_GATEWAY_PEPPER_VERSION` 直接等于当前 `versionName`。OCI
+自动生成型 Secret 的 `versionName` 为空时，必须使用保留格式
+`oci-number-<positive-versionNumber>`，例如 `oci-number-1`；Gateway 会按精确
+`versionNumber` 读取，并同时校验返回版本号与 `CURRENT` stage。该前缀不得用作普通命名版本。
+数据库中仍引用旧 pepper 时，对应命名版本或数字版本必须继续保留。OCI 侧至少需要一个默认
 Virtual Vault、一枚 RSA 2048 位或更强的签名 key，以及一枚用于创建 Secret 的对称加密 key。
 不要为本服务创建按小时计费的 Private Vault。
 

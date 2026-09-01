@@ -84,22 +84,24 @@ function fixtures(overrides: Readonly<{
   };
   const secretsClient: OciSecretsClient = {
     getSecretBundle(request) {
-      if (request.secretVersionName === overrides.missingPepperVersion) {
+      const versionName = request.secretVersionName;
+      if (versionName === undefined) throw new Error("expected named secret version");
+      if (versionName === overrides.missingPepperVersion) {
         return Promise.resolve({
           secretBundle: {
             secretId: request.secretId,
-            versionName: request.secretVersionName,
+            versionName,
             secretBundleContent: { contentType: "BASE64" },
           },
         });
       }
-      const pepper = peppers.get(request.secretVersionName);
+      const pepper = peppers.get(versionName);
       if (pepper === undefined) throw new Error("unknown secret version");
       return Promise.resolve({
         secretBundle: {
           secretId: request.secretId,
-          versionName: request.secretVersionName,
-          stages: request.secretVersionName === "pepper-2026-09-v2" ? ["CURRENT"] : ["PREVIOUS"],
+          versionName,
+          stages: versionName === "pepper-2026-09-v2" ? ["CURRENT"] : ["PREVIOUS"],
           secretBundleContent: {
             contentType: "BASE64",
             content: pepper.toString("base64"),
@@ -200,6 +202,53 @@ describe("OCI Vault and KMS production providers", () => {
     expect(providers.pepper.supportsPepperVersion("pepper-unknown")).toBe(false);
     await providers.close();
   });
+
+  it("uses an explicit OCI version-number selector for auto-generated secret versions", async () => {
+    let observedRequest: Parameters<OciSecretsClient["getSecretBundle"]>[0] | undefined;
+    const clients = fixtures();
+    const providers = await createOciGatewayCryptoProviders({
+      ...clients,
+      secretsClient: {
+        getSecretBundle(request) {
+          observedRequest = request;
+          return Promise.resolve({
+            secretBundle: {
+              secretId: request.secretId,
+              versionNumber: 1,
+              stages: ["CURRENT", "LATEST"],
+              secretBundleContent: {
+                contentType: "BASE64",
+                content: Buffer.alloc(32, 0x2a).toString("base64"),
+              },
+            },
+          });
+        },
+      },
+      keyId: KEY_ID,
+      currentKeyVersionId: CURRENT_VERSION_ID,
+      pepperSecretId: SECRET_ID,
+      activePepperVersion: "oci-number-1",
+      requiredPepperVersions: ["oci-number-1"],
+    });
+    expect(observedRequest).toEqual({ secretId: SECRET_ID, versionNumber: 1 });
+    expect(providers.pepper.pepperVersion).toBe("oci-number-1");
+    await providers.close();
+  });
+
+  it.each(["oci-number-0", "oci-number-01", "oci-number-not-a-number"])(
+    "fails closed for an invalid reserved OCI version selector: %s",
+    async (version) => {
+      await expect(createOciGatewayCryptoProviders({
+        ...fixtures(),
+        keyId: KEY_ID,
+        currentKeyVersionId: CURRENT_VERSION_ID,
+        pepperSecretId: SECRET_ID,
+        activePepperVersion: version,
+        requiredPepperVersions: [version],
+        performSigningSelfTest: false,
+      })).rejects.toThrow(/secret version selector is invalid/u);
+    },
+  );
 
   it.each([
     [{ signKeyId: "ocid1.key.oc1.ap-tokyo-1.wrong" }, /unexpected key/u],

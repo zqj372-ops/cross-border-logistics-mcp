@@ -63,11 +63,13 @@ export interface OciKmsManagementClient {
 export interface OciSecretsClient {
   getSecretBundle(request: Readonly<{
     readonly secretId: string;
-    readonly secretVersionName: string;
+    readonly secretVersionName?: string;
+    readonly versionNumber?: number;
   }>): Promise<Readonly<{
     readonly secretBundle: Readonly<{
       readonly secretId: string;
       readonly versionName?: string;
+      readonly versionNumber?: number;
       readonly stages?: readonly string[];
       readonly secretBundleContent?: Readonly<{
         readonly contentType: string;
@@ -286,12 +288,23 @@ async function loadPepper(input: Readonly<{
   version: string;
   active: boolean;
 }>): Promise<Uint8Array> {
-  const response = await input.client.getSecretBundle({
-    secretId: input.secretId,
-    secretVersionName: input.version,
-  });
+  const numericSelector = /^oci-number-([1-9][0-9]{0,14})$/u.exec(input.version);
+  if (input.version.startsWith("oci-number-") && numericSelector === null) {
+    throw new Error("OCI Vault secret version selector is invalid.");
+  }
+  const versionNumber = numericSelector === null ? undefined : Number(numericSelector[1]);
+  if (versionNumber !== undefined && !Number.isSafeInteger(versionNumber)) {
+    throw new Error("OCI Vault secret version selector is invalid.");
+  }
+  const request = versionNumber === undefined
+    ? Object.freeze({ secretId: input.secretId, secretVersionName: input.version })
+    : Object.freeze({ secretId: input.secretId, versionNumber });
+  const response = await input.client.getSecretBundle(request);
   const bundle = response.secretBundle;
-  if (bundle.secretId !== input.secretId || bundle.versionName !== input.version) {
+  const versionMatches = versionNumber === undefined
+    ? bundle.versionName === input.version
+    : bundle.versionNumber === versionNumber;
+  if (bundle.secretId !== input.secretId || !versionMatches) {
     throw new Error("OCI Vault returned unexpected secret identity.");
   }
   if (input.active && !bundle.stages?.includes("CURRENT")) {

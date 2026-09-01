@@ -98,6 +98,11 @@ pepper bytes 和递增 `ACCESS_GATEWAY_PEPPER_VERSION`；禁止复用版本名�
 引用时删除历史版本。该本地 keyring 只解决候选环境的轮换连续性，不替代 KMS/Secret Manager，
 因此不会改变 `production_eligible=false`。
 
+OCI 自动生成型 Secret 没有 `versionName`，此时使用
+`ACCESS_GATEWAY_PEPPER_VERSION=oci-number-<positive-versionNumber>` 选择精确版本；命名型
+Secret 仍直接使用其 `versionName`。两种形式都会写入 credential 记录，轮换后必须保留仍被
+引用的旧版本，并且当前版本仍须带 `CURRENT` stage。
+
 从 v1/v2 SQLite 首次迁移到 v3 时，必须临时显式提供
 `ACCESS_GATEWAY_LEGACY_PEPPER_VERSION`，其值必须是旧 credential 实际使用的版本，且对应材料
 必须已存在于 keyring。迁移不会用新的 current version 猜测或重新标记旧 hash；任一条件不满足
