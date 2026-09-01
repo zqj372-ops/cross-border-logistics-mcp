@@ -71,4 +71,37 @@ describe("narrow Access Console boundary", () => {
     expect(app).toMatch(/supported_clients/iu);
     expect(html).not.toMatch(/7776000|90 天/iu);
   });
+
+  it("implements a state-driven credential lifecycle instead of one-click record mutations", () => {
+    const html = readFileSync(`${consoleDirectory}/index.html`, "utf8");
+    const app = readFileSync(`${consoleDirectory}/app.js`, "utf8");
+
+    expect(html).toMatch(/id="access-workbench"/u);
+    expect(html).toMatch(/id="tenant-context"/u);
+    expect(html).toMatch(/id="lifecycle-track"/u);
+    expect(html).toMatch(/id="next-action"/u);
+    expect(html).toMatch(/id="write-progress"[^>]*aria-live="polite"/u);
+    expect(html).toMatch(/id="action-dialog"/u);
+    expect(html).toMatch(/id="rotation-tools"/u);
+    expect(html).toMatch(/id="delivery-acknowledgement"/u);
+    expect(html).toMatch(/id="ack-and-verify"/u);
+    expect(html).toMatch(/id="discard-key"/u);
+    expect(html).toMatch(/id="client-config-preview"/u);
+    expect(html).toMatch(/接入清单不是可直接导入的凭证配置/u);
+
+    expect(app).toMatch(/function renderAccessWorkbench/u);
+    expect(app).toMatch(/function verifyWriteReadback/u);
+    expect(app).toMatch(/operation\.status\s*!==\s*["']success["']/u);
+    expect(app).toMatch(/expected\.credentialId/u);
+    expect(app).toMatch(/exactCatalog\(credential\.tool_names, expected\.toolNames\)/u);
+    expect(app).toMatch(/function setWriteBusy/u);
+    expect(app).toMatch(/function openActionDialog/u);
+    expect(app).toMatch(/function openRotationDialog/u);
+    expect(app).toMatch(/credential\.tool_names/u);
+    expect(app).toMatch(/pendingApiKey\s*=\s*["']["']/u);
+    expect(app).toMatch(/runCredentialReadback\(apiKey\)/u);
+    expect(app).toMatch(/LOGISTICS_MCP_BEARER_TOKEN/u);
+    expect(app).not.toMatch(/按当前勾选权限轮换/u);
+    expect(app).not.toMatch(/rotateCredential\(credential\.credential_id\)[\s\S]{0,200}selectedTools\(\)/u);
+  });
 });
