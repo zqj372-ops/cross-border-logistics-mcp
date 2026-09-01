@@ -45,6 +45,9 @@
     "bootstrap": "5.3.8",
     "decimal.js": "10.6.0",
     "jose": "6.2.8",
+    "oci-common": "2.140.0",
+    "oci-keymanagement": "2.140.0",
+    "oci-secrets": "2.140.0",
     "pg": "8.23.0",
     "zod": "4.4.3"
   },

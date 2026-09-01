@@ -72,6 +72,15 @@ const ENV_KEYS = [
   "ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS",
   "ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS",
   "ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS",
+  "ACCESS_GATEWAY_CRYPTO_BACKEND",
+  "ACCESS_GATEWAY_OCI_AUTH_MODE",
+  "ACCESS_GATEWAY_OCI_REGION",
+  "ACCESS_GATEWAY_OCI_KMS_KEY_ID",
+  "ACCESS_GATEWAY_OCI_KMS_CURRENT_KEY_VERSION_ID",
+  "ACCESS_GATEWAY_OCI_KMS_PREVIOUS_KEY_VERSION_ID",
+  "ACCESS_GATEWAY_OCI_KMS_CRYPTO_ENDPOINT",
+  "ACCESS_GATEWAY_OCI_KMS_MANAGEMENT_ENDPOINT",
+  "ACCESS_GATEWAY_OCI_PEPPER_SECRET_ID",
 ] as const;
 
 afterEach(() => {
@@ -132,6 +141,23 @@ describe("standalone Access Gateway runtime", () => {
         "kms_signer_unconfigured",
         "managed_database_unconfigured",
       ],
+    });
+  });
+
+  it("clears only the KMS blocker for an initialized OCI Vault crypto backend", () => {
+    expect(evaluateAccessGatewayReadiness({
+      tenantStoreReady: true,
+      operationStoreReady: true,
+      signingKeyCount: 2,
+      adminConfigured: true,
+      adminReady: true,
+      databaseBackend: "postgresql",
+      cryptoBackend: "oci-vault",
+    })).toEqual({
+      httpStatus: 200,
+      status: "manual_review",
+      operationalReady: true,
+      blockers: ["managed_database_qualification_pending"],
     });
   });
 

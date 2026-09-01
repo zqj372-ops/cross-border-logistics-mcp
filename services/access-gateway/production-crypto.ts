@@ -46,7 +46,11 @@ function readProtectedFile(path: string, label: string): Buffer {
   return readFileSync(path);
 }
 
-function derive(secret: string, salt: Uint8Array, pepper: Uint8Array): Promise<Uint8Array> {
+export function deriveCredentialSecretHash(
+  secret: string,
+  salt: Uint8Array,
+  pepper: Uint8Array,
+): Promise<Uint8Array> {
   const combinedSalt = Buffer.concat([Buffer.from(salt), Buffer.from(pepper)]);
   return new Promise((resolve, reject) => {
     scrypt(secret, combinedSalt, SCRYPT_KEY_LENGTH, SCRYPT_OPTIONS, (error, value) => {
@@ -76,7 +80,7 @@ interface PepperHistory {
   readonly entries: readonly PepperHistoryEntry[];
 }
 
-function validPepperVersion(value: unknown): value is string {
+export function validCredentialPepperVersion(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(value);
 }
 
@@ -101,7 +105,7 @@ function readPepperHistory(path: string): PepperHistory | null {
   if (
     Object.keys(record).sort().join(",") !== "active_version,format,peppers" ||
     record.format !== PEPPER_HISTORY_FORMAT ||
-    !validPepperVersion(record.active_version) ||
+    !validCredentialPepperVersion(record.active_version) ||
     !Array.isArray(record.peppers) ||
     record.peppers.length < 1 ||
     record.peppers.length > MAX_RETAINED_PEPPERS
@@ -117,7 +121,7 @@ function readPepperHistory(path: string): PepperHistory | null {
     const entry = candidate as Record<string, unknown>;
     if (
       Object.keys(entry).sort().join(",") !== "pepper,version" ||
-      !validPepperVersion(entry.version) ||
+      !validCredentialPepperVersion(entry.version) ||
       typeof entry.pepper !== "string" ||
       !/^[A-Za-z0-9+/]+={0,2}$/u.test(entry.pepper)
     ) {
@@ -214,7 +218,7 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
   readonly #peppers: ReadonlyMap<string, Uint8Array>;
 
   constructor(options: FileSecretPepperProviderOptions) {
-    if (!validPepperVersion(options.pepperVersion)) {
+    if (!validCredentialPepperVersion(options.pepperVersion)) {
       throw new TypeError("Credential pepper version is invalid.");
     }
     const pepper = readProtectedFile(options.pepperPath, "Credential pepper");
@@ -260,7 +264,7 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
     ) {
       return Promise.reject(new TypeError("Credential derivation input is invalid."));
     }
-    return derive(input.secret, input.salt, this.#pepper);
+    return deriveCredentialSecretHash(input.secret, input.salt, this.#pepper);
   }
 
   async verifyCredentialSecret(input: Readonly<{
@@ -283,7 +287,7 @@ export class FileSecretPepperProvider implements SecretPepperProvider {
       material.expectedHash instanceof Uint8Array &&
       material.expectedHash.byteLength === SCRYPT_KEY_LENGTH &&
       /^[A-Za-z0-9_-]{43}$/u.test(input.secret);
-    const candidate = await derive(
+    const candidate = await deriveCredentialSecretHash(
       /^[A-Za-z0-9_-]{43}$/u.test(input.secret) ? input.secret : "_".repeat(43),
       structurallyValid ? material.salt : DUMMY_SALT,
       structurallyValid && selectedPepper !== undefined ? selectedPepper : this.#pepper,
