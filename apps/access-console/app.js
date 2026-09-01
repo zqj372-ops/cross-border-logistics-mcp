@@ -5,6 +5,13 @@ const T0_TOOLS = Object.freeze([
   "container.plan_summary",
   "system.agent_context.get",
 ]);
+const T0_RESOURCES = Object.freeze([
+  "logistics://agent/bootstrap",
+  "logistics://agent/profiles",
+  "logistics://contracts/envelope/current",
+  "logistics://modules/catalog",
+  "logistics://standards/index",
+]);
 
 const elements = Object.freeze({
   statusCard: document.getElementById("status-card"),
@@ -24,6 +31,9 @@ const elements = Object.freeze({
   routeQualification: document.getElementById("route-qualification"),
   oneTimePanel: document.getElementById("one-time-panel"),
   oneTimeKey: document.getElementById("one-time-key"),
+  readbackApiKey: document.getElementById("readback-api-key"),
+  readbackResults: document.getElementById("readback-results"),
+  runReadback: document.getElementById("run-readback"),
 });
 
 let adminToken = "";
@@ -33,6 +43,13 @@ class ApiError extends Error {
   constructor(payload) {
     super("Access Console request failed.");
     this.payload = payload;
+  }
+}
+
+class ReadbackError extends Error {
+  constructor(code) {
+    super("Credential readback failed.");
+    this.code = code;
   }
 }
 
@@ -99,6 +116,377 @@ async function readinessApi() {
   } catch {
     return { status: "unavailable", data: null, blockers: ["readiness_response_invalid"] };
   }
+}
+
+function exactCatalog(actual, expected) {
+  if (!Array.isArray(actual) || actual.some((value) => typeof value !== "string")) return false;
+  const left = [...actual].sort();
+  const right = [...expected].sort();
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function jsonPayload(response, code) {
+  if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    throw new ReadbackError(`${code}_content_type_invalid`);
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new ReadbackError(`${code}_response_invalid`);
+  }
+}
+
+async function exchangeForReadback(apiKey) {
+  if (!/^lmcpk_[A-Za-z0-9._:-]+_[A-Za-z0-9_-]{43}$/u.test(apiKey)) {
+    throw new ReadbackError("api_key_format_invalid");
+  }
+  const requestId = `req_console_${crypto.randomUUID().replaceAll("-", "")}`;
+  const response = await fetch("/access/v1/token/exchange", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      authorization: `ApiKey ${apiKey}`,
+      "Content-Type": "application/json",
+      "X-Request-Id": requestId,
+    },
+    body: JSON.stringify({
+      schema_version: SCHEMA_VERSION,
+      requested_tool_names: T0_TOOLS,
+    }),
+    cache: "no-store",
+    redirect: "error",
+  });
+  const payload = await jsonPayload(response, "exchange");
+  if (!response.ok || payload?.status !== "success") {
+    throw new ReadbackError(
+      typeof payload?.code === "string" ? payload.code : `exchange_http_${response.status}`,
+    );
+  }
+  const data = payload?.data;
+  if (
+    typeof data?.access_token !== "string" ||
+    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(data.access_token) ||
+    data.token_type !== "Bearer" ||
+    !Number.isSafeInteger(data.expires_in) ||
+    !exactCatalog(data.tool_names, T0_TOOLS) ||
+    data.request_id !== requestId
+  ) {
+    throw new ReadbackError("exchange_contract_invalid");
+  }
+  return {
+    accessToken: data.access_token,
+    expiresIn: data.expires_in,
+    requestId,
+  };
+}
+
+function parseMcpPayload(body, contentType) {
+  try {
+    if (contentType.includes("text/event-stream")) {
+      const candidates = body
+        .split(/\r?\n\r?\n/u)
+        .map((event) => event
+          .split(/\r?\n/u)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n"))
+        .filter((value) => value.length > 0 && value !== "[DONE]")
+        .map((value) => JSON.parse(value));
+      const payload = candidates.at(-1);
+      if (payload === undefined) throw new Error("missing event data");
+      return payload;
+    }
+    return JSON.parse(body);
+  } catch {
+    throw new ReadbackError("mcp_response_invalid");
+  }
+}
+
+async function mcpPost(accessToken, sessionId, request, responseExpected = true) {
+  const response = await fetch("/mcp", {
+    method: "POST",
+    headers: {
+      Accept: "application/json, text/event-stream",
+      authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      ...(sessionId.length === 0 ? {} : { "Mcp-Session-Id": sessionId }),
+    },
+    body: JSON.stringify(request),
+    cache: "no-store",
+    redirect: "error",
+  });
+  if (!response.ok) throw new ReadbackError(`mcp_http_${response.status}`);
+  const returnedSessionId = response.headers.get("mcp-session-id") ?? sessionId;
+  const body = await response.text();
+  if (!responseExpected) return { result: null, sessionId: returnedSessionId };
+  const payload = parseMcpPayload(body, response.headers.get("content-type") ?? "");
+  if (payload?.error !== undefined || payload?.result === undefined) {
+    throw new ReadbackError("mcp_rpc_failed");
+  }
+  return { result: payload.result, sessionId: returnedSessionId };
+}
+
+async function sha256Text(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function cargoReadbackArguments() {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "cargo.calculate@credential-readback-v1",
+    cargo_lines: [{
+      version: "cargo-line@credential-readback-v1",
+      line_id: "line_credential_readback_1",
+      description: "synthetic carton",
+      quantity: 2,
+      quantity_unit: "carton",
+      package_type: "carton",
+      unit_weight: { value: "12.5", unit: "kg" },
+      dimensions: [{
+        length: { value: "60", unit: "cm" },
+        width: { value: "50", unit: "cm" },
+        height: { value: "40", unit: "cm" },
+        quantity: 2,
+      }],
+      stackable: true,
+      fragile: false,
+      sensitive: false,
+      source_ref_ids: ["src_credential_readback_input_1"],
+    }],
+    dimensional_divisor: null,
+    bubble_rule: {
+      channel: "CAQ-HP",
+      mode: "full",
+      ratio: null,
+      rule_version: "CAQ-HP@credential-readback-v1",
+      source_ref_ids: ["src_credential_readback_rule_1"],
+      density: { value: "1000", unit: "kg_per_cbm" },
+      unit: "kg",
+      rounding: { mode: "none", decimals: 6 },
+    },
+    channel_code: "CAQ-HP",
+    source_refs: [
+      {
+        source_id: "src_credential_readback_input_1",
+        source_type: "fixture",
+        system: "credential-readback",
+        locator: "fixture://credential-readback/cargo/input",
+        version: "credential-readback-v1",
+        retrieved_at: "2026-08-27T00:00:00Z",
+        authority: "user_provided",
+        content_hash: "sha256:credentialreadbackcargoinput01",
+      },
+      {
+        source_id: "src_credential_readback_rule_1",
+        source_type: "fixture",
+        system: "credential-readback",
+        locator: "fixture://credential-readback/cargo/rule",
+        version: "CAQ-HP@credential-readback-v1",
+        retrieved_at: "2026-08-27T00:00:00Z",
+        authority: "authoritative",
+        content_hash: "sha256:credentialreadbackcargorule01",
+      },
+    ],
+  };
+}
+
+function containerReadbackArguments() {
+  return {
+    schema_version: "2026-08-11.v1",
+    version: "container-profile@credential-readback-v1",
+    plan_id: "plan_credential_readback_1",
+    container_type: "40HQ",
+    physical_capacity: { value: "76", unit: "cbm" },
+    operational_target: { value: "75", unit: "cbm" },
+    max_payload: { value: "26000", unit: "kg" },
+    source_ref_ids: ["src:container:credential-readback"],
+    cargo_metrics: {
+      version: "cargo-metrics@credential-readback-v1",
+      line_count: 1,
+      total_quantity: 2,
+      total_volume: { value: "60", unit: "cbm" },
+      actual_weight: { value: "18000", unit: "kg" },
+      volumetric_weight: { value: "60000", unit: "kg" },
+      weight_evidence: "line_total_weight",
+      derived_from_line_ids: ["line_credential_readback_1"],
+    },
+    loading_constraints: {
+      sensitive_at_head: true,
+      declaration_at_tail: true,
+      fifo_for_other: true,
+      customer_priority: null,
+    },
+    loading_lines: [{
+      line_id: "line_credential_readback_1",
+      sensitive: false,
+      customer_priority: null,
+      declaration_required: false,
+    }],
+  };
+}
+
+function toolReadbackArguments(toolName) {
+  if (toolName === "cargo.calculate") return cargoReadbackArguments();
+  if (toolName === "container.plan_summary") return containerReadbackArguments();
+  return { profile_id: "runtime-caller", module_id: "cargo" };
+}
+
+async function runCredentialReadback(apiKey) {
+  let accessToken = "";
+  let sessionId = "";
+  try {
+    const exchange = await exchangeForReadback(apiKey);
+    accessToken = exchange.accessToken;
+    const initialized = await mcpPost(accessToken, "", {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "freightclaw-access-console", version: "1.0.0" },
+      },
+    });
+    sessionId = initialized.sessionId;
+    if (sessionId.length === 0) throw new ReadbackError("mcp_session_missing");
+    await mcpPost(accessToken, sessionId, {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {},
+    }, false);
+
+    const resourceCatalog = await mcpPost(accessToken, sessionId, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/list",
+      params: {},
+    });
+    const resourceUris = resourceCatalog.result?.resources?.map((resource) => resource?.uri);
+    if (!exactCatalog(resourceUris, T0_RESOURCES)) {
+      throw new ReadbackError("resource_catalog_mismatch");
+    }
+    const resources = [];
+    for (const [index, uri] of T0_RESOURCES.entries()) {
+      const read = await mcpPost(accessToken, sessionId, {
+        jsonrpc: "2.0",
+        id: 10 + index,
+        method: "resources/read",
+        params: { uri },
+      });
+      const contents = read.result?.contents;
+      if (!Array.isArray(contents) || contents.length === 0) {
+        throw new ReadbackError("resource_readback_invalid");
+      }
+      const textContent = contents
+        .map((entry) => typeof entry?.text === "string" ? entry.text : "")
+        .join("\n");
+      if (textContent.length === 0) throw new ReadbackError("resource_readback_invalid");
+      resources.push({
+        uri,
+        bytes: new TextEncoder().encode(textContent).byteLength,
+        sha256: await sha256Text(textContent),
+      });
+    }
+
+    const toolCatalog = await mcpPost(accessToken, sessionId, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/list",
+      params: {},
+    });
+    const toolNames = toolCatalog.result?.tools?.map((tool) => tool?.name);
+    if (!exactCatalog(toolNames, T0_TOOLS)) throw new ReadbackError("tool_catalog_mismatch");
+    const tools = [];
+    for (const [index, name] of T0_TOOLS.entries()) {
+      const called = await mcpPost(accessToken, sessionId, {
+        jsonrpc: "2.0",
+        id: 20 + index,
+        method: "tools/call",
+        params: { name, arguments: toolReadbackArguments(name) },
+      });
+      const envelope = called.result?.structuredContent;
+      if (envelope?.status !== "success") throw new ReadbackError("tool_readback_not_success");
+      tools.push({
+        name,
+        status: envelope.status,
+        requestId: typeof envelope.request_id === "string" ? envelope.request_id : "—",
+        auditId: typeof envelope.audit_id === "string" ? envelope.audit_id : "—",
+      });
+    }
+    return {
+      exchangeRequestId: exchange.requestId,
+      expiresIn: exchange.expiresIn,
+      tools,
+      resources,
+    };
+  } finally {
+    if (accessToken.length > 0 && sessionId.length > 0) {
+      await fetch("/mcp", {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "Mcp-Session-Id": sessionId,
+        },
+        cache: "no-store",
+        redirect: "error",
+      }).catch(() => undefined);
+    }
+    accessToken = "";
+  }
+}
+
+function renderReadbackReport(summary) {
+  elements.readbackResults.replaceChildren();
+  const headline = document.createElement("article");
+  headline.className = "record readback-headline";
+  headline.dataset.state = "success";
+  headline.append(
+    row("结论", "PASS"),
+    row("兑换请求", summary.exchangeRequestId),
+    row("短期 JWT", `已签发 · ${summary.expiresIn} 秒 · 未显示`),
+    row("精确目录", `${summary.tools.length} / 3 工具 · ${summary.resources.length} / 5 资源`),
+    row("MCP session", "已建立并关闭"),
+  );
+  elements.readbackResults.append(headline);
+  for (const tool of summary.tools) {
+    const article = document.createElement("article");
+    article.className = "record readback-record";
+    article.dataset.state = tool.status;
+    article.append(
+      row("工具", tool.name),
+      row("状态", tool.status),
+      row("请求", tool.requestId),
+      row("审计", tool.auditId),
+    );
+    elements.readbackResults.append(article);
+  }
+  for (const resource of summary.resources) {
+    const article = document.createElement("article");
+    article.className = "record readback-record";
+    article.dataset.state = "success";
+    article.append(
+      row("资源", resource.uri),
+      row("读取", `${resource.bytes} bytes`),
+      row("SHA-256", resource.sha256),
+    );
+    elements.readbackResults.append(article);
+  }
+}
+
+function renderReadbackFailure(error) {
+  elements.readbackResults.replaceChildren();
+  const article = document.createElement("article");
+  article.className = "record readback-headline";
+  article.dataset.state = "blocked";
+  article.append(
+    row("结论", "未通过"),
+    row("原因", error instanceof ReadbackError ? error.code : "credential_readback_unavailable"),
+    row("凭证", "未显示、未保存"),
+  );
+  elements.readbackResults.append(article);
 }
 
 function row(label, value) {
@@ -567,5 +955,38 @@ document.getElementById("ack-key").addEventListener("click", () => {
   if (typeof pendingCredentialId === "string") void acknowledgeDelivery(pendingCredentialId);
 });
 document.getElementById("hide-key").addEventListener("click", hideOneTimeKey);
+document.getElementById("readback-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  let apiKey = elements.readbackApiKey.value.trim();
+  elements.readbackApiKey.value = "";
+  if (apiKey.length === 0) {
+    renderReadbackFailure(new ReadbackError("api_key_required"));
+    return;
+  }
+  elements.runReadback.disabled = true;
+  elements.readbackResults.setAttribute("aria-busy", "true");
+  setStatus("working", "正在验收", "正在兑换短期身份并读取精确 T0 目录。");
+  try {
+    const summary = await runCredentialReadback(apiKey);
+    renderReadbackReport(summary);
+    await refreshState({ announce: false });
+    setStatus("ready", "认证验收通过", "真实 Key 已完成短期 JWT、3 工具和 5 资源读回。");
+  } catch (error) {
+    renderReadbackFailure(error);
+    setStatus("blocked", "认证验收未通过", "请按脱敏原因检查 Key 状态、权限或运行门禁。");
+  } finally {
+    apiKey = "";
+    elements.runReadback.disabled = false;
+    elements.readbackResults.setAttribute("aria-busy", "false");
+  }
+});
+document.getElementById("clear-readback").addEventListener("click", () => {
+  elements.readbackApiKey.value = "";
+  elements.readbackResults.replaceChildren();
+  const empty = document.createElement("p");
+  empty.className = "empty";
+  empty.textContent = "已清除页面内凭证输入和脱敏验收结果。";
+  elements.readbackResults.append(empty);
+});
 
 void refreshState();

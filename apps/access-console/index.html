@@ -31,6 +31,7 @@
           <a href="#identity"><span>02</span>管理员身份</a>
           <a href="#access-management"><span>03</span>租户与 Key</a>
           <a href="#operations-section"><span>04</span>操作回读</a>
+          <a href="#credential-readback"><span>05</span>认证验收</a>
         </nav>
 
         <div class="rail-boundary">
@@ -256,6 +257,43 @@
               <span>时间 / 操作标识</span>
             </div>
             <div id="operations" class="records operation-records"></div>
+          </section>
+
+          <section id="credential-readback" class="deck-section readback-section" aria-labelledby="readback-title">
+            <div class="section-heading">
+              <div>
+                <p class="section-code">05 / AUTH READBACK</p>
+                <h2 id="readback-title">认证验收</h2>
+              </div>
+              <p class="section-note">用真实长期 Key 兑换短期 JWT，并精确读取 3 个工具和 5 个资源。</p>
+            </div>
+
+            <div class="readback-console">
+              <form id="readback-form" class="readback-form">
+                <div>
+                  <span class="panel-code">ONE-SHOT VERIFICATION</span>
+                  <h3>当前浏览器内存验收</h3>
+                  <p>Key 只在当前页面内存中使用；提交后立即清空输入，不写入 URL、Cookie、浏览器存储、页面结果或服务日志。</p>
+                </div>
+                <label for="readback-api-key">长期 API Key</label>
+                <div class="readback-entry">
+                  <input id="readback-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 lmcpk_…">
+                  <button id="run-readback" type="submit">验收 3 工具 / 5 资源</button>
+                  <button id="clear-readback" class="secondary" type="button">清除</button>
+                </div>
+                <p class="hint">只请求三个精确 T0 权限；短期 JWT 不显示、不保存，验收结束后关闭 MCP session。</p>
+              </form>
+
+              <section class="readback-report" aria-labelledby="readback-report-title">
+                <div class="subheading">
+                  <span>DETERMINISTIC RESULT</span>
+                  <h3 id="readback-report-title">脱敏结果</h3>
+                </div>
+                <div id="readback-results" class="records" aria-live="polite" aria-busy="false">
+                  <p class="empty">等待真实 Key 验收；不会展示 Key 或短期 JWT。</p>
+                </div>
+              </section>
+            </div>
           </section>
         </main>
 

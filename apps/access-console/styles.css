@@ -1099,6 +1099,84 @@ fieldset label small {
   border-width: 0 1px 1px .2rem;
 }
 
+.readback-section {
+  padding-bottom: 3.5rem;
+  border-top: 1px solid var(--steel-line);
+}
+
+.readback-console {
+  display: grid;
+  grid-template-columns: minmax(24rem, .85fr) minmax(28rem, 1.15fr);
+  border: 1px solid var(--harbor-ink);
+  background: var(--deck-white);
+}
+
+.readback-form {
+  align-content: start;
+  margin: 0;
+  padding: 1.45rem;
+  color: #eef4f1;
+  background: var(--harbor-ink);
+}
+
+.readback-form h3 {
+  margin: .25rem 0 .55rem;
+  font-family: var(--display-face);
+  font-size: 1.65rem;
+}
+
+.readback-form > div > p {
+  margin: 0 0 .8rem;
+  color: #aec2bc;
+  font-size: .74rem;
+  line-height: 1.65;
+}
+
+.readback-form label {
+  color: #dce8e4;
+}
+
+.readback-entry {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
+  gap: .55rem;
+}
+
+.readback-entry input {
+  border-color: rgb(255 255 255 / 42%);
+  color: #fff;
+  background: rgb(255 255 255 / 7%);
+}
+
+.readback-entry input::placeholder {
+  color: #8eaaa2;
+}
+
+.readback-entry button.secondary {
+  border-color: rgb(255 255 255 / 48%);
+  color: #fff;
+}
+
+.readback-form .hint {
+  margin: 0;
+  color: #91aaa3;
+}
+
+.readback-report {
+  min-width: 0;
+  padding: 1.45rem;
+  border-left: 1px solid var(--harbor-ink);
+}
+
+.readback-headline {
+  border-left-width: .35rem;
+}
+
+.readback-record p:last-child {
+  font-family: var(--utility-face);
+  font-size: .64rem;
+}
+
 .deck-footer {
   display: flex;
   justify-content: space-between;
@@ -1231,6 +1309,15 @@ fieldset label small {
     grid-template-columns: 1fr;
   }
 
+  .readback-console {
+    grid-template-columns: 1fr;
+  }
+
+  .readback-report {
+    border-top: 1px solid var(--harbor-ink);
+    border-left: 0;
+  }
+
   .key-panel {
     grid-row: auto;
   }
@@ -1338,11 +1425,13 @@ fieldset label small {
   }
 
   .identity-entry,
-  .field-pair {
+  .field-pair,
+  .readback-entry {
     grid-template-columns: 1fr;
   }
 
-  .identity-entry button {
+  .identity-entry button,
+  .readback-entry button {
     width: 100%;
   }
 
