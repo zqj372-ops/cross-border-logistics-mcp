@@ -326,6 +326,7 @@ describe("safe deployment artifacts", () => {
     expect(healthcheck).toContain('"status"[[:space:]]*:[[:space:]]*"ready"');
     expect(service).toContain("OnFailure=freightclaw-read-preview-alert@%n.service");
     expect(service).toContain("ProtectSystem=strict");
+    expect(service).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
     expect(timer).toContain("OnUnitActiveSec=1min");
     expect(alert).toContain("systemd-cat");
   });
