@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   CapabilityRegistry,
+  createT0CatalogGeneration,
   ModuleHost,
   ModuleRuntimeError,
   moduleManifestDigest,
   parseT0ProductionProfile,
   T0_MODULE_DESCRIPTORS,
+  T0_PRODUCTION_RESOURCE_URIS,
   toolContractDigest,
   validateModuleDescriptor,
 } from "../../src/logistics_mcp/module-runtime";
@@ -58,6 +60,78 @@ describe("T0 production module descriptors", () => {
         input_schema_id: "urn:logistics-mcp:cargo.calculate:changed",
       }],
     })).toThrow(ModuleRuntimeError);
+  });
+
+  it("builds one immutable content-addressed generation for the exact T0 catalog", () => {
+    const generation = createT0CatalogGeneration("t0-v1");
+    const reordered = createT0CatalogGeneration(
+      "t0-v1",
+      [...T0_MODULE_DESCRIPTORS].reverse(),
+      [...T0_PRODUCTION_RESOURCE_URIS].reverse(),
+    );
+
+    expect(reordered).toEqual(generation);
+    expect(generation).toMatchObject({
+      schema_version: "2026-09-02.v1",
+      profile: "t0-v1",
+      catalog_generation: `catalog_${generation.catalog_digest.slice("sha256:".length)}`,
+      resource_uris: [...T0_PRODUCTION_RESOURCE_URIS].sort(),
+      prompt_names: [],
+    });
+    expect(generation.modules.map(({ module_id }) => module_id)).toEqual([
+      "agent-access",
+      "cargo",
+      "container",
+    ]);
+    expect(generation.modules.flatMap(({ tools }) => tools.map(({ name }) => name))).toEqual([
+      "system.agent_context.get",
+      "cargo.calculate",
+      "container.plan_summary",
+    ]);
+    expect(generation.catalog_digest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(Object.isFrozen(generation)).toBe(true);
+    expect(Object.isFrozen(generation.modules)).toBe(true);
+    expect(Object.isFrozen(generation.modules[0])).toBe(true);
+    expect(Object.isFrozen(generation.modules[0]?.tools)).toBe(true);
+    expect(Object.isFrozen(generation.resource_uris)).toBe(true);
+    expect(Object.isFrozen(generation.prompt_names)).toBe(true);
+  });
+
+  it("changes the generation when reviewed content changes and rejects incomplete exact sets", () => {
+    const current = createT0CatalogGeneration("t0-v1");
+    const agentAccess = T0_MODULE_DESCRIPTORS.find(
+      ({ module_id }) => module_id === "agent-access",
+    );
+    if (agentAccess === undefined) throw new Error("agent-access descriptor missing");
+    const changedAgentAccess = {
+      ...agentAccess,
+      artifact_digest: `sha256:${"f".repeat(64)}` as const,
+      manifest_digest: moduleManifestDigest({
+        ...agentAccess,
+        artifact_digest: `sha256:${"f".repeat(64)}`,
+      }),
+    };
+    const changed = createT0CatalogGeneration(
+      "t0-v1",
+      T0_MODULE_DESCRIPTORS.map((descriptor) =>
+        descriptor.module_id === "agent-access" ? changedAgentAccess : descriptor
+      ),
+    );
+
+    expect(changed.catalog_digest).not.toBe(current.catalog_digest);
+    expect(changed.catalog_generation).not.toBe(current.catalog_generation);
+    expect(createT0CatalogGeneration("t0-staging").catalog_generation).not.toBe(
+      current.catalog_generation,
+    );
+    expect(() => createT0CatalogGeneration(
+      "t0-v1",
+      T0_MODULE_DESCRIPTORS.slice(0, 2),
+    )).toThrow(expect.objectContaining({ code: "t0_catalog_module_set_invalid" }));
+    expect(() => createT0CatalogGeneration(
+      "t0-v1",
+      T0_MODULE_DESCRIPTORS,
+      T0_PRODUCTION_RESOURCE_URIS.slice(0, 4),
+    )).toThrow(expect.objectContaining({ code: "t0_catalog_resource_set_invalid" }));
   });
 
   it("binds each reviewed descriptor to reproducible implementation, validator, and schema bytes", async () => {

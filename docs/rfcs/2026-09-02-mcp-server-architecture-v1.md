@@ -190,8 +190,12 @@ stateful，避免把本地兼容行为静默写成生产行为。
 4. managed startup、Compose、环境示例和 readiness 显式要求 transport mode。
 5. 使用官方 SDK 对 stateless initialize、tools/list、resources/list 和三个 T0 调用读回。
 6. 对仍需要 stateful 的客户端单独记录兼容原因、容量和 sticky-owner 证据。
-7. 后续再实施不可变 catalog generation、T1 worker 和生产 Control API；不得把本 P0
-   写成完整热插拔已上线。
+7. 为 reviewed T0 目录生成不可变、内容寻址的 catalog generation，并在 Agent catalog
+   resource 与 production readiness 中做 exact readback。
+8. 后续再实施 T1 worker 和生产 Control API；不得把本 P0 写成完整热插拔已上线。
+
+截至 2026-09-02，步骤 1–7 已作为仓库候选实现并通过本地测试；这只证明源码与合成环境行为，
+不等于已发布镜像或真实 staging/生产通过。T1 隔离 worker、生产 Control API 和外部设施证据仍未完成。
 
 ## 8. 测试
 

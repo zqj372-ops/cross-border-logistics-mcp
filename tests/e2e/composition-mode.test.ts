@@ -44,6 +44,8 @@ import {
   quoteInput,
 } from "./fixtures/tenant-fixtures";
 import { securityClaims } from "./fixtures/security-fixtures";
+import { createAgentAccessRuntime } from "../../src/logistics_mcp/agent-context/runtime";
+import { readFixedAgentStandardPack } from "../../src/logistics_mcp/agent-context/pack";
 
 const API_DATE = "2026-08-12";
 const API_TIME = `${API_DATE}T00:00:00.000Z`;
@@ -968,13 +970,30 @@ describe("gateway composition modes", () => {
       expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
         "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
         "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
-        "sha256:07319b8a00fe09590645f616d405167771d1f29255f92a9b79911877c4bb38e7",
+        "sha256:3d66fa2ccf9c6b3bc018883db9f66135ea43f8c189629583f5d7b89bda694fd4",
       ]);
       expect(composition.moduleHost.snapshot().modules.map(({ artifact_digest }) => artifact_digest)).toEqual([
         "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
         "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
-        "sha256:6c87b77a45b719f0ce7c7446076337c6b37684fedc32bd7d731f3fc64d78032a",
+        "sha256:8e2426e6976d3ad3700aebb181182164e3728ba9f7944c2296e6285882dbbd9a",
       ]);
+      const catalogGeneration = composition.catalogGeneration;
+      if (catalogGeneration === undefined) throw new Error("catalog generation missing");
+      expect(catalogGeneration.profile).toBe("t0-v1");
+      expect(catalogGeneration.modules).toHaveLength(3);
+      expect(catalogGeneration.resource_uris).toHaveLength(5);
+      expect(catalogGeneration.prompt_names).toEqual([]);
+      expect(Object.isFrozen(catalogGeneration)).toBe(true);
+      const catalogResource = JSON.parse(composition.agentAccessRuntime.readResource(
+        "logistics://modules/catalog",
+        serverContext(),
+      ).text) as Record<string, unknown>;
+      expect(catalogResource).toMatchObject({
+        schema_version: catalogGeneration.schema_version,
+        profile: catalogGeneration.profile,
+        catalog_generation: catalogGeneration.catalog_generation,
+        catalog_digest: catalogGeneration.catalog_digest,
+      });
       expect(Object.keys(composition.handlers).sort()).toEqual([
         "cargo.calculate",
         "container.plan_summary",
@@ -984,6 +1003,31 @@ describe("gateway composition modes", () => {
         "container.plan_summary",
       ]);
       expect(Object.keys(composition.adapters)).toEqual([]);
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it("fails readiness when Agent catalog readback does not match the mounted generation", async () => {
+    const runtime = createAgentAccessRuntime({
+      pack: readFixedAgentStandardPack(),
+      catalogIdentity: {
+        schema_version: "2026-09-02.v1",
+        profile: "t0-v1",
+        catalog_generation: `catalog_${"0".repeat(64)}`,
+        catalog_digest: `sha256:${"0".repeat(64)}`,
+      },
+    });
+    const composition = createProductionComposition({
+      dataMode: "production",
+      profile: "t0-v1",
+      agentAccessRuntime: runtime,
+    });
+
+    try {
+      expect((await composition.readiness()).reasons).toContain(
+        "t0_catalog_generation_mismatch",
+      );
     } finally {
       await composition.close();
     }

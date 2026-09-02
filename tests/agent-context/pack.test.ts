@@ -161,9 +161,9 @@ describe("Agent standard pack", () => {
     const serialized = serializeAgentStandardPack(pack);
 
     expect(pack.standards).toHaveLength(14);
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(149_824);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(150_218);
     expect(sha256(serialized)).toBe(
-      "sha256:f2db8e8d4d9537e0412c106d26f05824d500d5b8941273e6df540cf0f85a3492",
+      "sha256:a806d094c39d03f94f8e6903b1cebb3a03cda576a52d6cae7299a551db9e9fb0",
     );
   });
 

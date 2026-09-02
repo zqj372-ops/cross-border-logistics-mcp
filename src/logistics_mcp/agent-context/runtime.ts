@@ -25,6 +25,12 @@ import {
 import type { AgentContextScope, AgentStandardPack } from "./types";
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const catalogIdentitySchema = z.object({
+  schema_version: z.literal("2026-09-02.v1"),
+  profile: z.enum(["t0-staging", "t0-v1"]),
+  catalog_generation: z.string().regex(/^catalog_[a-f0-9]{64}$/u),
+  catalog_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+}).strict();
 
 function withoutKey(value: object, keyToRemove: string): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([key]) => key !== keyToRemove));
@@ -156,6 +162,13 @@ export type AgentContextAuthorizationCallback = (
   request: AgentContextAuthorizationRequest,
 ) => boolean;
 
+export interface AgentModuleCatalogIdentity {
+  readonly schema_version: "2026-09-02.v1";
+  readonly profile: "t0-staging" | "t0-v1";
+  readonly catalog_generation: `catalog_${string}`;
+  readonly catalog_digest: `sha256:${string}`;
+}
+
 function unavailableNotice(code: string, message: string): Notice {
   return { code, message, severity: "error", field: null };
 }
@@ -208,6 +221,7 @@ function isSafeServerExecutionContext(value: unknown): value is ExecutionContext
 
 class DefaultAgentAccessRuntime implements AgentAccessRuntime {
   readonly #pack: AgentStandardPack | null;
+  readonly #catalogIdentity: AgentModuleCatalogIdentity | null;
   private readonly unavailableReason: string;
   private readonly authorizationCallback: AgentContextAuthorizationCallback | null;
 
@@ -215,8 +229,10 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
     pack: AgentStandardPack | null,
     unavailableReason = "",
     authorizationCallback: AgentContextAuthorizationCallback | null = null,
+    catalogIdentity: AgentModuleCatalogIdentity | null = null,
   ) {
     this.#pack = pack;
+    this.#catalogIdentity = catalogIdentity;
     this.unavailableReason = unavailableReason;
     this.authorizationCallback = authorizationCallback;
   }
@@ -415,6 +431,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         uri,
         mimeType: canonical.mimeType,
         text: JSON.stringify({
+          ...(this.#catalogIdentity ?? {}),
           modules: pack.modules.filter((module) =>
             module.risk_level === "T0" && runtimeCaller.allowed_module_ids.includes(module.module_id),
           ),
@@ -456,6 +473,47 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
 export interface AgentAccessRuntimeOptions {
   readonly pack?: AgentStandardPack | null;
   readonly authorizeProfile?: AgentContextAuthorizationCallback;
+  readonly catalogIdentity?: AgentModuleCatalogIdentity;
+}
+
+function validateCatalogIdentity(value: unknown): AgentModuleCatalogIdentity {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    isProxy(value)
+  ) {
+    throw new AgentAccessRuntimeError(
+      "catalog_identity_invalid",
+      "Agent module catalog identity is invalid.",
+    );
+  }
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      throw new Error("invalid prototype");
+    }
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") throw new Error("invalid key");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || !("value" in descriptor)) {
+        throw new Error("invalid property");
+      }
+    }
+    const parsed = catalogIdentitySchema.safeParse(value);
+    if (
+      !parsed.success ||
+      parsed.data.catalog_generation.slice("catalog_".length) !==
+        parsed.data.catalog_digest.slice("sha256:".length)
+    ) {
+      throw new Error("invalid identity");
+    }
+    return Object.freeze(parsed.data) as AgentModuleCatalogIdentity;
+  } catch {
+    throw new AgentAccessRuntimeError(
+      "catalog_identity_invalid",
+      "Agent module catalog identity is invalid.",
+    );
+  }
 }
 
 function validateRuntimeOptions(value: unknown): AgentAccessRuntimeOptions {
@@ -491,7 +549,7 @@ function validateRuntimeOptions(value: unknown): AgentAccessRuntimeOptions {
           "Agent runtime pack options are invalid.",
         );
       }
-      if (!["pack", "authorizeProfile"].includes(key)) {
+      if (!["pack", "authorizeProfile", "catalogIdentity"].includes(key)) {
         throw new AgentAccessRuntimeError(
           "pack_option_invalid",
           "Agent runtime pack options are invalid.",
@@ -511,6 +569,9 @@ function validateRuntimeOptions(value: unknown): AgentAccessRuntimeOptions {
 export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}): AgentAccessRuntime {
   const safeOptions = validateRuntimeOptions(options);
   const authorizationCallback = safeOptions.authorizeProfile ?? null;
+  const catalogIdentity = Object.hasOwn(safeOptions, "catalogIdentity")
+    ? validateCatalogIdentity(safeOptions.catalogIdentity)
+    : null;
   if (authorizationCallback !== null && typeof authorizationCallback !== "function") {
     throw new AgentAccessRuntimeError(
       "authorization_invalid",
@@ -529,6 +590,7 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
         null,
         "The immutable Standard Pack is intentionally unavailable.",
         authorizationCallback,
+        catalogIdentity,
       );
     }
     if (!isRuntimeTrustedAgentStandardPack(safeOptions.pack)) {
@@ -537,11 +599,26 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
         "Agent runtime pack injection is not trusted.",
       );
     }
-    return new DefaultAgentAccessRuntime(safeOptions.pack, "", authorizationCallback);
+    return new DefaultAgentAccessRuntime(
+      safeOptions.pack,
+      "",
+      authorizationCallback,
+      catalogIdentity,
+    );
   }
   try {
-    return new DefaultAgentAccessRuntime(readFixedAgentStandardPack(), "", authorizationCallback);
+    return new DefaultAgentAccessRuntime(
+      readFixedAgentStandardPack(),
+      "",
+      authorizationCallback,
+      catalogIdentity,
+    );
   } catch {
-    return new DefaultAgentAccessRuntime(null, "The immutable Standard Pack is invalid.", authorizationCallback);
+    return new DefaultAgentAccessRuntime(
+      null,
+      "The immutable Standard Pack is invalid.",
+      authorizationCallback,
+      catalogIdentity,
+    );
   }
 }

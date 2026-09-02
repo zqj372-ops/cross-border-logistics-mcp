@@ -87,6 +87,40 @@ describe("Agent access runtime", () => {
     expect(runtime.readResource("logistics://agent/profiles", context).text).toContain("runtime-caller");
   });
 
+  it("projects a validated catalog generation identity without changing the fixed module list", () => {
+    const catalogIdentity = {
+      schema_version: "2026-09-02.v1" as const,
+      profile: "t0-v1" as const,
+      catalog_generation: `catalog_${"a".repeat(64)}` as const,
+      catalog_digest: `sha256:${"a".repeat(64)}` as const,
+    };
+    const runtime = createAgentAccessRuntime({
+      pack: readFixedAgentStandardPack(),
+      catalogIdentity,
+    });
+    const catalog = JSON.parse(runtime.readResource(
+      "logistics://modules/catalog",
+      executionContext("sales"),
+    ).text) as Record<string, unknown>;
+
+    expect(catalog).toMatchObject(catalogIdentity);
+    expect((catalog.modules as readonly unknown[])).toHaveLength(3);
+    expect(() => createAgentAccessRuntime({
+      pack: readFixedAgentStandardPack(),
+      catalogIdentity: {
+        ...catalogIdentity,
+        catalog_digest: "sha256:invalid",
+      },
+    })).toThrow(expect.objectContaining({ code: "catalog_identity_invalid" }));
+    expect(() => createAgentAccessRuntime({
+      pack: readFixedAgentStandardPack(),
+      catalogIdentity: {
+        ...catalogIdentity,
+        unreviewed: true,
+      },
+    } as never)).toThrow(expect.objectContaining({ code: "catalog_identity_invalid" }));
+  });
+
   it("publishes only the sanitized runtime-caller profile metadata", () => {
     const pack = readFixedAgentStandardPack();
     const runtime = createAgentAccessRuntime({ pack });

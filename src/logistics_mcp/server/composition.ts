@@ -47,6 +47,7 @@ import {
 } from "../control-plane/service";
 import {
   CapabilityRegistry,
+  createT0CatalogGeneration,
   ModuleHost,
   assertExactStringSet,
   T0_MODULE_DESCRIPTORS,
@@ -54,6 +55,7 @@ import {
   T0_PRODUCTION_RESOURCE_URIS,
   T0_PRODUCTION_TOOL_NAMES,
   parseT0ProductionProfile,
+  type T0CatalogGenerationReceipt,
   type T0ProductionProfile,
 } from "../module-runtime";
 import {
@@ -203,6 +205,7 @@ export interface GatewayComposition {
   readonly mode: CompositionMode;
   readonly dataMode: CompositionMode;
   readonly profile?: T0ProductionProfile;
+  readonly catalogGeneration?: T0CatalogGenerationReceipt;
   readonly adapters: FixtureAdapters;
   readonly bundle: Phase1Bundle;
   readonly handlers: ToolHandlerMap;
@@ -256,6 +259,7 @@ interface CompositionTools {
   readonly definitions: readonly ToolDefinition[];
   readonly moduleHost: ModuleHost;
   readonly agentAccessRuntime: AgentAccessRuntime;
+  readonly catalogGeneration?: T0CatalogGenerationReceipt;
 }
 
 function fixtureInputRecord(input: unknown): Record<string, unknown> {
@@ -475,10 +479,19 @@ function compositionTools(
 const emptyProductionAdapters = Object.freeze({}) as unknown as FixtureAdapters;
 
 function t0CompositionTools(
+  profile: T0ProductionProfile,
   configuredAgentAccessRuntime?: AgentAccessRuntime,
   runtimeActivation?: RuntimeActivationFacades,
 ): CompositionTools {
-  const agentAccessRuntime = configuredAgentAccessRuntime ?? createAgentAccessRuntime();
+  const catalogGeneration = createT0CatalogGeneration(profile);
+  const agentAccessRuntime = configuredAgentAccessRuntime ?? createAgentAccessRuntime({
+    catalogIdentity: {
+      schema_version: catalogGeneration.schema_version,
+      profile: catalogGeneration.profile,
+      catalog_generation: catalogGeneration.catalog_generation,
+      catalog_digest: catalogGeneration.catalog_digest,
+    },
+  });
   const moduleHost = new ModuleHost({
     capabilities: new CapabilityRegistry(),
     modules: [
@@ -522,6 +535,7 @@ function t0CompositionTools(
         : wrapModuleToolDefinitions(definitions, runtimeActivation),
     moduleHost,
     agentAccessRuntime,
+    catalogGeneration,
   };
 }
 
@@ -551,6 +565,7 @@ function parseResourceJson(text: string): Record<string, unknown> {
 function assertT0AgentResourceSet(
   runtime: AgentAccessRuntime,
   expectedModules: readonly T0ModuleSnapshot[],
+  expectedGeneration: T0CatalogGenerationReceipt,
 ): readonly string[] {
   assertExactStringSet(
     CANONICAL_AGENT_RESOURCES.map((resource) => resource.uri),
@@ -586,6 +601,14 @@ function assertT0AgentResourceSet(
     const modulePayload = parseResourceJson(
       contents.get("logistics://modules/catalog") ?? "",
     );
+    if (
+      modulePayload.schema_version !== expectedGeneration.schema_version ||
+      modulePayload.profile !== expectedGeneration.profile ||
+      modulePayload.catalog_generation !== expectedGeneration.catalog_generation ||
+      modulePayload.catalog_digest !== expectedGeneration.catalog_digest
+    ) {
+      return ["t0_catalog_generation_mismatch"];
+    }
     if (!Array.isArray(modulePayload.modules)) {
       throw new Error("The Agent module catalog is invalid.");
     }
@@ -708,6 +731,9 @@ function buildComposition(
     mode,
     dataMode: mode,
     ...(profile === undefined ? {} : { profile }),
+    ...(tools.catalogGeneration === undefined
+      ? {}
+      : { catalogGeneration: tools.catalogGeneration }),
     adapters,
     bundle: tools.bundle,
     handlers: tools.handlers,
@@ -837,7 +863,11 @@ export function createProductionComposition(
     "token_verifier",
     options.tokenVerifier,
   );
-  const tools = t0CompositionTools(options.agentAccessRuntime, runtimeActivation);
+  const tools = t0CompositionTools(
+    profile,
+    options.agentAccessRuntime,
+    runtimeActivation,
+  );
   const mountedModules = tools.moduleHost.snapshot().modules.map((module) => ({
     module_id: module.module_id,
     version: module.version,
@@ -847,6 +877,7 @@ export function createProductionComposition(
   const agentResourceReasons = assertT0AgentResourceSet(
     tools.agentAccessRuntime,
     mountedModules,
+    tools.catalogGeneration!,
   );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];

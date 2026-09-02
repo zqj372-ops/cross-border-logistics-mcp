@@ -39,10 +39,12 @@ logistics://agent/profiles
 3. 读取 `resources/list`，验证精确五项；
 4. 读取 `logistics://agent/bootstrap`、`logistics://standards/index` 和
    `logistics://agent/profiles`；
-5. 调用 `system.agent_context.get({"profile_id":"runtime-caller"})`；
-6. 读取 `tools/list`，验证精确三项；
-7. 只按返回 Schema 调用 cargo/container，并保留版本、source refs、warnings、blockers 和 trace；
-8. JWT 到期后重新兑换并建立新 session，不把旧 token 当作可续期长期凭证。
+5. 读取 `logistics://modules/catalog`，验证 `schema_version=2026-09-02.v1`、目标 profile、
+   `catalog_generation`、`catalog_digest` 和精确三个模块；generation 后缀必须等于 digest hex；
+6. 调用 `system.agent_context.get({"profile_id":"runtime-caller"})`；
+7. 读取 `tools/list`，验证精确三项；
+8. 只按返回 Schema 调用 cargo/container，并保留版本、source refs、warnings、blockers 和 trace；
+9. JWT 到期后重新兑换并建立新 session，不把旧 token 当作可续期长期凭证。
 
 Pack 缺失、hash/descriptor/profile/catalog 不一致、未知资源或逐资源 scope 不满足必须失败闭合；
 客户端不能回退读取工作目录 Markdown、网络说明或模型自造规则。

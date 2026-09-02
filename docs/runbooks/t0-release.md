@@ -40,6 +40,7 @@ Freightcom、订舱、文档和任何业务写操作必须未注册、未初始�
 | Node 版本 | 与 CI/镜像一致的 `22.13.0` | `[待实际执行]` |
 | image digest | registry 返回的不可变 `sha256:...` | `[待实际执行]` |
 | Standard Pack digest | 构建产物 bytes 与 reviewed descriptor 双重读回 | `[待实际执行]` |
+| catalog generation | profile、3 modules、3 tool contracts、5 resources 与同一 image/Pack 的内容寻址收据 | `[待实际执行]` |
 | config hash | 去除 secret 正文后的版本化配置 canonical hash | `[待实际执行]` |
 | SBOM / provenance | 与同一 image digest 关联 | `[待实际执行]` |
 
@@ -57,7 +58,9 @@ Freightcom、订舱、文档和任何业务写操作必须未注册、未初始�
 5. 使用官方 MCP SDK initialize，并保存脱敏响应：
    - `tools/list` exact set 为 3；
    - `resources/list` exact set 为 5；
-   - bootstrap、profile、catalog 和 Standard Pack digest 与候选一致；
+   - `logistics://modules/catalog` 的 `schema_version`、`profile`、`catalog_generation`、
+     `catalog_digest` 与候选收据逐字一致，且 generation 后缀等于 digest hex；
+   - bootstrap、profile 和 Standard Pack digest 与同一候选一致；
    - 任一非 T0 工具不可见且调用返回稳定失败，不触发 adapter 或网络。
 6. readiness、目录或 Agent Pack 不一致时，由 Edge 摘流并判定 NO-GO。
 
@@ -126,7 +129,8 @@ backup、restore、RPO、RTO 证据：`[待实际执行]`。
 ## 9. Rollback 演练与发布决定
 
 按 [T0 回滚 Runbook](t0-rollback.md) 回滚到上一份已验证的 previous image digest、previous
-config hash 和 previous Standard Pack digest，完成 `/readyz`、目录、身份、计算和审计读回。
+config hash、previous Standard Pack digest 和 previous catalog generation，完成 `/readyz`、目录、
+身份、计算和审计读回。
 
 rollback 证据：`[待实际执行]`。
 

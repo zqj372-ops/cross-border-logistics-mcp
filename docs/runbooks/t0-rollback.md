@@ -4,12 +4,13 @@
 
 ## 1. 回滚候选冻结
 
-回滚只允许选择上一次完成 exact readback 的完整三元组：
+回滚只允许选择上一次完成 exact readback 的完整四元组：
 
 ```text
 previous image digest
 previous config hash
 previous Standard Pack digest
+previous catalog generation / digest
 ```
 
 同时记录 source SHA、数据库/schema 兼容性、备份引用、Gateway/JWKS 版本和 Edge 策略。
@@ -29,11 +30,12 @@ previous Standard Pack digest
 
 1. 获取回滚前的非空 backup，记录 digest、WAL/事务状态和恢复 owner；不得在活跃写入中复制
    不一致快照。
-2. 验证 previous image digest、previous config hash、previous Standard Pack digest 与历史发布
-   回执逐字一致。
+2. 验证 previous image digest、previous config hash、previous Standard Pack digest、previous
+   catalog generation/digest 与历史发布回执逐字一致。
 3. 验证 Gateway 数据库 migration 向后兼容；不做临时逆迁移、不清空 tenant/key/audit 历史。
 4. 部署上一不可变镜像和配置，由 `/readyz` 决定是否接流量；`/healthz` 不能单独放量。
-5. 使用官方 MCP SDK 完成 exact **3 tools / 5 resources** 读回，并核对 Pack/profile/catalog digest。
+5. 使用官方 MCP SDK 完成 exact **3 tools / 5 resources** 读回，并核对 Pack/profile、
+   `catalog_generation` 和 `catalog_digest`；generation 后缀必须等于 digest hex。
 6. 使用真实短 JWT 验证 cargo、container、Agent context、tenant 隔离、transport mode 和审计；
    stateless 不得返回 session header，stateful 才执行 session 重连和 durable owner 读回。
 7. 验证长期 API Key 仍只能兑换、Key/tenant/client 吊销继续阻断新 token、Edge denylist 生效。
@@ -51,7 +53,7 @@ previous Standard Pack digest
 
 ## 5. 回滚完成条件
 
-只有目标三元组、readiness、目录、Pack、真实短 JWT、确定性向量、审计、告警和恢复后数据读回
+只有目标四元组、readiness、目录、Pack、真实短 JWT、确定性向量、审计、告警和恢复后数据读回
 全部一致，且 incident commander、平台、安全、运维 owner 签字，才能写“回滚完成”。
 
 最终判定：`[待实际执行：PASS / NO-GO]`。

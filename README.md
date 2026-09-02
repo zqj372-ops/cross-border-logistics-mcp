@@ -13,7 +13,7 @@
 - AI 负责理解意图、补齐输入、选择工具和解释结果；金额、税率、Zone、重量、容量、状态和版本由确定性代码或上游权威系统决定。
 - Module Runtime v0 在启动时挂载静态可信模块，通过 manifest、capability、lease 和 catalog 暴露工具；远程安装、模型驱动写入和运行时 hot-plug 仍不是当前生产能力。
 - Agent Standard Access v0 为不同 Agent 角色提供 allowlisted profile、Standard Pack、固定 MCP resources 和只读 system.agent_context.get。
-- `t0-v1` production composition 在注册前把目录结构性收敛为 cargo、container、agent-access 三个静态模块、三个工具和五个固定资源；非 T0 handler/adapter 不构造。managed production 必须显式选择 `MCP_TRANSPORT_MODE=stateless|stateful`，推荐并默认设计为 `stateless`。
+- `t0-v1` production composition 在注册前把目录结构性收敛为 cargo、container、agent-access 三个静态模块、三个工具和五个固定资源，并生成无时间戳、内容寻址、深度冻结的 catalog generation 收据；`logistics://modules/catalog` 读回同一 profile/generation/digest，不一致时 readiness 失败闭合。非 T0 handler/adapter 不构造。managed production 必须显式选择 `MCP_TRANSPORT_MODE=stateless|stateful`，推荐并默认设计为 `stateless`。
 - Admin control-plane v1 只管理当前已挂载模块的 inventory、preview、四眼审批、activation policy 和 runtime exact readback；它不加载任意代码，也不拥有报价、关务或客户数据。
 - Tenant Access v1 在独立 store 中管理租户接入元数据与机器凭证；完整 Key 只显示一次，只保存带盐 hash、前缀和末四位。生产客户端必须先通过统一凭证网关把长期 Key 换成短期 JWT，再调用现有 MCP JWT 入口。
 - ready=false、版本缺失、响应冲突、超时和写后读回失败不会被 AI 或 fixture 静默补成 success。
@@ -44,7 +44,7 @@ flowchart LR
 
 | 能力 | 当前状态 | 可调用边界 | 下一门禁 / 证据 |
 | --- | --- | --- | --- |
-| T0 MCP Runtime | **仓库实现与本地测试候选**：`t0-staging`/`t0-v1` 只构造 3 个静态模块、3 个工具和 5 个资源；生产 stateless 模式不生成/接受 `Mcp-Session-Id`，每次请求重新验证短 JWT；显式 stateful 兼容模式保留持久 binding；模块 descriptor 同时绑定工具合同标识，Agent Pack/catalog 漂移和非 T0 adapter 注入失败闭合 | 只接受短期 RS256 JWT；JWKS 是唯一应用级出站 host；生产目录不含报价、关务、Freightcom 或写工具 | 真实 Edge/JWKS/持久库、staging exact smoke、镜像 digest 和真实演练仍待完成，当前仍是 NO-GO |
+| T0 MCP Runtime | **仓库实现与本地测试候选**：`t0-staging`/`t0-v1` 只构造 3 个静态模块、3 个工具和 5 个资源；生产 stateless 模式不生成/接受 `Mcp-Session-Id`，每次请求重新验证短 JWT；显式 stateful 兼容模式保留持久 binding；模块 descriptor 同时绑定工具合同标识，catalog generation 对 profile、模块/制品/manifest/工具合同及 5 resources 做内容寻址，Agent 读回代次不一致、Agent Pack/catalog 漂移和非 T0 adapter 注入均失败闭合 | 只接受短期 RS256 JWT；JWKS 是唯一应用级出站 host；生产目录不含报价、关务、Freightcom 或写工具 | 真实 Edge/JWKS/持久库、staging exact smoke、镜像 digest 和真实演练仍待完成，当前仍是 NO-GO |
 | Unified Access Gateway / Access Console | **provider-neutral 候选已写入**：closed Schema、长期 Key→短 JWT、精确 T0 scope、RS256/JWKS 当前/前一 key、本地 synthetic 互操作、审计失败闭合和窄 Console 已有本地测试；production assembly 会拒绝缺失或 synthetic provider | synthetic 仅限 local contract test；MCP 仍拒绝长期 Key；Console 只呈现租户、客户端、Key、三个工具权限和 operation readback | real IdP、KMS/HSM、托管 DB、共享限流、集中审计/吊销、生产管理 API 和真实 Gateway 部署均待适配验证 |
 | Admin control-plane | **已本地验证（fixture HTTP）**：register → preview → 不同 actor approval → publish → activation `active_verified` 与 exact readback；同一 application root 重启后恢复已读回状态；prior-boot 未完成 attempt 在 listen 前收敛为 `unknown/manual_review`，未决 release 仍使启动 fail-closed | 仅本地受控 fixture/loopback；control POST 的 fixture 流程可走 `/packages/register`、`/deployments/preview`、`/approvals`、`/deployments/publish`、`/deployments/reconcile`；生产所有管理 POST 固定 HTTP 403 | 生产身份、多实例、制品签名/attestation、Deployment Evidence 和生产资格仍未上线；未决 release 只能由 operator reconcile，不把本地 readback 当生产证明 |
 | Tenant Access / API Key | **已本地验证（fixture HTTP + loopback MCP 诊断链路）**：租户创建/暂停、T0 工具精确授权、一次性签发、功能调整轮换、幂等重放 withheld、吊销、到期和脱敏 state | 仅 loopback fixture 可用 `lmcpk_...` 直连诊断；凭证固定 `service` 角色，`tools/list` 只暴露 `cargo.calculate`、`container.plan_summary`、`system.agent_context.get`；生产 MCP 实例只接受短期 JWT | 生产统一凭证网关、企业 IdP、TLS 网关、KMS/Secret Manager、限流、审计、集中吊销、备份恢复、负载、告警和回滚演练仍未完成；正式报价/关务/Freightcom/业务写操作不开放 |

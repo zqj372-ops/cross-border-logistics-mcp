@@ -20,6 +20,7 @@ import {
 } from "../../src/logistics_mcp/server/start";
 import { createProductionTokenVerifier } from "../../src/logistics_mcp/server/production-token-verifier";
 import { cargoInput } from "./fixtures/tenant-fixtures";
+import { createT0CatalogGeneration } from "../../src/logistics_mcp/module-runtime";
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -36,6 +37,7 @@ async function freePort(): Promise<number> {
 }
 
 function t0AgentAccessRuntime(): AgentAccessRuntime {
+  const generation = createT0CatalogGeneration("t0-v1");
   const modules = [
     {
       module_id: "cargo",
@@ -67,7 +69,13 @@ function t0AgentAccessRuntime(): AgentAccessRuntime {
         return {
           uri,
           mimeType: "application/json",
-          text: JSON.stringify({ modules }),
+          text: JSON.stringify({
+            schema_version: generation.schema_version,
+            profile: generation.profile,
+            catalog_generation: generation.catalog_generation,
+            catalog_digest: generation.catalog_digest,
+            modules,
+          }),
         };
       }
       if (uri === "logistics://agent/profiles") {
@@ -276,6 +284,19 @@ describe("production platform runtime", () => {
         "logistics://modules/catalog",
         "logistics://standards/index",
       ]);
+      const catalogReadback = await client.readResource({
+        uri: "logistics://modules/catalog",
+      });
+      const catalogContent = catalogReadback.contents[0];
+      if (catalogContent === undefined || !("text" in catalogContent)) {
+        throw new Error("catalog text readback missing");
+      }
+      expect(JSON.parse(catalogContent.text)).toMatchObject({
+        schema_version: composition.catalogGeneration?.schema_version,
+        profile: composition.catalogGeneration?.profile,
+        catalog_generation: composition.catalogGeneration?.catalog_generation,
+        catalog_digest: composition.catalogGeneration?.catalog_digest,
+      });
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),
@@ -375,6 +396,19 @@ describe("production platform runtime", () => {
         "system.agent_context.get",
       ]);
       expect((await client.listResources()).resources).toHaveLength(5);
+      const catalogReadback = await client.readResource({
+        uri: "logistics://modules/catalog",
+      });
+      const catalogContent = catalogReadback.contents[0];
+      if (catalogContent === undefined || !("text" in catalogContent)) {
+        throw new Error("catalog text readback missing");
+      }
+      expect(JSON.parse(catalogContent.text)).toMatchObject({
+        schema_version: composition.catalogGeneration?.schema_version,
+        profile: composition.catalogGeneration?.profile,
+        catalog_generation: composition.catalogGeneration?.catalog_generation,
+        catalog_digest: composition.catalogGeneration?.catalog_digest,
+      });
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),
