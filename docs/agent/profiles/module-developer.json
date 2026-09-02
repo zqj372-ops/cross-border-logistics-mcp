@@ -1,11 +1,11 @@
 {
   "$schema": "../../../schemas/agent-profile.schema.json",
   "profile_id": "module-developer",
-  "version": "2026-09-02.v1",
+  "version": "2026-09-02.v2",
   "audience": "developer",
-  "standard_ids": ["agent.bootstrap", "mcp-server-architecture-v1", "platform.contracts", "readback-attempt-finalization-v1", "module-runtime.v0", "agent-access.v0", "active-workstreams", "writable-module-control-plane-v1", "admin-control-state-dto-v1", "effective-rfc", "implementation-plan"],
-  "allowed_rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001", "MCP-SERVER-BOUNDARY-001", "MCP-TRANSPORT-001", "MCP-CREDENTIAL-001", "MCP-MODULE-001", "MCP-ADMIN-BOUNDARY-001", "CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001", "CONTROL-ATTEMPT-001", "CONTROL-FINALIZE-001", "CONTROL-RECOVERY-001", "MOD-LIFE-001", "MOD-CAP-001", "MOD-TOOL-001", "MOD-MOUNT-001", "AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001", "WORKSTREAM-001", "CONTROL-WRITE-001", "CONTROL-AUTH-001", "CONTROL-RELEASE-001", "CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003", "RFC-CHANGE-001", "PLAN-TRACE-001"],
+  "standard_ids": ["agent.bootstrap", "mcp-server-architecture-v1", "read-preview-staging-profile-v1", "platform.contracts", "readback-attempt-finalization-v1", "module-runtime.v0", "agent-access.v0", "active-workstreams", "writable-module-control-plane-v1", "admin-control-state-dto-v1", "effective-rfc", "implementation-plan"],
+  "allowed_rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001", "MCP-SERVER-BOUNDARY-001", "MCP-TRANSPORT-001", "MCP-CREDENTIAL-001", "MCP-MODULE-001", "MCP-ADMIN-BOUNDARY-001", "READ-PREVIEW-PROFILE-001", "READ-PREVIEW-ISOLATION-001", "READ-PREVIEW-AUTH-001", "READ-PREVIEW-QUALIFICATION-001", "CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001", "CONTROL-ATTEMPT-001", "CONTROL-FINALIZE-001", "CONTROL-RECOVERY-001", "MOD-LIFE-001", "MOD-CAP-001", "MOD-TOOL-001", "MOD-MOUNT-001", "AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001", "WORKSTREAM-001", "CONTROL-WRITE-001", "CONTROL-AUTH-001", "CONTROL-RELEASE-001", "CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003", "RFC-CHANGE-001", "PLAN-TRACE-001"],
   "context_scopes": ["bootstrap", "standards", "module_catalog", "workstreams"],
-  "allowed_module_ids": ["cargo", "container", "freightcom-ltl"],
+  "allowed_module_ids": ["cargo", "container", "canada-final-mile-quote", "riskcustoms-ca", "freightcom-ltl"],
   "content_mode": "full"
 }

@@ -2,9 +2,9 @@ export interface ReviewedRuntimePackDescriptor {
   readonly format: "serializeAgentStandardPack:utf8-json-pretty-lf:v1";
   readonly registry_id: "logistics-mcp.agent-standards";
   readonly pack_schema_version: "2026-08-21.v1";
-  readonly standard_count: 14;
-  readonly serialized_bytes: 150_218;
-  readonly serialized_sha256: "sha256:a806d094c39d03f94f8e6903b1cebb3a03cda576a52d6cae7299a551db9e9fb0";
+  readonly standard_count: 15;
+  readonly serialized_bytes: 161_869;
+  readonly serialized_sha256: "sha256:cf9fbb65895eff35110c63ad1ec747526877ac572b68fbe44a336b8dab9c02eb";
 }
 
 /**
@@ -16,8 +16,8 @@ export const REVIEWED_RUNTIME_PACK_DESCRIPTOR: ReviewedRuntimePackDescriptor =
     format: "serializeAgentStandardPack:utf8-json-pretty-lf:v1",
     registry_id: "logistics-mcp.agent-standards",
     pack_schema_version: "2026-08-21.v1",
-    standard_count: 14,
-    serialized_bytes: 150_218,
+    standard_count: 15,
+    serialized_bytes: 161_869,
     serialized_sha256:
-      "sha256:a806d094c39d03f94f8e6903b1cebb3a03cda576a52d6cae7299a551db9e9fb0",
+      "sha256:cf9fbb65895eff35110c63ad1ec747526877ac572b68fbe44a336b8dab9c02eb",
   });

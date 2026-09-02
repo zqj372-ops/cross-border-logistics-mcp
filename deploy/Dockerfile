@@ -17,6 +17,7 @@ COPY docs/rfcs/2026-08-23-readback-attempt-finalization-v1.md ./docs/rfcs/2026-0
 COPY docs/rfcs/2026-08-27-t0-production-profile-v1.md ./docs/rfcs/2026-08-27-t0-production-profile-v1.md
 COPY docs/rfcs/2026-08-27-credential-exchange-v1.md ./docs/rfcs/2026-08-27-credential-exchange-v1.md
 COPY docs/rfcs/2026-09-02-mcp-server-architecture-v1.md ./docs/rfcs/2026-09-02-mcp-server-architecture-v1.md
+COPY docs/rfcs/2026-09-02-read-preview-staging-profile-v1.md ./docs/rfcs/2026-09-02-read-preview-staging-profile-v1.md
 COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs

@@ -970,12 +970,12 @@ describe("gateway composition modes", () => {
       expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
         "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
         "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
-        "sha256:3d66fa2ccf9c6b3bc018883db9f66135ea43f8c189629583f5d7b89bda694fd4",
+        "sha256:a011e20c6f97c6026834bd0ff087c3c67d3ede7f9499beaf3da88f681d422b6b",
       ]);
       expect(composition.moduleHost.snapshot().modules.map(({ artifact_digest }) => artifact_digest)).toEqual([
         "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
         "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
-        "sha256:8e2426e6976d3ad3700aebb181182164e3728ba9f7944c2296e6285882dbbd9a",
+        "sha256:490a40f175d6df1fe9469c15e75ed13ebdc3603249d66098e788365ed4a19c64",
       ]);
       const catalogGeneration = composition.catalogGeneration;
       if (catalogGeneration === undefined) throw new Error("catalog generation missing");

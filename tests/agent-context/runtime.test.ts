@@ -121,6 +121,40 @@ describe("Agent access runtime", () => {
     } as never)).toThrow(expect.objectContaining({ code: "catalog_identity_invalid" }));
   });
 
+  it("projects only the reviewed read-preview caller catalog when explicitly selected", () => {
+    const runtime = createAgentAccessRuntime({
+      pack: readFixedAgentStandardPack(),
+      runtimeProfileId: "read-preview-caller",
+      catalogIdentity: {
+        schema_version: "2026-09-02.v1",
+        profile: "read-preview-staging",
+        catalog_generation: `catalog_${"b".repeat(64)}`,
+        catalog_digest: `sha256:${"b".repeat(64)}`,
+      },
+    });
+    const context = executionContext("sales");
+    const catalog = JSON.parse(runtime.readResource(
+      "logistics://modules/catalog",
+      context,
+    ).text) as { readonly modules: readonly { readonly module_id: string }[] };
+    expect(catalog.modules.map(({ module_id }) => module_id).sort()).toEqual([
+      "agent-access",
+      "canada-final-mile-quote",
+      "cargo",
+      "container",
+      "freightcom-ltl",
+      "riskcustoms-ca",
+    ]);
+    expect(runtime.getContext(
+      { profile_id: "read-preview-caller", module_id: "riskcustoms-ca" },
+      context,
+    ).status).toBe("success");
+    expect(runtime.getContext(
+      { profile_id: "runtime-caller" },
+      context,
+    ).status).toBe("blocked");
+  });
+
   it("publishes only the sanitized runtime-caller profile metadata", () => {
     const pack = readFixedAgentStandardPack();
     const runtime = createAgentAccessRuntime({ pack });

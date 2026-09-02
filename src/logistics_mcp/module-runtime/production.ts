@@ -16,6 +16,12 @@ export const T0_PRODUCTION_PROFILES = Object.freeze([
 
 export type T0ProductionProfile = (typeof T0_PRODUCTION_PROFILES)[number];
 
+export const READ_PREVIEW_STAGING_PROFILE = "read-preview-staging" as const;
+export type ReadPreviewProductionProfile = typeof READ_PREVIEW_STAGING_PROFILE;
+export type ProductionRuntimeProfile =
+  | T0ProductionProfile
+  | ReadPreviewProductionProfile;
+
 export const T0_PRODUCTION_MODULE_IDS = Object.freeze([
   "cargo",
   "container",
@@ -34,6 +40,29 @@ export const T0_PRODUCTION_RESOURCE_URIS = Object.freeze([
   "logistics://contracts/envelope/current",
   "logistics://modules/catalog",
   "logistics://agent/profiles",
+] as const);
+
+export const READ_PREVIEW_MODULE_IDS = Object.freeze([
+  "cargo",
+  "container",
+  "canada-final-mile-quote",
+  "riskcustoms-ca",
+  "freightcom-ltl",
+  "agent-access",
+] as const);
+
+export const READ_PREVIEW_TOOL_NAMES = Object.freeze([
+  "cargo.calculate",
+  "container.plan_summary",
+  "quote.canada_final_mile.calculate",
+  "customs.ca.search",
+  "customs.ca.estimate",
+  "quote.freightcom_ltl.preview",
+  "system.agent_context.get",
+] as const);
+
+export const READ_PREVIEW_RESOURCE_URIS = Object.freeze([
+  ...T0_PRODUCTION_RESOURCE_URIS,
 ] as const);
 
 export interface ModuleDescriptor {
@@ -323,6 +352,11 @@ export function parseT0ProductionProfile(input: unknown): T0ProductionProfile {
   return input as T0ProductionProfile;
 }
 
+export function parseProductionRuntimeProfile(input: unknown): ProductionRuntimeProfile {
+  if (input === READ_PREVIEW_STAGING_PROFILE) return READ_PREVIEW_STAGING_PROFILE;
+  return parseT0ProductionProfile(input);
+}
+
 export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze([
   Object.freeze({
     module_id: "cargo",
@@ -381,11 +415,107 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    artifact_digest: "sha256:8e2426e6976d3ad3700aebb181182164e3728ba9f7944c2296e6285882dbbd9a",
-    manifest_digest: "sha256:3d66fa2ccf9c6b3bc018883db9f66135ea43f8c189629583f5d7b89bda694fd4",
+    artifact_digest: "sha256:490a40f175d6df1fe9469c15e75ed13ebdc3603249d66098e788365ed4a19c64",
+    manifest_digest: "sha256:a011e20c6f97c6026834bd0ff087c3c67d3ede7f9499beaf3da88f681d422b6b",
   }),
 ]);
 
+const READ_PREVIEW_T1_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze([
+  Object.freeze({
+    module_id: "canada-final-mile-quote",
+    version: "2026-09-02.v1",
+    risk_level: "T1",
+    tool_names: Object.freeze(["quote.canada_final_mile.calculate"]),
+    tool_contracts: Object.freeze([Object.freeze({
+      name: "quote.canada_final_mile.calculate",
+      input_schema_id: "urn:logistics-mcp:quote.canada_final_mile.calculate:2026-08-13.v2",
+      output_schema_id: "quote-envelope-v2.schema.json",
+      permission: "quote:calculate",
+      kind: "read",
+      risk_level: "T1",
+      standard_refs: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+      contract_digest: "sha256:f0e66bd0e4f637ec13e09c49c4f6c68b9de4f0e18f478a7b79c3df55915e0fab",
+    })]),
+    required_capabilities: Object.freeze([Object.freeze({
+      name: "quote.canada_final_mile.adapter",
+      version: "quote-adapter-port@2026-09-02.v1",
+    })]),
+    optional_capabilities: Object.freeze([]),
+    artifact_digest: "sha256:e15b0478e6d409c0b555113f6086585ab9519473e8f2ed50bcb1fb3abaec4813",
+    manifest_digest: "sha256:62e16bfacf53cc0f58a683c69d7dca0fd91ae724220fe125184b85275b5264c5",
+  }),
+  Object.freeze({
+    module_id: "riskcustoms-ca",
+    version: "2026-09-02.v1",
+    risk_level: "T1",
+    tool_names: Object.freeze(["customs.ca.search", "customs.ca.estimate"]),
+    tool_contracts: Object.freeze([
+      Object.freeze({
+        name: "customs.ca.search",
+        input_schema_id: "urn:logistics-mcp:customs.ca.search:2026-08-11.v1",
+        output_schema_id: "customs-search-result.schema.json",
+        permission: "tariff:read",
+        kind: "read",
+        risk_level: "T1",
+        standard_refs: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+        contract_digest: "sha256:10812b793c2e8be88d2b86c3b3be0638359be30a88bf54412dfabb86d60b99db",
+      }),
+      Object.freeze({
+        name: "customs.ca.estimate",
+        input_schema_id: "urn:logistics-mcp:customs.ca.estimate:2026-08-11.v1",
+        output_schema_id: "customs-assessment.schema.json",
+        permission: "tariff:estimate",
+        kind: "read",
+        risk_level: "T1",
+        standard_refs: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+        contract_digest: "sha256:3633fa8060e3f855cfd42394ee89f41be83be1fad1763c0cc2d76946a0d1bd94",
+      }),
+    ]),
+    required_capabilities: Object.freeze([Object.freeze({
+      name: "customs.ca.adapter",
+      version: "customs-adapter-port@2026-09-02.v1",
+    })]),
+    optional_capabilities: Object.freeze([]),
+    artifact_digest: "sha256:2312643b0ea98837971f0f01d1fef326979f1a6f51f45e315a3fc9a152bec791",
+    manifest_digest: "sha256:30803f06a8697843e3cc6532c66ac68f700e82c8eaabc41e904166bb77a9d121",
+  }),
+  Object.freeze({
+    module_id: "freightcom-ltl",
+    version: "2026-08-26.v1",
+    risk_level: "T1",
+    tool_names: Object.freeze(["quote.freightcom_ltl.preview"]),
+    tool_contracts: Object.freeze([Object.freeze({
+      name: "quote.freightcom_ltl.preview",
+      input_schema_id: "urn:logistics-mcp:quote.freightcom_ltl.preview:2026-08-26.v1",
+      output_schema_id: "urn:logistics-mcp:quote.freightcom_ltl.preview:result:2026-08-26.v1",
+      permission: "quote:calculate",
+      kind: "read",
+      risk_level: "T1",
+      standard_refs: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+      contract_digest: "sha256:44171988e40abef43c8b98134212a30d5174110daca8a64b40542b90621d0728",
+    })]),
+    required_capabilities: Object.freeze([Object.freeze({
+      name: "quote.freightcom_ltl.rate_adapter",
+      version: "freightcom-rate-port@2026-08-26.v1",
+    })]),
+    optional_capabilities: Object.freeze([]),
+    artifact_digest: "sha256:45baf8321c7154b3d5db850835445cd16c1d576f19ec31889229eb53708ae17d",
+    manifest_digest: "sha256:ec98a326201c034d4a73a86c6993de7d8e82793eff87d4edd0ddcda5a6d67cf6",
+  }),
+]);
+
+export const READ_PREVIEW_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] =
+  Object.freeze([
+    T0_MODULE_DESCRIPTORS[0]!,
+    T0_MODULE_DESCRIPTORS[1]!,
+    ...READ_PREVIEW_T1_MODULE_DESCRIPTORS,
+    T0_MODULE_DESCRIPTORS[2]!,
+  ]);
+
 for (const descriptor of T0_MODULE_DESCRIPTORS) {
+  validateModuleDescriptor(descriptor);
+}
+
+for (const descriptor of READ_PREVIEW_MODULE_DESCRIPTORS) {
   validateModuleDescriptor(descriptor);
 }

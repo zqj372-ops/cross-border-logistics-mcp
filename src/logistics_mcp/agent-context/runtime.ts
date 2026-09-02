@@ -27,7 +27,7 @@ import type { AgentContextScope, AgentStandardPack } from "./types";
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 const catalogIdentitySchema = z.object({
   schema_version: z.literal("2026-09-02.v1"),
-  profile: z.enum(["t0-staging", "t0-v1"]),
+  profile: z.enum(["t0-staging", "t0-v1", "read-preview-staging"]),
   catalog_generation: z.string().regex(/^catalog_[a-f0-9]{64}$/u),
   catalog_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
 }).strict();
@@ -164,7 +164,7 @@ export type AgentContextAuthorizationCallback = (
 
 export interface AgentModuleCatalogIdentity {
   readonly schema_version: "2026-09-02.v1";
-  readonly profile: "t0-staging" | "t0-v1";
+  readonly profile: "t0-staging" | "t0-v1" | "read-preview-staging";
   readonly catalog_generation: `catalog_${string}`;
   readonly catalog_digest: `sha256:${string}`;
 }
@@ -194,7 +194,12 @@ const RULE_CONFLICT_NOTICE = unavailableNotice(
   "The requested Agent context contains conflicting standards.",
 );
 
-const RUNTIME_PROFILE_ID = "runtime-caller";
+const DEFAULT_RUNTIME_PROFILE_ID = "runtime-caller" as const;
+const runtimeProfileIdSchema = z.enum([
+  DEFAULT_RUNTIME_PROFILE_ID,
+  "read-preview-caller",
+]);
+type RuntimeProfileId = z.infer<typeof runtimeProfileIdSchema>;
 
 function isSafeServerExecutionContext(value: unknown): value is ExecutionContext {
   try {
@@ -222,6 +227,7 @@ function isSafeServerExecutionContext(value: unknown): value is ExecutionContext
 class DefaultAgentAccessRuntime implements AgentAccessRuntime {
   readonly #pack: AgentStandardPack | null;
   readonly #catalogIdentity: AgentModuleCatalogIdentity | null;
+  readonly #runtimeProfileId: RuntimeProfileId;
   private readonly unavailableReason: string;
   private readonly authorizationCallback: AgentContextAuthorizationCallback | null;
 
@@ -230,11 +236,13 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
     unavailableReason = "",
     authorizationCallback: AgentContextAuthorizationCallback | null = null,
     catalogIdentity: AgentModuleCatalogIdentity | null = null,
+    runtimeProfileId: RuntimeProfileId = DEFAULT_RUNTIME_PROFILE_ID,
   ) {
     this.#pack = pack;
     this.#catalogIdentity = catalogIdentity;
     this.unavailableReason = unavailableReason;
     this.authorizationCallback = authorizationCallback;
+    this.#runtimeProfileId = runtimeProfileId;
   }
 
   get available(): boolean {
@@ -264,7 +272,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
       return false;
     }
     if (this.authorizationCallback === null) {
-      return profile.profile_id === RUNTIME_PROFILE_ID && profile.audience === "caller";
+      return profile.profile_id === this.#runtimeProfileId && profile.audience === "caller";
     }
     const request: AgentContextAuthorizationRequest = {
       context,
@@ -405,7 +413,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         "The requested Agent resource is not registered.",
       );
     }
-    if (!this.isProfileAuthorized(pack, RUNTIME_PROFILE_ID, undefined, context, canonical)) {
+    if (!this.isProfileAuthorized(pack, this.#runtimeProfileId, undefined, context, canonical)) {
       throw new AgentAccessRuntimeError(
         "resource_not_authorized",
         "The requested Agent resource is not authorized for this caller.",
@@ -419,7 +427,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
     }
     if (resource.resource_id === "modules.catalog") {
       const runtimeCaller = pack.profiles.find(
-        (profile) => profile.profile_id === RUNTIME_PROFILE_ID,
+        (profile) => profile.profile_id === this.#runtimeProfileId,
       );
       if (runtimeCaller === undefined || runtimeCaller.audience !== "caller") {
         throw new AgentAccessRuntimeError(
@@ -433,14 +441,14 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         text: JSON.stringify({
           ...(this.#catalogIdentity ?? {}),
           modules: pack.modules.filter((module) =>
-            module.risk_level === "T0" && runtimeCaller.allowed_module_ids.includes(module.module_id),
+            runtimeCaller.allowed_module_ids.includes(module.module_id),
           ),
         }, null, 2),
       };
     }
     if (resource.resource_id === "agent.profiles") {
       const runtimeCaller = pack.profiles.find(
-        (profile) => profile.profile_id === RUNTIME_PROFILE_ID,
+        (profile) => profile.profile_id === this.#runtimeProfileId,
       );
       if (runtimeCaller === undefined || runtimeCaller.audience !== "caller") {
         throw new AgentAccessRuntimeError(
@@ -474,6 +482,7 @@ export interface AgentAccessRuntimeOptions {
   readonly pack?: AgentStandardPack | null;
   readonly authorizeProfile?: AgentContextAuthorizationCallback;
   readonly catalogIdentity?: AgentModuleCatalogIdentity;
+  readonly runtimeProfileId?: RuntimeProfileId;
 }
 
 function validateCatalogIdentity(value: unknown): AgentModuleCatalogIdentity {
@@ -549,7 +558,7 @@ function validateRuntimeOptions(value: unknown): AgentAccessRuntimeOptions {
           "Agent runtime pack options are invalid.",
         );
       }
-      if (!["pack", "authorizeProfile", "catalogIdentity"].includes(key)) {
+      if (!["pack", "authorizeProfile", "catalogIdentity", "runtimeProfileId"].includes(key)) {
         throw new AgentAccessRuntimeError(
           "pack_option_invalid",
           "Agent runtime pack options are invalid.",
@@ -572,6 +581,9 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
   const catalogIdentity = Object.hasOwn(safeOptions, "catalogIdentity")
     ? validateCatalogIdentity(safeOptions.catalogIdentity)
     : null;
+  const runtimeProfileId = runtimeProfileIdSchema.parse(
+    safeOptions.runtimeProfileId ?? DEFAULT_RUNTIME_PROFILE_ID,
+  );
   if (authorizationCallback !== null && typeof authorizationCallback !== "function") {
     throw new AgentAccessRuntimeError(
       "authorization_invalid",
@@ -591,6 +603,7 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
         "The immutable Standard Pack is intentionally unavailable.",
         authorizationCallback,
         catalogIdentity,
+        runtimeProfileId,
       );
     }
     if (!isRuntimeTrustedAgentStandardPack(safeOptions.pack)) {
@@ -604,6 +617,7 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
       "",
       authorizationCallback,
       catalogIdentity,
+      runtimeProfileId,
     );
   }
   try {
@@ -612,6 +626,7 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
       "",
       authorizationCallback,
       catalogIdentity,
+      runtimeProfileId,
     );
   } catch {
     return new DefaultAgentAccessRuntime(
@@ -619,6 +634,7 @@ export function createAgentAccessRuntime(options: AgentAccessRuntimeOptions = {}
       "The immutable Standard Pack is invalid.",
       authorizationCallback,
       catalogIdentity,
+      runtimeProfileId,
     );
   }
 }

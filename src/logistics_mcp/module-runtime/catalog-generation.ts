@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import { ModuleRuntimeError } from "./errors";
 import {
   assertExactStringSet,
+  READ_PREVIEW_MODULE_DESCRIPTORS,
+  READ_PREVIEW_MODULE_IDS,
+  READ_PREVIEW_RESOURCE_URIS,
+  READ_PREVIEW_STAGING_PROFILE,
+  READ_PREVIEW_TOOL_NAMES,
   parseT0ProductionProfile,
   T0_MODULE_DESCRIPTORS,
   T0_PRODUCTION_MODULE_IDS,
@@ -10,6 +15,8 @@ import {
   T0_PRODUCTION_TOOL_NAMES,
   validateModuleDescriptor,
   type ModuleDescriptor,
+  type ProductionRuntimeProfile,
+  type ReadPreviewProductionProfile,
   type T0ProductionProfile,
 } from "./production";
 import type { ModuleRiskLevel } from "./types";
@@ -45,6 +52,15 @@ export interface T0CatalogGenerationReceipt {
   readonly resource_uris: readonly string[];
   readonly prompt_names: readonly [];
 }
+
+export interface ReadPreviewCatalogGenerationReceipt
+  extends Omit<T0CatalogGenerationReceipt, "profile"> {
+  readonly profile: ReadPreviewProductionProfile;
+}
+
+export type CatalogGenerationReceipt =
+  | T0CatalogGenerationReceipt
+  | ReadPreviewCatalogGenerationReceipt;
 
 function catalogError(code: string, message: string): ModuleRuntimeError {
   return new ModuleRuntimeError(code, message);
@@ -90,29 +106,60 @@ export function createT0CatalogGeneration(
   resourceUriInputs: readonly string[] = T0_PRODUCTION_RESOURCE_URIS,
 ): T0CatalogGenerationReceipt {
   const profile = parseT0ProductionProfile(profileInput);
+  return createCatalogGeneration({
+    profile,
+    descriptorInputs,
+    resourceUriInputs,
+    expectedModuleIds: T0_PRODUCTION_MODULE_IDS,
+    expectedToolNames: T0_PRODUCTION_TOOL_NAMES,
+    expectedResourceUris: T0_PRODUCTION_RESOURCE_URIS,
+    errorPrefix: "t0",
+  }) as T0CatalogGenerationReceipt;
+}
+
+interface CatalogGenerationInput {
+  readonly profile: ProductionRuntimeProfile;
+  readonly descriptorInputs: readonly ModuleDescriptor[];
+  readonly resourceUriInputs: readonly string[];
+  readonly expectedModuleIds: readonly string[];
+  readonly expectedToolNames: readonly string[];
+  readonly expectedResourceUris: readonly string[];
+  readonly errorPrefix: "t0" | "read_preview";
+}
+
+function createCatalogGeneration(input: CatalogGenerationInput): CatalogGenerationReceipt {
+  const {
+    profile,
+    descriptorInputs,
+    resourceUriInputs,
+    expectedModuleIds,
+    expectedToolNames,
+    expectedResourceUris,
+    errorPrefix,
+  } = input;
   const descriptors = descriptorInputs.map((descriptor) => validateModuleDescriptor(descriptor));
   assertExactStringSet(
     descriptors.map(({ module_id }) => module_id),
-    T0_PRODUCTION_MODULE_IDS,
-    "t0_catalog_module_set_invalid",
+    expectedModuleIds,
+    `${errorPrefix}_catalog_module_set_invalid`,
   );
   assertExactStringSet(
     descriptors.flatMap(({ tool_contracts }) =>
       tool_contracts.map(({ name }) => name)
     ),
-    T0_PRODUCTION_TOOL_NAMES,
-    "t0_catalog_tool_set_invalid",
+    expectedToolNames,
+    `${errorPrefix}_catalog_tool_set_invalid`,
   );
   if (resourceUriInputs.some((uri) => typeof uri !== "string")) {
     throw catalogError(
-      "t0_catalog_resource_set_invalid",
-      "The T0 catalog resource set is invalid.",
+      `${errorPrefix}_catalog_resource_set_invalid`,
+      "The runtime catalog resource set is invalid.",
     );
   }
   assertExactStringSet(
     resourceUriInputs,
-    T0_PRODUCTION_RESOURCE_URIS,
-    "t0_catalog_resource_set_invalid",
+    expectedResourceUris,
+    `${errorPrefix}_catalog_resource_set_invalid`,
   );
 
   const modules = Object.freeze(
@@ -138,4 +185,19 @@ export function createT0CatalogGeneration(
     catalog_generation: `catalog_${digestHex}`,
     catalog_digest: `sha256:${digestHex}`,
   });
+}
+
+export function createReadPreviewCatalogGeneration(
+  descriptorInputs: readonly ModuleDescriptor[] = READ_PREVIEW_MODULE_DESCRIPTORS,
+  resourceUriInputs: readonly string[] = READ_PREVIEW_RESOURCE_URIS,
+): ReadPreviewCatalogGenerationReceipt {
+  return createCatalogGeneration({
+    profile: READ_PREVIEW_STAGING_PROFILE,
+    descriptorInputs,
+    resourceUriInputs,
+    expectedModuleIds: READ_PREVIEW_MODULE_IDS,
+    expectedToolNames: READ_PREVIEW_TOOL_NAMES,
+    expectedResourceUris: READ_PREVIEW_RESOURCE_URIS,
+    errorPrefix: "read_preview",
+  }) as ReadPreviewCatalogGenerationReceipt;
 }

@@ -104,6 +104,14 @@ const agentStandardPackSchema = z
   .strict();
 
 const runtimeCallerModuleIds = ["agent-access", "cargo", "container"] as const;
+const readPreviewCallerModuleIds = [
+  "agent-access",
+  "cargo",
+  "container",
+  "canada-final-mile-quote",
+  "riskcustoms-ca",
+  "freightcom-ltl",
+] as const;
 
 const runtimeCallerEntitlements = Object.freeze({
   standardIds: Object.freeze([
@@ -163,6 +171,63 @@ const runtimeCallerModuleEntitlements = Object.freeze({
     riskLevel: "T0",
     standardIds: Object.freeze(["module-runtime.v0", "platform.contracts", "agent-access.v0"]),
     toolNames: Object.freeze(["system.agent_context.get"]),
+  }),
+});
+
+const readPreviewCallerEntitlements = Object.freeze({
+  standardIds: Object.freeze([
+    "agent.bootstrap",
+    "mcp-server-architecture-v1",
+    "platform.contracts",
+    "agent-access.v0",
+    "release-agent-adapters",
+    "read-preview-staging-profile-v1",
+  ]),
+  ruleIds: Object.freeze([
+    "AGENT-BOOT-001",
+    "SEC-BOUNDARY-001",
+    "MCP-SERVER-BOUNDARY-001",
+    "MCP-TRANSPORT-001",
+    "MCP-CREDENTIAL-001",
+    "MCP-MODULE-001",
+    "MCP-ADMIN-BOUNDARY-001",
+    "CONTRACT-SCHEMA-001",
+    "STATUS-ENVELOPE-001",
+    "AGENT-PROFILE-001",
+    "AGENT-CONTEXT-001",
+    "AGENT-RESOURCE-001",
+    "RELEASE-ADAPTER-001",
+    "RELEASE-ADAPTER-002",
+    "READ-PREVIEW-PROFILE-001",
+    "READ-PREVIEW-ISOLATION-001",
+    "READ-PREVIEW-AUTH-001",
+    "READ-PREVIEW-QUALIFICATION-001",
+  ]),
+  contextScopes: Object.freeze([
+    "bootstrap",
+    "standards",
+    "module_catalog",
+    "release",
+  ]),
+  moduleIds: readPreviewCallerModuleIds,
+});
+
+const readPreviewCallerModuleEntitlements = Object.freeze({
+  ...runtimeCallerModuleEntitlements,
+  "canada-final-mile-quote": Object.freeze({
+    riskLevel: "T1",
+    standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+    toolNames: Object.freeze(["quote.canada_final_mile.calculate"]),
+  }),
+  "riskcustoms-ca": Object.freeze({
+    riskLevel: "T1",
+    standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+    toolNames: Object.freeze(["customs.ca.search", "customs.ca.estimate"]),
+  }),
+  "freightcom-ltl": Object.freeze({
+    riskLevel: "T1",
+    standardIds: Object.freeze(["module-runtime.v0", "platform.contracts"]),
+    toolNames: Object.freeze(["quote.freightcom_ltl.preview"]),
   }),
 });
 
@@ -412,6 +477,36 @@ function assertPackSemantics(pack: AgentStandardPack): void {
       !sameSet(module.tool_names, entitlement.toolNames)
     ) {
       fail("pack.runtime_caller_module_entitlement_mismatch");
+    }
+  }
+
+  const readPreviewCaller = pack.profiles.find(
+    (profile) => profile.profile_id === "read-preview-caller",
+  );
+  if (
+    readPreviewCaller === undefined ||
+    readPreviewCaller.audience !== "caller" ||
+    readPreviewCaller.content_mode !== "summary" ||
+    !sameSet(readPreviewCaller.standard_ids, readPreviewCallerEntitlements.standardIds) ||
+    !sameSet(readPreviewCaller.allowed_rule_ids, readPreviewCallerEntitlements.ruleIds) ||
+    !sameSet(readPreviewCaller.context_scopes, readPreviewCallerEntitlements.contextScopes) ||
+    !sameSet(readPreviewCaller.allowed_module_ids, readPreviewCallerEntitlements.moduleIds)
+  ) {
+    fail("pack.read_preview_caller_entitlement_mismatch");
+  }
+  if (readPreviewCaller.allowed_rule_ids.some((ruleId) => ruleId.startsWith("CONTROL-"))) {
+    fail("pack.read_preview_caller_control_forbidden");
+  }
+  for (const moduleId of readPreviewCallerModuleIds) {
+    const module = pack.modules.find((candidate) => candidate.module_id === moduleId);
+    const entitlement = readPreviewCallerModuleEntitlements[moduleId];
+    if (
+      module === undefined ||
+      module.risk_level !== entitlement.riskLevel ||
+      !sameSet(module.standard_ids, entitlement.standardIds) ||
+      !sameSet(module.tool_names, entitlement.toolNames)
+    ) {
+      fail("pack.read_preview_caller_module_entitlement_mismatch");
     }
   }
 

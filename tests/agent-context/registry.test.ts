@@ -327,9 +327,11 @@ describe("Agent standard registry", () => {
     expect(registry.standards.some((candidate) => candidate.path === "docs/superpowers/plans/2026-08-22-writable-mcp-control-plane-plan.md")).toBe(false);
     expect(registry.modules.map((module) => module.module_id).sort()).toEqual([
       "agent-access",
+      "canada-final-mile-quote",
       "cargo",
       "container",
       "freightcom-ltl",
+      "riskcustoms-ca",
     ]);
     expect(registry.resources.map((resource) => resource.resource_id).sort()).toEqual([
       "agent.bootstrap",

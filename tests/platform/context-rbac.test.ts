@@ -12,6 +12,7 @@ import {
   authorizeTool,
   getToolPolicy,
   phaseOneToolNames,
+  readPreviewToolNames,
   tenantApiKeyToolNames,
   toolVisibleForContext,
 } from "../../src/logistics_mcp/platform/rbac";
@@ -187,7 +188,6 @@ describe("platform context and RBAC", () => {
   it.each([
     ["platform admin mixed with exact scope", ["tool:cargo.calculate", "platform:admin"]],
     ["legacy broad scope mixed with exact scope", ["tool:cargo.calculate", "quote:calculate"]],
-    ["non-T0 exact scope mixed with exact scope", ["tool:cargo.calculate", "tool:quote.canada_final_mile.calculate"]],
     ["duplicate exact scope", ["tool:cargo.calculate", "tool:cargo.calculate"]],
   ])("rejects invalid T0 service JWT scopes: %s", (label, scopes) => {
     if (label === "duplicate exact scope") {
@@ -204,6 +204,30 @@ describe("platform context and RBAC", () => {
 
     expect(() => authorizeTool(context, "cargo.calculate")).toThrow(ForbiddenError);
     expect(() => toolVisibleForContext(context, "cargo.calculate")).toThrow(ForbiddenError);
+  });
+
+  it("allows reviewed read-preview entitlements without inheriting sibling tools", () => {
+    const context = parseExecutionContext({
+      ...claims("service"),
+      scopes: [
+        "tool:cargo.calculate",
+        "tool:quote.canada_final_mile.calculate",
+      ],
+    });
+
+    expect([...readPreviewToolNames]).toEqual([
+      "cargo.calculate",
+      "container.plan_summary",
+      "system.agent_context.get",
+      "quote.canada_final_mile.calculate",
+      "customs.ca.search",
+      "customs.ca.estimate",
+      "quote.freightcom_ltl.preview",
+    ]);
+    expect(authorizeTool(context, "cargo.calculate")).toBe(true);
+    expect(authorizeTool(context, "quote.canada_final_mile.calculate")).toBe(true);
+    expect(toolVisibleForContext(context, "customs.ca.search")).toBe(false);
+    expect(() => authorizeTool(context, "customs.ca.search")).toThrow(ForbiddenError);
   });
 
   it("keeps an explicit non-T0 legacy business context on broad scope behavior", () => {
