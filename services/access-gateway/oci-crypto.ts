@@ -14,7 +14,7 @@ import {
 } from "./production-crypto";
 
 const OCI_SIGNING_ALGORITHM = "SHA_256_RSA_PKCS1_V1_5" as const;
-const OCI_MESSAGE_TYPE = "RAW" as const;
+const OCI_MESSAGE_TYPE = "DIGEST" as const;
 const MAX_OCI_MESSAGE_BYTES = 4_096;
 const MAX_OCI_IDENTIFIER_BYTES = 512;
 const MAX_RETAINED_PEPPERS = 64;
@@ -429,9 +429,10 @@ export class OciKmsJwtSigningProvider implements JwtSigningProvider {
     if (message.byteLength < 1 || message.byteLength > MAX_OCI_MESSAGE_BYTES) {
       throw new Error("OCI KMS signing message size is invalid.");
     }
+    const digest = createHash("sha256").update(message).digest();
     const response = await this.#client.sign({
       signDataDetails: {
-        message: Buffer.from(message).toString("base64"),
+        message: digest.toString("base64"),
         keyId: this.#keyId,
         keyVersionId: this.#currentKeyVersionId,
         messageType: OCI_MESSAGE_TYPE,

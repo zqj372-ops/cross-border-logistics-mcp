@@ -1,7 +1,8 @@
 import {
+  constants,
   createPublicKey,
   generateKeyPairSync,
-  sign as signBytes,
+  privateEncrypt,
 } from "node:crypto";
 
 import { createLocalJWKSet, jwtVerify } from "jose";
@@ -45,6 +46,7 @@ function fixtures(overrides: Readonly<{
   signingAlgorithm?: string;
   missingPepperVersion?: string;
 }> = {}) {
+  const signRequests: Parameters<OciKmsCryptoClient["sign"]>[0][] = [];
   const current = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const previous = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const publicKeys = new Map([
@@ -71,13 +73,21 @@ function fixtures(overrides: Readonly<{
   };
   const cryptoClient: OciKmsCryptoClient = {
     sign(request) {
-      const message = Buffer.from(request.signDataDetails.message, "base64");
+      signRequests.push(request);
+      const digest = Buffer.from(request.signDataDetails.message, "base64");
+      const digestInfo = Buffer.concat([
+        Buffer.from("3031300d060960864801650304020105000420", "hex"),
+        digest,
+      ]);
       return Promise.resolve({
         signedData: {
           keyId: overrides.signKeyId ?? request.signDataDetails.keyId,
           keyVersionId: overrides.signKeyVersionId ?? CURRENT_VERSION_ID,
           signingAlgorithm: overrides.signingAlgorithm ?? "SHA_256_RSA_PKCS1_V1_5",
-          signature: signBytes("RSA-SHA256", message, current.privateKey).toString("base64"),
+          signature: privateEncrypt({
+            key: current.privateKey,
+            padding: constants.RSA_PKCS1_PADDING,
+          }, digestInfo).toString("base64"),
         },
       });
     },
@@ -110,7 +120,7 @@ function fixtures(overrides: Readonly<{
       });
     },
   };
-  return { cryptoClient, managementClient, secretsClient };
+  return { cryptoClient, managementClient, secretsClient, signRequests };
 }
 
 describe("OCI Vault and KMS production providers", () => {
@@ -171,6 +181,52 @@ describe("OCI Vault and KMS production providers", () => {
     });
     expect(verified.protectedHeader).toEqual({ alg: "RS256", kid: signed.kid, typ: "JWT" });
     expect(verified.payload).toMatchObject(claims());
+    expect(clients.signRequests).toHaveLength(2);
+    for (const request of clients.signRequests) {
+      expect(request.signDataDetails.messageType).toBe("DIGEST");
+      expect(Buffer.from(request.signDataDetails.message, "base64")).toHaveLength(32);
+    }
+    await providers.close();
+  });
+
+  it("signs a full read-preview JWT whose raw compact input exceeds RSA PKCS1 limits", async () => {
+    const clients = fixtures();
+    const providers = await createOciGatewayCryptoProviders({
+      ...clients,
+      keyId: KEY_ID,
+      currentKeyVersionId: CURRENT_VERSION_ID,
+      pepperSecretId: SECRET_ID,
+      activePepperVersion: "pepper-2026-09-v2",
+      requiredPepperVersions: ["pepper-2026-09-v2"],
+    });
+    const readPreviewClaims = {
+      ...claims(),
+      scopes: [
+        "tool:cargo.calculate",
+        "tool:container.plan_summary",
+        "tool:quote.canada_final_mile.calculate",
+        "tool:customs.ca.search",
+        "tool:customs.ca.estimate",
+        "tool:quote.freightcom_ltl.preview",
+        "tool:system.agent_context.get",
+      ],
+    } as unknown as JwtClaims;
+    const signed = await providers.signer.sign(readPreviewClaims);
+    const compactInput = signed.token.split(".").slice(0, 2).join(".");
+    expect(Buffer.byteLength(compactInput, "ascii")).toBeGreaterThan(245);
+    const verified = await jwtVerify(
+      signed.token,
+      createLocalJWKSet({ keys: [...(await providers.signer.getJwks()).keys] }),
+      {
+        algorithms: ["RS256"],
+        issuer: readPreviewClaims.iss,
+        audience: readPreviewClaims.aud,
+        currentDate: new Date(readPreviewClaims.iat * 1_000),
+      },
+    );
+    expect(verified.payload.scopes).toEqual(readPreviewClaims.scopes);
+    expect(clients.signRequests.at(-1)?.signDataDetails.messageType).toBe("DIGEST");
+    expect(Buffer.from(clients.signRequests.at(-1)!.signDataDetails.message, "base64")).toHaveLength(32);
     await providers.close();
   });
 

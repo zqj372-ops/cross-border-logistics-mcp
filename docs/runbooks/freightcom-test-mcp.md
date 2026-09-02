@@ -71,5 +71,7 @@ readback，不表示制品签名、生产资格或正式报价资格。
 
 ## 生产边界
 
-`MCP_DATA_MODE=production` 始终使用 disabled Freightcom adapter。设置测试开关不会改变生产组合。
-订舱、保存和发送报价均不在该工具范围内。
+`t0-v1` 的 production 组合始终不构造 Freightcom adapter。只有独立
+`read-preview-staging` profile 同时满足测试开关、固定测试 host、精确 tenant allowlist 和
+secret-file 边界时才允许构造测试 adapter；这不会赋予 Freightcom production 资格。订舱、保存
+和发送报价均不在该工具范围内。
