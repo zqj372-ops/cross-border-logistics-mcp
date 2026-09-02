@@ -323,7 +323,7 @@ describe("safe deployment artifacts", () => {
     expect(nginx).toContain("proxy_pass http://logistics-mcp-read-preview-staging:8080/mcp");
     expect(nginx).toContain("location = /staging/runtime/readyz");
     expect(healthcheck).toContain("freightclaw-read-preview-alert");
-    expect(healthcheck).toContain('"ready"[[:space:]]*:[[:space:]]*true');
+    expect(healthcheck).toContain('"status"[[:space:]]*:[[:space:]]*"ready"');
     expect(service).toContain("OnFailure=freightclaw-read-preview-alert@%n.service");
     expect(service).toContain("ProtectSystem=strict");
     expect(timer).toContain("OnUnitActiveSec=1min");

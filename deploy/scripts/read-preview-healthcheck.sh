@@ -12,7 +12,7 @@ status_code="$(/usr/bin/curl --fail-with-body --silent --show-error \
   --write-out '%{http_code}' \
   "$health_url" 2>/dev/null || true)"
 
-if [ "$status_code" != "200" ] || ! /usr/bin/grep -q '"ready"[[:space:]]*:[[:space:]]*true' "$response_file"; then
+if [ "$status_code" != "200" ] || ! /usr/bin/grep -q '"status"[[:space:]]*:[[:space:]]*"ready"' "$response_file"; then
   /usr/bin/logger --priority user.err --tag freightclaw-read-preview-alert \
     "read-preview readiness failed status=${status_code:-transport_error}"
   exit 1
