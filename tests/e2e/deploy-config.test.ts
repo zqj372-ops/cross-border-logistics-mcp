@@ -170,6 +170,7 @@ describe("safe deployment artifacts", () => {
     expect(start).not.toContain("createRiskCustomsApiAdapterFromEnvironment");
     expect(start).not.toContain("MCP_RISK_CUSTOMS_");
     expect(start).toContain("createT1ReadWorkerClient");
+    expect(start).toContain("requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS - 1_000");
     expect(start).toContain("buildT1WorkerEnvironment");
     expect(start).toContain('new URL("../t1-worker/start.mjs", import.meta.url)');
     expect(start).toContain("return createProductionComposition({");

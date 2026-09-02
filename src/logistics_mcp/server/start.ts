@@ -1531,6 +1531,7 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     ? createT1ReadWorkerClient({
         entryPoint: fileURLToPath(new URL("../t1-worker/start.mjs", import.meta.url)),
         environment: buildT1WorkerEnvironment(),
+        requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS - 1_000,
       })
     : undefined;
   return createProductionComposition({
