@@ -319,6 +319,7 @@ describe("safe deployment artifacts", () => {
 
     expect(nginx).toContain("zone=freightclaw_read_preview:10m rate=2r/s");
     expect(nginx).toContain("location = /staging/mcp");
+    expect(nginx).toContain("limit_req_status 429;");
     expect(nginx).toContain("proxy_pass http://logistics-mcp-read-preview-staging:8080/mcp");
     expect(nginx).toContain("location = /staging/runtime/readyz");
     expect(healthcheck).toContain("freightclaw-read-preview-alert");
