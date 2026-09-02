@@ -62,6 +62,7 @@ describe("T0 single-region release gates", () => {
     const compose = read("deploy/compose.yml");
 
     expect(compose).toContain('MCP_RUNTIME_PROFILE: "${MCP_RUNTIME_PROFILE:?');
+    expect(compose).toContain('MCP_TRANSPORT_MODE: "${MCP_TRANSPORT_MODE:?');
     expect(compose).toContain("read_only: true");
     expect(compose).toContain("no-new-privileges:true");
     expect(compose).toMatch(/cap_drop:\s*\n\s*- ALL/);
@@ -117,6 +118,7 @@ describe("T0 single-region release gates", () => {
     for (const artifact of [
       "docs/rfcs/2026-08-27-t0-production-profile-v1.md",
       "docs/rfcs/2026-08-27-credential-exchange-v1.md",
+      "docs/rfcs/2026-09-02-mcp-server-architecture-v1.md",
       "docs/runbooks/t0-release.md",
       "docs/runbooks/t0-rollback.md",
       "docs/runbooks/t0-single-region-evidence.template.md",

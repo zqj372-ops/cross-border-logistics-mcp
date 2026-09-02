@@ -40,6 +40,7 @@ import type {
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import { getToolPolicy } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
+import { parseMcpTransportMode } from "../platform/transport-mode";
 import {
   CapabilityRegistry,
   ModuleHost,
@@ -219,6 +220,7 @@ async function readiness(
         "MCP_JWT_AUDIENCE",
         "MCP_JWKS_URL",
         "MCP_RUNTIME_PROFILE",
+        "MCP_TRANSPORT_MODE",
         "MCP_STATE_DB_PATH",
         "MCP_INSTANCE_ID",
         "MCP_ALLOWED_ORIGINS",
@@ -1469,6 +1471,9 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     ? process.env.MCP_RUNTIME_PROFILE ?? ""
     : "t0-v1";
   const profile = parseT0ProductionProfile(profileSetting);
+  const transportMode = parseMcpTransportMode(
+    requiredRuntimeSetting("MCP_TRANSPORT_MODE"),
+  );
   const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
   const instanceId = process.env.MCP_INSTANCE_ID?.trim();
   const jwksUrl = process.env.MCP_JWKS_URL?.trim();
@@ -1496,15 +1501,16 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
   return createProductionComposition({
     dataMode: "production",
     profile,
+    transportMode,
     ...common,
     ...(store === undefined
       ? {}
       : {
           auditRepository: store,
           idempotencyRepository: store,
-          sessionBindingStore: store,
+          ...(transportMode === "stateful" ? { sessionBindingStore: store } : {}),
         }),
-    ...(instanceId === undefined || instanceId.length === 0
+    ...(transportMode === "stateless" || instanceId === undefined || instanceId.length === 0
       ? {}
       : { sessionOwnerId: instanceId }),
     ...(tokenVerifier === undefined ? {} : { tokenVerifier }),

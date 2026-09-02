@@ -77,7 +77,7 @@ describe("platform dependency assembly", () => {
   });
 
   it("reports missing production durable dependencies without creating memory fallbacks", async () => {
-    const assembly = createProductionPlatformAssembly({});
+    const assembly = createProductionPlatformAssembly({ transportMode: "stateful" });
 
     expect(assembly.status).toBe("unavailable");
     expect(assembly.reasonCodes).toEqual([
@@ -91,6 +91,27 @@ describe("platform dependency assembly", () => {
     });
     expect(assembly.errors).toHaveLength(3);
     expect(assembly.errors.every((error) => error instanceof PlatformConfigurationError)).toBe(true);
+  });
+
+  it("does not require a session registry or binding store for stateless production", async () => {
+    const audit = durableAudit();
+    const idempotency = durableIdempotency();
+    const assembly = createProductionPlatformAssembly({
+      transportMode: "stateless",
+      auditRepository: audit,
+      idempotencyRepository: idempotency,
+    });
+
+    expect(assembly.status).toBe("available");
+    expect(assembly.reasonCodes).toEqual([]);
+    expect(assembly.dependencies).toMatchObject({
+      auditRepository: audit,
+      idempotencyRepository: idempotency,
+    });
+    expect(assembly.dependencies).not.toHaveProperty("sessionBindingStore");
+    expect(assembly.dependencies).not.toHaveProperty("sessionRegistry");
+    await expect(assembly.readiness()).resolves.toEqual({ ready: true, reasons: [] });
+    await assembly.close();
   });
 
   it("does not accept memory implementations as durable production dependencies", () => {

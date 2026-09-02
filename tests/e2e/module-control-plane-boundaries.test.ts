@@ -14,6 +14,7 @@ const APPROVER_TOKEN = "boundary-approver-token";
 const RUNTIME_ENV_NAMES = [
   "MCP_PORT",
   "MCP_DATA_MODE",
+  "MCP_TRANSPORT_MODE",
   "MCP_ADMIN_UI_ENABLED",
   "MCP_ADMIN_CONTROL_ENABLED",
   "MCP_INSTANCE_ID",
@@ -170,6 +171,7 @@ async function withRuntime<T>(
     });
   } else {
     Object.assign(environment, {
+      MCP_TRANSPORT_MODE: "stateless",
       MCP_ADMIN_CONTROL_ENABLED: "true",
       MCP_INSTANCE_ID: INSTANCE_ID,
       MCP_ADMIN_TENANT_ID: MANAGEMENT_TENANT_ID,

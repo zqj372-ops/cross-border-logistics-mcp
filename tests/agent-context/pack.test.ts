@@ -156,14 +156,14 @@ describe("Agent standard pack", () => {
     expect(isRuntimeTrustedAgentStandardPack(buildAgentStandardPack(rootDir))).toBe(false);
   });
 
-  it("pins the current thirteen-standard build to the reviewed serialized-byte digest", () => {
+  it("pins the current fourteen-standard build to the reviewed serialized-byte digest", () => {
     const pack = buildAgentStandardPack(rootDir);
     const serialized = serializeAgentStandardPack(pack);
 
-    expect(pack.standards).toHaveLength(13);
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(138_416);
+    expect(pack.standards).toHaveLength(14);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(149_824);
     expect(sha256(serialized)).toBe(
-      "sha256:6e18315d97cfcf2f5b81b1b8e68d3b1e1c4d3bc651f3f18c00e9bc026bcef264",
+      "sha256:f2db8e8d4d9537e0412c106d26f05824d500d5b8941273e6df540cf0f85a3492",
     );
   });
 
@@ -228,6 +228,7 @@ describe("Agent standard pack", () => {
       "credential-exchange-v1",
       "effective-rfc",
       "implementation-plan",
+      "mcp-server-architecture-v1",
       "module-runtime.v0",
       "platform.contracts",
       "readback-attempt-finalization-v1",
@@ -361,6 +362,20 @@ describe("Agent standard pack", () => {
 
   it("keeps the runtime caller entitlement to the three T0 modules", () => {
     const valid = buildAgentStandardPack(rootDir);
+    const runtimeCaller = valid.profiles.find(
+      (profile) => profile.profile_id === "runtime-caller",
+    );
+    expect(runtimeCaller?.standard_ids).toContain("mcp-server-architecture-v1");
+    expect(runtimeCaller?.allowed_rule_ids).toEqual(
+      expect.arrayContaining([
+        "MCP-SERVER-BOUNDARY-001",
+        "MCP-TRANSPORT-001",
+        "MCP-CREDENTIAL-001",
+        "MCP-MODULE-001",
+        "MCP-ADMIN-BOUNDARY-001",
+      ]),
+    );
+    expect(runtimeCaller?.allowed_rule_ids.some((ruleId) => ruleId.includes("CONTROL-"))).toBe(false);
     expect(valid.modules.find((module) => module.module_id === "freightcom-ltl")).toEqual({
       module_id: "freightcom-ltl",
       version: "2026-08-26.v1",
@@ -375,11 +390,11 @@ describe("Agent standard pack", () => {
     ]);
 
     const broadened = mutableClone(valid);
-    const runtimeCaller = broadened.profiles.find(
+    const broadenedRuntimeCaller = broadened.profiles.find(
       (profile) => profile.profile_id === "runtime-caller",
     );
-    if (runtimeCaller === undefined) throw new Error("Expected runtime-caller fixture.");
-    runtimeCaller.allowed_module_ids.push("freightcom-ltl");
+    if (broadenedRuntimeCaller === undefined) throw new Error("Expected runtime-caller fixture.");
+    broadenedRuntimeCaller.allowed_module_ids.push("freightcom-ltl");
 
     expect(() => validateAndFreezeAgentStandardPack(broadened)).toThrowError(
       expect.objectContaining({

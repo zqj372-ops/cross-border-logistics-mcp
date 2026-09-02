@@ -76,6 +76,15 @@
       "summary": "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness."
     },
     {
+      "standard_id": "mcp-server-architecture-v1",
+      "version": "2026-09-02.v1",
+      "path": "docs/rfcs/2026-09-02-mcp-server-architecture-v1.md",
+      "priority": 95,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["MCP-SERVER-BOUNDARY-001", "MCP-TRANSPORT-001", "MCP-CREDENTIAL-001", "MCP-MODULE-001", "MCP-ADMIN-BOUNDARY-001"],
+      "summary": "Independent multi-tenant MCP Server boundaries, stateless-first transport, credential exchange, module runtime and control plane."
+    },
+    {
       "standard_id": "t0-production-profile-v1",
       "version": "2026-08-27.v1",
       "path": "docs/rfcs/2026-08-27-t0-production-profile-v1.md",

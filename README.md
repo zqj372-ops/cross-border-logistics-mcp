@@ -2,7 +2,7 @@
 
 > A thin, fail-closed control plane for logistics tools used by ChatGPT, Codex, enterprise assistants, and internal workbenches.
 
-这是一个独立运行的 MCP 服务端平台：它负责 transport、身份与租户上下文、RBAC、Schema、审计、幂等、会话、状态包络和窄 API 适配；报价、关务、文档等业务系统继续拥有自己的业务权威。MCP 不复制报价、Zone、关税、客户记录或文档主表。
+这是一个独立运行的 MCP 服务端平台：它负责 transport、身份与租户上下文、RBAC、Schema、审计、幂等、状态包络和窄 API 适配；报价、关务、文档等业务系统继续拥有自己的业务权威。生产默认使用无协议会话的 stateless Streamable HTTP，只有显式兼容模式才保留 MCP session。MCP 不复制报价、Zone、关税、客户记录或文档主表。
 
 > [!IMPORTANT]
 > 本 README 描述的是当前 checkout 的可核对边界，不把代码存在、fixture 通过、fake HTTP 测试或计划文档写成生产上线证明。当前未获生产资格的能力必须保持 unavailable、manual_review、blocked 或 needs_input。
@@ -13,7 +13,7 @@
 - AI 负责理解意图、补齐输入、选择工具和解释结果；金额、税率、Zone、重量、容量、状态和版本由确定性代码或上游权威系统决定。
 - Module Runtime v0 在启动时挂载静态可信模块，通过 manifest、capability、lease 和 catalog 暴露工具；远程安装、模型驱动写入和运行时 hot-plug 仍不是当前生产能力。
 - Agent Standard Access v0 为不同 Agent 角色提供 allowlisted profile、Standard Pack、固定 MCP resources 和只读 system.agent_context.get。
-- `t0-v1` production composition 在注册前把目录结构性收敛为 cargo、container、agent-access 三个静态模块、三个工具和五个固定资源；非 T0 handler/adapter 不构造。
+- `t0-v1` production composition 在注册前把目录结构性收敛为 cargo、container、agent-access 三个静态模块、三个工具和五个固定资源；非 T0 handler/adapter 不构造。managed production 必须显式选择 `MCP_TRANSPORT_MODE=stateless|stateful`，推荐并默认设计为 `stateless`。
 - Admin control-plane v1 只管理当前已挂载模块的 inventory、preview、四眼审批、activation policy 和 runtime exact readback；它不加载任意代码，也不拥有报价、关务或客户数据。
 - Tenant Access v1 在独立 store 中管理租户接入元数据与机器凭证；完整 Key 只显示一次，只保存带盐 hash、前缀和末四位。生产客户端必须先通过统一凭证网关把长期 Key 换成短期 JWT，再调用现有 MCP JWT 入口。
 - ready=false、版本缺失、响应冲突、超时和写后读回失败不会被 AI 或 fixture 静默补成 success。
@@ -23,7 +23,7 @@
 ~~~mermaid
 flowchart LR
   C["ChatGPT / Codex / 企业助手 / 内部工作台"] --> G["企业 IdP / 统一凭证网关\nAPI Key -> 短期 JWT"]
-  G --> T["MCP transport\nJWT 身份 · tenant/RBAC · Schema\naudit · idempotency · session"]
+  G --> T["MCP transport\nJWT 身份 · tenant/RBAC · Schema\naudit · idempotency · stateless-first"]
   T --> H["Module Runtime v0\n静态可信模块 · capability · lease · catalog"]
   H --> L["本地确定性工具\ncargo · container"]
   H --> A["Agent Standard Access\nprofile · Standard Pack · MCP resources"]
@@ -32,7 +32,7 @@ flowchart LR
   T -. "pending contract" .-> P["PDF / 文档 API"]
 ~~~
 
-图中的“权威业务系统”仍拥有价格、关务规则、文档记录和业务状态；MCP 只保留必要的版本引用、snapshot ID、opaque handle、审计关联和写后读回证据。某个业务 API 故障只关闭依赖它的工具；身份、审计、session 或幂等等平台依赖缺失，才会阻断更大范围的生产入口。
+图中的“权威业务系统”仍拥有价格、关务规则、文档记录和业务状态；MCP 只保留必要的版本引用、snapshot ID、opaque handle、审计关联和写后读回证据。某个业务 API 故障只关闭依赖它的工具；身份、审计或幂等等平台依赖缺失，才会阻断更大范围的生产入口。只有显式 `stateful` 兼容模式才额外依赖 session registry、持久 binding 和 owner。
 
 ### 三条不可越过的边界
 
@@ -44,7 +44,7 @@ flowchart LR
 
 | 能力 | 当前状态 | 可调用边界 | 下一门禁 / 证据 |
 | --- | --- | --- | --- |
-| T0 MCP Runtime | **仓库实现与本地测试候选**：`t0-staging`/`t0-v1` 只构造 3 个静态模块、3 个工具和 5 个资源；模块 descriptor 同时绑定工具合同标识，Agent Pack/catalog 漂移和非 T0 adapter 注入失败闭合 | 只接受短期 RS256 JWT；JWKS 是唯一应用级出站 host；生产目录不含报价、关务、Freightcom 或写工具 | 真实 Edge/JWKS/持久库、staging exact smoke、镜像 digest 和真实演练仍待完成，当前仍是 NO-GO |
+| T0 MCP Runtime | **仓库实现与本地测试候选**：`t0-staging`/`t0-v1` 只构造 3 个静态模块、3 个工具和 5 个资源；生产 stateless 模式不生成/接受 `Mcp-Session-Id`，每次请求重新验证短 JWT；显式 stateful 兼容模式保留持久 binding；模块 descriptor 同时绑定工具合同标识，Agent Pack/catalog 漂移和非 T0 adapter 注入失败闭合 | 只接受短期 RS256 JWT；JWKS 是唯一应用级出站 host；生产目录不含报价、关务、Freightcom 或写工具 | 真实 Edge/JWKS/持久库、staging exact smoke、镜像 digest 和真实演练仍待完成，当前仍是 NO-GO |
 | Unified Access Gateway / Access Console | **provider-neutral 候选已写入**：closed Schema、长期 Key→短 JWT、精确 T0 scope、RS256/JWKS 当前/前一 key、本地 synthetic 互操作、审计失败闭合和窄 Console 已有本地测试；production assembly 会拒绝缺失或 synthetic provider | synthetic 仅限 local contract test；MCP 仍拒绝长期 Key；Console 只呈现租户、客户端、Key、三个工具权限和 operation readback | real IdP、KMS/HSM、托管 DB、共享限流、集中审计/吊销、生产管理 API 和真实 Gateway 部署均待适配验证 |
 | Admin control-plane | **已本地验证（fixture HTTP）**：register → preview → 不同 actor approval → publish → activation `active_verified` 与 exact readback；同一 application root 重启后恢复已读回状态；prior-boot 未完成 attempt 在 listen 前收敛为 `unknown/manual_review`，未决 release 仍使启动 fail-closed | 仅本地受控 fixture/loopback；control POST 的 fixture 流程可走 `/packages/register`、`/deployments/preview`、`/approvals`、`/deployments/publish`、`/deployments/reconcile`；生产所有管理 POST 固定 HTTP 403 | 生产身份、多实例、制品签名/attestation、Deployment Evidence 和生产资格仍未上线；未决 release 只能由 operator reconcile，不把本地 readback 当生产证明 |
 | Tenant Access / API Key | **已本地验证（fixture HTTP + loopback MCP 诊断链路）**：租户创建/暂停、T0 工具精确授权、一次性签发、功能调整轮换、幂等重放 withheld、吊销、到期和脱敏 state | 仅 loopback fixture 可用 `lmcpk_...` 直连诊断；凭证固定 `service` 角色，`tools/list` 只暴露 `cargo.calculate`、`container.plan_summary`、`system.agent_context.get`；生产 MCP 实例只接受短期 JWT | 生产统一凭证网关、企业 IdP、TLS 网关、KMS/Secret Manager、限流、审计、集中吊销、备份恢复、负载、告警和回滚演练仍未完成；正式报价/关务/Freightcom/业务写操作不开放 |
@@ -65,7 +65,7 @@ flowchart LR
 sequenceDiagram
   participant A as Agent client
   participant M as MCP server
-  participant V as Schema/RBAC/session
+  participant V as Schema/RBAC/context
   participant D as Deterministic tool or adapter
   participant S as Source system
   A->>M: initialize + tools/list/resources
@@ -127,7 +127,7 @@ flowchart TB
 
 三个模板都指向 runtime-caller profile、固定资源 URI 和 allowlisted tools。客户端不能提交 tenant/actor 身份、上游 token、任意 URL、密码或 secret；写工具仍需审批。
 
-当前 Agent 注册表包含 13 个标准、5 个 profile、4 个登记模块和 5 个固定 MCP resources；`runtime-caller` 只投影 cargo、container、agent-access 三个 T0 模块。机器入口是 [docs/agent/index.json](docs/agent/index.json)；构建产物为 `dist/standards/agent-standard-pack.json`，运行时只读取该 pack；上下文工具是 `system.agent_context.get`。
+当前 Agent 注册表包含 14 个标准、5 个 profile、4 个登记模块和 5 个固定 MCP resources；`runtime-caller` 只投影 cargo、container、agent-access 三个 T0 模块。机器入口是 [docs/agent/index.json](docs/agent/index.json)；构建产物为 `dist/standards/agent-standard-pack.json`，运行时只读取该 pack；上下文工具是 `system.agent_context.get`。
 
 ## 工具与契约
 
@@ -217,7 +217,7 @@ git diff --check
 
 ~~~text
 src/logistics_mcp/
-├── platform/        tenant/actor、RBAC、envelope、audit、幂等、session、契约校验
+├── platform/        tenant/actor、RBAC、envelope、audit、幂等、transport mode、契约校验
 ├── server/          HTTP/MCP transport、工具注册、组合注入、production token verifier
 ├── module-runtime/  静态可信 Module Host、capability、lease、catalog
 ├── modules/         cargo、container、Agent Access 的 module contribution
@@ -257,6 +257,7 @@ tests/                platform、module-runtime、agent-context、domains、adap
 
 - [产品实现说明](docs/product/2026-08-11-cross-border-logistics-mcp-product-implementation.md)
 - [后台控制台说明](docs/product/admin-console.md)
+- [独立 MCP Server Architecture v1](docs/rfcs/2026-09-02-mcp-server-architecture-v1.md)
 - [Module Runtime + Agent Standard Access RFC](docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md)
 - [T0 Production Profile RFC](docs/rfcs/2026-08-27-t0-production-profile-v1.md)
 - [Credential Exchange RFC](docs/rfcs/2026-08-27-credential-exchange-v1.md)

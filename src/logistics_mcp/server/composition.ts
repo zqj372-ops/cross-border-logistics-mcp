@@ -23,6 +23,7 @@ import type {
   SessionRuntimeRegistry,
   SessionRuntimeRegistryOptions,
 } from "../platform/session-runtime";
+import type { McpTransportMode } from "../platform/transport-mode";
 import {
   createUnavailableMcpHttpHandler,
   createMcpHttpHandler,
@@ -189,6 +190,7 @@ export interface ProductionCompositionOptions
   extends Omit<GatewayCompositionOptions, "auditRepository" | "idempotencyRepository"> {
   readonly dataMode: "production";
   readonly profile?: string;
+  readonly transportMode?: McpTransportMode;
   readonly auditRepository?: DurableAuditRepository;
   readonly idempotencyRepository?: DurableIdempotencyRepository;
   readonly tokenVerifier?: ProductionTokenVerifier;
@@ -807,9 +809,11 @@ export function createProductionComposition(
   const profile = parseT0ProductionProfile(
     Object.hasOwn(options, "profile") ? options.profile : "t0-v1",
   );
+  const transportMode = options.transportMode ?? "stateless";
   const runtimeActivation = runtimeActivationFacades(options);
 
   const productionPlatformOptions = {
+    transportMode,
     ...(options.auditRepository === undefined
       ? {}
       : { auditRepository: options.auditRepository }),
@@ -846,9 +850,16 @@ export function createProductionComposition(
   );
   const allowedOrigins = options.allowedOrigins ?? [];
   const allowedHosts = options.allowedHosts ?? [];
-  const validSessionOwner =
+  const validSessionOwner = transportMode === "stateless" || (
     options.sessionOwnerId !== undefined &&
-    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(options.sessionOwnerId);
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(options.sessionOwnerId)
+  );
+  const statelessSessionConfiguration = transportMode === "stateless" && (
+    options.sessionBindingStore !== undefined ||
+    options.sessionRegistry !== undefined ||
+    options.sessionRegistryOptions !== undefined ||
+    options.sessionOwnerId !== undefined
+  );
   const structuralReasons = [
     ...platform.reasonCodes,
     ...(allowedOrigins.length === 0 ? ["production_allowed_origins_missing"] : []),
@@ -858,6 +869,9 @@ export function createProductionComposition(
       : []),
     ...(!validSessionOwner
       ? ["platform_session_owner_missing"]
+      : []),
+    ...(statelessSessionConfiguration
+      ? ["production_stateless_session_configuration_invalid"]
       : []),
     ...(verifierStatus.valid ? [] : [verifierStatus.reason]),
     ...(options.adapterSource === undefined
@@ -882,6 +896,7 @@ export function createProductionComposition(
     structuralReasons.length > 0 || platform.dependencies === undefined
       ? createUnavailableMcpHttpHandler(structuralReasons)
       : createMcpHttpHandler({
+          transportMode,
           allowedOrigins,
           allowedHosts,
           authenticate: async (token) => {
@@ -903,9 +918,15 @@ export function createProductionComposition(
           agentAccessRuntime: tools.agentAccessRuntime,
           auditRepository: platform.dependencies.auditRepository,
           idempotencyRepository: platform.dependencies.idempotencyRepository,
-          sessionRegistry: platform.dependencies.sessionRegistry,
-          sessionBindingStore: platform.dependencies.sessionBindingStore,
-          sessionOwnerId: options.sessionOwnerId!,
+          ...(platform.dependencies.sessionRegistry === undefined
+            ? {}
+            : { sessionRegistry: platform.dependencies.sessionRegistry }),
+          ...(platform.dependencies.sessionBindingStore === undefined
+            ? {}
+            : { sessionBindingStore: platform.dependencies.sessionBindingStore }),
+          ...(transportMode === "stateless"
+            ? {}
+            : { sessionOwnerId: options.sessionOwnerId! }),
           maxBodyBytes: options.maxBodyBytes ?? 32 * 1024,
           requestTimeoutMs: options.requestTimeoutMs ?? 10_000,
           requireHttps: true,

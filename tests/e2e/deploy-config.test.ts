@@ -169,6 +169,7 @@ describe("safe deployment artifacts", () => {
     for (const required of [
       "MCP_DATA_MODE",
       "MCP_RUNTIME_PROFILE",
+      "MCP_TRANSPORT_MODE",
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
       "MCP_JWKS_URL",
@@ -193,6 +194,7 @@ describe("safe deployment artifacts", () => {
     }
     expect(env).toContain("https://issuer.example.invalid/");
     expect(env).toContain("MCP_RUNTIME_PROFILE=t0-v1");
+    expect(env).toContain("MCP_TRANSPORT_MODE=stateless");
     expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
     expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
     expect(compose).not.toContain("MCP_RISK_CUSTOMS_");

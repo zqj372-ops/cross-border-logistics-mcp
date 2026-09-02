@@ -452,6 +452,38 @@ describe("gateway composition modes", () => {
   });
 
   it.each([
+    ["missing transport mode", undefined, /MCP_TRANSPORT_MODE is required/],
+    ["unknown transport mode", "auto", /must be stateless or stateful/],
+  ] as const)("does not call listen for %s", async (_label, transportMode, expected) => {
+    const applicationRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "logistics-mcp-production-transport-gate-")),
+    );
+    const names = ["MCP_DATA_MODE", "MCP_TRANSPORT_MODE"] as const;
+    const previous = new Map(names.map((name) => [name, process.env[name]]));
+    let listenCalls = 0;
+    try {
+      process.env.MCP_DATA_MODE = "production";
+      if (transportMode === undefined) delete process.env.MCP_TRANSPORT_MODE;
+      else process.env.MCP_TRANSPORT_MODE = transportMode;
+
+      await expect(startRuntime({
+        applicationRoot,
+        listen: () => {
+          listenCalls += 1;
+          return Promise.resolve();
+        },
+      })).rejects.toThrow(expected);
+      expect(listenCalls).toBe(0);
+    } finally {
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(applicationRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
     ["state directory missing", (applicationRoot: string): StartupMutationResult | undefined => {
       rmSync(fixedControlPaths(applicationRoot).stateDir, { force: true, recursive: true });
       return undefined;
@@ -936,12 +968,12 @@ describe("gateway composition modes", () => {
       expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
         "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
         "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
-        "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
+        "sha256:07319b8a00fe09590645f616d405167771d1f29255f92a9b79911877c4bb38e7",
       ]);
       expect(composition.moduleHost.snapshot().modules.map(({ artifact_digest }) => artifact_digest)).toEqual([
         "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
         "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
-        "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
+        "sha256:6c87b77a45b719f0ce7c7446076337c6b37684fedc32bd7d731f3fc64d78032a",
       ]);
       expect(Object.keys(composition.handlers).sort()).toEqual([
         "cargo.calculate",

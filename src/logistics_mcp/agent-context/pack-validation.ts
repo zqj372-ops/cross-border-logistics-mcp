@@ -108,6 +108,7 @@ const runtimeCallerModuleIds = ["agent-access", "cargo", "container"] as const;
 const runtimeCallerEntitlements = Object.freeze({
   standardIds: Object.freeze([
     "agent.bootstrap",
+    "mcp-server-architecture-v1",
     "platform.contracts",
     "agent-access.v0",
     "release-agent-adapters",
@@ -117,6 +118,11 @@ const runtimeCallerEntitlements = Object.freeze({
   ruleIds: Object.freeze([
     "AGENT-BOOT-001",
     "SEC-BOUNDARY-001",
+    "MCP-SERVER-BOUNDARY-001",
+    "MCP-TRANSPORT-001",
+    "MCP-CREDENTIAL-001",
+    "MCP-MODULE-001",
+    "MCP-ADMIN-BOUNDARY-001",
     "CONTRACT-SCHEMA-001",
     "STATUS-ENVELOPE-001",
     "AGENT-PROFILE-001",

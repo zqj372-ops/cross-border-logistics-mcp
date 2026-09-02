@@ -381,8 +381,8 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    artifact_digest: "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
-    manifest_digest: "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
+    artifact_digest: "sha256:6c87b77a45b719f0ce7c7446076337c6b37684fedc32bd7d731f3fc64d78032a",
+    manifest_digest: "sha256:07319b8a00fe09590645f616d405167771d1f29255f92a9b79911877c4bb38e7",
   }),
 ]);
 

@@ -34,7 +34,8 @@ previous Standard Pack digest
 3. 验证 Gateway 数据库 migration 向后兼容；不做临时逆迁移、不清空 tenant/key/audit 历史。
 4. 部署上一不可变镜像和配置，由 `/readyz` 决定是否接流量；`/healthz` 不能单独放量。
 5. 使用官方 MCP SDK 完成 exact **3 tools / 5 resources** 读回，并核对 Pack/profile/catalog digest。
-6. 使用真实短 JWT 验证 cargo、container、Agent context、tenant 隔离、session 重连和审计。
+6. 使用真实短 JWT 验证 cargo、container、Agent context、tenant 隔离、transport mode 和审计；
+   stateless 不得返回 session header，stateful 才执行 session 重连和 durable owner 读回。
 7. 验证长期 API Key 仍只能兑换、Key/tenant/client 吊销继续阻断新 token、Edge denylist 生效。
 8. 在批准的最小 canary 中逐步恢复流量并观察 readiness、认证、五态、审计、资源和重启指标。
 

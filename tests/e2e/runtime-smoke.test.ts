@@ -287,6 +287,7 @@ describe("built runtime smoke", () => {
         PATH: process.env.PATH ?? "",
         MCP_PORT: String(port),
         MCP_DATA_MODE: "production",
+        MCP_TRANSPORT_MODE: "stateless",
         MCP_JWT_ISSUER: "https://issuer.example.invalid/",
         MCP_JWT_AUDIENCE: "logistics-mcp-demo",
         MCP_STATE_DB_PATH: resolve(layout, "platform.sqlite"),
