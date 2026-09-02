@@ -99,7 +99,7 @@ export function createFreightcomTestAdapterFromEnvironment(
     ...(dependencies.fetchImpl === undefined ? {} : { fetchImpl: dependencies.fetchImpl }),
     ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
     ...(dependencies.sleep === undefined ? {} : { sleep: dependencies.sleep }),
-    maxPollAttempts: 12,
+    maxPollAttempts: 20,
     pollDelayMs: dependencies.sleep === undefined ? 750 : 0,
     timeoutMs: 20_000,
     maxResponseBytes: 2 * 1024 * 1024,

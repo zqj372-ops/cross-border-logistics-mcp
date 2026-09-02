@@ -133,4 +133,33 @@ describe("Freightcom test worker runtime configuration", () => {
     expect(readSecretFile).toHaveBeenCalledWith("/run/secrets/freightcom-test-token");
     expect(JSON.stringify(result)).not.toContain("freightcom-test-token");
   });
+
+  it("keeps polling past the former 12-attempt staging window", async () => {
+    let pollCount = 0;
+    const fetchImpl = vi.fn<FetchImplementation>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: "rate-slow-1" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockImplementation(() => {
+        pollCount += 1;
+        return Promise.resolve(new Response(JSON.stringify({
+          status: { done: pollCount === 13, total: 0, complete: 0 },
+          rates: [],
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      });
+    const adapter = createFreightcomTestAdapterFromEnvironment(
+      runtimeEnv(),
+      {
+        readSecretFile: () => "freightcom-test-token",
+        fetchImpl,
+        sleep: () => Promise.resolve(),
+      },
+    );
+
+    const result = await adapter!.requestRate(rateRequest(), undefined, context);
+
+    expect(result.status).toBe("manual_review");
+    expect(pollCount).toBe(13);
+  });
 });
