@@ -1,0 +1,20 @@
+[Unit]
+Description=FreightClaw read-preview staging readiness check
+After=network-online.target docker.service
+Wants=network-online.target
+OnFailure=freightclaw-read-preview-alert@%n.service
+
+[Service]
+Type=oneshot
+Environment=READ_PREVIEW_HEALTH_URL=https://www.freightclaw.net/staging/runtime/readyz
+ExecStart=/usr/local/libexec/freightclaw/read-preview-healthcheck.sh
+User=nobody
+Group=nobody
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6

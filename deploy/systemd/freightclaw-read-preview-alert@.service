@@ -1,0 +1,12 @@
+[Unit]
+Description=Record a FreightClaw read-preview staging alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-cat --priority=err --identifier=freightclaw-read-preview-alert /usr/bin/printf 'alert fired for %i\n'
+User=nobody
+Group=nobody
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

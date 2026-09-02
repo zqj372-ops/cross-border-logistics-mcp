@@ -117,6 +117,18 @@ await build({
   legalComments: "none",
 });
 
+await build({
+  entryPoints: ["deploy/scripts/issue-read-preview-staging-jwt.mjs"],
+  outfile: "dist/deploy/issue-read-preview-staging-jwt.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
+  banner: nodeEsmBanner,
+  sourcemap: false,
+  legalComments: "none",
+});
+
 execFileSync(process.execPath, [
   "--import",
   "tsx/esm",

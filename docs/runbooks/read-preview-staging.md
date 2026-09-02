@@ -30,17 +30,26 @@ system.agent_context.get
 
 在扩展长期 Key 合同、吊销、审计和迁移 RFC 被接受前，不得以长期 Key 直接访问本档位。
 
+同机 OCI staging 可运行镜像内的 `dist/deploy/issue-read-preview-staging-jwt.mjs`，由 OCI
+instance principal 调用现有非导出 RSA KMS key，生成最长 300 秒的验收 token。该脚本要求显式
+staging 确认短语并只允许 `t0-v1` 或 `read-preview-staging` 两个精确 scope 集；它不是长期
+Key 兑换接口，也不得作为客户端常驻签发服务。
+
 ## 3. 配置准备
 
-以 `deploy/compose.yml` 为基础，只在 staging 叠加：
+共享进程内的配置展开可继续使用 override 示例。真实同机 staging 必须使用独立服务、容器名和
+状态卷，避免覆盖正在运行的 T0：
 
 ```bash
 docker compose \
   --env-file <staging-env-file> \
-  -f deploy/compose.yml \
-  -f deploy/compose.read-preview-staging.override.yml.example \
+  -f deploy/compose.read-preview-staging.yml \
   config
 ```
+
+`deploy/compose.read-preview-staging.override.yml.example` 只用于隔离环境中的配置审阅，不得在
+同一 Compose project 中覆盖正式 `logistics-mcp` 服务。独立 staging 固定使用
+`logistics-mcp-read-preview-staging` 和 `logistics-mcp-read-preview-staging-state`。
 
 该命令只做配置展开，不代表服务已连接。必须提供：
 
@@ -64,6 +73,9 @@ Quote origin map 的格式固定为：
 ```
 
 真实值必须保存在部署系统之外，仓库示例不得包含客户标识或凭证。
+
+真实 endpoint 不等于已取得资格。若 `/quotes/zone-preview` 或 RiskCustoms M2M route 尚未部署，
+对应 adapter 必须保持 `enabled=false`；不得用占位 secret 或其他旧接口伪造一次成功出站。
 
 ## 4. 隔离进程验收
 
@@ -109,3 +121,7 @@ hash。
 回滚时撤下本 override 和扩展 JWT scope，恢复上一已验证的 `t0-v1` 镜像与配置。不得静默把
 `read-preview-staging` 改名为生产，也不得保留扩展凭证挂载。任一真实证据缺失时结论固定为
 **staging-only / NO-GO**。
+
+同机告警探针由 `deploy/systemd/freightclaw-read-preview-healthcheck.*` 提供。演练至少保存一次
+readiness 失败和一次恢复后的 journal 读回；它只证明本机告警状态流转。没有配置并验证外部
+通知目的地时，不得写成告警已送达值班人员。

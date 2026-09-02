@@ -102,6 +102,23 @@ describe("safe deployment artifacts", () => {
     expect(load).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
   });
 
+  it("packages an OCI-KMS-only ephemeral staging JWT issuer without widening the gateway contract", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const dockerfile = read("deploy/Dockerfile");
+    const issuer = read("deploy/scripts/issue-read-preview-staging-jwt.mjs");
+
+    expect(build).toContain("deploy/scripts/issue-read-preview-staging-jwt.mjs");
+    expect(build).toContain("dist/deploy/issue-read-preview-staging-jwt.mjs");
+    expect(dockerfile).toContain("COPY deploy/scripts/issue-read-preview-staging-jwt.mjs");
+    expect(issuer).toContain('READ_PREVIEW_JWT_ENVIRONMENT") !== "staging"');
+    expect(issuer).toContain("issue-ephemeral-read-preview-jwt");
+    expect(issuer).toContain('profile !== "t0-v1" && profile !== "read-preview-staging"');
+    expect(issuer).toContain("ttlSeconds < 60 || ttlSeconds > 300");
+    expect(issuer).toContain("ociCryptoConfigurationFromEnvironment");
+    expect(issuer).toContain("configuration.backend !== \"oci-vault\"");
+    expect(issuer).not.toMatch(/(?:BEGIN .* PRIVATE KEY|lmcpk_|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+  });
+
   it("copies every registered Agent source into the image build stage", () => {
     const dockerfile = read("deploy/Dockerfile");
     const registry = JSON.parse(read("docs/agent/index.json")) as {
@@ -259,6 +276,8 @@ describe("safe deployment artifacts", () => {
 
   it("keeps the read-preview deployment separate, secret-file based and staging-only", () => {
     const override = read("deploy/compose.read-preview-staging.override.yml.example");
+    const standalone = read("deploy/compose.read-preview-staging.yml");
+    const example = read("deploy/read-preview-staging.env.example");
     const runbook = read("docs/runbooks/read-preview-staging.md");
 
     expect(override).toContain('MCP_RUNTIME_PROFILE: "read-preview-staging"');
@@ -267,10 +286,42 @@ describe("safe deployment artifacts", () => {
     expect(override).toContain("MCP_FREIGHTCOM_TEST_AUTH_SECRET_FILE");
     expect(override).toContain("MCP_FREIGHTCOM_TEST_ALLOWED_TENANTS");
     expect(override).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(standalone).toContain("logistics-mcp-read-preview-staging");
+    expect(standalone).toContain("logistics-mcp-read-preview-staging-state");
+    expect(standalone).toContain('MCP_RUNTIME_PROFILE: "read-preview-staging"');
+    expect(standalone).toContain('MCP_DATA_MODE: "production"');
+    expect(standalone).toContain('MCP_TRANSPORT_MODE: "stateless"');
+    expect(standalone).toContain("READ_PREVIEW_SECRET_DIR");
+    expect(standalone).toContain("quote-preview-origin-map.json");
+    expect(standalone).toContain("read_only: true");
+    expect(standalone).toContain("no-new-privileges:true");
+    expect(standalone).not.toContain("access-gateway");
+    expect(example).toContain("MCP_FREIGHTCOM_TEST_ENABLED=false");
+    expect(example).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
     expect(runbook).toContain("7 tools / 5 resources");
     expect(runbook).toContain("staging-only / NO-GO");
     expect(runbook).toContain("customs.ca.estimate");
     expect(runbook).toMatch(/固定[\s\S]*unavailable[\s\S]*零 HTTP/u);
+    expect(runbook).toContain("不得用占位 secret");
+  });
+
+  it("ships a staging-only readiness alert probe and isolated edge rate limit", () => {
+    const nginx = read("deploy/nginx/www.freightclaw.net.conf");
+    const healthcheck = read("deploy/scripts/read-preview-healthcheck.sh");
+    const service = read("deploy/systemd/freightclaw-read-preview-healthcheck.service");
+    const timer = read("deploy/systemd/freightclaw-read-preview-healthcheck.timer");
+    const alert = read("deploy/systemd/freightclaw-read-preview-alert@.service");
+
+    expect(nginx).toContain("zone=freightclaw_read_preview:10m rate=2r/s");
+    expect(nginx).toContain("location = /staging/mcp");
+    expect(nginx).toContain("proxy_pass http://logistics-mcp-read-preview-staging:8080/mcp");
+    expect(nginx).toContain("location = /staging/runtime/readyz");
+    expect(healthcheck).toContain("freightclaw-read-preview-alert");
+    expect(healthcheck).toContain('"ready"[[:space:]]*:[[:space:]]*true');
+    expect(service).toContain("OnFailure=freightclaw-read-preview-alert@%n.service");
+    expect(service).toContain("ProtectSystem=strict");
+    expect(timer).toContain("OnUnitActiveSec=1min");
+    expect(alert).toContain("systemd-cat");
   });
 
   it("documents the exact Cloudflare Access assertion-to-admin mapping boundary", () => {

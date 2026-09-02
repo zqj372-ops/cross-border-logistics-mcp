@@ -22,6 +22,7 @@ COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./doc
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
 COPY deploy/scripts/migrate-access-gateway-postgres.mjs ./deploy/scripts/migrate-access-gateway-postgres.mjs
+COPY deploy/scripts/issue-read-preview-staging-jwt.mjs ./deploy/scripts/issue-read-preview-staging-jwt.mjs
 COPY tsconfig.json .
 COPY vitest.config.ts .
 RUN npm run build
