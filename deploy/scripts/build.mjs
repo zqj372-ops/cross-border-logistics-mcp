@@ -70,6 +70,18 @@ await build({
 });
 
 await build({
+  entryPoints: ["src/logistics_mcp/t1-worker/start.ts"],
+  outfile: "dist/src/logistics_mcp/t1-worker/start.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
+  banner: nodeEsmBanner,
+  sourcemap: false,
+  legalComments: "none",
+});
+
+await build({
   entryPoints: ["services/access-gateway/start.ts"],
   outfile: "dist/services/access-gateway/start.mjs",
   bundle: true,

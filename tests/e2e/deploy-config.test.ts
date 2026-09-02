@@ -144,11 +144,13 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("createProductionComposition");
     expect(start).toContain("createProductionTokenVerifier");
     expect(start).toContain('splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "")');
-    expect(start).toContain("allowedHosts: allowedOutboundHosts");
-    expect(start).not.toContain("allowedHosts: [jwksHost]");
+    expect(start).toContain("allowedHosts: [jwksHost]");
     expect(start).toContain("SqliteProductionStore");
     expect(start).not.toContain("createRiskCustomsApiAdapterFromEnvironment");
     expect(start).not.toContain("MCP_RISK_CUSTOMS_");
+    expect(start).toContain("createT1ReadWorkerClient");
+    expect(start).toContain("buildT1WorkerEnvironment");
+    expect(start).toContain('new URL("../t1-worker/start.mjs", import.meta.url)');
     expect(start).toContain("return createProductionComposition({");
     expect(start).toContain("profile,");
     expect(start).toMatch(
@@ -157,6 +159,23 @@ describe("safe deployment artifacts", () => {
     expect(deployReadme).toContain("JWKS");
     expect(deployReadme).toContain("SQLite");
     expect(deployReadme).toContain("3 个工具");
+  });
+
+  it("packages the isolated T1 read-preview worker without loading business adapters in the MCP entry", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const start = read("src/logistics_mcp/server/start.ts");
+    const worker = read("src/logistics_mcp/t1-worker/start.ts");
+
+    expect(build).toContain("src/logistics_mcp/t1-worker/start.ts");
+    expect(build).toContain("dist/src/logistics_mcp/t1-worker/start.mjs");
+    expect(start).not.toContain("createQuotePreviewAdapterFromEnvironment");
+    expect(start).not.toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(start).not.toContain('from "../adapters/quote/freightcom-runtime"');
+    expect(worker).toContain("createQuotePreviewAdapterFromEnvironment");
+    expect(worker).toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(worker).toContain("createFreightcomTestAdapterFromEnvironment");
+    expect(worker).toContain("MAX_REQUEST_BYTES");
+    expect(worker).toContain("MAX_RESPONSE_BYTES");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
@@ -236,6 +255,22 @@ describe("safe deployment artifacts", () => {
       expect(compose).toContain(setting);
       expect(env).toContain(setting);
     }
+  });
+
+  it("keeps the read-preview deployment separate, secret-file based and staging-only", () => {
+    const override = read("deploy/compose.read-preview-staging.override.yml.example");
+    const runbook = read("docs/runbooks/read-preview-staging.md");
+
+    expect(override).toContain('MCP_RUNTIME_PROFILE: "read-preview-staging"');
+    expect(override).toContain("MCP_QUOTE_PREVIEW_API_KEY_SECRET_FILE");
+    expect(override).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
+    expect(override).toContain("MCP_FREIGHTCOM_TEST_AUTH_SECRET_FILE");
+    expect(override).toContain("MCP_FREIGHTCOM_TEST_ALLOWED_TENANTS");
+    expect(override).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(runbook).toContain("7 tools / 5 resources");
+    expect(runbook).toContain("staging-only / NO-GO");
+    expect(runbook).toContain("customs.ca.estimate");
+    expect(runbook).toMatch(/固定[\s\S]*unavailable[\s\S]*零 HTTP/u);
   });
 
   it("documents the exact Cloudflare Access assertion-to-admin mapping boundary", () => {

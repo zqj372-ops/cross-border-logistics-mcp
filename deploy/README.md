@@ -24,6 +24,13 @@ system.agent_context.get
 release 轨道。`deploy/compose.riskcustoms.override.yml.example` 是历史/后续适配器参考，不能
 叠加到 `t0-v1` 候选并宣称仍符合本 profile。
 
+需要评估报价、关务查询和 Freightcom 测试询价时，使用独立的
+`read-preview-staging` 档位和
+`deploy/compose.read-preview-staging.override.yml.example`。它精确注册 6 个静态模块、
+7 个只读工具和同一组 5 个 Agent resources；三个外部能力通过有界协议的独立子进程执行。
+该档位固定为 staging-only / NO-GO，不得替代本页的 T0 生产候选。详细资格与读回步骤见
+[Read Preview Staging Runbook](../docs/runbooks/read-preview-staging.md)。
+
 ## 身份、JWT 与出站
 
 生产 MCP 只接受 `Authorization: Bearer <short-jwt>`。长期 `lmcpk_...` API Key 必须先在
@@ -33,6 +40,11 @@ Unified Access Gateway 兑换短期 JWT，不能直接进入 MCP 实例。生产
 - `MCP_JWT_ISSUER`、`MCP_JWT_AUDIENCE` 和最长 15 分钟策略校验 claims；
 - JWT 中服务端签发的 tenant、actor、client、service role、精确 `tool:` scope 和 session；
 - `MCP_ALLOWED_OUTBOUND_HOSTS` 只允许 JWKS 主机。T0 Runtime 没有业务 API 出站用途。
+
+`read-preview-staging` 允许在全局出站白名单中额外列出已审核的 Quote、RiskCustoms 和固定
+Freightcom test 主机，但 JWT verifier 自身仍被锁定到从 `MCP_JWKS_URL` 解析出的唯一主机。
+扩展工具不在 Unified Access Gateway v1 的长期 Key entitlement 中；当前只能由受控 IdP
+直接签发短期 JWT，不能用长期 Key 绕过这一限制。
 
 JWKS 必须使用 HTTPS，并由部署环境配置实际企业域名。示例中的 `.invalid` 地址只用于
 离线 config 检查，不能成为 staging 或 production readback。
