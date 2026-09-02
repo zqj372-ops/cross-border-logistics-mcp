@@ -58,13 +58,16 @@ if (configuration.backend !== "oci-vault") {
   throw new Error("Ephemeral staging JWTs require the OCI Vault crypto backend.");
 }
 const pepperVersion = required("ACCESS_GATEWAY_PEPPER_VERSION");
-const providers = await createOciSdkGatewayCryptoProviders({
-  configuration,
-  activePepperVersion: pepperVersion,
-  requiredPepperVersions: [pepperVersion],
-});
-
+const originalConsoleLog = console.log;
+console.log = (...values) => console.error(...values);
+let providers;
+let token;
 try {
+  providers = await createOciSdkGatewayCryptoProviders({
+    configuration,
+    activePepperVersion: pepperVersion,
+    requiredPepperVersions: [pepperVersion],
+  });
   const now = Math.floor(Date.now() / 1000);
   const tools = profile === "t0-v1" ? T0_TOOLS : READ_PREVIEW_TOOLS;
   const signed = await providers.signer.sign({
@@ -82,7 +85,14 @@ try {
     client_id: identifier("READ_PREVIEW_JWT_CLIENT_ID"),
     session_id: `staging:${randomUUID()}`,
   });
-  process.stdout.write(signed.token);
+  token = signed.token;
 } finally {
-  await providers.close();
+  try {
+    if (providers !== undefined) await providers.close();
+  } finally {
+    console.log = originalConsoleLog;
+  }
 }
+
+if (token === undefined) throw new Error("Ephemeral staging JWT was not issued.");
+process.stdout.write(`${token}\n`);

@@ -116,6 +116,10 @@ describe("safe deployment artifacts", () => {
     expect(issuer).toContain("ttlSeconds < 60 || ttlSeconds > 300");
     expect(issuer).toContain("ociCryptoConfigurationFromEnvironment");
     expect(issuer).toContain("configuration.backend !== \"oci-vault\"");
+    expect(issuer).toContain("const originalConsoleLog = console.log;");
+    expect(issuer).toContain("console.log = (...values) => console.error(...values);");
+    expect(issuer.indexOf("await providers.close()"))
+      .toBeLessThan(issuer.indexOf("process.stdout.write"));
     expect(issuer).not.toMatch(/(?:BEGIN .* PRIVATE KEY|lmcpk_|Bearer\s+[A-Za-z0-9_-]{20,})/i);
   });
 
