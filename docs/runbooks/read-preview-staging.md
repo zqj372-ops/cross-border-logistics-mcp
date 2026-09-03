@@ -2,6 +2,9 @@
 
 > 状态：仅用于候选 staging。本文不授予生产资格，也不允许业务写入、发送报价或订舱。
 
+四节点部署中的 Oracle/广州职责、带宽限制、Tailscale ACL 与跨架构发布规则以
+[四节点 MCP 拓扑、带宽与 ACL Runbook](four-node-mcp-topology.md) 为准。
+
 ## 1. 固定目录
 
 `MCP_RUNTIME_PROFILE=read-preview-staging` 的 `tools/list` 必须精确等于：

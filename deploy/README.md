@@ -30,6 +30,8 @@ release 轨道。`deploy/compose.riskcustoms.override.yml.example` 是历史/后
 7 个只读工具和同一组 5 个 Agent resources；三个外部能力通过有界协议的独立子进程执行。
 该档位固定为 staging-only / NO-GO，不得替代本页的 T0 生产候选。详细资格与读回步骤见
 [Read Preview Staging Runbook](../docs/runbooks/read-preview-staging.md)。
+四台云服务器的角色、实测链路、最小 ACL、跨架构镜像和回滚边界见
+[四节点 MCP 拓扑、带宽与 ACL Runbook](../docs/runbooks/four-node-mcp-topology.md)。
 
 ## 身份、JWT 与出站
 

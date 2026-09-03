@@ -322,7 +322,8 @@ describe("safe deployment artifacts", () => {
     expect(nginx).toContain("zone=freightclaw_read_preview:10m rate=2r/s");
     expect(nginx).toContain("location = /staging/mcp");
     expect(nginx).toContain("limit_req_status 429;");
-    expect(nginx).toContain("proxy_pass http://logistics-mcp-read-preview-staging:8080/mcp");
+    expect(nginx).toContain("proxy_pass http://100.95.166.107:18080/mcp");
+    expect(nginx).toContain("proxy_read_timeout 80s;");
     expect(nginx).toContain("location = /staging/runtime/readyz");
     expect(healthcheck).toContain("freightclaw-read-preview-alert");
     expect(healthcheck).toContain('"status"[[:space:]]*:[[:space:]]*"ready"');
@@ -331,6 +332,56 @@ describe("safe deployment artifacts", () => {
     expect(service).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
     expect(timer).toContain("OnUnitActiveSec=1min");
     expect(alert).toContain("systemd-cat");
+  });
+
+  it("ships a deny-by-default four-node tailnet policy", () => {
+    const guangzhouOverride = read("deploy/compose.read-preview-guangzhou.override.yml");
+    const policy = JSON.parse(read("deploy/tailscale/four-node-policy.hujson")) as {
+      grants: readonly { src: readonly string[]; dst: readonly string[]; ip: readonly string[] }[];
+      tests: readonly { src: string; accept?: readonly string[]; deny?: readonly string[] }[];
+    };
+
+    expect(guangzhouOverride).toContain("platform: linux/amd64");
+    expect(guangzhouOverride).toContain('host_ip: 100.95.166.107');
+    expect(guangzhouOverride).toContain("READ_PREVIEW_SOURCE_SHA is required");
+    expect(policy.grants).not.toContainEqual({ src: ["*"], dst: ["*"], ip: ["*"] });
+    expect(policy.grants).toContainEqual({
+      src: ["tag:gateway"],
+      dst: ["tag:worker"],
+      ip: ["tcp:18080"],
+    });
+    expect(policy.grants.some(({ ip }) => ip.includes("tcp:5432"))).toBe(false);
+    expect(policy.tests.some(({ src, deny }) =>
+      src === "tag:china-edge" && deny?.includes("freightclaw-guangzhou-worker:18080") === true,
+    )).toBe(true);
+  });
+
+  it("documents the bandwidth-aware four-node MCP topology and rollback boundary", () => {
+    const topology = read("docs/runbooks/four-node-mcp-topology.md");
+    const deployReadme = read("deploy/README.md");
+    const stagingRunbook = read("docs/runbooks/read-preview-staging.md");
+    const stagingEnvironment = read("deploy/read-preview-staging.env.example");
+
+    expect(deployReadme).toContain("four-node-mcp-topology.md");
+    expect(stagingRunbook).toContain("four-node-mcp-topology.md");
+    expect(stagingEnvironment).toContain("READ_PREVIEW_SOURCE_SHA=");
+    for (const required of [
+      "Oracle",
+      "广州",
+      "深圳",
+      "Tokyo",
+      "ARM64",
+      "AMD64",
+      "27.7 Mbps",
+      "6.03 Mbps",
+      "不是 SLA",
+      "不跨节点复制原始 PDF",
+      "staging-only / NO-GO",
+      "tcp:5432",
+      "回滚",
+    ]) {
+      expect(topology).toContain(required);
+    }
   });
 
   it("documents the exact Cloudflare Access assertion-to-admin mapping boundary", () => {
