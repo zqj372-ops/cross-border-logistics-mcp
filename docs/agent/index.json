@@ -76,6 +76,24 @@
       "summary": "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness."
     },
     {
+      "standard_id": "mcp-server-architecture-v1",
+      "version": "2026-09-02.v1",
+      "path": "docs/rfcs/2026-09-02-mcp-server-architecture-v1.md",
+      "priority": 95,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["MCP-SERVER-BOUNDARY-001", "MCP-TRANSPORT-001", "MCP-CREDENTIAL-001", "MCP-MODULE-001", "MCP-ADMIN-BOUNDARY-001"],
+      "summary": "Independent multi-tenant MCP Server boundaries, stateless-first transport, credential exchange, module runtime and control plane."
+    },
+    {
+      "standard_id": "read-preview-staging-profile-v1",
+      "version": "2026-09-02.v1",
+      "path": "docs/rfcs/2026-09-02-read-preview-staging-profile-v1.md",
+      "priority": 94,
+      "audiences": ["developer", "reviewer", "operator", "caller"],
+      "rule_ids": ["READ-PREVIEW-PROFILE-001", "READ-PREVIEW-ISOLATION-001", "READ-PREVIEW-AUTH-001", "READ-PREVIEW-QUALIFICATION-001"],
+      "summary": "Accepted staging-only read-preview profile for isolated quote, customs and Freightcom test capabilities without production qualification."
+    },
+    {
       "standard_id": "t0-production-profile-v1",
       "version": "2026-08-27.v1",
       "path": "docs/rfcs/2026-08-27-t0-production-profile-v1.md",
@@ -141,6 +159,10 @@
     {
       "profile_id": "runtime-caller",
       "path": "docs/agent/profiles/runtime-caller.json"
+    },
+    {
+      "profile_id": "read-preview-caller",
+      "path": "docs/agent/profiles/read-preview-caller.json"
     }
   ],
   "modules": [
@@ -157,6 +179,20 @@
       "risk_level": "T0",
       "standard_ids": ["module-runtime.v0", "platform.contracts"],
       "tool_names": ["container.plan_summary"]
+    },
+    {
+      "module_id": "canada-final-mile-quote",
+      "version": "2026-09-02.v1",
+      "risk_level": "T1",
+      "standard_ids": ["module-runtime.v0", "platform.contracts"],
+      "tool_names": ["quote.canada_final_mile.calculate"]
+    },
+    {
+      "module_id": "riskcustoms-ca",
+      "version": "2026-09-02.v1",
+      "risk_level": "T1",
+      "standard_ids": ["module-runtime.v0", "platform.contracts"],
+      "tool_names": ["customs.ca.search", "customs.ca.estimate"]
     },
     {
       "module_id": "freightcom-ltl",

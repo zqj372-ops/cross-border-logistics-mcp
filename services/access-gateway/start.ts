@@ -27,6 +27,11 @@ import { createAdminTenantAccessApiHandler } from "../../src/logistics_mcp/serve
 import { createProductionAccessGateway } from "./assembly";
 import { createAccessGatewayHttpHandler } from "./http";
 import {
+  createOciSdkGatewayCryptoProviders,
+  ociCryptoConfigurationFromEnvironment,
+} from "./oci-crypto";
+import type { JwtSigningProvider, SecretPepperProvider } from "./ports";
+import {
   FileJwtSigningProvider,
   FileSecretPepperProvider,
 } from "./production-crypto";
@@ -373,6 +378,89 @@ export interface AccessGatewayStartHandle {
   readonly port: number;
 }
 
+type RuntimePepperProvider = SecretPepperProvider & Readonly<{
+  pepperVersion: string;
+  supportsPepperVersion(version: string): boolean;
+}>;
+
+interface OpenGatewayCryptoResult {
+  readonly backend: "file" | "oci-vault";
+  readonly pepper: RuntimePepperProvider;
+  readonly signer: JwtSigningProvider;
+  close(): Promise<void>;
+}
+
+function configuredSetting(environment: NodeJS.ProcessEnv, name: string): boolean {
+  const value = environment[name]?.trim();
+  return value !== undefined && value.length > 0;
+}
+
+async function openGatewayCrypto(input: Readonly<{
+  environment: NodeJS.ProcessEnv;
+  applicationRoot: string;
+  pepperVersion: string;
+  requiredPepperVersions: readonly string[];
+  keyRetentionSeconds: number;
+  nowSeconds: () => number;
+}>): Promise<OpenGatewayCryptoResult> {
+  const configuration = ociCryptoConfigurationFromEnvironment(input.environment);
+  if (configuration.backend === "oci-vault") {
+    const fileSettingNames = [
+      "ACCESS_GATEWAY_JWT_PRIVATE_KEY_PATH",
+      "ACCESS_GATEWAY_JWT_KEY_HISTORY_PATH",
+      "ACCESS_GATEWAY_PEPPER_PATH",
+      "ACCESS_GATEWAY_PEPPER_HISTORY_PATH",
+    ] as const;
+    if (fileSettingNames.some((name) => configuredSetting(input.environment, name))) {
+      throw new Error("OCI Vault crypto cannot be combined with file crypto overrides.");
+    }
+    const providers = await createOciSdkGatewayCryptoProviders({
+      configuration,
+      activePepperVersion: input.pepperVersion,
+      requiredPepperVersions: input.requiredPepperVersions,
+    });
+    return Object.freeze({
+      backend: "oci-vault" as const,
+      pepper: providers.pepper,
+      signer: providers.signer,
+      close: () => providers.close(),
+    });
+  }
+
+  const secrets = gatewaySecretPaths(input.applicationRoot);
+  const privateKeyPath = input.environment.ACCESS_GATEWAY_JWT_PRIVATE_KEY_PATH?.trim() ||
+    secrets.jwtSigningKeyPath;
+  const keyHistoryPath = input.environment.ACCESS_GATEWAY_JWT_KEY_HISTORY_PATH?.trim() ||
+    secrets.jwtKeyHistoryPath;
+  const pepperPath = input.environment.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
+    secrets.credentialPepperPath;
+  const pepperHistoryPath = input.environment.ACCESS_GATEWAY_PEPPER_HISTORY_PATH?.trim() ||
+    secrets.credentialPepperHistoryPath;
+  const pepper = new FileSecretPepperProvider({
+    pepperPath,
+    pepperVersion: input.pepperVersion,
+    historyPath: pepperHistoryPath,
+  });
+  const unsupportedPepperVersion = input.requiredPepperVersions.find(
+    (version) => !pepper.supportsPepperVersion(version),
+  );
+  if (unsupportedPepperVersion !== undefined) {
+    throw new Error("Stored credential pepper material is unavailable.");
+  }
+  const signer = new FileJwtSigningProvider({
+    privateKeyPath,
+    historyPath: keyHistoryPath,
+    nowSeconds: input.nowSeconds,
+    retentionSeconds: input.keyRetentionSeconds,
+  });
+  return Object.freeze({
+    backend: "file" as const,
+    pepper,
+    signer,
+    close: () => Promise.resolve(),
+  });
+}
+
 export function evaluateAccessGatewayReadiness(input: Readonly<{
   tenantStoreReady: boolean;
   operationStoreReady: boolean;
@@ -380,6 +468,7 @@ export function evaluateAccessGatewayReadiness(input: Readonly<{
   adminConfigured: boolean;
   adminReady: boolean;
   databaseBackend?: "sqlite" | "postgresql";
+  cryptoBackend?: "file" | "oci-vault";
 }>): Readonly<{
   httpStatus: 200 | 503;
   status: "manual_review" | "unavailable";
@@ -404,7 +493,7 @@ export function evaluateAccessGatewayReadiness(input: Readonly<{
     operationalReady,
     blockers: Object.freeze([
       ...idpBlockers,
-      "kms_signer_unconfigured",
+      ...(input.cryptoBackend === "oci-vault" ? [] : ["kms_signer_unconfigured"]),
       databaseBlocker,
     ]),
   });
@@ -433,15 +522,6 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
     30,
     10_000,
   );
-  const secrets = gatewaySecretPaths(applicationRoot);
-  const privateKeyPath = process.env.ACCESS_GATEWAY_JWT_PRIVATE_KEY_PATH?.trim() ||
-    secrets.jwtSigningKeyPath;
-  const keyHistoryPath = process.env.ACCESS_GATEWAY_JWT_KEY_HISTORY_PATH?.trim() ||
-    secrets.jwtKeyHistoryPath;
-  const pepperPath = process.env.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
-    secrets.credentialPepperPath;
-  const pepperHistoryPath = process.env.ACCESS_GATEWAY_PEPPER_HISTORY_PATH?.trim() ||
-    secrets.credentialPepperHistoryPath;
   const jwtTtlSeconds = positiveIntegerSetting("ACCESS_GATEWAY_JWT_TTL_SECONDS", 300, 900);
   const keyRetentionSeconds = positiveIntegerSetting(
     "ACCESS_GATEWAY_JWT_KEY_RETENTION_SECONDS",
@@ -453,20 +533,6 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   }
   const clock = new SystemGatewayClock();
   const randomSource = new SystemGatewayRandomSource();
-  const pepper = new FileSecretPepperProvider({
-    pepperPath,
-    pepperVersion,
-    historyPath: pepperHistoryPath,
-  });
-  if (legacyPepperVersion !== undefined && !pepper.supportsPepperVersion(legacyPepperVersion)) {
-    throw new Error("Legacy credential pepper material is unavailable.");
-  }
-  const signer = new FileJwtSigningProvider({
-    privateKeyPath,
-    historyPath: keyHistoryPath,
-    nowSeconds: () => clock.nowSeconds(),
-    retentionSeconds: keyRetentionSeconds,
-  });
   const stores = await openGatewayStores({
     environment: process.env,
     applicationRoot,
@@ -478,13 +544,28 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
       : { legacyCredentialPepperVersion: legacyPepperVersion }),
   });
   const tenantStore = stores.tenantStore;
-  const unsupportedPepperVersion = (await tenantStore.getState()).credentials.find(
-    (credential) => !pepper.supportsPepperVersion(credential.pepperVersion),
-  )?.pepperVersion;
-  if (unsupportedPepperVersion !== undefined) {
+  let crypto: OpenGatewayCryptoResult;
+  try {
+    const storedState = await tenantStore.getState();
+    const requiredPepperVersions = Object.freeze([...new Set([
+      pepperVersion,
+      ...(legacyPepperVersion === undefined ? [] : [legacyPepperVersion]),
+      ...storedState.credentials.map((credential) => credential.pepperVersion),
+    ])]);
+    crypto = await openGatewayCrypto({
+      environment: process.env,
+      applicationRoot,
+      pepperVersion,
+      requiredPepperVersions,
+      keyRetentionSeconds,
+      nowSeconds: () => clock.nowSeconds(),
+    });
+  } catch (error) {
     await stores.close();
-    throw new Error("Stored credential pepper material is unavailable.");
+    throw error;
   }
+  const pepper = crypto.pepper;
+  const signer = crypto.signer;
   const operations = stores.operationalStore;
   const credentials = new TenantAccessGatewayRepository({
     store: tenantStore,
@@ -592,6 +673,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
           adminConfigured: admin.configured,
           adminReady: adminHealth.ready,
           databaseBackend: stores.backend,
+          cryptoBackend: crypto.backend,
         });
         sendJson(response, readiness.httpStatus, {
           status: readiness.status,
@@ -601,6 +683,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
             operational_ready: readiness.operationalReady,
             admin_idp_ready: adminHealth.ready,
             database_backend: stores.backend,
+            crypto_backend: crypto.backend,
             production_eligible: false,
             audit_count: operationHealth.auditCount,
           },
@@ -640,6 +723,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
       });
       await Promise.all([
         stores.close(),
+        crypto.close(),
         "close" in admin.provider ? admin.provider.close() : Promise.resolve(),
       ]);
     },

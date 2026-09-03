@@ -74,7 +74,57 @@ function makeHandler(overrides: Partial<Parameters<typeof createMcpHttpHandler>[
   });
 }
 
+function makeStatelessHandler(
+  overrides: Partial<Parameters<typeof createMcpHttpHandler>[0]> = {},
+) {
+  return createMcpHttpHandler({
+    transportMode: "stateless",
+    allowedOrigins: ["https://client.example.invalid"],
+    allowedHosts: ["mcp.example.invalid"],
+    maxBodyBytes: 256,
+    requestTimeoutMs: 100,
+    authenticate: () => validClaims(),
+    auditRepository: new MemoryAuditRepository(),
+    idempotencyRepository: new MemoryIdempotencyRepository(),
+    ...overrides,
+  });
+}
+
 describe("Streamable HTTP security boundary", () => {
+  it("serves independent requests without an MCP session in stateless mode", async () => {
+    const handle = makeStatelessHandler();
+
+    const initialized = await handle(makeRequest(initializeBody));
+    expect(initialized.status).toBe(200);
+    expect(initialized.headers.get("mcp-session-id")).toBeNull();
+
+    const tools = await handle(makeRequest(
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { "mcp-protocol-version": "2025-03-26" },
+    ));
+    const body = (await tools.json()) as { result?: { tools?: unknown[] } };
+    expect(tools.status).toBe(200);
+    expect(body.result?.tools).toBeDefined();
+
+    await handle.close();
+  });
+
+  it("rejects a stateful session header in stateless mode", async () => {
+    const handle = makeStatelessHandler();
+    const response = await handle(makeRequest(
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      {
+        "mcp-protocol-version": "2025-03-26",
+        "mcp-session-id": "mcp_confused_client",
+      },
+    ));
+    const body = (await response.json()) as { status?: string };
+
+    expect(response.status).toBe(400);
+    expect(body.status).toBe("blocked");
+    await handle.close();
+  });
+
   it("rejects unauthenticated requests without invoking a handler", async () => {
     let handlerCalled = false;
     const handle = makeHandler({

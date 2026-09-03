@@ -20,6 +20,7 @@ import {
 } from "../../src/logistics_mcp/server/start";
 import { createProductionTokenVerifier } from "../../src/logistics_mcp/server/production-token-verifier";
 import { cargoInput } from "./fixtures/tenant-fixtures";
+import { createT0CatalogGeneration } from "../../src/logistics_mcp/module-runtime";
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -36,6 +37,7 @@ async function freePort(): Promise<number> {
 }
 
 function t0AgentAccessRuntime(): AgentAccessRuntime {
+  const generation = createT0CatalogGeneration("t0-v1");
   const modules = [
     {
       module_id: "cargo",
@@ -67,7 +69,13 @@ function t0AgentAccessRuntime(): AgentAccessRuntime {
         return {
           uri,
           mimeType: "application/json",
-          text: JSON.stringify({ modules }),
+          text: JSON.stringify({
+            schema_version: generation.schema_version,
+            profile: generation.profile,
+            catalog_generation: generation.catalog_generation,
+            catalog_digest: generation.catalog_digest,
+            modules,
+          }),
         };
       }
       if (uri === "logistics://agent/profiles") {
@@ -118,6 +126,7 @@ describe("production platform runtime", () => {
     const composition = createProductionComposition({
       dataMode: "production",
       profile: "t0-v1",
+      transportMode: "stateful",
       allowedOrigins: ["https://client.example.invalid"],
       allowedHosts: [`127.0.0.1:${port}`],
       tokenPolicy: {
@@ -275,6 +284,19 @@ describe("production platform runtime", () => {
         "logistics://modules/catalog",
         "logistics://standards/index",
       ]);
+      const catalogReadback = await client.readResource({
+        uri: "logistics://modules/catalog",
+      });
+      const catalogContent = catalogReadback.contents[0];
+      if (catalogContent === undefined || !("text" in catalogContent)) {
+        throw new Error("catalog text readback missing");
+      }
+      expect(JSON.parse(catalogContent.text)).toMatchObject({
+        schema_version: composition.catalogGeneration?.schema_version,
+        profile: composition.catalogGeneration?.profile,
+        catalog_generation: composition.catalogGeneration?.catalog_generation,
+        catalog_digest: composition.catalogGeneration?.catalog_digest,
+      });
       const result = await client.callTool({
         name: "cargo.calculate",
         arguments: cargoInput(),
@@ -287,6 +309,115 @@ describe("production platform runtime", () => {
         new Promise<string>((resolve) => setTimeout(() => resolve("timed_out"), 500)),
       ])).resolves.toBe("closed");
       await client.close().catch(() => undefined);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses stateless Streamable HTTP without a session binding through the official SDK", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "logistics-mcp-stateless-production-"));
+    const store = new SqliteProductionStore(join(directory, "platform.sqlite"));
+    const keys = await generateKeyPair("RS256", { extractable: true });
+    const publicJwk = {
+      ...await exportJWK(keys.publicKey),
+      alg: "RS256",
+      kid: "stateless-production-test-key",
+      use: "sig",
+    };
+    const verifier = createProductionTokenVerifier({
+      jwksUrl: "https://identity.example.invalid/jwks",
+      allowedHosts: ["identity.example.invalid"],
+      fetchImpl: vi.fn(() => Promise.resolve(new Response(
+        JSON.stringify({ keys: [publicJwk] }),
+        { headers: { "content-type": "application/json" } },
+      ))),
+    });
+    const port = await freePort();
+    const composition = createProductionComposition({
+      dataMode: "production",
+      profile: "t0-v1",
+      transportMode: "stateless",
+      allowedOrigins: ["https://client.example.invalid"],
+      allowedHosts: [`127.0.0.1:${port}`],
+      tokenPolicy: {
+        issuer: "https://identity.example.invalid/",
+        audience: "logistics-mcp",
+      },
+      tokenVerifier: verifier,
+      auditRepository: store,
+      idempotencyRepository: store,
+      agentAccessRuntime: t0AgentAccessRuntime(),
+    });
+    await expect(composition.readiness()).resolves.toEqual({ ready: true, reasons: [] });
+
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({
+      tenant_id: "tenant_demo_stateless",
+      actor_id: "service_stateless",
+      actor_role: "service",
+      roles: ["service"],
+      scopes: [
+        "tool:cargo.calculate",
+        "tool:container.plan_summary",
+        "tool:system.agent_context.get",
+      ],
+      client_id: "codex-stateless-test",
+      session_id: "auth-session-stateless-test",
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "stateless-production-test-key" })
+      .setIssuer("https://identity.example.invalid/")
+      .setAudience("logistics-mcp")
+      .setSubject("service_stateless")
+      .setIssuedAt(now)
+      .setExpirationTime(now + 300)
+      .sign(keys.privateKey);
+    const server = createRuntimeServer(composition, {
+      adminUi: { handle: () => false },
+      trustedProxyAddresses: ["127.0.0.1"],
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
+    });
+    const client = new Client({ name: "stateless-production-runtime-test", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+      { requestInit: { headers: {
+        authorization: `Bearer ${token}`,
+        "x-forwarded-proto": "https",
+      } } },
+    );
+
+    try {
+      await client.connect(transport as Transport);
+      expect(transport.sessionId).toBeUndefined();
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+      ]);
+      expect((await client.listResources()).resources).toHaveLength(5);
+      const catalogReadback = await client.readResource({
+        uri: "logistics://modules/catalog",
+      });
+      const catalogContent = catalogReadback.contents[0];
+      if (catalogContent === undefined || !("text" in catalogContent)) {
+        throw new Error("catalog text readback missing");
+      }
+      expect(JSON.parse(catalogContent.text)).toMatchObject({
+        schema_version: composition.catalogGeneration?.schema_version,
+        profile: composition.catalogGeneration?.profile,
+        catalog_generation: composition.catalogGeneration?.catalog_generation,
+        catalog_digest: composition.catalogGeneration?.catalog_digest,
+      });
+      const result = await client.callTool({
+        name: "cargo.calculate",
+        arguments: cargoInput(),
+      });
+      expect(result.structuredContent).toMatchObject({ status: "success" });
+      expect((await store.list()).some((event) => event.tool === "cargo.calculate")).toBe(true);
+    } finally {
+      await client.close().catch(() => undefined);
+      await closeRuntimeServer(server, composition);
       rmSync(directory, { recursive: true, force: true });
     }
   });

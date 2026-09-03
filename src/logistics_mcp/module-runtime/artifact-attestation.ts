@@ -6,16 +6,20 @@ import { resolve } from "node:path";
 import { build } from "esbuild";
 
 export type T0ModuleId = "cargo" | "container" | "agent-access";
+export type ReadPreviewModuleId = T0ModuleId |
+  "canada-final-mile-quote" |
+  "riskcustoms-ca" |
+  "freightcom-ltl";
 export type Sha256Digest = `sha256:${string}`;
 
-interface T0ArtifactSpec {
+interface ModuleArtifactSpec {
   readonly entryPoint: string;
   readonly canonicalJsonFiles: readonly string[];
 }
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
-const artifactSpecs: Readonly<Record<T0ModuleId, T0ArtifactSpec>> = Object.freeze({
+const artifactSpecs: Readonly<Record<ReadPreviewModuleId, ModuleArtifactSpec>> = Object.freeze({
   cargo: Object.freeze({
     entryPoint: "src/logistics_mcp/modules/cargo/module.ts",
     canonicalJsonFiles: Object.freeze([
@@ -34,7 +38,25 @@ const artifactSpecs: Readonly<Record<T0ModuleId, T0ArtifactSpec>> = Object.freez
     entryPoint: "src/logistics_mcp/modules/agent-access/module.ts",
     canonicalJsonFiles: Object.freeze([]),
   }),
+  "canada-final-mile-quote": Object.freeze({
+    entryPoint: "src/logistics_mcp/modules/canada-final-mile-quote/module.ts",
+    canonicalJsonFiles: Object.freeze([]),
+  }),
+  "riskcustoms-ca": Object.freeze({
+    entryPoint: "src/logistics_mcp/modules/riskcustoms-ca/module.ts",
+    canonicalJsonFiles: Object.freeze([]),
+  }),
+  "freightcom-ltl": Object.freeze({
+    entryPoint: "src/logistics_mcp/modules/freightcom-ltl/module.ts",
+    canonicalJsonFiles: Object.freeze([]),
+  }),
 });
+
+const t0ModuleIds: readonly T0ModuleId[] = Object.freeze([
+  "cargo",
+  "container",
+  "agent-access",
+]);
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
@@ -56,7 +78,7 @@ function canonicalJson(value: unknown): string {
 }
 
 function artifactDigest(
-  moduleId: T0ModuleId,
+  moduleId: ReadPreviewModuleId,
   chunks: readonly { readonly label: string; readonly bytes: Uint8Array }[],
 ): Sha256Digest {
   const hash = createHash("sha256");
@@ -75,8 +97,8 @@ function artifactDigest(
 }
 
 async function computeModuleArtifactDigest(
-  moduleId: T0ModuleId,
-  spec: T0ArtifactSpec,
+  moduleId: ReadPreviewModuleId,
+  spec: ModuleArtifactSpec,
 ): Promise<Sha256Digest> {
   const result = await build({
     absWorkingDir: repositoryRoot,
@@ -116,10 +138,27 @@ export async function computeT0ModuleArtifactDigests(): Promise<
   Readonly<Record<T0ModuleId, Sha256Digest>>
 > {
   const entries = await Promise.all(
-    (Object.entries(artifactSpecs) as readonly [T0ModuleId, T0ArtifactSpec][])
-      .map(async ([moduleId, spec]) => [moduleId, await computeModuleArtifactDigest(moduleId, spec)] as const),
+    t0ModuleIds.map(async (moduleId) => [
+      moduleId,
+      await computeModuleArtifactDigest(moduleId, artifactSpecs[moduleId]),
+    ] as const),
   );
   return Object.freeze(Object.fromEntries(entries) as Record<T0ModuleId, Sha256Digest>);
+}
+
+export async function computeReadPreviewModuleArtifactDigests(): Promise<
+  Readonly<Record<ReadPreviewModuleId, Sha256Digest>>
+> {
+  const entries = await Promise.all(
+    (Object.entries(artifactSpecs) as readonly [ReadPreviewModuleId, ModuleArtifactSpec][])
+      .map(async ([moduleId, spec]) => [
+        moduleId,
+        await computeModuleArtifactDigest(moduleId, spec),
+      ] as const),
+  );
+  return Object.freeze(
+    Object.fromEntries(entries) as Record<ReadPreviewModuleId, Sha256Digest>,
+  );
 }
 
 export async function assertT0ModuleArtifactDigests(
@@ -144,11 +183,34 @@ export async function assertT0ModuleArtifactDigests(
   }
 }
 
+export async function assertReadPreviewModuleArtifactDigests(
+  descriptors: readonly {
+    readonly module_id: string;
+    readonly artifact_digest: Sha256Digest;
+  }[],
+): Promise<void> {
+  const actual = await computeReadPreviewModuleArtifactDigests();
+  const reviewedIds = descriptors.map(({ module_id }) => module_id).sort();
+  const actualIds = Object.keys(actual).sort();
+  if (JSON.stringify(reviewedIds) !== JSON.stringify(actualIds)) {
+    throw new Error("The reviewed read-preview module set does not match the reproducible artifact set.");
+  }
+  for (const descriptor of descriptors) {
+    const actualDigest = actual[descriptor.module_id as ReadPreviewModuleId];
+    if (actualDigest !== descriptor.artifact_digest) {
+      throw new Error(
+        `Read-preview module ${descriptor.module_id} implementation, validator, or schema bytes do not match the reviewed artifact digest.`,
+      );
+    }
+  }
+}
+
 if (
   process.argv[1] !== undefined &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  const { T0_MODULE_DESCRIPTORS } = await import("./production");
+  const { READ_PREVIEW_MODULE_DESCRIPTORS, T0_MODULE_DESCRIPTORS } = await import("./production");
   await assertT0ModuleArtifactDigests(T0_MODULE_DESCRIPTORS);
-  process.stdout.write("T0 module artifact attestation passed.\n");
+  await assertReadPreviewModuleArtifactDigests(READ_PREVIEW_MODULE_DESCRIPTORS);
+  process.stdout.write("T0 and read-preview module artifact attestation passed.\n");
 }

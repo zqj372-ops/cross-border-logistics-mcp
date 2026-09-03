@@ -35,7 +35,8 @@
 | `/readyz` | `[待实际执行]` | `[待实际执行]` |
 | `tools/list` exact 3 | `[待实际执行]` | `[待实际执行]` |
 | `resources/list` exact 5 | `[待实际执行]` | `[待实际执行]` |
-| bootstrap/profile/catalog/Pack digest | `[待实际执行]` | `[待实际执行]` |
+| catalog schema/profile/generation/digest exact readback | `[待实际执行]` | `[待实际执行]` |
+| bootstrap/profile/Pack digest | `[待实际执行]` | `[待实际执行]` |
 | 非 T0 工具不可见、不可调用、零 adapter/network | `[待实际执行]` | `[待实际执行]` |
 | MCP 拒绝长期 API Key | `[待实际执行]` | `[待实际执行]` |
 

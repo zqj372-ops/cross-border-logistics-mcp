@@ -47,6 +47,10 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
     expect(dockerfile).toContain("COPY apps/admin ./apps/admin");
+    expect(dockerfile).toContain("COPY deploy/clients/freightclaw-auth-headers.mjs");
+    expect(dockerfile).toContain("COPY deploy/clients/freightclaw-codex-setup.mjs");
+    expect(dockerfile).toContain("COPY deploy/clients/freightclaw-keychain-helper.swift");
+    expect(dockerfile).toContain("RUN rm -r ./dist/deploy/clients");
     expect(dockerfile).toContain("COPY docs/agent ./docs/agent");
     expect(dockerfile).toContain("COPY docs/standards ./docs/standards");
     expect(dockerfile).toContain("COPY docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md");
@@ -102,6 +106,51 @@ describe("safe deployment artifacts", () => {
     expect(load).not.toMatch(/console\.(?:log|error)\([^\n]*(?:apiKey|accessToken|authorization)/i);
   });
 
+  it("packages an OCI-KMS-only ephemeral staging JWT issuer without widening the gateway contract", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const dockerfile = read("deploy/Dockerfile");
+    const issuer = read("deploy/scripts/issue-read-preview-staging-jwt.mjs");
+
+    expect(build).toContain("deploy/scripts/issue-read-preview-staging-jwt.mjs");
+    expect(build).toContain("dist/deploy/issue-read-preview-staging-jwt.mjs");
+    expect(dockerfile).toContain("COPY deploy/scripts/issue-read-preview-staging-jwt.mjs");
+    expect(issuer).toContain('READ_PREVIEW_JWT_ENVIRONMENT") !== "staging"');
+    expect(issuer).toContain("issue-ephemeral-read-preview-jwt");
+    expect(issuer).toContain('profile !== "t0-v1" && profile !== "read-preview-staging"');
+    expect(issuer).toContain("ttlSeconds < 60 || ttlSeconds > 300");
+    expect(issuer).toContain("ociCryptoConfigurationFromEnvironment");
+    expect(issuer).toContain("configuration.backend !== \"oci-vault\"");
+    expect(issuer).toContain("const originalConsoleLog = console.log;");
+    expect(issuer).toContain("console.log = (...values) => console.error(...values);");
+    expect(issuer.indexOf("await providers.close()"))
+      .toBeLessThan(issuer.indexOf("process.stdout.write"));
+    expect(issuer).not.toMatch(/(?:BEGIN .* PRIVATE KEY|lmcpk_|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+  });
+
+  it("packages the secure Codex credential exchange and setup helpers", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const packageJson = read("package.json");
+    const authHelper = read("deploy/clients/freightclaw-auth-headers.mjs");
+    const setup = read("deploy/clients/freightclaw-codex-setup.mjs");
+
+    for (const asset of [
+      "freightclaw-auth-headers.mjs",
+      "freightclaw-codex-setup.mjs",
+      "freightclaw-keychain-helper.swift",
+    ]) {
+      expect(build).toContain(asset);
+    }
+    expect(build).toContain('mkdirSync(resolve("dist/deploy/clients")');
+    expect(packageJson).toContain('"setup:codex-client"');
+    expect(authHelper).toContain("http");
+    expect(authHelper).toContain('Authorization: `Bearer ${exchange.accessToken}`');
+    expect(authHelper).not.toContain("LOGISTICS_MCP_BEARER_TOKEN");
+    expect(setup).toContain('resolve(homedir(), ".codex")');
+    expect(setup).toContain('"127.0.0.1"');
+    expect(setup).toContain("storeKeychainCredential");
+    expect(setup).not.toMatch(/localStorage|sessionStorage|document\.cookie/iu);
+  });
+
   it("copies every registered Agent source into the image build stage", () => {
     const dockerfile = read("deploy/Dockerfile");
     const registry = JSON.parse(read("docs/agent/index.json")) as {
@@ -144,11 +193,16 @@ describe("safe deployment artifacts", () => {
     expect(start).toContain("createProductionComposition");
     expect(start).toContain("createProductionTokenVerifier");
     expect(start).toContain('splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "")');
-    expect(start).toContain("allowedHosts: allowedOutboundHosts");
-    expect(start).not.toContain("allowedHosts: [jwksHost]");
+    expect(start).toContain("allowedHosts: [jwksHost]");
     expect(start).toContain("SqliteProductionStore");
     expect(start).not.toContain("createRiskCustomsApiAdapterFromEnvironment");
     expect(start).not.toContain("MCP_RISK_CUSTOMS_");
+    expect(start).toContain("createT1ReadWorkerClient");
+    expect(start).toContain("const READ_PREVIEW_RUNTIME_REQUEST_TIMEOUT_MS = 75_000");
+    expect(start).toContain("requestTimeoutMs: productionRequestTimeoutMs - 1_000");
+    expect(start).toContain("requestTimeoutMs: productionRequestTimeoutMs,");
+    expect(start).toContain("buildT1WorkerEnvironment");
+    expect(start).toContain('new URL("../t1-worker/start.mjs", import.meta.url)');
     expect(start).toContain("return createProductionComposition({");
     expect(start).toContain("profile,");
     expect(start).toMatch(
@@ -157,6 +211,23 @@ describe("safe deployment artifacts", () => {
     expect(deployReadme).toContain("JWKS");
     expect(deployReadme).toContain("SQLite");
     expect(deployReadme).toContain("3 个工具");
+  });
+
+  it("packages the isolated T1 read-preview worker without loading business adapters in the MCP entry", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const start = read("src/logistics_mcp/server/start.ts");
+    const worker = read("src/logistics_mcp/t1-worker/start.ts");
+
+    expect(build).toContain("src/logistics_mcp/t1-worker/start.ts");
+    expect(build).toContain("dist/src/logistics_mcp/t1-worker/start.mjs");
+    expect(start).not.toContain("createQuotePreviewAdapterFromEnvironment");
+    expect(start).not.toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(start).not.toContain('from "../adapters/quote/freightcom-runtime"');
+    expect(worker).toContain("createQuotePreviewAdapterFromEnvironment");
+    expect(worker).toContain("createRiskCustomsApiAdapterFromEnvironment");
+    expect(worker).toContain("createFreightcomTestAdapterFromEnvironment");
+    expect(worker).toContain("MAX_REQUEST_BYTES");
+    expect(worker).toContain("MAX_RESPONSE_BYTES");
   });
 
   it("keeps the service internal and requires explicit data/security settings", () => {
@@ -169,6 +240,7 @@ describe("safe deployment artifacts", () => {
     for (const required of [
       "MCP_DATA_MODE",
       "MCP_RUNTIME_PROFILE",
+      "MCP_TRANSPORT_MODE",
       "MCP_JWT_ISSUER",
       "MCP_JWT_AUDIENCE",
       "MCP_JWKS_URL",
@@ -193,6 +265,7 @@ describe("safe deployment artifacts", () => {
     }
     expect(env).toContain("https://issuer.example.invalid/");
     expect(env).toContain("MCP_RUNTIME_PROFILE=t0-v1");
+    expect(env).toContain("MCP_TRANSPORT_MODE=stateless");
     expect(env).toContain("MCP_ALLOWED_OUTBOUND_HOSTS=issuer.example.invalid");
     expect(env).toContain("MCP_TRUSTED_PROXY_ADDRESSES=192.0.2.10");
     expect(compose).not.toContain("MCP_RISK_CUSTOMS_");
@@ -219,6 +292,123 @@ describe("safe deployment artifacts", () => {
     ]) {
       expect(compose).toContain(setting);
       expect(env).toContain(setting);
+    }
+    for (const setting of [
+      "ACCESS_GATEWAY_CRYPTO_BACKEND",
+      "ACCESS_GATEWAY_OCI_AUTH_MODE",
+      "ACCESS_GATEWAY_OCI_REGION",
+      "ACCESS_GATEWAY_OCI_KMS_KEY_ID",
+      "ACCESS_GATEWAY_OCI_KMS_CURRENT_KEY_VERSION_ID",
+      "ACCESS_GATEWAY_OCI_KMS_PREVIOUS_KEY_VERSION_ID",
+      "ACCESS_GATEWAY_OCI_KMS_CRYPTO_ENDPOINT",
+      "ACCESS_GATEWAY_OCI_KMS_MANAGEMENT_ENDPOINT",
+      "ACCESS_GATEWAY_OCI_PEPPER_SECRET_ID",
+    ]) {
+      expect(compose).toContain(setting);
+      expect(env).toContain(setting);
+    }
+  });
+
+  it("keeps the read-preview deployment separate, secret-file based and staging-only", () => {
+    const override = read("deploy/compose.read-preview-staging.override.yml.example");
+    const standalone = read("deploy/compose.read-preview-staging.yml");
+    const example = read("deploy/read-preview-staging.env.example");
+    const runbook = read("docs/runbooks/read-preview-staging.md");
+
+    expect(override).toContain('MCP_RUNTIME_PROFILE: "read-preview-staging"');
+    expect(override).toContain("MCP_QUOTE_PREVIEW_API_KEY_SECRET_FILE");
+    expect(override).toContain("MCP_RISK_CUSTOMS_AUTH_SECRET_FILE");
+    expect(override).toContain("MCP_FREIGHTCOM_TEST_AUTH_SECRET_FILE");
+    expect(override).toContain("MCP_FREIGHTCOM_TEST_ALLOWED_TENANTS");
+    expect(override).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(standalone).toContain("logistics-mcp-read-preview-staging");
+    expect(standalone).toContain("logistics-mcp-read-preview-staging-state");
+    expect(standalone).toContain('MCP_RUNTIME_PROFILE: "read-preview-staging"');
+    expect(standalone).toContain('MCP_DATA_MODE: "production"');
+    expect(standalone).toContain('MCP_TRANSPORT_MODE: "stateless"');
+    expect(standalone).toContain("READ_PREVIEW_SECRET_DIR");
+    expect(standalone).toContain("quote-preview-origin-map.json");
+    expect(standalone).toContain("read_only: true");
+    expect(standalone).toContain("no-new-privileges:true");
+    expect(standalone).not.toContain("access-gateway");
+    expect(example).toContain("MCP_FREIGHTCOM_TEST_ENABLED=false");
+    expect(example).not.toMatch(/(?:sk_live|ghp_|AKIA|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+    expect(runbook).toContain("7 tools / 5 resources");
+    expect(runbook).toContain("staging-only / NO-GO");
+    expect(runbook).toContain("customs.ca.estimate");
+    expect(runbook).toMatch(/固定[\s\S]*unavailable[\s\S]*零 HTTP/u);
+    expect(runbook).toContain("不得用占位 secret");
+  });
+
+  it("ships a staging-only readiness alert probe and isolated edge rate limit", () => {
+    const nginx = read("deploy/nginx/www.freightclaw.net.conf");
+    const healthcheck = read("deploy/scripts/read-preview-healthcheck.sh");
+    const service = read("deploy/systemd/freightclaw-read-preview-healthcheck.service");
+    const timer = read("deploy/systemd/freightclaw-read-preview-healthcheck.timer");
+    const alert = read("deploy/systemd/freightclaw-read-preview-alert@.service");
+
+    expect(nginx).toContain("zone=freightclaw_read_preview:10m rate=2r/s");
+    expect(nginx).toContain("location = /staging/mcp");
+    expect(nginx).toContain("limit_req_status 429;");
+    expect(nginx).toContain("proxy_pass http://100.95.166.107:18080/mcp");
+    expect(nginx).toContain("proxy_read_timeout 80s;");
+    expect(nginx).toContain("location = /staging/runtime/readyz");
+    expect(healthcheck).toContain("freightclaw-read-preview-alert");
+    expect(healthcheck).toContain('"status"[[:space:]]*:[[:space:]]*"ready"');
+    expect(service).toContain("OnFailure=freightclaw-read-preview-alert@%n.service");
+    expect(service).toContain("ProtectSystem=strict");
+    expect(service).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
+    expect(timer).toContain("OnUnitActiveSec=1min");
+    expect(alert).toContain("systemd-cat");
+  });
+
+  it("ships a deny-by-default four-node tailnet policy", () => {
+    const guangzhouOverride = read("deploy/compose.read-preview-guangzhou.override.yml");
+    const policy = JSON.parse(read("deploy/tailscale/four-node-policy.hujson")) as {
+      grants: readonly { src: readonly string[]; dst: readonly string[]; ip: readonly string[] }[];
+      tests: readonly { src: string; accept?: readonly string[]; deny?: readonly string[] }[];
+    };
+
+    expect(guangzhouOverride).toContain("platform: linux/amd64");
+    expect(guangzhouOverride).toContain('host_ip: 100.95.166.107');
+    expect(guangzhouOverride).toContain("READ_PREVIEW_SOURCE_SHA is required");
+    expect(policy.grants).not.toContainEqual({ src: ["*"], dst: ["*"], ip: ["*"] });
+    expect(policy.grants).toContainEqual({
+      src: ["tag:gateway"],
+      dst: ["tag:worker"],
+      ip: ["tcp:18080"],
+    });
+    expect(policy.grants.some(({ ip }) => ip.includes("tcp:5432"))).toBe(false);
+    expect(policy.tests.some(({ src, deny }) =>
+      src === "tag:china-edge" && deny?.includes("freightclaw-guangzhou-worker:18080") === true,
+    )).toBe(true);
+  });
+
+  it("documents the bandwidth-aware four-node MCP topology and rollback boundary", () => {
+    const topology = read("docs/runbooks/four-node-mcp-topology.md");
+    const deployReadme = read("deploy/README.md");
+    const stagingRunbook = read("docs/runbooks/read-preview-staging.md");
+    const stagingEnvironment = read("deploy/read-preview-staging.env.example");
+
+    expect(deployReadme).toContain("four-node-mcp-topology.md");
+    expect(stagingRunbook).toContain("four-node-mcp-topology.md");
+    expect(stagingEnvironment).toContain("READ_PREVIEW_SOURCE_SHA=");
+    for (const required of [
+      "Oracle",
+      "广州",
+      "深圳",
+      "Tokyo",
+      "ARM64",
+      "AMD64",
+      "27.7 Mbps",
+      "6.03 Mbps",
+      "不是 SLA",
+      "不跨节点复制原始 PDF",
+      "staging-only / NO-GO",
+      "tcp:5432",
+      "回滚",
+    ]) {
+      expect(topology).toContain(required);
     }
   });
 

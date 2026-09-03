@@ -1,0 +1,111 @@
+{
+  "hosts": {
+    "freightclaw-oracle-gateway": "100.109.189.49",
+    "freightclaw-guangzhou-worker": "100.95.166.107",
+    "freightclaw-shenzhen-edge": "100.111.187.53",
+    "freightclaw-tokyo-egress": "100.109.20.49"
+  },
+  "tagOwners": {
+    "tag:gateway": ["autogroup:admin"],
+    "tag:worker": ["autogroup:admin"],
+    "tag:china-edge": ["autogroup:admin"],
+    "tag:overseas-egress": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["autogroup:admin", "autogroup:owner"],
+      "dst": ["tag:gateway", "tag:worker", "tag:china-edge", "tag:overseas-egress"],
+      "ip": ["tcp:22"]
+    },
+    {
+      "src": ["tag:gateway"],
+      "dst": ["tag:worker"],
+      "ip": ["tcp:18080"]
+    },
+    {
+      "src": ["tag:gateway"],
+      "dst": ["tag:china-edge"],
+      "ip": ["tcp:80", "tcp:443"]
+    },
+    {
+      "src": ["tag:gateway"],
+      "dst": ["tag:overseas-egress"],
+      "ip": ["tcp:80", "tcp:443", "tcp:18317"]
+    },
+    {
+      "src": ["tag:worker"],
+      "dst": ["tag:gateway"],
+      "ip": ["tcp:443"]
+    },
+    {
+      "src": ["tag:worker"],
+      "dst": ["tag:overseas-egress"],
+      "ip": ["tcp:443", "tcp:18317"]
+    },
+    {
+      "src": ["tag:china-edge"],
+      "dst": ["tag:gateway"],
+      "ip": ["tcp:443"]
+    },
+    {
+      "src": ["tag:overseas-egress"],
+      "dst": ["tag:gateway"],
+      "ip": ["tcp:443"]
+    }
+  ],
+  "tests": [
+    {
+      "src": "tag:gateway",
+      "proto": "tcp",
+      "accept": [
+        "freightclaw-guangzhou-worker:18080",
+        "freightclaw-shenzhen-edge:80",
+        "freightclaw-shenzhen-edge:443",
+        "freightclaw-tokyo-egress:80",
+        "freightclaw-tokyo-egress:443",
+        "freightclaw-tokyo-egress:18317"
+      ],
+      "deny": [
+        "freightclaw-guangzhou-worker:22",
+        "freightclaw-guangzhou-worker:5432",
+        "freightclaw-guangzhou-worker:18082",
+        "freightclaw-shenzhen-edge:3001"
+      ]
+    },
+    {
+      "src": "tag:worker",
+      "proto": "tcp",
+      "accept": [
+        "freightclaw-oracle-gateway:443",
+        "freightclaw-tokyo-egress:443",
+        "freightclaw-tokyo-egress:18317"
+      ],
+      "deny": [
+        "freightclaw-oracle-gateway:22",
+        "freightclaw-oracle-gateway:5432",
+        "freightclaw-oracle-gateway:18082",
+        "freightclaw-shenzhen-edge:80"
+      ]
+    },
+    {
+      "src": "tag:china-edge",
+      "proto": "tcp",
+      "accept": ["freightclaw-oracle-gateway:443"],
+      "deny": [
+        "freightclaw-oracle-gateway:5432",
+        "freightclaw-guangzhou-worker:18080",
+        "freightclaw-tokyo-egress:18317"
+      ]
+    },
+    {
+      "src": "tag:overseas-egress",
+      "proto": "tcp",
+      "accept": ["freightclaw-oracle-gateway:443"],
+      "deny": [
+        "freightclaw-oracle-gateway:5432",
+        "freightclaw-guangzhou-worker:18080",
+        "freightclaw-shenzhen-edge:80"
+      ]
+    }
+  ]
+}

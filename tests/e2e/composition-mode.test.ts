@@ -44,6 +44,8 @@ import {
   quoteInput,
 } from "./fixtures/tenant-fixtures";
 import { securityClaims } from "./fixtures/security-fixtures";
+import { createAgentAccessRuntime } from "../../src/logistics_mcp/agent-context/runtime";
+import { readFixedAgentStandardPack } from "../../src/logistics_mcp/agent-context/pack";
 
 const API_DATE = "2026-08-12";
 const API_TIME = `${API_DATE}T00:00:00.000Z`;
@@ -442,6 +444,38 @@ describe("gateway composition modes", () => {
       })).rejects.toThrow();
       expect(listenCalls).toBe(0);
       expect(existsSync(resolve(applicationRoot, ".runtime"))).toBe(false);
+    } finally {
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(applicationRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["missing transport mode", undefined, /MCP_TRANSPORT_MODE is required/],
+    ["unknown transport mode", "auto", /must be stateless or stateful/],
+  ] as const)("does not call listen for %s", async (_label, transportMode, expected) => {
+    const applicationRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "logistics-mcp-production-transport-gate-")),
+    );
+    const names = ["MCP_DATA_MODE", "MCP_TRANSPORT_MODE"] as const;
+    const previous = new Map(names.map((name) => [name, process.env[name]]));
+    let listenCalls = 0;
+    try {
+      process.env.MCP_DATA_MODE = "production";
+      if (transportMode === undefined) delete process.env.MCP_TRANSPORT_MODE;
+      else process.env.MCP_TRANSPORT_MODE = transportMode;
+
+      await expect(startRuntime({
+        applicationRoot,
+        listen: () => {
+          listenCalls += 1;
+          return Promise.resolve();
+        },
+      })).rejects.toThrow(expected);
+      expect(listenCalls).toBe(0);
     } finally {
       for (const [name, value] of previous) {
         if (value === undefined) delete process.env[name];
@@ -936,13 +970,30 @@ describe("gateway composition modes", () => {
       expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
         "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
         "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
-        "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
+        "sha256:a011e20c6f97c6026834bd0ff087c3c67d3ede7f9499beaf3da88f681d422b6b",
       ]);
       expect(composition.moduleHost.snapshot().modules.map(({ artifact_digest }) => artifact_digest)).toEqual([
         "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
         "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
-        "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
+        "sha256:490a40f175d6df1fe9469c15e75ed13ebdc3603249d66098e788365ed4a19c64",
       ]);
+      const catalogGeneration = composition.catalogGeneration;
+      if (catalogGeneration === undefined) throw new Error("catalog generation missing");
+      expect(catalogGeneration.profile).toBe("t0-v1");
+      expect(catalogGeneration.modules).toHaveLength(3);
+      expect(catalogGeneration.resource_uris).toHaveLength(5);
+      expect(catalogGeneration.prompt_names).toEqual([]);
+      expect(Object.isFrozen(catalogGeneration)).toBe(true);
+      const catalogResource = JSON.parse(composition.agentAccessRuntime.readResource(
+        "logistics://modules/catalog",
+        serverContext(),
+      ).text) as Record<string, unknown>;
+      expect(catalogResource).toMatchObject({
+        schema_version: catalogGeneration.schema_version,
+        profile: catalogGeneration.profile,
+        catalog_generation: catalogGeneration.catalog_generation,
+        catalog_digest: catalogGeneration.catalog_digest,
+      });
       expect(Object.keys(composition.handlers).sort()).toEqual([
         "cargo.calculate",
         "container.plan_summary",
@@ -952,6 +1003,31 @@ describe("gateway composition modes", () => {
         "container.plan_summary",
       ]);
       expect(Object.keys(composition.adapters)).toEqual([]);
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it("fails readiness when Agent catalog readback does not match the mounted generation", async () => {
+    const runtime = createAgentAccessRuntime({
+      pack: readFixedAgentStandardPack(),
+      catalogIdentity: {
+        schema_version: "2026-09-02.v1",
+        profile: "t0-v1",
+        catalog_generation: `catalog_${"0".repeat(64)}`,
+        catalog_digest: `sha256:${"0".repeat(64)}`,
+      },
+    });
+    const composition = createProductionComposition({
+      dataMode: "production",
+      profile: "t0-v1",
+      agentAccessRuntime: runtime,
+    });
+
+    try {
+      expect((await composition.readiness()).reasons).toContain(
+        "t0_catalog_generation_mismatch",
+      );
     } finally {
       await composition.close();
     }

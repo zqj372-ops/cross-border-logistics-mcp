@@ -1,0 +1,40 @@
+services:
+  logistics-mcp:
+    environment:
+      MCP_RUNTIME_PROFILE: "read-preview-staging"
+      MCP_ALLOWED_OUTBOUND_HOSTS: "${READ_PREVIEW_ALLOWED_OUTBOUND_HOSTS:?include the exact JWKS, Quote, RiskCustoms and Freightcom test hosts}"
+
+      MCP_QUOTE_PREVIEW_ENABLED: "${MCP_QUOTE_PREVIEW_ENABLED:-false}"
+      MCP_QUOTE_PREVIEW_BASE_URL: "${MCP_QUOTE_PREVIEW_BASE_URL:-}"
+      MCP_QUOTE_PREVIEW_ALLOWED_HOSTS: "${MCP_QUOTE_PREVIEW_ALLOWED_HOSTS:-}"
+      MCP_QUOTE_PREVIEW_API_KEY_SECRET_FILE: "/run/secrets/quote_preview_api_key"
+      MCP_QUOTE_PREVIEW_ORIGIN_MAP_FILE: "/run/config/quote_preview_origin_map.json"
+
+      MCP_RISK_CUSTOMS_ENABLED: "${MCP_RISK_CUSTOMS_ENABLED:-false}"
+      MCP_RISK_CUSTOMS_BASE_URL: "${MCP_RISK_CUSTOMS_BASE_URL:-}"
+      MCP_RISK_CUSTOMS_ALLOWED_HOSTS: "${MCP_RISK_CUSTOMS_ALLOWED_HOSTS:-}"
+      MCP_RISK_CUSTOMS_ALLOWED_TENANTS: "${MCP_RISK_CUSTOMS_ALLOWED_TENANTS:-}"
+      MCP_RISK_CUSTOMS_AUTH_SECRET_FILE: "/run/secrets/riskcustoms_m2m_token"
+
+      MCP_FREIGHTCOM_TEST_ENABLED: "${MCP_FREIGHTCOM_TEST_ENABLED:-false}"
+      MCP_FREIGHTCOM_TEST_AUTH_SECRET_FILE: "/run/secrets/freightcom_test_auth"
+      MCP_FREIGHTCOM_TEST_ALLOWED_TENANTS: "${MCP_FREIGHTCOM_TEST_ALLOWED_TENANTS:-}"
+    secrets:
+      - quote_preview_api_key
+      - riskcustoms_m2m_token
+      - freightcom_test_auth
+    configs:
+      - source: quote_preview_origin_map
+        target: /run/config/quote_preview_origin_map.json
+
+secrets:
+  quote_preview_api_key:
+    file: "${QUOTE_PREVIEW_API_KEY_FILE:?point to an external secret file}"
+  riskcustoms_m2m_token:
+    file: "${RISK_CUSTOMS_M2M_TOKEN_FILE:?point to an external secret file}"
+  freightcom_test_auth:
+    file: "${FREIGHTCOM_TEST_AUTH_FILE:?point to an external secret file}"
+
+configs:
+  quote_preview_origin_map:
+    file: "${QUOTE_PREVIEW_ORIGIN_MAP_FILE:?point to the reviewed tenant and warehouse origin map}"

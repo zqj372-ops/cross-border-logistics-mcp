@@ -156,14 +156,14 @@ describe("Agent standard pack", () => {
     expect(isRuntimeTrustedAgentStandardPack(buildAgentStandardPack(rootDir))).toBe(false);
   });
 
-  it("pins the current thirteen-standard build to the reviewed serialized-byte digest", () => {
+  it("pins the current fifteen-standard build to the reviewed serialized-byte digest", () => {
     const pack = buildAgentStandardPack(rootDir);
     const serialized = serializeAgentStandardPack(pack);
 
-    expect(pack.standards).toHaveLength(13);
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(138_416);
+    expect(pack.standards).toHaveLength(15);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(161_869);
     expect(sha256(serialized)).toBe(
-      "sha256:6e18315d97cfcf2f5b81b1b8e68d3b1e1c4d3bc651f3f18c00e9bc026bcef264",
+      "sha256:cf9fbb65895eff35110c63ad1ec747526877ac572b68fbe44a336b8dab9c02eb",
     );
   });
 
@@ -228,8 +228,10 @@ describe("Agent standard pack", () => {
       "credential-exchange-v1",
       "effective-rfc",
       "implementation-plan",
+      "mcp-server-architecture-v1",
       "module-runtime.v0",
       "platform.contracts",
+      "read-preview-staging-profile-v1",
       "readback-attempt-finalization-v1",
       "release-agent-adapters",
       "t0-production-profile-v1",
@@ -264,9 +266,11 @@ describe("Agent standard pack", () => {
     });
     expect(first.modules.map((module) => module.module_id).sort()).toEqual([
       "agent-access",
+      "canada-final-mile-quote",
       "cargo",
       "container",
       "freightcom-ltl",
+      "riskcustoms-ca",
     ]);
 
     const outputDir = mkdtempSync(resolve(physicalTmpDir, "agent-pack-"));
@@ -361,6 +365,20 @@ describe("Agent standard pack", () => {
 
   it("keeps the runtime caller entitlement to the three T0 modules", () => {
     const valid = buildAgentStandardPack(rootDir);
+    const runtimeCaller = valid.profiles.find(
+      (profile) => profile.profile_id === "runtime-caller",
+    );
+    expect(runtimeCaller?.standard_ids).toContain("mcp-server-architecture-v1");
+    expect(runtimeCaller?.allowed_rule_ids).toEqual(
+      expect.arrayContaining([
+        "MCP-SERVER-BOUNDARY-001",
+        "MCP-TRANSPORT-001",
+        "MCP-CREDENTIAL-001",
+        "MCP-MODULE-001",
+        "MCP-ADMIN-BOUNDARY-001",
+      ]),
+    );
+    expect(runtimeCaller?.allowed_rule_ids.some((ruleId) => ruleId.includes("CONTROL-"))).toBe(false);
     expect(valid.modules.find((module) => module.module_id === "freightcom-ltl")).toEqual({
       module_id: "freightcom-ltl",
       version: "2026-08-26.v1",
@@ -375,15 +393,46 @@ describe("Agent standard pack", () => {
     ]);
 
     const broadened = mutableClone(valid);
-    const runtimeCaller = broadened.profiles.find(
+    const broadenedRuntimeCaller = broadened.profiles.find(
       (profile) => profile.profile_id === "runtime-caller",
     );
-    if (runtimeCaller === undefined) throw new Error("Expected runtime-caller fixture.");
-    runtimeCaller.allowed_module_ids.push("freightcom-ltl");
+    if (broadenedRuntimeCaller === undefined) throw new Error("Expected runtime-caller fixture.");
+    broadenedRuntimeCaller.allowed_module_ids.push("freightcom-ltl");
 
     expect(() => validateAndFreezeAgentStandardPack(broadened)).toThrowError(
       expect.objectContaining({
         code: "pack.runtime_caller_entitlement_mismatch",
+      }),
+    );
+  });
+
+  it("pins the read-preview caller to six reviewed read-only modules", () => {
+    const valid = buildAgentStandardPack(rootDir);
+    const caller = valid.profiles.find(
+      (profile) => profile.profile_id === "read-preview-caller",
+    );
+    expect(caller?.standard_ids).toContain("read-preview-staging-profile-v1");
+    expect(caller?.standard_ids).not.toContain("credential-exchange-v1");
+    expect(caller?.allowed_rule_ids.some((ruleId) => ruleId.startsWith("CONTROL-")))
+      .toBe(false);
+    expect([...(caller?.allowed_module_ids ?? [])].sort()).toEqual([
+      "agent-access",
+      "canada-final-mile-quote",
+      "cargo",
+      "container",
+      "freightcom-ltl",
+      "riskcustoms-ca",
+    ]);
+
+    const broadened = mutableClone(valid);
+    const broadenedCaller = broadened.profiles.find(
+      (profile) => profile.profile_id === "read-preview-caller",
+    );
+    if (broadenedCaller === undefined) throw new Error("Expected read-preview caller fixture.");
+    broadenedCaller.allowed_module_ids.pop();
+    expect(() => validateAndFreezeAgentStandardPack(broadened)).toThrowError(
+      expect.objectContaining({
+        code: "pack.read_preview_caller_entitlement_mismatch",
       }),
     );
   });

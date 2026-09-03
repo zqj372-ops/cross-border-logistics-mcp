@@ -1,0 +1,17 @@
+services:
+  logistics-mcp-read-preview-staging:
+    platform: linux/amd64
+    container_name: logistics-mcp-read-preview-staging-gz
+    ports:
+      - target: 8080
+        published: "18080"
+        host_ip: 100.95.166.107
+        protocol: tcp
+    environment:
+      MCP_INSTANCE_ID: "logistics-mcp-read-preview-staging-gz-01"
+      MCP_TRUSTED_PROXY_ADDRESSES: "100.109.189.49"
+    labels:
+      com.freightclaw.node-role: "worker"
+      com.freightclaw.release-profile: "read-preview-staging"
+      com.freightclaw.source-sha: "${READ_PREVIEW_SOURCE_SHA:?READ_PREVIEW_SOURCE_SHA is required}"
+    stop_grace_period: 30s

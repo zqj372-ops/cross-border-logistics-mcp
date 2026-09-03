@@ -40,11 +40,13 @@ import type {
 import { AuthenticationError, type AuthClaims } from "../platform/context";
 import { getToolPolicy } from "../platform/rbac";
 import { SqliteProductionStore } from "../platform/sqlite-production-store";
+import { parseMcpTransportMode } from "../platform/transport-mode";
 import {
   CapabilityRegistry,
   ModuleHost,
   normalizeCapabilityRequirement,
-  parseT0ProductionProfile,
+  parseProductionRuntimeProfile,
+  READ_PREVIEW_STAGING_PROFILE,
 } from "../module-runtime";
 import {
   cargoModule,
@@ -90,6 +92,8 @@ import {
 import { DEFAULT_FREIGHTCOM_TEST_BASE_URL } from "../adapters/quote/freightcom-test-client";
 import type { FreightcomRatePort } from "../adapters/ports";
 import { ManagedFreightcomConfigRuntime } from "./plugin-config-runtime";
+import { createT1ReadWorkerClient } from "../t1-worker/client";
+import { buildT1WorkerEnvironment } from "../t1-worker/environment";
 
 export { initializeSqliteControlState } from "../control-plane/sqlite-control-store";
 export { initializeSqliteTenantAccessState } from "../control-plane/sqlite-tenant-access-store";
@@ -98,6 +102,7 @@ export { initializeSqlitePluginConfigState } from "../control-plane/plugin-confi
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
 const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
+const READ_PREVIEW_RUNTIME_REQUEST_TIMEOUT_MS = 75_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
 const execFileAsync = promisify(execFile);
 const MANAGED_PATH_SETTINGS = [
@@ -219,6 +224,7 @@ async function readiness(
         "MCP_JWT_AUDIENCE",
         "MCP_JWKS_URL",
         "MCP_RUNTIME_PROFILE",
+        "MCP_TRANSPORT_MODE",
         "MCP_STATE_DB_PATH",
         "MCP_INSTANCE_ID",
         "MCP_ALLOWED_ORIGINS",
@@ -277,18 +283,21 @@ function adminBlocker(reason: string): string {
   return "存在未通过的运行门槛，技术信息已隐藏。";
 }
 
-function businessSources(mode: GatewayComposition["mode"]): readonly Record<string, unknown>[] {
-  const fixture = mode === "fixtures";
+function businessSources(composition: GatewayComposition): readonly Record<string, unknown>[] {
+  const fixture = composition.mode === "fixtures";
+  const readPreview = composition.profile === READ_PREVIEW_STAGING_PROFILE;
   const common = {
     category: "business_api",
     type: "外部业务接口",
-    environment: fixture ? "演示环境" : "正式环境",
+    environment: fixture ? "演示环境" : readPreview ? "受控预览环境" : "正式环境",
     update_mode: "每次请求直接读取，不在平台保存业务数据。",
     last_checked_at: null,
     last_success_at: null,
-    readiness: fixture ? "manual_review" : "unavailable",
+    readiness: fixture || readPreview ? "manual_review" : "unavailable",
     reason: fixture
       ? "当前使用演示替身验证流程，不代表外部接口已经连接。"
+      : readPreview
+        ? "工具已进入隔离读取预览档位；单次响应仍须通过来源资格门禁。"
       : "正式业务接口尚未注入运行组合，相关工具保持不可用。",
   } as const;
   return [
@@ -298,7 +307,9 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
       label: "智能报价服务",
       business_key: "quote",
       affected_tools: ["quote.canada_final_mile.calculate"],
-      registration_status: "工具已登记，正式接口未启用",
+      registration_status: readPreview
+        ? "受控预览工具已登记；默认关闭且未取得生产资格"
+        : "工具已登记，正式接口未启用",
       business_version_evidence: "尚未取得完整的规则版本、数据版本和生效期证据。",
       blocker: "上游只读边界、货物体积与始发地映射、响应版本证据仍待确认。",
     },
@@ -308,7 +319,9 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
       label: "关务查询服务",
       business_key: "customs",
       affected_tools: ["customs.ca.search", "customs.ca.estimate"],
-      registration_status: "查询工具已登记，正式接口未启用",
+      registration_status: readPreview
+        ? "关务查询已进入受控预览；正式税额估算仍不可用"
+        : "查询工具已登记，正式接口未启用",
       business_version_evidence: "发布版本和数据就绪证据必须来自真实查询响应。",
       blocker: "正式认证、租户映射和发布状态读回仍待适配验证；现有接口不提供正式税额估算。",
     },
@@ -318,14 +331,16 @@ function businessSources(mode: GatewayComposition["mode"]): readonly Record<stri
       label: "Freightcom LTL 测试询价",
       business_key: "quote.freightcom_ltl",
       affected_tools: ["quote.freightcom_ltl.preview"],
-      environment: fixture ? "测试/演示环境" : "正式环境",
-      readiness: fixture && process.env.MCP_FREIGHTCOM_TEST_ENABLED === "true" ? "manual_review" : "unavailable",
+      environment: fixture || readPreview ? "测试/受控预览环境" : "正式环境",
+      readiness: readPreview || (fixture && process.env.MCP_FREIGHTCOM_TEST_ENABLED === "true")
+        ? "manual_review"
+        : "unavailable",
       registration_status: "MCP 工具已登记；真实调用仅允许固定测试环境",
       business_version_evidence: "Freightcom Customer API 2.10.0；测试结果不可提升为正式报价。",
-      reason: fixture
+      reason: fixture || readPreview
         ? "测试调用需要显式启用，并且结果始终要求人工复核。"
         : "生产 Freightcom 调用被代码级禁用。",
-      blocker: fixture
+      blocker: fixture || readPreview
         ? "测试响应缺少正式发布、租户快照和生产有效性证据，必须人工复核。"
         : "生产 Freightcom 调用被代码级禁用。",
     },
@@ -347,10 +362,11 @@ async function adminRuntimeSnapshot(
 ): Promise<Readonly<Record<string, unknown>>> {
   const state = await readiness(composition);
   const fixture = composition.mode === "fixtures";
+  const readPreview = composition.profile === READ_PREVIEW_STAGING_PROFILE;
   const blockers = [...new Set(state.reasons.map(adminBlocker))];
   return {
     schema_version: "2026-08-11.v1",
-    environment: fixture ? "演示环境" : "正式环境",
+    environment: fixture ? "演示环境" : readPreview ? "受控预览环境" : "正式环境",
     tenant: { name: "服务级只读状态（未绑定租户）" },
     actor: { name: "未绑定具体用户" },
     config: { current_version: null, last_published_at: null },
@@ -381,12 +397,23 @@ async function adminRuntimeSnapshot(
       description: definition.description,
       kind: definition.kind,
       roles: [...getToolPolicy(definition.name).roles],
-      availability:
-        fixture || (state.ready && LOCAL_TOOL_NAMES.has(definition.name))
-          ? "ready"
-          : "unavailable",
+      availability: fixture
+        ? "ready"
+        : !state.ready
+          ? "unavailable"
+          : LOCAL_TOOL_NAMES.has(definition.name)
+            ? "ready"
+            : readPreview && definition.name === "customs.ca.estimate"
+              ? "unavailable"
+              : readPreview && (
+                  definition.name === "quote.canada_final_mile.calculate" ||
+                  definition.name === "customs.ca.search" ||
+                  definition.name === "quote.freightcom_ltl.preview"
+                )
+                ? "manual_review"
+                : "unavailable",
     })),
-    sources: businessSources(composition.mode),
+    sources: businessSources(composition),
     approvals: {
       validation: {
         status: "blocked",
@@ -1468,46 +1495,67 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
   const profileSetting = Object.hasOwn(process.env, "MCP_RUNTIME_PROFILE")
     ? process.env.MCP_RUNTIME_PROFILE ?? ""
     : "t0-v1";
-  const profile = parseT0ProductionProfile(profileSetting);
+  const profile = parseProductionRuntimeProfile(profileSetting);
+  const productionRequestTimeoutMs = profile === READ_PREVIEW_STAGING_PROFILE
+    ? READ_PREVIEW_RUNTIME_REQUEST_TIMEOUT_MS
+    : RUNTIME_REQUEST_TIMEOUT_MS;
+  const transportMode = parseMcpTransportMode(
+    requiredRuntimeSetting("MCP_TRANSPORT_MODE"),
+  );
   const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
   const instanceId = process.env.MCP_INSTANCE_ID?.trim();
   const jwksUrl = process.env.MCP_JWKS_URL?.trim();
   const allowedOutboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
+  let jwksHost: string | undefined;
   const store =
     databasePath === undefined || databasePath.length === 0
       ? undefined
       : new SqliteProductionStore(databasePath);
   if (jwksUrl !== undefined && jwksUrl.length > 0) {
-    if (allowedOutboundHosts.length !== 1) {
+    if (
+      profile !== READ_PREVIEW_STAGING_PROFILE &&
+      allowedOutboundHosts.length !== 1
+    ) {
       throw new Error("T0 production must allow exactly the configured JWKS host.");
     }
     assertAllowedOutboundUrl(jwksUrl, allowedOutboundHosts);
+    jwksHost = new URL(jwksUrl).hostname.toLowerCase().replace(/\.$/u, "");
   }
   const tokenVerifier =
     tokenPolicy === undefined ||
     jwksUrl === undefined ||
     jwksUrl.length === 0 ||
-    allowedOutboundHosts.length !== 1
+    jwksHost === undefined
       ? undefined
       : createProductionTokenVerifier({
           jwksUrl,
-          allowedHosts: allowedOutboundHosts,
+          allowedHosts: [jwksHost],
         });
+  const t1Worker = profile === READ_PREVIEW_STAGING_PROFILE
+    ? createT1ReadWorkerClient({
+        entryPoint: fileURLToPath(new URL("../t1-worker/start.mjs", import.meta.url)),
+        environment: buildT1WorkerEnvironment(),
+        requestTimeoutMs: productionRequestTimeoutMs - 1_000,
+      })
+    : undefined;
   return createProductionComposition({
     dataMode: "production",
     profile,
+    transportMode,
     ...common,
+    requestTimeoutMs: productionRequestTimeoutMs,
     ...(store === undefined
       ? {}
       : {
           auditRepository: store,
           idempotencyRepository: store,
-          sessionBindingStore: store,
+          ...(transportMode === "stateful" ? { sessionBindingStore: store } : {}),
         }),
-    ...(instanceId === undefined || instanceId.length === 0
+    ...(transportMode === "stateless" || instanceId === undefined || instanceId.length === 0
       ? {}
       : { sessionOwnerId: instanceId }),
     ...(tokenVerifier === undefined ? {} : { tokenVerifier }),
+    ...(t1Worker === undefined ? {} : { t1Worker }),
     ...(tokenPolicy === undefined ? {} : { tokenPolicy }),
   });
 }

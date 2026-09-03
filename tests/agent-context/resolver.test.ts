@@ -140,6 +140,29 @@ describe("Agent context resolver", () => {
     ]);
   });
 
+  it("projects the read-preview caller without Admin or long-key exchange authority", () => {
+    const result = resolveAgentContextFromRepository({
+      rootDir,
+      profileId: "read-preview-caller",
+    });
+
+    expect(result.modules.map((module) => module.module_id).sort()).toEqual([
+      "agent-access",
+      "canada-final-mile-quote",
+      "cargo",
+      "container",
+      "freightcom-ltl",
+      "riskcustoms-ca",
+    ]);
+    expect(result.standards.map((standard) => standard.standard_id)).toContain(
+      "read-preview-staging-profile-v1",
+    );
+    expect(result.standards.map((standard) => standard.standard_id)).not.toContain(
+      "credential-exchange-v1",
+    );
+    expect(result.rules.some((rule) => rule.rule_id.startsWith("CONTROL-"))).toBe(false);
+  });
+
   it("rejects a forged broadened pack before it can project control-plane rules", () => {
     const broadened = mutableClone(buildAgentStandardPack(rootDir));
     const runtimeCaller = broadened.profiles.find(

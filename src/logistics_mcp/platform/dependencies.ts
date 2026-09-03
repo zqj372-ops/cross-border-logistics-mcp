@@ -11,6 +11,7 @@ import type {
   SessionRuntimeRegistryOptions,
 } from "./session-runtime";
 import { SessionRuntimeRegistry } from "./session-runtime";
+import type { McpTransportMode } from "./transport-mode";
 
 export interface DependencyHealth {
   readonly ready: boolean;
@@ -173,6 +174,7 @@ function inspectDependency<T extends DurableDependency>(
 }
 
 export interface ProductionPlatformDependencyOptions {
+  readonly transportMode?: McpTransportMode;
   readonly auditRepository?: DurableAuditRepository;
   readonly idempotencyRepository?: DurableIdempotencyRepository;
   readonly sessionBindingStore?: DurableSessionBindingStore;
@@ -183,8 +185,8 @@ export interface ProductionPlatformDependencyOptions {
 export interface ProductionPlatformDependencies {
   readonly auditRepository: DurableAuditRepository;
   readonly idempotencyRepository: DurableIdempotencyRepository;
-  readonly sessionBindingStore: DurableSessionBindingStore;
-  readonly sessionRegistry: SessionRuntimeRegistry<SessionRuntimeHandle>;
+  readonly sessionBindingStore?: DurableSessionBindingStore;
+  readonly sessionRegistry?: SessionRuntimeRegistry<SessionRuntimeHandle>;
 }
 
 export interface PlatformReadiness {
@@ -204,11 +206,17 @@ export interface ProductionPlatformAssembly {
 export function createProductionPlatformAssembly(
   options: ProductionPlatformDependencyOptions,
 ): ProductionPlatformAssembly {
-  const checks = [
+  const transportMode = options.transportMode ?? "stateful";
+  const requiredChecks = [
     inspectDependency("audit_repository", options.auditRepository),
     inspectDependency("idempotency_repository", options.idempotencyRepository),
-    inspectDependency("session_binding_store", options.sessionBindingStore),
   ];
+  const sessionCheck = transportMode === "stateful"
+    ? inspectDependency("session_binding_store", options.sessionBindingStore)
+    : null;
+  const checks = sessionCheck === null
+    ? requiredChecks
+    : [...requiredChecks, sessionCheck];
   const reasonCodes = checks.map((check) => check.reasonCode);
   const errors = checks.flatMap((check) =>
     check.error === null ? [] : [check.error],
@@ -225,17 +233,17 @@ export function createProductionPlatformAssembly(
 
   const auditRepository = checks[0]!.dependency as DurableAuditRepository;
   const idempotencyRepository = checks[1]!.dependency as DurableIdempotencyRepository;
-  const sessionBindingStore = checks[2]!.dependency as DurableSessionBindingStore;
-  const sessionRegistry =
-    options.sessionRegistry ??
-    new SessionRuntimeRegistry(
-      options.sessionRegistryOptions ?? DEFAULT_FIXTURE_SESSION_RUNTIME_LIMITS,
-    );
+  const sessionBindingStore = sessionCheck?.dependency ?? undefined;
+  const sessionRegistry = transportMode === "stateful"
+    ? options.sessionRegistry ?? new SessionRuntimeRegistry(
+        options.sessionRegistryOptions ?? DEFAULT_FIXTURE_SESSION_RUNTIME_LIMITS,
+      )
+    : undefined;
   const dependencies: ProductionPlatformDependencies = {
     auditRepository,
     idempotencyRepository,
-    sessionBindingStore,
-    sessionRegistry,
+    ...(sessionBindingStore === undefined ? {} : { sessionBindingStore }),
+    ...(sessionRegistry === undefined ? {} : { sessionRegistry }),
   };
 
   return {
@@ -247,7 +255,9 @@ export function createProductionPlatformAssembly(
       const healthChecks = [
         ["platform_audit_repository_unhealthy", auditRepository] as const,
         ["platform_idempotency_repository_unhealthy", idempotencyRepository] as const,
-        ["platform_session_binding_store_unhealthy", sessionBindingStore] as const,
+        ...(sessionBindingStore === undefined
+          ? []
+          : [["platform_session_binding_store_unhealthy", sessionBindingStore] as const]),
       ];
       const uniqueDependencies = new Map<DurableDependency, string[]>();
       for (const [reason, dependency] of healthChecks) {
@@ -271,10 +281,10 @@ export function createProductionPlatformAssembly(
       const dependencies = new Set<DurableDependency>([
         auditRepository,
         idempotencyRepository,
-        sessionBindingStore,
+        ...(sessionBindingStore === undefined ? [] : [sessionBindingStore]),
       ]);
       const results = await Promise.allSettled([
-        sessionRegistry.close(),
+        ...(sessionRegistry === undefined ? [] : [sessionRegistry.close()]),
         ...[...dependencies].map((dependency) => dependency.close()),
       ]);
       if (results.some((result) => result.status === "rejected")) {

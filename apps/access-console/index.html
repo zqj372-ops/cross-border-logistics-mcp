@@ -29,8 +29,10 @@
         <nav class="rail-nav" aria-label="页面区域">
           <a href="#overview"><span>01</span>运行总览</a>
           <a href="#identity"><span>02</span>管理员身份</a>
-          <a href="#access-management"><span>03</span>租户与 Key</a>
-          <a href="#operations-section"><span>04</span>操作回读</a>
+          <a href="#access-workbench"><span>03</span>接入任务台</a>
+          <a href="#access-management"><span>04</span>租户与 Key</a>
+          <a href="#operations-section"><span>05</span>操作回读</a>
+          <a href="#credential-readback"><span>06</span>认证验收</a>
         </nav>
 
         <div class="rail-boundary">
@@ -38,7 +40,7 @@
           <p>只管理租户、长期 Key 和三个镜像内置工具权限。</p>
         </div>
 
-        <p class="rail-foot">CONTROL SURFACE<br>2026-08-30.V1</p>
+        <p class="rail-foot">CONTROL SURFACE<br>2026-09-01.V2</p>
       </aside>
 
       <div class="console-deck">
@@ -158,10 +160,60 @@
             </form>
           </section>
 
+          <section id="access-workbench" class="deck-section workbench-section" aria-labelledby="workbench-title">
+            <div class="section-heading">
+              <div>
+                <p class="section-code">03 / GUIDED ONBOARDING</p>
+                <h2 id="workbench-title">接入任务台</h2>
+              </div>
+              <p class="section-note">只显示当前应做的一步；完成条件来自服务端状态与精确读回。</p>
+            </div>
+
+            <div class="context-bar">
+              <div>
+                <span class="panel-code">WORKING CONTEXT</span>
+                <strong>当前租户</strong>
+              </div>
+              <label for="tenant-context">选择操作范围</label>
+              <select id="tenant-context" aria-describedby="tenant-context-note">
+                <option value="">正在读取租户…</option>
+              </select>
+              <p id="tenant-context-note">切换租户只改变页面操作范围，不改变任何服务端权限。</p>
+            </div>
+
+            <div class="workbench-grid">
+              <ol id="lifecycle-track" class="lifecycle-track" aria-label="Agent 接入生命周期"></ol>
+              <aside class="next-action-card" aria-live="polite">
+                <span class="panel-code">CURRENT ACTION</span>
+                <p id="next-action-kicker">等待服务端状态</p>
+                <h3 id="next-action-title">正在计算下一步</h3>
+                <p id="next-action-detail">不会根据按钮点击推测完成状态。</p>
+                <button id="next-action" type="button" disabled>等待状态读回</button>
+              </aside>
+            </div>
+
+            <section class="client-config" aria-labelledby="client-config-title">
+              <div class="client-config-copy">
+                <span class="panel-code">CLIENT HANDOFF</span>
+                <h3 id="client-config-title">Agent 无密钥接入清单</h3>
+                <p>生成 endpoint、环境变量名和精确目录预期；不包含长期 Key 或短期 JWT。</p>
+              </div>
+              <label for="client-profile">Agent 类型</label>
+              <select id="client-profile">
+                <option value="codex">Codex</option>
+                <option value="chatgpt-work">ChatGPT Work</option>
+                <option value="enterprise-assistant">企业助手</option>
+              </select>
+              <pre id="client-config-preview" tabindex="0"></pre>
+              <button id="copy-client-config" class="secondary" type="button">复制接入清单</button>
+              <p class="hint">接入清单不是可直接导入的凭证配置；短期 JWT 仍必须由受控凭证注入器生成。</p>
+            </section>
+          </section>
+
           <section id="access-management" class="deck-section" aria-labelledby="access-title">
             <div class="section-heading">
               <div>
-                <p class="section-code">03 / ACCESS</p>
+                <p class="section-code">04 / ACCESS</p>
                 <h2 id="access-title">租户与 Key</h2>
               </div>
               <p class="section-note">每次写入都必须在服务端读回同一 operation_id。</p>
@@ -194,7 +246,11 @@
                 </div>
                 <form id="key-form">
                   <div class="field-pair">
-                    <label>租户标识<input name="tenant_id" required placeholder="tenant_north_america"></label>
+                    <label for="key-tenant">租户
+                      <select id="key-tenant" name="tenant_id" required>
+                        <option value="">先创建并选择 active 租户</option>
+                      </select>
+                    </label>
                     <label>调用方标识<input name="client_id" required placeholder="codex_ops"></label>
                   </div>
                   <div class="field-pair">
@@ -217,13 +273,24 @@
                 </form>
                 <section id="one-time-panel" class="secret-panel" hidden aria-labelledby="one-time-title">
                   <strong id="one-time-title">一次性 Key</strong>
-                  <p>复制到批准的 Secret Manager 后确认交付；关闭后不可再次显示。</p>
+                  <p>按顺序完成复制、外部保存和交付确认；离开页面后完整 Key 不可恢复。</p>
                   <output id="one-time-key" class="secret-output"></output>
+                  <ol class="secret-steps">
+                    <li>复制一次性 Key</li>
+                    <li>保存到调用方批准的 Secret Manager</li>
+                    <li>确认交付，再兑换短期 JWT 验收</li>
+                  </ol>
+                  <label class="delivery-check">
+                    <input id="delivery-acknowledgement" type="checkbox">
+                    <span>我已把完整 Key 保存到调用方的安全凭证位置</span>
+                  </label>
                   <div class="button-row">
-                    <button id="copy-key" type="button">复制</button>
-                    <button id="ack-key" class="secondary" type="button">确认已安全保存</button>
-                    <button id="hide-key" class="secondary" type="button">隐藏</button>
+                    <button id="copy-key" type="button">复制一次性 Key</button>
+                    <button id="ack-and-verify" type="button" disabled>确认交付并立即验收</button>
+                    <button id="ack-key" class="secondary" type="button" disabled>仅确认交付</button>
+                    <button id="discard-key" class="danger" type="button">放弃并吊销</button>
                   </div>
+                  <p id="secret-status" class="hint" aria-live="polite">尚未确认外部安全保存。</p>
                 </section>
                 <div id="credentials" class="records"></div>
               </section>
@@ -245,11 +312,20 @@
           <section id="operations-section" class="deck-section operations-section" aria-labelledby="operations-title">
             <div class="section-heading">
               <div>
-                <p class="section-code">04 / READBACK</p>
+                <p class="section-code">05 / READBACK</p>
                 <h2 id="operations-title">操作回读</h2>
               </div>
               <p class="section-note">状态流转只信任服务端回读，不以按钮点击作为完成证明。</p>
             </div>
+            <section class="write-progress-card" aria-labelledby="write-progress-title">
+              <div class="subheading">
+                <span>EXACT WRITE PROOF</span>
+                <h3 id="write-progress-title">最近一次写入核验</h3>
+              </div>
+              <div id="write-progress" class="write-progress" aria-live="polite">
+                <p class="empty">尚无本页写入；每次操作会依次显示输入、事务、operation 和对象状态核对。</p>
+              </div>
+            </section>
             <div class="operations-ledger-heading" aria-hidden="true">
               <span>动作 / 流转</span>
               <span>状态 / 原因</span>
@@ -257,7 +333,79 @@
             </div>
             <div id="operations" class="records operation-records"></div>
           </section>
+
+          <section id="credential-readback" class="deck-section readback-section" aria-labelledby="readback-title">
+            <div class="section-heading">
+              <div>
+                <p class="section-code">06 / AUTH READBACK</p>
+                <h2 id="readback-title">认证验收</h2>
+              </div>
+              <p class="section-note">用真实长期 Key 兑换短期 JWT，并精确读取 3 个工具和 5 个资源。</p>
+            </div>
+
+            <div class="readback-console">
+              <form id="readback-form" class="readback-form">
+                <div>
+                  <span class="panel-code">ONE-SHOT VERIFICATION</span>
+                  <h3>当前浏览器内存验收</h3>
+                  <p>Key 只在当前页面内存中使用；提交后立即清空输入，不写入 URL、Cookie、浏览器存储、页面结果或服务日志。</p>
+                </div>
+                <label for="readback-api-key">长期 API Key</label>
+                <div class="readback-entry">
+                  <input id="readback-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 lmcpk_…">
+                  <button id="run-readback" type="submit">验收 3 工具 / 5 资源</button>
+                  <button id="clear-readback" class="secondary" type="button">清除</button>
+                </div>
+                <p class="hint">只请求三个精确 T0 权限；短期 JWT 不显示、不保存，验收结束后关闭 MCP session。</p>
+              </form>
+
+              <section class="readback-report" aria-labelledby="readback-report-title">
+                <div class="subheading">
+                  <span>DETERMINISTIC RESULT</span>
+                  <h3 id="readback-report-title">脱敏结果</h3>
+                </div>
+                <div id="readback-results" class="records" aria-live="polite" aria-busy="false">
+                  <p class="empty">等待真实 Key 验收；不会展示 Key 或短期 JWT。</p>
+                </div>
+              </section>
+            </div>
+          </section>
         </main>
+
+        <dialog id="action-dialog" class="action-dialog" aria-labelledby="action-dialog-title">
+          <form id="action-dialog-form" method="dialog">
+            <span class="panel-code">IMPACT CONFIRMATION</span>
+            <h2 id="action-dialog-title">确认操作</h2>
+            <p id="action-dialog-detail"></p>
+            <div id="action-dialog-impact" class="impact-summary"></div>
+
+            <section id="rotation-options" class="rotation-options" hidden aria-labelledby="rotation-title">
+              <h3 id="rotation-title">新 Key 的完整权限</h3>
+              <fieldset id="rotation-tools">
+                <legend>允许调用</legend>
+                <label><input type="checkbox" value="cargo.calculate"><span>cargo.calculate</span></label>
+                <label><input type="checkbox" value="container.plan_summary"><span>container.plan_summary</span></label>
+                <label><input type="checkbox" value="system.agent_context.get"><span>system.agent_context.get</span></label>
+              </fieldset>
+              <label for="rotation-expiry">新 Key 有效期
+                <select id="rotation-expiry">
+                  <option value="86400">1 天</option>
+                  <option value="2592000" selected>30 天</option>
+                </select>
+              </label>
+              <p class="hint">旧 Key 会立即吊销，新 Key 重新进入待交付状态。</p>
+            </section>
+
+            <label class="dialog-confirmation">
+              <input id="action-confirmation" type="checkbox">
+              <span id="action-confirmation-copy">我理解此操作的影响</span>
+            </label>
+            <div class="dialog-actions">
+              <button class="secondary" type="submit" value="cancel">取消</button>
+              <button id="confirm-action" type="submit" value="confirm" disabled>确认操作</button>
+            </div>
+          </form>
+        </dialog>
 
         <footer class="deck-footer">
           <span>FreightClaw / Unified Access Gateway</span>

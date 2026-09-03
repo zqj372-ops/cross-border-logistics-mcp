@@ -7,6 +7,7 @@ export * from "./idempotency";
 export * from "./rbac";
 export * from "./repositories";
 export * from "./session-runtime";
+export * from "./transport-mode";
 export {
   SecurityPolicyError,
   assertAllowedOutboundUrl,

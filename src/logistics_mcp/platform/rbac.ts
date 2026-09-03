@@ -34,6 +34,17 @@ export type TenantApiKeyToolScope = `tool:${TenantApiKeyToolName}`;
 
 const tenantApiKeyToolNameSet = new Set<string>(tenantApiKeyToolNames);
 
+export const readPreviewToolNames = Object.freeze([
+  ...tenantApiKeyToolNames,
+  "quote.canada_final_mile.calculate",
+  "customs.ca.search",
+  "customs.ca.estimate",
+  freightcomLtlToolName,
+] as const);
+
+export type ReadPreviewToolName = (typeof readPreviewToolNames)[number];
+const readPreviewToolNameSet = new Set<string>(readPreviewToolNames);
+
 export function tenantApiKeyScopeForToolName(
   toolName: TenantApiKeyToolName,
 ): TenantApiKeyToolScope {
@@ -119,15 +130,19 @@ function usesExactToolEntitlements(context: ExecutionContext): boolean {
 }
 
 function hasExactToolEntitlement(context: ExecutionContext, toolName: string): boolean {
-  return tenantApiKeyToolNameSet.has(toolName)
+  return readPreviewToolNameSet.has(toolName)
     && context.scopes.includes(`tool:${toolName}`);
 }
 
-export function isExactT0ServiceIdentity(input: Readonly<{
+function hasExactServiceIdentityShape(input: Readonly<{
   readonly role: unknown;
   readonly roles: unknown;
   readonly scopes: unknown;
-}>): boolean {
+}>): input is Readonly<{
+  readonly role: "service";
+  readonly roles: readonly ["service"];
+  readonly scopes: readonly string[];
+}> {
   return input.role === "service"
     && Array.isArray(input.roles)
     && input.roles.length === 1
@@ -135,19 +150,40 @@ export function isExactT0ServiceIdentity(input: Readonly<{
     && Array.isArray(input.scopes)
     && input.scopes.length > 0
     && input.scopes.every((scope): scope is string => typeof scope === "string")
-    && new Set(input.scopes).size === input.scopes.length
+    && new Set(input.scopes).size === input.scopes.length;
+}
+
+export function isExactT0ServiceIdentity(input: Readonly<{
+  readonly role: unknown;
+  readonly roles: unknown;
+  readonly scopes: unknown;
+}>): boolean {
+  return hasExactServiceIdentityShape(input)
     && input.scopes.every((scope) => tenantApiKeyToolNameFromScope(scope) !== null);
 }
 
-function assertT0ServiceScopeBoundary(context: ExecutionContext): void {
-  // The production credential-exchange contract issues T0 JWTs only as a
-  // service identity. A tool:* entitlement marks that context as T0; legacy
-  // service-to-service contexts without tool entitlements remain governed by
-  // their existing business scope. The production composition separately
-  // requires every incoming identity to be an exact T0 service identity.
+export function isExactReadPreviewServiceIdentity(input: Readonly<{
+  readonly role: unknown;
+  readonly roles: unknown;
+  readonly scopes: unknown;
+}>): boolean {
+  return hasExactServiceIdentityShape(input)
+    && input.scopes.every((scope) => {
+      if (!scope.startsWith("tool:")) return false;
+      return readPreviewToolNameSet.has(scope.slice("tool:".length));
+    });
+}
+
+function assertExactServiceScopeBoundary(context: ExecutionContext): void {
+  // A tool:* entitlement marks a service context as an exact production
+  // identity. The shared RBAC layer accepts only the union of reviewed T0 and
+  // read-preview names; each production composition separately constrains the
+  // same identity to its own exact profile before this authorization runs.
+  // Legacy service contexts without tool entitlements keep their business
+  // scope behavior.
   if (context.role !== "service" || !usesExactToolEntitlements(context)) return;
-  if (!isExactT0ServiceIdentity(context)) {
-    throw new ForbiddenError("The authenticated scope cannot be used for the T0 production profile.");
+  if (!isExactReadPreviewServiceIdentity(context)) {
+    throw new ForbiddenError("The authenticated scope cannot be used for a reviewed production profile.");
   }
 }
 
@@ -155,7 +191,7 @@ export function toolVisibleForContext(
   context: ExecutionContext,
   toolName: string,
 ): boolean {
-  assertT0ServiceScopeBoundary(context);
+  assertExactServiceScopeBoundary(context);
   return !usesExactToolEntitlements(context) || hasExactToolEntitlement(context, toolName);
 }
 
@@ -174,7 +210,7 @@ export function authorizeTool(
   targetTenantId = context.tenantId,
 ): true {
   assertTenantScope(context, targetTenantId);
-  assertT0ServiceScopeBoundary(context);
+  assertExactServiceScopeBoundary(context);
 
   if (!Object.hasOwn(toolPolicies, toolName)) {
     throw new ForbiddenError("The requested MCP tool is not allowlisted.");

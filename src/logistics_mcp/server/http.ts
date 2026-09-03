@@ -38,6 +38,7 @@ import {
   type SessionRuntimeHandle,
   type SessionRuntimeRegistry,
 } from "../platform/session-runtime";
+import type { McpTransportMode } from "../platform/transport-mode";
 import {
   agentContextToolName,
   CrossTenantAccessError,
@@ -65,6 +66,7 @@ import {
 import type { AgentAccessRuntime } from "../agent-context/runtime";
 
 export interface McpHttpOptions {
+  readonly transportMode?: McpTransportMode;
   readonly allowedOrigins: readonly string[];
   readonly allowedHosts: readonly string[];
   readonly authenticate: (
@@ -77,7 +79,7 @@ export interface McpHttpOptions {
   readonly agentAccessRuntime?: AgentAccessRuntime;
   readonly auditRepository: AuditRepository;
   readonly idempotencyRepository: IdempotencyRepository;
-  readonly sessionRegistry: SessionRuntimeRegistry;
+  readonly sessionRegistry?: SessionRuntimeRegistry;
   readonly sessionBindingStore?: SessionBindingStore;
   readonly sessionOwnerId?: string;
   readonly maxBodyBytes?: number;
@@ -88,6 +90,11 @@ export interface McpHttpOptions {
 export interface McpHttpHandler {
   (request: Request): Promise<Response>;
   close(): Promise<void>;
+}
+
+interface McpServerRuntime extends SessionRuntimeHandle {
+  readonly server: McpServer;
+  readonly transport: WebStandardStreamableHTTPServerTransport;
 }
 
 class BodyTooLargeError extends Error {}
@@ -432,6 +439,7 @@ function auditPersistenceFailureEnvelope(requestId: string): ResponseEnvelope {
 }
 
 function ensureSecurityOptions(options: McpHttpOptions): void {
+  const transportMode = options.transportMode ?? "stateful";
   if (options.allowedOrigins.length === 0 || options.allowedHosts.length === 0) {
     throw new Error("Secure MCP HTTP options require origin and host allowlists.");
   }
@@ -444,7 +452,18 @@ function ensureSecurityOptions(options: McpHttpOptions): void {
   if ((options.requestTimeoutMs ?? 10_000) < 1) {
     throw new Error("The request timeout must be positive.");
   }
-  if ((options.sessionBindingStore === undefined) !== (options.sessionOwnerId === undefined)) {
+  if (
+    transportMode === "stateless" &&
+    (options.sessionRegistry !== undefined ||
+      options.sessionBindingStore !== undefined ||
+      options.sessionOwnerId !== undefined)
+  ) {
+    throw new Error("Stateless MCP transport cannot be configured with session dependencies.");
+  }
+  if (
+    transportMode === "stateful" &&
+    (options.sessionBindingStore === undefined) !== (options.sessionOwnerId === undefined)
+  ) {
     throw new Error("Session binding store and owner ID must be configured together.");
   }
   if (
@@ -468,7 +487,7 @@ function ensurePlatformDependencies(options: McpHttpOptions): void {
       "idempotency_repository",
     );
   }
-  if (options.sessionRegistry === undefined) {
+  if ((options.transportMode ?? "stateful") === "stateful" && options.sessionRegistry === undefined) {
     throw new PlatformConfigurationError(
       "platform_dependency_missing",
       "session_runtime_registry",
@@ -779,11 +798,13 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
   const auditRepository = options.auditRepository;
   const idempotencyRepository = options.idempotencyRepository;
   const definitions = options.definitions ?? registerPhaseOneTools(options.handlers, options.contracts);
-  const sessions = options.sessionRegistry;
+  const transportMode = options.transportMode ?? "stateful";
+  const sessions = transportMode === "stateful" ? options.sessionRegistry! : undefined;
   const sessionBindingStore = options.sessionBindingStore;
   const sessionOwnerId = options.sessionOwnerId;
   const requestSignals = new AsyncLocalStorage<AbortSignal>();
   const createdSessionIds = new Set<string>();
+  const activeStatelessRuntimes = new Set<McpServerRuntime>();
   const requireHttps = options.requireHttps ?? true;
 
   const secureFailure = async (
@@ -813,28 +834,10 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     return responseForEnvelope(envelope, status);
   };
 
-  const createSession = async (
+  const prepareRuntime = (
     context: ExecutionContext,
-    signal: AbortSignal,
-  ): Promise<{ readonly sessionId: string; readonly runtime: SessionRuntimeHandle }> => {
-    const sessionId = `mcp_${randomUUID()}`;
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => sessionId,
-      enableJsonResponse: true,
-      allowedHosts: [...options.allowedHosts],
-      allowedOrigins: [...options.allowedOrigins],
-      enableDnsRebindingProtection: true,
-      onsessionclosed: async (closedSessionId) => {
-        createdSessionIds.delete(closedSessionId);
-        const results = await Promise.allSettled([
-          sessions.delete(closedSessionId),
-          sessionBindingStore?.delete(closedSessionId),
-        ]);
-        if (results.some((result) => result.status === "rejected")) {
-          throw new Error("The MCP session could not be terminated durably.");
-        }
-      },
-    });
+    transport: WebStandardStreamableHTTPServerTransport,
+  ): McpServerRuntime => {
     const server = new McpServer(
       { name: "cross-border-logistics-mcp", version: "0.1.0" },
       { instructions: SERVER_INSTRUCTIONS },
@@ -855,13 +858,48 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     ) {
       registerAgentResources(server, options.agentAccessRuntime, context);
     }
-    const runtime: SessionRuntimeHandle = { transport, server };
+    return { transport, server };
+  };
+
+  const closeRuntime = async (runtime: SessionRuntimeHandle): Promise<void> => {
+    const results = await Promise.allSettled([
+      runtime.server.close(),
+      runtime.transport.close(),
+    ]);
+    if (results.some((result) => result.status === "rejected")) {
+      throw new Error("An MCP request runtime could not be closed cleanly.");
+    }
+  };
+
+  const createSession = async (
+    context: ExecutionContext,
+    signal: AbortSignal,
+  ): Promise<{ readonly sessionId: string; readonly runtime: McpServerRuntime }> => {
+    const sessionId = `mcp_${randomUUID()}`;
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => sessionId,
+      enableJsonResponse: true,
+      allowedHosts: [...options.allowedHosts],
+      allowedOrigins: [...options.allowedOrigins],
+      enableDnsRebindingProtection: true,
+      onsessionclosed: async (closedSessionId) => {
+        createdSessionIds.delete(closedSessionId);
+        const results = await Promise.allSettled([
+          sessions!.delete(closedSessionId),
+          sessionBindingStore?.delete(closedSessionId),
+        ]);
+        if (results.some((result) => result.status === "rejected")) {
+          throw new Error("The MCP session could not be terminated durably.");
+        }
+      },
+    });
+    const runtime = prepareRuntime(context, transport);
     let registered = false;
     try {
-      const entry = await sessions.register(sessionId, runtime, context);
+      const entry = await sessions!.register(sessionId, runtime, context);
       registered = true;
       assertRequestActive(signal);
-      await server.connect(transport);
+      await runtime.server.connect(transport);
       assertRequestActive(signal);
       if (sessionBindingStore !== undefined && sessionOwnerId !== undefined) {
         const binding: SessionBinding = {
@@ -875,7 +913,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
           createdAtMs: entry.createdAtMs,
           expiresAtMs: Math.min(
             entry.tokenExpiresAtMs,
-            entry.createdAtMs + sessions.limits.maxLifetimeMs,
+            entry.createdAtMs + sessions!.limits.maxLifetimeMs,
           ),
         };
         await sessionBindingStore.put(binding);
@@ -884,15 +922,37 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       }
     } catch (error: unknown) {
       if (registered) {
-        await sessions.delete(sessionId).catch(() => undefined);
+        await sessions!.delete(sessionId).catch(() => undefined);
       } else {
-        await Promise.allSettled([server.close(), transport.close()]);
+        await closeRuntime(runtime).catch(() => undefined);
       }
       await sessionBindingStore?.delete(sessionId).catch(() => undefined);
       createdSessionIds.delete(sessionId);
       throw error;
     }
     return { sessionId, runtime };
+  };
+
+  const createStatelessRuntime = async (
+    context: ExecutionContext,
+    signal: AbortSignal,
+  ): Promise<McpServerRuntime> => {
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      enableJsonResponse: true,
+      allowedHosts: [...options.allowedHosts],
+      allowedOrigins: [...options.allowedOrigins],
+      enableDnsRebindingProtection: true,
+    });
+    const runtime = prepareRuntime(context, transport);
+    try {
+      await runtime.server.connect(transport);
+      assertRequestActive(signal);
+      activeStatelessRuntimes.add(runtime);
+      return runtime;
+    } catch (error: unknown) {
+      await closeRuntime(runtime).catch(() => undefined);
+      throw error;
+    }
   };
 
   const processRequest = async (
@@ -980,20 +1040,27 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     const sessionId = request.headers.get("mcp-session-id");
     let session: SessionRuntimeHandle;
     let newSessionId: string | null = null;
-    if (sessionId !== null) {
+    let statelessRuntime: McpServerRuntime | null = null;
+    if (transportMode === "stateless") {
+      if (sessionId !== null) {
+        return secureFailure(request, 400, new RequestSecurityError(), context);
+      }
+      statelessRuntime = await createStatelessRuntime(context, signal);
+      session = statelessRuntime;
+    } else if (sessionId !== null) {
       try {
         const binding = await sessionBindingStore?.get(sessionId);
         assertRequestActive(signal);
         if (sessionBindingStore !== undefined) {
           if (binding === null) {
-            await sessions.delete(sessionId).catch(() => undefined);
+            await sessions!.delete(sessionId).catch(() => undefined);
             return secureFailure(request, 404, new RequestSecurityError(), context);
           }
           if (binding?.ownerId !== sessionOwnerId) {
             return secureFailure(request, 503, new RequestSecurityError(), context);
           }
         }
-        const entry = await sessions.get(sessionId, context);
+        const entry = await sessions!.get(sessionId, context);
         assertRequestActive(signal);
         if (entry === null) {
           await sessionBindingStore?.delete(sessionId);
@@ -1009,7 +1076,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
         ) {
           return secureFailure(request, 503, new RequestSecurityError(), context);
         }
-        const touched = await sessions.touch(sessionId, context);
+        const touched = await sessions!.touch(sessionId, context);
         assertRequestActive(signal);
         if (touched === null) {
           return secureFailure(request, 404, new RequestSecurityError(), context);
@@ -1041,7 +1108,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       assertRequestActive(signal);
       if (response.status >= 400) {
         if (newSessionId !== null) {
-          await sessions.delete(newSessionId).catch(() => undefined);
+          await sessions!.delete(newSessionId).catch(() => undefined);
           await sessionBindingStore?.delete(newSessionId).catch(() => undefined);
           createdSessionIds.delete(newSessionId);
         }
@@ -1058,12 +1125,17 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       return response;
     } catch (error: unknown) {
       if (newSessionId !== null) {
-        await sessions.delete(newSessionId).catch(() => undefined);
+        await sessions!.delete(newSessionId).catch(() => undefined);
         await sessionBindingStore?.delete(newSessionId).catch(() => undefined);
         createdSessionIds.delete(newSessionId);
       }
       if (error instanceof RequestTimeoutError) throw error;
       return secureFailure(request, 503, error, context, "mcp.transport");
+    } finally {
+      if (statelessRuntime !== null) {
+        activeStatelessRuntimes.delete(statelessRuntime);
+        await closeRuntime(statelessRuntime).catch(() => undefined);
+      }
     }
   };
 
@@ -1075,10 +1147,13 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
 
   handler.close = async (): Promise<void> => {
     const sessionIds = [...createdSessionIds];
+    const statelessRuntimes = [...activeStatelessRuntimes];
     createdSessionIds.clear();
+    activeStatelessRuntimes.clear();
     const results = await Promise.allSettled([
-      sessions.close(),
+      ...(sessions === undefined ? [] : [sessions.close()]),
       ...sessionIds.map((sessionId) => sessionBindingStore?.delete(sessionId)),
+      ...statelessRuntimes.map(closeRuntime),
     ]);
     if (results.some((result) => result.status === "rejected")) {
       throw new Error("The MCP session runtime could not be closed cleanly.");

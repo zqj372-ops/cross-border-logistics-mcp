@@ -69,6 +69,7 @@ export interface FreightcomRatePort {
   requestRate(
     input: unknown,
     signal?: AbortSignal,
+    context?: ExecutionContext,
   ): Promise<AdapterResult>;
 }
 

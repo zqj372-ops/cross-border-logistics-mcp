@@ -354,7 +354,7 @@ function invalidAdapterData(): ModuleToolOutcome {
 }
 
 export function createFreightcomLtlToolHandler(adapter: FreightcomRatePort): ModuleToolHandler {
-  return async (input, _context, signal) => {
+  return async (input, context, signal) => {
     const preflightOutcome = preflightFreightcomLtlInput(input);
     if (preflightOutcome !== undefined) return preflightOutcome;
     const parsed = freightcomLtlInputSchema.safeParse(input);
@@ -378,7 +378,7 @@ export function createFreightcomLtlToolHandler(adapter: FreightcomRatePort): Mod
         : { excluded_services: parsed.data.excluded_services }),
       details: parsed.data.details,
     };
-    const result = await adapter.requestRate(providerInput, signal);
+    const result = await adapter.requestRate(providerInput, signal, context);
     if (result.data === null) return result;
     const providerData = result.data as FreightcomRateData;
     try {
