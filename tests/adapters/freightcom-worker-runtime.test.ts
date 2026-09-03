@@ -134,8 +134,9 @@ describe("Freightcom test worker runtime configuration", () => {
     expect(JSON.stringify(result)).not.toContain("freightcom-test-token");
   });
 
-  it("keeps polling past the former 12-attempt staging window", async () => {
+  it("uses a low-frequency poll window long enough for observed test responses", async () => {
     let pollCount = 0;
+    const pollDelays: number[] = [];
     const fetchImpl = vi.fn<FetchImplementation>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ request_id: "rate-slow-1" }), {
         status: 202,
@@ -144,7 +145,7 @@ describe("Freightcom test worker runtime configuration", () => {
       .mockImplementation(() => {
         pollCount += 1;
         return Promise.resolve(new Response(JSON.stringify({
-          status: { done: pollCount === 13, total: 0, complete: 0 },
+          status: { done: pollCount === 21, total: 0, complete: 0 },
           rates: [],
         }), { status: 200, headers: { "content-type": "application/json" } }));
       });
@@ -153,13 +154,17 @@ describe("Freightcom test worker runtime configuration", () => {
       {
         readSecretFile: () => "freightcom-test-token",
         fetchImpl,
-        sleep: () => Promise.resolve(),
+        sleep: (delayMs) => {
+          pollDelays.push(delayMs);
+          return Promise.resolve();
+        },
       },
     );
 
     const result = await adapter!.requestRate(rateRequest(), undefined, context);
 
     expect(result.status).toBe("manual_review");
-    expect(pollCount).toBe(13);
+    expect(pollCount).toBe(21);
+    expect(pollDelays).toEqual(Array(20).fill(2_000));
   });
 });
