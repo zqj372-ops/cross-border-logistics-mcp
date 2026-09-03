@@ -1,5 +1,6 @@
 import {
   constants,
+  createHash,
   createPublicKey,
   generateKeyPairSync,
   privateEncrypt,
@@ -182,6 +183,16 @@ describe("OCI Vault and KMS production providers", () => {
     expect(verified.protectedHeader).toEqual({ alg: "RS256", kid: signed.kid, typ: "JWT" });
     expect(verified.payload).toMatchObject(claims());
     expect(clients.signRequests).toHaveLength(2);
+    const startupRequest = clients.signRequests[0];
+    expect(startupRequest?.signDataDetails.loggingContext.operation).toBe("startup-self-test");
+    expect(startupRequest?.signDataDetails.message).toBe(
+      createHash("sha256")
+        .update(Buffer.from(
+          "logistics-mcp-access-gateway/oci-kms-self-test/v1/".repeat(8),
+          "utf8",
+        ))
+        .digest("base64"),
+    );
     for (const request of clients.signRequests) {
       expect(request.signDataDetails.messageType).toBe("DIGEST");
       expect(Buffer.from(request.signDataDetails.message, "base64")).toHaveLength(32);

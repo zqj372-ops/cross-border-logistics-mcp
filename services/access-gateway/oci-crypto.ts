@@ -460,7 +460,10 @@ export class OciKmsJwtSigningProvider implements JwtSigningProvider {
 
   async selfTest(): Promise<void> {
     await this.#signBytes(
-      Buffer.from("logistics-mcp-access-gateway/oci-kms-self-test/v1", "utf8"),
+      Buffer.from(
+        "logistics-mcp-access-gateway/oci-kms-self-test/v1/".repeat(8),
+        "utf8",
+      ),
       "startup-self-test",
     );
   }
