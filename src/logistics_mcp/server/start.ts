@@ -102,6 +102,7 @@ export { initializeSqlitePluginConfigState } from "../control-plane/plugin-confi
 const PORT = Number.parseInt(process.env.MCP_PORT ?? "8080", 10);
 const RUNTIME_MAX_BODY_BYTES = 32 * 1024;
 const RUNTIME_REQUEST_TIMEOUT_MS = 30_000;
+const READ_PREVIEW_RUNTIME_REQUEST_TIMEOUT_MS = 75_000;
 const RUNTIME_HEADERS_TIMEOUT_MS = 10_000;
 const execFileAsync = promisify(execFile);
 const MANAGED_PATH_SETTINGS = [
@@ -1495,6 +1496,9 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     ? process.env.MCP_RUNTIME_PROFILE ?? ""
     : "t0-v1";
   const profile = parseProductionRuntimeProfile(profileSetting);
+  const productionRequestTimeoutMs = profile === READ_PREVIEW_STAGING_PROFILE
+    ? READ_PREVIEW_RUNTIME_REQUEST_TIMEOUT_MS
+    : RUNTIME_REQUEST_TIMEOUT_MS;
   const transportMode = parseMcpTransportMode(
     requiredRuntimeSetting("MCP_TRANSPORT_MODE"),
   );
@@ -1531,7 +1535,7 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     ? createT1ReadWorkerClient({
         entryPoint: fileURLToPath(new URL("../t1-worker/start.mjs", import.meta.url)),
         environment: buildT1WorkerEnvironment(),
-        requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS - 1_000,
+        requestTimeoutMs: productionRequestTimeoutMs - 1_000,
       })
     : undefined;
   return createProductionComposition({
@@ -1539,6 +1543,7 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     profile,
     transportMode,
     ...common,
+    requestTimeoutMs: productionRequestTimeoutMs,
     ...(store === undefined
       ? {}
       : {
