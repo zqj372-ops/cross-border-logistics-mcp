@@ -10,6 +10,7 @@ import { parseExecutionContext } from "../platform/context";
 import { isExactReadPreviewServiceIdentity } from "../platform/rbac";
 
 export const T1_WORKER_PROTOCOL_VERSION = "2026-09-02.v1" as const;
+const T1_WORKER_MAX_REQUEST_MS = 74_000;
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u);
 const contextSchema = z.object({
@@ -93,7 +94,10 @@ export function createT1WorkerRequestHandler(
       return failure(request.request_id, "worker.request_invalid");
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(remainingMs, 30_000));
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.min(remainingMs, T1_WORKER_MAX_REQUEST_MS),
+    );
     try {
       let result: AdapterResult;
       switch (request.method) {

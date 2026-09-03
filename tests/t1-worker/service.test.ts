@@ -102,6 +102,51 @@ describe("T1 worker closed request service", () => {
     expect(fixture.quoteCalculate).not.toHaveBeenCalled();
   });
 
+  it("honors the bounded parent deadline instead of aborting every request at 30 seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = adapters();
+      const freightcomRate = vi.fn<FreightcomRatePort["requestRate"]>((_input, signal) =>
+        new Promise((resolve) => {
+          signal?.addEventListener("abort", () => {
+            resolve(unavailable("freightcom.aborted"));
+          }, { once: true });
+        }),
+      );
+      const now = 1_000;
+      const handle = createT1WorkerRequestHandler({
+        ...fixture.ports,
+        freightcom: { requestRate: freightcomRate },
+      }, () => now);
+      const responsePromise = handle({
+        ...request("quote.freightcom_ltl.preview"),
+        context: {
+          ...request("quote.freightcom_ltl.preview").context,
+          scopes: ["tool:quote.freightcom_ltl.preview"],
+        },
+        deadline_unix_ms: now + 120_000,
+      });
+      let settled = false;
+      void responsePromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(43_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(await responsePromise).toMatchObject({
+        ok: true,
+        result: { blockers: [{ code: "freightcom.aborted" }] },
+      });
+      expect(freightcomRate).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("requires the authenticated exact tool entitlement before routing", async () => {
     const fixture = adapters();
     const handle = createT1WorkerRequestHandler(fixture.ports);
