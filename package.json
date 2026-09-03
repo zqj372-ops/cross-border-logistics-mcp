@@ -11,6 +11,7 @@
     "build:freightcom-keychain-helper": "node apps/freightcom-credential/build-helper.mjs",
     "start:freightcom-quote": "node --import tsx/esm apps/freightcom-quote/server.mjs",
     "credential:freightcom-test": "npm run build:freightcom-keychain-helper && node apps/freightcom-credential/server.mjs",
+    "setup:codex-client": "npm run build && node dist/deploy/clients/freightclaw-codex-setup.mjs",
     "init:control-fixture": "npm run build && node deploy/scripts/init-control-fixture.mjs",
     "init:tenant-access-fixture": "npm run build && node deploy/scripts/init-tenant-access-fixture.mjs",
     "init:plugin-config-fixture": "npm run build && node deploy/scripts/init-plugin-config-fixture.mjs",

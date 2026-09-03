@@ -49,6 +49,25 @@ logistics://agent/profiles
 Pack 缺失、hash/descriptor/profile/catalog 不一致、未知资源或逐资源 scope 不满足必须失败闭合；
 客户端不能回退读取工作目录 Markdown、网络说明或模型自造规则。
 
+## Codex 本机闭环接入
+
+macOS 上执行 `npm run setup:codex-client` 后，会打开一个只监听 `127.0.0.1` 的本机页面。
+操作员从 Access Console 创建并确认交付 active 长期 Key，再将完整 Key 粘贴到该页面。安装器按以下
+顺序执行，任一步失败都不会把未验证配置标记为完成：
+
+1. 只在进程内使用长期 Key，向 Gateway 请求精确三项 T0 权限的短期 JWT；
+2. 对真实 MCP endpoint 执行 initialize、逐项读取五个资源，并实际调用三个确定性工具；
+3. 同时兼容服务端返回 `Mcp-Session-Id` 的 stateful 模式和不返回该响应头的 stateless 模式；
+4. 验收通过后，才经标准输入把长期 Key 写入 macOS Keychain；
+5. 在 `~/.codex/config.toml` 写入有明确边界标记的 FreightClaw 配置块，保留其他用户配置；
+6. Codex 通过 `http_headers_helper` 动态取得 Bearer 请求头；同源请求收到 401/403 时，重新兑换
+   一次短期 JWT 并只重试一次。
+
+TOML 中不保存长期 Key、短期 JWT、tenant ID 或 client ID。长期 Key 不会进入 stdout、日志、
+浏览器存储或 URL；动态助手只向调用它的 Codex 进程输出当前短期 `Authorization` JSON。若已有
+非本安装器管理的 `[mcp_servers.freightclaw]`，安装器失败闭合，不覆盖该段。完成后重启 Codex，
+在新会话中先读取 `logistics://agent/bootstrap`，再按返回合同调用工具。
+
 ## 五态处理
 
 - `success`：展示版本、来源、trace 和 warnings；仍遵守 `sendable=false` 与

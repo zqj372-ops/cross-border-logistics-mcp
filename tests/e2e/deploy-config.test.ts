@@ -47,6 +47,10 @@ describe("safe deployment artifacts", () => {
     expect(dockerfile).toMatch(/USER\s+[^#\s]+/);
     expect(dockerfile).toContain("RUN npm run build");
     expect(dockerfile).toContain("COPY apps/admin ./apps/admin");
+    expect(dockerfile).toContain("COPY deploy/clients/freightclaw-auth-headers.mjs");
+    expect(dockerfile).toContain("COPY deploy/clients/freightclaw-codex-setup.mjs");
+    expect(dockerfile).toContain("COPY deploy/clients/freightclaw-keychain-helper.swift");
+    expect(dockerfile).toContain("RUN rm -r ./dist/deploy/clients");
     expect(dockerfile).toContain("COPY docs/agent ./docs/agent");
     expect(dockerfile).toContain("COPY docs/standards ./docs/standards");
     expect(dockerfile).toContain("COPY docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md");
@@ -121,6 +125,30 @@ describe("safe deployment artifacts", () => {
     expect(issuer.indexOf("await providers.close()"))
       .toBeLessThan(issuer.indexOf("process.stdout.write"));
     expect(issuer).not.toMatch(/(?:BEGIN .* PRIVATE KEY|lmcpk_|Bearer\s+[A-Za-z0-9_-]{20,})/i);
+  });
+
+  it("packages the secure Codex credential exchange and setup helpers", () => {
+    const build = read("deploy/scripts/build.mjs");
+    const packageJson = read("package.json");
+    const authHelper = read("deploy/clients/freightclaw-auth-headers.mjs");
+    const setup = read("deploy/clients/freightclaw-codex-setup.mjs");
+
+    for (const asset of [
+      "freightclaw-auth-headers.mjs",
+      "freightclaw-codex-setup.mjs",
+      "freightclaw-keychain-helper.swift",
+    ]) {
+      expect(build).toContain(asset);
+    }
+    expect(build).toContain('mkdirSync(resolve("dist/deploy/clients")');
+    expect(packageJson).toContain('"setup:codex-client"');
+    expect(authHelper).toContain("http");
+    expect(authHelper).toContain('Authorization: `Bearer ${exchange.accessToken}`');
+    expect(authHelper).not.toContain("LOGISTICS_MCP_BEARER_TOKEN");
+    expect(setup).toContain('resolve(homedir(), ".codex")');
+    expect(setup).toContain('"127.0.0.1"');
+    expect(setup).toContain("storeKeychainCredential");
+    expect(setup).not.toMatch(/localStorage|sessionStorage|document\.cookie/iu);
   });
 
   it("copies every registered Agent source into the image build stage", () => {

@@ -33,6 +33,21 @@ const accessConsoleAssetSpecs = [
   { name: "app.js", source: resolve("apps/access-console/app.js") },
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
+const codexClientAssetSpecs = [
+  {
+    name: "freightclaw-auth-headers.mjs",
+    source: resolve("deploy/clients/freightclaw-auth-headers.mjs"),
+  },
+  {
+    name: "freightclaw-codex-setup.mjs",
+    source: resolve("deploy/clients/freightclaw-codex-setup.mjs"),
+  },
+  {
+    name: "freightclaw-keychain-helper.swift",
+    source: resolve("deploy/clients/freightclaw-keychain-helper.swift"),
+  },
+];
+const codexClientSourcePaths = codexClientAssetSpecs.map(({ source }) => source);
 const nodeEsmBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
 };
@@ -45,14 +60,14 @@ execFileSync(process.execPath, [
   "src/logistics_mcp/module-runtime/artifact-attestation.ts",
 ], { stdio: "inherit" });
 
-if ([...adminSourcePaths, ...accessConsoleSourcePaths].some((path) => {
+if ([...adminSourcePaths, ...accessConsoleSourcePaths, ...codexClientSourcePaths].some((path) => {
   try {
     return !statSync(path).isFile();
   } catch {
     return true;
   }
 })) {
-  throw new Error("Admin UI build requires all declared application and vendor assets.");
+  throw new Error("Application build requires all declared UI and client assets.");
 }
 
 const { build } = await import("esbuild");
@@ -158,4 +173,9 @@ await build({
 mkdirSync(resolve("dist/access-console"), { recursive: true });
 for (const asset of accessConsoleAssetSpecs) {
   cpSync(asset.source, resolve("dist/access-console", asset.name));
+}
+
+mkdirSync(resolve("dist/deploy/clients"), { recursive: true });
+for (const asset of codexClientAssetSpecs) {
+  cpSync(asset.source, resolve("dist/deploy/clients", asset.name));
 }

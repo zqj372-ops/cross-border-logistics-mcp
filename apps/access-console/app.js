@@ -408,12 +408,14 @@ async function runCredentialReadback(apiKey) {
       },
     });
     sessionId = initialized.sessionId;
-    if (sessionId.length === 0) throw new ReadbackError("mcp_session_missing");
-    await mcpPost(accessToken, sessionId, {
-      jsonrpc: "2.0",
-      method: "notifications/initialized",
-      params: {},
-    }, false);
+    const transportMode = sessionId.length === 0 ? "stateless" : "stateful";
+    if (transportMode === "stateful") {
+      await mcpPost(accessToken, sessionId, {
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+        params: {},
+      }, false);
+    }
 
     const resourceCatalog = await mcpPost(accessToken, sessionId, {
       jsonrpc: "2.0",
@@ -476,6 +478,7 @@ async function runCredentialReadback(apiKey) {
     return {
       exchangeRequestId: exchange.requestId,
       expiresIn: exchange.expiresIn,
+      transportMode,
       tools,
       resources,
     };
@@ -505,7 +508,10 @@ function renderReadbackReport(summary) {
     row("兑换请求", summary.exchangeRequestId),
     row("短期 JWT", `已签发 · ${summary.expiresIn} 秒 · 未显示`),
     row("精确目录", `${summary.tools.length} / 3 工具 · ${summary.resources.length} / 5 资源`),
-    row("MCP session", "已建立并关闭"),
+    row(
+      "MCP transport",
+      summary.transportMode === "stateless" ? "无协议会话（stateless）" : "已建立并关闭（stateful）",
+    ),
   );
   elements.readbackResults.append(headline);
   for (const tool of summary.tools) {

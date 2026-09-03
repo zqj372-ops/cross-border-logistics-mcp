@@ -50,6 +50,8 @@ describe("narrow Access Console boundary", () => {
     expect(app).toMatch(/method:\s*["']resources\/read["']/u);
     expect(app).toMatch(/method:\s*["']tools\/list["']/u);
     expect(app).toMatch(/method:\s*["']tools\/call["']/u);
+    expect(app).toMatch(/sessionId\.length\s*===\s*0\s*\?\s*["']stateless["']\s*:\s*["']stateful["']/u);
+    expect(app).not.toMatch(/throw new ReadbackError\(["']mcp_session_missing["']\)/u);
     expect(app).toMatch(/logistics:\/\/agent\/bootstrap/u);
     expect(app).toMatch(/logistics:\/\/standards\/index/u);
     expect(app).toMatch(/logistics:\/\/contracts\/envelope\/current/u);

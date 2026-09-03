@@ -6,17 +6,19 @@ const root = resolve(import.meta.dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("state-aware client examples", () => {
-  it("provides a Codex Streamable HTTP configuration without client-supplied identity", () => {
+  it("provides a Codex Streamable HTTP configuration with renewable helper auth", () => {
     const content = read("deploy/clients/codex.example.toml");
     expect(content).toContain("[mcp_servers.cross_border_logistics]");
     expect(content).toContain('url = "https://mcp.example.invalid/mcp"');
-    expect(content).toContain('bearer_token_env_var = "LOGISTICS_MCP_BEARER_TOKEN"');
+    expect(content).toContain('http_headers_helper = "freightclaw-auth-headers"');
+    expect(content).not.toContain("bearer_token_env_var");
     expect(content).toContain("enabled_tools = [");
     expect(content).toContain('"cargo.calculate"');
     expect(content).toContain('"container.plan_summary"');
     expect(content).toContain('"system.agent_context.get"');
     expect(content).not.toMatch(/quote\.|customs\.|freightcom|save_draft|create_task|write_tools|approval/i);
     expect(content).toContain("短期 JWT");
+    expect(content).toContain("401/403");
     expect(content).toContain("待真实 staging 适配验证");
     expect(content).not.toMatch(/^(?:client|client_id|tenant_id|token|endpoint|tools|transport)\s*=/m);
   });

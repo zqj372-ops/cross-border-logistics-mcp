@@ -1,11 +1,12 @@
-# 按 OpenAI 当前 Codex MCP 配置格式编写。使用前替换示例地址，
-# 并由统一凭证网关/企业身份平台把短期 JWT 注入 LOGISTICS_MCP_BEARER_TOKEN。
+# 按 OpenAI 当前 Codex MCP 配置格式编写。使用前替换示例地址。
+# 本机 helper 从安全存储读取长期 Key，仅向统一凭证网关兑换短期 JWT；
+# Codex 在同源请求收到 401/403 后会重新执行 helper 并仅重试一次。
 [mcp_servers.cross_border_logistics]
 url = "https://mcp.example.invalid/mcp"
-bearer_token_env_var = "LOGISTICS_MCP_BEARER_TOKEN"
+http_headers_helper = "freightclaw-auth-headers"
 enabled = true
 required = true
-startup_timeout_sec = 20
+startup_timeout_sec = 30
 tool_timeout_sec = 60
 enabled_tools = [
   "cargo.calculate",
