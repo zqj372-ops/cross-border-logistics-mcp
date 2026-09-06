@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.freightclaw.net/access-gateway/application-authority-request.schema.json",
+  "title": "Application short-token authority check request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": { "const": "application-authority@2026-09-06.v1" }
+  }
+}

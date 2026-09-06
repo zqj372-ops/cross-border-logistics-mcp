@@ -20,6 +20,10 @@ export interface AccessGatewayHttpOptions {
   readonly maxBodyBytes?: number;
 }
 
+export interface TokenExchangeHttpOptions extends Omit<AccessGatewayHttpOptions, "gateway"> {
+  readonly gateway: Pick<AccessGateway, "exchangeToken">;
+}
+
 export interface AccessGatewayHttpHandler {
   handle(request: IncomingMessage, response: ServerResponse): boolean;
 }
@@ -57,7 +61,7 @@ function countRawHeader(request: IncomingMessage, target: string): number {
 
 function assertBoundary(
   request: IncomingMessage,
-  options: AccessGatewayHttpOptions,
+  options: TokenExchangeHttpOptions,
   write: boolean,
 ): void {
   const host = request.headers.host;
@@ -96,7 +100,7 @@ function assertBoundary(
   }
 }
 
-function clientIp(request: IncomingMessage, options: AccessGatewayHttpOptions): string {
+function clientIp(request: IncomingMessage, options: TokenExchangeHttpOptions): string {
   const remoteAddress = request.socket.remoteAddress;
   if (remoteAddress === undefined) throw new AccessGatewayError("invalid_request");
   if (!(options.trustedProxyAddresses ?? []).includes(remoteAddress)) return remoteAddress;
@@ -152,7 +156,7 @@ function apiKey(request: IncomingMessage): string | null {
 }
 
 async function auditHeaderAuthenticationFailure(
-  options: AccessGatewayHttpOptions,
+  options: TokenExchangeHttpOptions,
   body: unknown,
   clientIp: string,
   requestId: string,
@@ -169,7 +173,7 @@ async function auditHeaderAuthenticationFailure(
 async function handleExchange(
   request: IncomingMessage,
   response: ServerResponse,
-  options: AccessGatewayHttpOptions,
+  options: TokenExchangeHttpOptions,
 ): Promise<void> {
   const currentRequestId = requestId(request);
   try {
@@ -225,7 +229,7 @@ async function handleJwks(
 }
 
 export function createTokenExchangeHandler(
-  options: AccessGatewayHttpOptions,
+  options: TokenExchangeHttpOptions,
 ): AccessGatewayHttpHandler {
   return {
     handle(request, response): boolean {

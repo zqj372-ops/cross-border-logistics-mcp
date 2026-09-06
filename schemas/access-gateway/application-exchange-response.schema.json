@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.freightclaw.net/access-gateway/application-exchange-response.schema.json",
+  "title": "Unified application Key MCP token exchange response",
+  "$ref": "https://schemas.logistics-mcp.invalid/access-gateway/exchange-response.schema.json"
+}

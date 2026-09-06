@@ -26,6 +26,7 @@ import {
   validateConfigState,
   validateConfigValues,
 } from "./plugin-config.js";
+import { renderBusinessService, renderBusinessHome, validateBusinessEntrypoints } from "./business-services.js";
 
 const SNAPSHOT_OBJECT_FIELDS = ["tenant", "config", "actor", "health", "approvals"];
 const SNAPSHOT_ARRAY_FIELDS = ["clients", "roles", "tools", "sources", "audit"];
@@ -289,29 +290,41 @@ const STATUS_META = {
 
 const VIEW_META = {
   overview: {
-    title: "总览",
+    title: "工作台",
     eyebrow: "系统状态",
-    description: "先看网关是否在线、哪些依赖可用，以及当前配置为什么还不能发布。",
+    description: "查看需要关注的事项，从这里继续接入与配置工作。",
+  },
+  customs: {
+    title: "关务查询",
+    description: "按商品和税则日期确认编码，再核对适用税率、措施与来源。",
+  },
+  inquiries: {
+    title: "询价工作台",
+    description: "选择报价来源，准备运输资料，核对费用、有效期与适用条件。",
+  },
+  calculator: {
+    title: "税费估算",
+    description: "在原关务工作台估算美国或加拿大进口税费。",
   },
   clients: {
     title: "Agent 接入",
     eyebrow: "接入边界",
-    description: "管理对话助手、开发助手和企业助手的身份信息；只显示登记状态，不显示原始凭证。",
+    description: "核对客户端登记与接入条件，确认下一步需要完成什么。",
   },
   modules: {
-    title: "插件与能力",
+    title: "能力与配置",
     eyebrow: "能力运营控制面",
-    description: "安全调整一项内置能力，经过校验、预览、审批、发布和服务端精确读回。",
+    description: "了解每项能力的用途，按权限管理内置模块和受控参数。",
   },
   tools: {
     title: "工具权限",
     eyebrow: "角色权限清单",
-    description: "只展示正式快照返回的角色和第一阶段工具，不新增通用写入口。",
+    description: "按角色查看工具授权与当前可用性。",
   },
   adapters: {
-    title: "数据源与适配器",
+    title: "数据连接",
     eyebrow: "权威来源引用",
-    description: "查看智能报价、关务查询、报价单、精选知识、系统状态和复核任务的配置与就绪状态。",
+    description: "查看业务来源的连接状态、检查结果与待处理原因。",
   },
   architecture: {
     title: "系统结构",
@@ -321,12 +334,12 @@ const VIEW_META = {
   approvals: {
     title: "审批与发布",
     eyebrow: "草稿 → 校验 → 审批 → 发布",
-    description: "浏览脱敏差异和审批链；正式写操作必须经过校验、审批和写后读回。",
+    description: "查看快照中的变更记录与审批进度。受控发布在能力配置中完成。",
   },
   audit: {
     title: "审计日志",
     eyebrow: "可追溯记录",
-    description: "只展示脱敏后的操作人、租户、动作、结果、原因和记录状态，敏感原文不进入日志。",
+    description: "追踪谁做了什么，以及操作返回的结果。",
   },
 };
 
@@ -338,7 +351,13 @@ const state = isBrowser
       loading: true,
       error: null,
       roleFilter: "all",
+      toolFilter: "all",
+      businessEntries: null,
+      entryStatus: "loading",
+      entryRequest: 0,
+      entrySetupOpen: false,
       localDraft: null,
+      moduleWorkspaceOpen: false,
       architectureSelection: null,
       controlState: null,
       controlStateLoading: false,
@@ -396,6 +415,11 @@ const CHINESE_DISPLAY_TEXT = {
   "AI 报价 API": "智能报价服务",
   "RiskCustoms API": "关务查询服务",
   "PDF API": "报价单服务",
+  "Agent 标准上下文": "助手规范与能力上下文",
+  "读取 allowlisted Agent profile 对应的标准、规则和模块目录。": "按已允许的助手类型，读取适用规范、操作规则和模块目录。",
+  "Freightcom 测试 LTL 报价预览": "零担测试报价预览",
+  "Freightcom LTL 测试询价": "零担测试询价服务",
+  "提交 pallet LTL 测试询价并轮询结果；仅供人工复核，不可下单。": "提交托盘零担测试询价并轮询结果；仅供人工复核，不可下单或作为正式报价。",
   fixture: "演示环境",
   ready: "已就绪",
   unavailable: "不可用",
@@ -521,7 +545,6 @@ function pageHeader(view, actions = "") {
   const meta = VIEW_META[view];
   return `<div class="page-header">
     <div>
-      <span class="eyebrow">${escapeHtml(meta.eyebrow)}</span>
       <h1>${escapeHtml(meta.title)}</h1>
       <p>${escapeHtml(meta.description)}</p>
     </div>
@@ -535,15 +558,9 @@ function isDemoSnapshot() {
 
 function modeBanner() {
   if (isDemoSnapshot()) {
-    return `<div class="callout callout-warning" role="status">
-      <div class="callout-head"><h2>演示数据</h2>${statusMarkup("manual_review", "未连接正式后台")}</div>
-      <p>当前已明确启用演示快照。发布、回滚和保存到服务器已禁用；本地差异只在浏览器中预览，未持久化。</p>
-    </div>`;
+    return `<div class="overview-status-line" role="status">${statusMarkup("manual_review", "演示快照")}<span>当前页面用于演示，不代表正式运行状态。</span><details><summary>查看说明</summary><p>快照中的发布、回滚和保存到服务器已禁用；本地差异只在浏览器中预览，未持久化。模块控制面另需身份认证，并以本地服务端读回为准。未连接正式后台。</p></details></div>`;
   }
-  return `<div class="callout callout-info" role="status">
-    <div class="callout-head"><h2>正式快照入口</h2>${statusMarkup("unavailable", "仅限同源请求")}</div>
-    <p>页面只从同源后台读取正式快照。请求失败会保持不可用，不会回退到演示数据或内置默认配置。</p>
-  </div>`;
+  return `<div class="overview-status-line" role="status">${statusMarkup(state.data ? "ready" : "unavailable", state.data ? "已读取快照" : "快照不可用")}<span>状态以最近一次服务端返回为准。</span><details><summary>数据说明</summary><p>页面只从同源后台读取正式快照。请求失败会保持不可用，不会回退到演示数据或内置默认配置。</p></details></div>`;
 }
 
 function emptyState(title, detail) {
@@ -616,48 +633,77 @@ function renderBusinessSourceCard(item) {
   </article>`;
 }
 
+function businessOptions() {
+  return { entries: state.businessEntries, entryStatus: state.entryStatus };
+}
+
 function renderOverview(data) {
+  return `${modeBanner()}${renderBusinessHome(data, businessOptions())}
+    <section class="platform-shortcuts" aria-label="平台管理"><div><h2>把能力交给 Agent</h2><p>接入、授权与配置，在这里继续。</p></div><div><button type="button" class="button button-secondary" data-view="clients">Agent 接入</button><button type="button" class="button button-quiet" data-view="modules">能力与配置</button></div></section>
+    <details class="platform-overview-fold"><summary>平台运行与待办 <span>${state.loading ? "正在读取" : state.error ? "读取失败，可重试" : "查看运行快照与管理事项"}</span></summary><div>${state.loading ? renderLoading() : state.error || !data ? renderError() : renderPlatformOverview(data)}</div></details>`;
+}
+
+function renderPlatformOverview(data) {
   const health = data.health ?? {};
   const config = data.config ?? {};
   const approvals = data.approvals ?? {};
   const blockers = Array.isArray(data.blockers) ? data.blockers : [];
   const sources = Array.isArray(data.sources) ? data.sources : [];
-  const pendingCount = blockers.length + (Array.isArray(approvals.changes) ? approvals.changes.filter((change) => change.status !== "ready").length : 0);
+  const clients = Array.isArray(data.clients) ? data.clients : [];
+  const changes = Array.isArray(approvals.changes) ? approvals.changes : [];
   const chain = Array.isArray(approvals.chain) ? approvals.chain : [];
   const legend = Array.isArray(data.status_legend) ? data.status_legend : [];
+  const pendingCount = blockers.length + changes.filter((change) => change.status !== "ready").length;
 
-  return `${pageHeader("overview", `<button class="button button-secondary" type="button" data-action="retry"><span class="button-icon" data-icon="refresh" aria-hidden="true"></span>重新读取</button>`)}
-    ${modeBanner()}
-    <div class="metric-grid" aria-label="核心状态">
-      ${metricCard("进程健康", health.healthz?.value, health.healthz?.detail, health.healthz?.status ?? "empty", "overview")}
-      ${metricCard("发布就绪", health.readyz?.value, health.readyz?.detail, health.readyz?.status ?? "empty", "approval")}
-      ${metricCard("当前发布版本", versionSummary(config.current_version), `最近发布：${display(config.last_published_at)}`, "manual_review", "adapter")}
-      ${metricCard("待处理项", `${pendingCount} 项`, "需要人工确认或补充信息", pendingCount > 0 ? "needs_input" : "ready", "audit")}
+  return `    <div class="workbench-grid">
+      <section class="panel" aria-labelledby="attention-title">
+        <div class="card-head"><div><h2 id="attention-title">需要关注</h2><p>来自当前快照的运行阻断说明</p></div><span class="status-pill status-neutral">${blockers.length} 项</span></div>
+        ${blockers.length ? `<div class="task-list">${blockers.map((item, index) => `<div class="task-row"><span class="task-marker" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><div class="task-copy"><p class="task-title">${display(item)}</p><span class="task-meta">运行检查 · 需要处理</span></div></div>`).join("")}</div>` : emptyState("快照暂无阻断说明", "实际运行状态仍需结合模块发布与读回结果核对。")}
+        <div class="panel-actions"><button class="button button-quiet" type="button" data-action="show-overview-details">查看运行与来源详情 <span aria-hidden="true">→</span></button></div>
+      </section>
+      <section class="panel onboarding-guide" aria-labelledby="getting-started-title">
+        <div class="card-head"><div><h2 id="getting-started-title">开始使用</h2><p>按顺序完成接入准备</p></div></div>
+        <ol class="guide-list">
+          <li><span class="guide-number" aria-hidden="true">1</span><div><button class="text-button" type="button" data-view="modules">确认所需能力 <span aria-hidden="true">↗</span></button><p>查看用途，再核对模块的发布状态。</p></div></li>
+          <li><span class="guide-number" aria-hidden="true">2</span><div><button class="text-button" type="button" data-view="clients">核对 Agent 接入 <span aria-hidden="true">↗</span></button><p>检查已登记客户端与身份条件。</p></div></li>
+          <li><span class="guide-number" aria-hidden="true">3</span><div><button class="text-button" type="button" data-view="audit">查看操作记录 <span aria-hidden="true">↗</span></button><p>结合实际调用结果确认操作完成。</p></div></li>
+        </ol>
+      </section>
     </div>
-    <div class="callout callout-warning" role="alert">
-      <div class="callout-head"><h2>当前阻断原因</h2>${statusMarkup("blocked")}</div>
-      ${blockers.length ? `<ul>${blockers.map((item) => `<li>${display(item)}</li>`).join("")}</ul>` : `<p>暂无阻断说明；仍应以正式快照和写后读回为准。</p>`}
-    </div>
-    <div class="section-grid section-grid-wide">
+    <div class="section-grid">
       <section class="panel" aria-labelledby="overview-sources-title">
-        <div class="card-head"><div><h2 id="overview-sources-title">数据源就绪情况</h2><p>单次检查成功不等于业务数据可发布；关务查询服务必须保留就绪门禁。</p></div><span class="status-pill status-neutral">${sources.length} 个来源</span></div>
-        ${renderSourceTable(sources)}
+        <div class="card-head"><div><h2 id="overview-sources-title">数据连接</h2><p>${sources.length} 个来源 · 最近快照</p></div><button class="button button-quiet" type="button" data-view="adapters">查看全部 <span aria-hidden="true">→</span></button></div>
+        ${sources.length ? `<div class="service-list">${sources.map((source) => `<div class="service-row"><span>${display(source.label ?? source.name, "未返回名称")}</span>${statusMarkup(source.readiness)}</div>`).join("")}</div>` : emptyState("暂无来源记录", "服务端尚未返回数据连接。")}
       </section>
-      <section class="panel" aria-labelledby="approval-chain-title">
-        <div class="card-head"><div><h2 id="approval-chain-title">发布门槛</h2><p>每一步都要有版本、审批和读回证据。</p></div>${statusMarkup(approvals.validation?.status ?? "empty")}</div>
-        ${chain.length ? `<ol class="step-list">${chain.map((item) => `<li class="step-item" data-status="${safeStatus(item.status)}"><span class="step-title">${display(item.label)}</span><span>${statusMarkup(item.status)}</span><span class="step-detail">${display(item.detail)}</span></li>`).join("")}</ol>` : emptyState("暂无审批链", "正式快照没有返回审批步骤。")}
+      <section class="panel" aria-labelledby="overview-clients-title">
+        <div class="card-head"><div><h2 id="overview-clients-title">客户端登记</h2><p>登记检查结果不代表真实连通</p></div><button class="button button-quiet" type="button" data-view="clients">查看全部 <span aria-hidden="true">→</span></button></div>
+        ${clients.length ? `<div class="service-list">${clients.map((client) => `<div class="service-row"><span>${display(client.name)}</span>${statusMarkup(client.check?.status ?? "empty")}</div>`).join("")}</div>` : emptyState("暂无客户端", "服务端尚未返回登记记录。")}
       </section>
-      <section class="panel panel-full" aria-labelledby="status-guide-title">
-        <div class="card-head"><div><h2 id="status-guide-title">状态说明</h2><p>文字、图标和颜色同时表达状态，不靠颜色单独判断。</p></div></div>
-        <div class="state-guide">${legend.length ? legend.map((item) => `<div class="state-guide-item"><div>${statusMarkup(item.key, item.label)}</div><p>${display(item.detail)}</p></div>`).join("") : emptyState("暂无状态说明", "正式快照没有返回状态文案。")}</div>
-      </section>
-    </div>`;
+    </div>
+    <details class="details-panel" id="overview-details">
+      <summary>运行与来源详情 <span class="muted">健康检查、发布门槛与状态解释</span></summary>
+      <div class="details-content">
+        <div class="metric-grid" aria-label="核心状态">
+          ${metricCard("进程健康", health.healthz?.value, health.healthz?.detail, health.healthz?.status ?? "empty", "overview")}
+          ${metricCard("发布就绪", health.readyz?.value, health.readyz?.detail, health.readyz?.status ?? "empty", "approval")}
+          ${metricCard("当前发布版本", versionSummary(config.current_version), `最近发布：${toChineseDisplayText(config.last_published_at)}`, "manual_review", "adapter")}
+          ${metricCard("待处理项", `${pendingCount} 项`, "阻断说明与未就绪变更的合计", pendingCount > 0 ? "needs_input" : "ready", "audit")}
+        </div>
+        <section class="panel"><div class="card-head"><h2>来源检查明细</h2></div>${renderSourceTable(sources)}</section>
+        <section class="panel" aria-labelledby="approval-chain-title"><div class="card-head"><div><h2 id="approval-chain-title">快照中的发布门槛</h2><p>实际模块生效状态请在能力与配置中核对。</p></div>${statusMarkup(approvals.validation?.status ?? "empty")}</div>${chain.length ? `<ol class="step-list">${chain.map((item) => `<li class="step-item" data-status="${safeStatus(item.status)}"><span class="step-title">${display(item.label)}</span>${statusMarkup(item.status)}<span class="step-detail">${display(item.detail)}</span></li>`).join("")}</ol>` : emptyState("暂无审批链", "正式快照没有返回审批步骤。")}</section>
+        <section class="panel" aria-labelledby="status-guide-title"><div class="card-head"><h2 id="status-guide-title">状态说明</h2></div><div class="state-guide">${legend.map((item) => `<div class="state-guide-item">${statusMarkup(item.key, item.label)}<p>${display(item.detail)}</p></div>`).join("")}</div></section>
+      </div>
+    </details>`;
 }
 
 function renderClients(data) {
   const clients = Array.isArray(data.clients) ? data.clients : [];
-  return `${pageHeader("clients")}
+  return `${pageHeader("clients", `<button class="button button-secondary" type="button" data-action="retry">刷新登记状态</button>`)}
     ${modeBanner()}
+    <section class="panel onboarding-guide" aria-labelledby="client-onboarding-title">
+      <div class="card-head"><div><h2 id="client-onboarding-title">接入前，完成这三步</h2><p>客户端登记、凭证授权与真实连通需要分别确认。</p></div></div>
+      <ol class="guide-list guide-list-horizontal"><li><span class="guide-number" aria-hidden="true">1</span><div><strong>确认能力与权限</strong><p>在能力与配置中检查运行状态，在工具权限中核对授权。</p></div></li><li><span class="guide-number" aria-hidden="true">2</span><div><strong>配置组织与凭证</strong><p>前往部署方提供的接入管理控制台，创建调用方并交付凭证。</p></div></li><li><span class="guide-number" aria-hidden="true">3</span><div><strong>在 Agent 端验证</strong><p>使用目标客户端完成真实调用。本页登记记录不证明已连通。</p></div></li></ol>
+    </section>
     <section class="panel" aria-labelledby="clients-table-title">
       <div class="card-head"><div><h2 id="clients-table-title">已登记客户端</h2><p>身份来源、使用范围和允许来源用于接入校验；原始凭证永不在此显示。</p></div>${statusMarkup(clients.length ? "ready" : "empty", clients.length ? "仅显示登记状态" : "暂无客户端")}</div>
       ${clients.length ? `<div class="client-card-grid">${clients.map((client) => `<article class="client-card">
@@ -670,23 +716,24 @@ function renderClients(data) {
         <p><strong>最近校验：</strong>${display(client.check?.checked_at)}<br />${display(client.check?.detail)}</p>
       </article>`).join("")}</div>` : emptyState("暂无客户端接入记录", "没有快照数据时不自动生成接入标识或允许来源。")}
     </section>
-    <div class="section-grid">
+    <details class="details-panel"><summary>接入规则与凭证说明</summary><div class="section-grid details-content">
       <section class="panel" aria-labelledby="client-rule-title"><div class="card-head"><div><h2 id="client-rule-title">接入规则</h2><p>客户端不是业务角色，操作人和租户必须由服务端认证后绑定。</p></div></div><ul class="plain-list"><li>只显示接入信息的登记状态。</li><li>租户、操作人、角色和会话不能由客户端自报。</li><li>校验失败显示已阻断或人工复核，不静默放行。</li></ul></section>
       <section class="panel" aria-labelledby="client-secret-title"><div class="card-head"><div><h2 id="client-secret-title">凭证边界</h2><p>页面不收集、不保存、不回显原始凭证。</p></div>${statusMarkup("blocked", "原始凭证隐藏")}</div><p class="muted">数据连接只使用服务端注入的最小权限引用；控制台只显示是否已配置。</p></section>
-    </div>`;
+    </div></details>`;
 }
 
 function renderTools(data) {
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const roles = Array.isArray(data.roles) ? data.roles : [];
   const permissionDataReady = roles.length > 0 && tools.length > 0;
-  const visibleTools = state.roleFilter === "all" ? tools : tools.filter((tool) => tool.roles?.includes(state.roleFilter));
+  const visibleTools = tools.filter((tool) => (state.roleFilter === "all" || tool.roles?.includes(state.roleFilter))
+    && (state.toolFilter === "all" || tool.name === state.toolFilter));
   return `${pageHeader("tools")}
     ${modeBanner()}
     <div class="callout callout-info" role="note"><div class="callout-head"><h2>权限边界</h2>${statusMarkup(permissionDataReady ? "ready" : "unavailable", permissionDataReady ? "快照授权" : "授权数据不可用")}</div><p>下面的角色和工具来自平台角色权限清单。仅保留两个受控写入动作；保存报价草稿当前不可用，创建人工复核仍需正式写入接口、审批和写后读回。</p></div>
     <section class="panel" aria-labelledby="tool-table-title">
       <div class="card-head"><div><h2 id="tool-table-title">第一阶段工具权限</h2><p>操作类型只说明工具边界；当前可用性单独读取快照，未返回时不推断。</p></div><span class="status-pill status-neutral">${tools.length} 个工具</span></div>
-      <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${roleLabel(role.key)}</option>`).join("")}</select></div><p class="field-help">选中角色后只看它能使用的工具。</p></div>
+      <div class="filter-bar"><div class="field"><label for="role-filter">按角色筛选</label><select id="role-filter" data-role-filter><option value="all"${state.roleFilter === "all" ? " selected" : ""}>全部角色</option>${roles.map((role) => `<option value="${escapeHtml(role.key)}"${state.roleFilter === role.key ? " selected" : ""}>${roleLabel(role.key)}</option>`).join("")}</select></div><div class="field"><label for="tool-filter">按能力筛选</label><select id="tool-filter" data-tool-filter><option value="all"${state.toolFilter === "all" ? " selected" : ""}>全部能力</option>${tools.map((tool) => `<option value="${escapeHtml(tool.name)}"${state.toolFilter === tool.name ? " selected" : ""}>${display(tool.label, "未命名能力")}</option>`).join("")}</select></div><p class="field-help">同时按角色和能力查看授权范围。</p></div>
       ${visibleTools.length ? `<div class="table-scroll" role="region" aria-label="工具权限表格，可横向滚动" tabindex="0"><table class="data-table table-wide"><thead><tr><th scope="col">工具</th><th scope="col">说明</th><th scope="col">操作类型</th><th scope="col">当前可用性</th><th scope="col">角色授权</th></tr></thead><tbody>${visibleTools.map((tool) => `<tr><td><span class="primary-cell">${display(tool.label, "未命名工具")}</span></td><td>${display(tool.description, "未返回说明")}</td><td>${tool.kind === "write" ? statusMarkup("manual_review", "受控写入") : tool.kind === "read" ? statusMarkup("ready", "只读") : statusMarkup("unavailable", "操作类型未返回")}</td><td>${safeStatus(tool.availability) === "empty" ? statusMarkup("empty", "未返回") : statusMarkup(tool.availability)}</td><td>${roleChips(tool.roles, state.roleFilter === "all" ? null : state.roleFilter)}</td></tr>`).join("")}</tbody></table></div>` : emptyState("暂无匹配工具", "这个角色没有返回可用工具，不能自行补权限。")}
     </section>
     <section class="panel" aria-labelledby="role-list-title"><div class="card-head"><div><h2 id="role-list-title">角色授权</h2><p>角色名称和说明只来自当前快照；新增角色不在本原型中创建。</p></div></div>${roles.length ? `<div class="role-grid">${roles.map((role) => `<article class="role-card"><div class="role-card-head"><h3>${roleLabel(role.key)}</h3></div><p>${display(role.description, "由服务端策略决定可见范围。")}</p></article>`).join("")}</div>` : emptyState("暂无角色授权数据", "正式快照没有返回角色，不能生成默认权限。")}</section>`;
@@ -770,6 +817,10 @@ function controlStatusMarkup(status, label) {
 
 function controlModuleKey(module) {
   return `${module.module_id}\u0000${module.version}`;
+}
+
+function moduleDisplayName(moduleId) {
+  return ({ "agent-access": "Agent 上下文", cargo: "货物计算", container: "装柜摘要", "freightcom-ltl": "Freightcom 零担（测试）" })[moduleId] ?? moduleId;
 }
 
 function controlModuleRef(module) {
@@ -978,7 +1029,7 @@ function renderConfigQualification(moduleId) {
 export function renderPluginConfigWorkspace(configState, options = {}) {
   const validatedState = validateConfigState(configState);
   const spec = validateConfigSpec(validatedState.config_spec);
-  const moduleLabel = validatedState.module_id === "freightcom-ltl" ? "Freightcom LTL 测试插件" : validatedState.module_id;
+  const moduleLabel = validatedState.module_id === "freightcom-ltl" ? "Freightcom LTL 测试插件" : moduleDisplayName(validatedState.module_id);
   const displayedStatus = options.statusOverride ?? validatedState.status;
   const header = `<div class="config-workbench-head"><div><span class="eyebrow">P1.5 · 受控配置</span><h2 id="plugin-config-title">${escapeHtml(moduleLabel)}</h2><p>只作用于 deployment；配置变化必须经过校验、预览、不同管理员审批、发布和精确读回。</p></div>${configStatusMarkup(displayedStatus)}</div>${renderConfigQualification(validatedState.module_id)}`;
   if (spec === null || spec.fields.length === 0) {
@@ -1018,7 +1069,7 @@ function renderControlIdentityPanel() {
   const actions = fixture
     ? `<div class="identity-actions"><button class="button button-primary" type="button" data-control-action="fixture-identity" data-identity="local_operator">本地演示申请人</button><button class="button button-secondary" type="button" data-control-action="fixture-identity" data-identity="local_approver">本地演示审批人</button></div><p class="field-help">只有 fixture=1 的本地路径显示演示身份；按钮不显示凭证值。</p>`
     : `<button class="button button-primary" type="button" data-control-action="open-identity">输入模块作用域身份</button><p class="field-help">身份只保留在本次页面会话的 API client 中；不写入存储、地址栏、页面文本或日志。</p>`;
-  const bound = state.controlActor ? `<p class="bound-identity">当前身份：<strong>${escapeHtml(state.controlActor.label)}</strong>。控制面状态仍需重新读取。</p><button class="button button-secondary" type="button" data-control-action="clear-identity">清除当前身份</button>` : "";
+  const bound = state.controlActor ? `<p class="bound-identity">当前身份：<strong>${escapeHtml(state.controlActor.label)}</strong>。${state.controlState ? "已读取服务端状态。" : "控制面状态仍需重新读取。"}</p><button class="button button-secondary" type="button" data-control-action="clear-identity">清除当前身份</button>` : "";
   const error = state.controlError ? `<p class="field-help">${escapeHtml(state.controlError)}</p>` : "";
   return `<section class="panel identity-panel" aria-labelledby="identity-panel-title"><div class="card-head"><div><h2 id="identity-panel-title">绑定控制面身份</h2><p>模块清单、预览和发布状态只接受服务端控制面读回；旧 snapshot 不替代这里的权限边界。</p></div>${controlStatusMarkup(state.controlStatus)}</div>${bound}${error}${actions}</section>`;
 }
@@ -1030,7 +1081,7 @@ function renderControlReleaseRail(data) {
   } catch {
     stages = [];
   }
-  return `<section class="panel release-rail-panel" aria-labelledby="release-rail-title"><div class="card-head"><div><h2 id="release-rail-title">发布门槛</h2><p>登记制品 → 生成预览 → 双人审批 → 发布读回</p></div>${hasExactVerifiedReadback(data) ? controlStatusMarkup("complete", "运行时精确读回") : controlStatusMarkup(state.controlStatus)}</div><ol class="release-rail" aria-label="发布阶段">${stages.map((stage) => `<li class="release-rail-item" data-stage-status="${escapeHtml(stage.status)}"><span class="release-rail-marker" aria-hidden="true"></span><div><strong>${escapeHtml(stage.label)}</strong>${controlStatusMarkup(stage.status)}</div></li>`).join("")}</ol></section>`;
+  return `<section class="panel release-rail-panel" aria-labelledby="release-rail-title"><div class="card-head"><div><h2 id="release-rail-title">发布门槛</h2><p>登记制品 → 生成预览 → 双人审批 → 发布读回</p></div>${hasExactVerifiedReadback(data) ? controlStatusMarkup("complete", "运行时精确读回") : controlStatusMarkup("pending", "尚未确认生效")}</div><ol class="release-rail" aria-label="发布阶段">${stages.map((stage) => `<li class="release-rail-item" data-stage-status="${escapeHtml(stage.status)}"><span class="release-rail-marker" aria-hidden="true"></span><div><strong>${escapeHtml(stage.label)}</strong>${controlStatusMarkup(stage.status)}</div></li>`).join("")}</ol></section>`;
 }
 
 function renderControlStatusCards(data) {
@@ -1050,13 +1101,13 @@ function renderControlModuleTable(data) {
   const modules = Array.isArray(data.inventory_modules) ? data.inventory_modules : [];
   const draft = controlDraftModules(data);
   if (modules.length === 0) return `<section class="panel" aria-labelledby="module-table-title"><div class="card-head"><div><h2 id="module-table-title">模块清单</h2><p>服务端没有返回部署清单，不根据名称补造模块。</p></div></div>${emptyState("暂无已登记模块", "请先由控制面登记当前部署清单。")}</section>`;
-  return `<section class="panel module-table-panel" aria-labelledby="module-table-title"><div class="card-head"><div><h2 id="module-table-title">模块清单</h2><p>期望启用开关只编辑浏览器草稿；运行时状态只在发布并精确读回后变化。</p></div>${controlStatusMarkup("complete", `${modules.length} 个模块`)}</div><div class="table-scroll module-table-scroll" role="region" aria-label="模块清单表格，可横向滚动" tabindex="0"><table class="data-table module-table"><thead><tr><th scope="col">模块名称</th><th scope="col">版本</th><th scope="col">风险</th><th scope="col">描述摘要</th><th scope="col">登记状态</th><th scope="col">运行时状态</th><th scope="col">期望启用</th></tr></thead><tbody>${modules.map((module) => {
+  return `<section class="panel module-table-panel" aria-labelledby="module-table-title"><div class="card-head"><div><h2 id="module-table-title">模块清单</h2><p>期望启用开关只编辑浏览器草稿；运行时状态只在发布并精确读回后变化。</p></div>${controlStatusMarkup("complete", `${modules.length} 个模块`)}</div><div class="table-scroll module-table-scroll" role="region" aria-label="模块清单表格，可横向滚动" tabindex="0"><table class="data-table module-table"><thead><tr><th scope="col">模块名称</th><th scope="col">登记状态</th><th scope="col">运行时状态</th><th scope="col">期望启用</th></tr></thead><tbody>${modules.map((module) => {
     const key = controlModuleKey(module);
     const desired = draft.some((item) => controlModuleKey(item) === key);
     const selected = key === state.controlSelection;
     const [registrationStatus, registrationLabel] = controlRegistrationState(module);
     const [runtimeStatus, runtimeLabel] = controlRuntimeState(module, data);
-    return `<tr class="${selected ? "is-selected" : ""}"><th scope="row"><button class="table-link" type="button" data-control-action="select-module" data-module-id="${escapeHtml(module.module_id)}" data-module-version="${escapeHtml(module.version)}" aria-pressed="${selected}">${escapeHtml(module.module_id)}</button></th><td>${escapeHtml(module.version)}</td><td>${escapeHtml(module.risk_level)}</td><td>${escapeHtml(abbreviateDigest(module.descriptor_digest))}</td><td>${controlStatusMarkup(registrationStatus, registrationLabel)}</td><td>${controlStatusMarkup(runtimeStatus, runtimeLabel)}</td><td><button class="switch" type="button" role="switch" aria-checked="${desired}" aria-label="期望启用 ${escapeHtml(module.module_id)}" data-control-action="toggle-module" data-module-id="${escapeHtml(module.module_id)}" data-module-version="${escapeHtml(module.version)}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>${desired ? "草稿启用" : "草稿停用"}</span></button></td></tr>`;
+    return `<tr class="${selected ? "is-selected" : ""}"><th scope="row"><button class="table-link" type="button" data-control-action="select-module" data-module-id="${escapeHtml(module.module_id)}" data-module-version="${escapeHtml(module.version)}" aria-pressed="${selected}">${escapeHtml(moduleDisplayName(module.module_id))}</button><span class="sub-cell">${escapeHtml(module.risk_level)} · ${escapeHtml(module.version)}</span></th><td>${controlStatusMarkup(registrationStatus, registrationLabel)}</td><td>${controlStatusMarkup(runtimeStatus, runtimeLabel)}</td><td><button class="switch" type="button" role="switch" aria-checked="${desired}" aria-label="期望启用 ${escapeHtml(moduleDisplayName(module.module_id))}" data-control-action="toggle-module" data-module-id="${escapeHtml(module.module_id)}" data-module-version="${escapeHtml(module.version)}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>${desired ? "草稿启用" : "草稿停用"}</span></button></td></tr>`;
   }).join("")}</tbody></table></div></section>`;
 }
 
@@ -1065,7 +1116,7 @@ function renderControlInspector(data) {
   if (!module) return `<aside class="panel module-inspector" aria-labelledby="module-inspector-title"><div class="card-head"><div><h2 id="module-inspector-title">模块检查器</h2><p>选择模块后显示脱敏登记证据。</p></div></div>${emptyState("未选择模块", "服务端未返回可检查模块。")}</aside>`;
   const [runtimeStatus, runtimeLabel] = controlRuntimeState(module, data);
   const registration = module.registration;
-  return `<aside class="panel module-inspector" aria-labelledby="module-inspector-title"><div class="card-head"><div><h2 id="module-inspector-title">模块检查器</h2><p>只显示本地构建证据；运行时读回不是签名，也不是生产资格。</p></div>${controlStatusMarkup(runtimeStatus, runtimeLabel)}</div><dl class="key-value-list"><div class="key-value-row"><dt>模块名称</dt><dd>${escapeHtml(module.module_id)}</dd></div><div class="key-value-row"><dt>版本</dt><dd>${escapeHtml(module.version)}</dd></div><div class="key-value-row"><dt>风险级别</dt><dd>${escapeHtml(module.risk_level)}</dd></div><div class="key-value-row"><dt>证据等级</dt><dd>本地构建</dd></div><div class="key-value-row"><dt>生产资格</dt><dd>${controlStatusMarkup("blocked", "未获生产资格")}</dd></div><div class="key-value-row"><dt>描述摘要</dt><dd>${escapeHtml(abbreviateDigest(module.descriptor_digest))}</dd></div><div class="key-value-row"><dt>登记人</dt><dd>${registration ? escapeHtml(redactReference(registration.registered_by_actor_ref, "已记录（身份隐藏）")) : "未登记"}</dd></div><div class="key-value-row"><dt>登记时间</dt><dd>${registration ? escapeHtml(registration.registered_at) : "未登记"}</dd></div><div class="key-value-row"><dt>工具范围</dt><dd>${module.tool_names.length ? module.tool_names.map((name) => escapeHtml(name)).join("、") : "未返回"}</dd></div><div class="key-value-row"><dt>规范引用</dt><dd>${module.standard_ids.length ? module.standard_ids.map((name) => escapeHtml(name)).join("、") : "未返回"}</dd></div></dl></aside>`;
+  return `<aside class="panel module-inspector" aria-labelledby="module-inspector-title"><div class="card-head"><div><h2 id="module-inspector-title">模块检查器</h2><p>只显示本地构建证据；运行时读回不是签名，也不是生产资格。</p></div>${controlStatusMarkup(runtimeStatus, runtimeLabel)}</div><dl class="key-value-list"><div class="key-value-row"><dt>模块名称</dt><dd>${escapeHtml(moduleDisplayName(module.module_id))}</dd></div><div class="key-value-row"><dt>版本</dt><dd>${escapeHtml(module.version)}</dd></div><div class="key-value-row"><dt>风险级别</dt><dd>${escapeHtml(module.risk_level)}</dd></div><div class="key-value-row"><dt>证据等级</dt><dd>本地构建</dd></div><div class="key-value-row"><dt>生产资格</dt><dd>${controlStatusMarkup("blocked", "未获生产资格")}</dd></div><div class="key-value-row"><dt>描述摘要</dt><dd>${escapeHtml(abbreviateDigest(module.descriptor_digest))}</dd></div><div class="key-value-row"><dt>登记人</dt><dd>${registration ? escapeHtml(redactReference(registration.registered_by_actor_ref, "已记录（身份隐藏）")) : "未登记"}</dd></div><div class="key-value-row"><dt>登记时间</dt><dd>${registration ? escapeHtml(registration.registered_at) : "未登记"}</dd></div><div class="key-value-row"><dt>工具范围</dt><dd>${module.tool_names.length ? module.tool_names.map((name) => escapeHtml(name)).join("、") : "未返回"}</dd></div><div class="key-value-row"><dt>规范引用</dt><dd>${module.standard_ids.length ? module.standard_ids.map((name) => escapeHtml(name)).join("、") : "未返回"}</dd></div></dl></aside>`;
 }
 
 function renderControlPreview(data) {
@@ -1114,14 +1165,22 @@ function renderControlActions(data) {
   return `<section class="panel control-actions-panel" aria-labelledby="control-actions-title"><div class="card-head"><div><h2 id="control-actions-title">本地受控操作</h2><p>保存草稿只留在当前页面；服务端失败或人工复核时保留原状态。</p></div>${controlStatusMarkup(state.controlStatus)}</div><div class="button-row control-action-row"><button class="button button-secondary" type="button" data-control-action="save-draft">保存草稿</button><button class="button button-secondary" type="button" data-control-action="register"${registerDisabled}>登记选中模块</button><button class="button button-secondary" type="button" data-control-action="generate-preview"${disabled("generatePreview")}>生成预览</button><button class="button button-secondary" type="button" data-control-action="submit-approval"${disabled("submitApproval")}>提交审批</button><button class="button button-primary" type="button" data-control-action="publish"${disabled("publish")}>发布并读回</button><button class="button button-secondary" type="button" data-control-action="reconcile"${disabled("reconcile")}>重新读回</button><button class="button button-secondary" type="button" data-control-action="rollback"${disabled("rollback")}>回滚到上一已读回版本（本地受控环境）</button></div></section>`;
 }
 
+function renderCapabilityCatalog() {
+  const tools = Array.isArray(state.data?.tools) ? state.data.tools : [];
+  return `<section class="panel" aria-labelledby="capability-catalog-title"><div class="card-head"><div><h2 id="capability-catalog-title">能力目录</h2><p>快照中的工具清单。目录状态、模块生效和租户授权分别核验。</p></div><span class="status-pill status-neutral">${tools.length} 项能力</span></div>
+    ${tools.length ? `<div class="capability-list">${tools.map((tool) => `<article class="capability-row"><span class="capability-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z M4 7.5l8 4.5 8-4.5 M12 12v9" /></svg></span><div class="capability-copy"><h3>${display(tool.label, "未命名能力")}</h3><p>${display(tool.description, "暂未提供说明")}</p><span class="task-meta">${tool.kind === "write" ? "受控写入" : tool.kind === "read" ? "只读能力" : "操作类型待核验"}</span></div><div class="capability-actions">${statusMarkup(tool.availability ?? "empty", tool.availability === "ready" ? "快照就绪" : safeStatus(tool.availability) === "empty" ? "状态待核验" : undefined)}<button class="button button-quiet" type="button" data-view="tools" data-tool-name="${escapeHtml(tool.name)}">查看授权 <span aria-hidden="true">→</span></button></div></article>`).join("")}</div>` : emptyState("能力目录暂不可用", "请重新读取快照。目录缺失时仍可凭有效身份读取模块控制面。")}
+    <div class="panel-actions"><p class="muted">需要启用模块或调整参数时，请打开“模块与配置管理”。</p><button class="button button-secondary" type="button" data-action="open-module-controls">模块与配置管理 <span aria-hidden="true">→</span></button></div>
+    </section>`;
+}
+
 function renderModuleCenter() {
   const controlData = state.controlState;
-  return `${pageHeader("modules", `<button class="button button-secondary" type="button" data-control-action="refresh">重新读取</button>`)}
-    <div class="callout callout-warning external-authority-warning" role="alert"><div class="callout-head"><h2>外部权威系统</h2>${controlStatusMarkup("manual_review", "固定提醒")}</div><p>报价、关务与客户数据仍由外部权威系统管理</p></div>
-    ${controlNoticeMarkup()}
-    ${renderControlIdentityPanel()}
-    ${renderPluginConfigPanel()}
-    ${state.controlStateLoading ? `<section class="panel loading-panel" aria-live="polite">${statusMarkup("loading")}<h2>正在读取模块控制面</h2><p>只读取服务端状态；未返回前不显示假激活状态。</p></section>` : controlData ? `${renderControlReleaseRail(controlData)}${renderControlStatusCards(controlData)}<div class="module-workspace">${renderControlModuleTable(controlData)}${renderControlInspector(controlData)}</div><div class="control-detail-grid">${renderControlPreview(controlData)}${renderControlReleaseTrail(controlData)}</div>${renderControlActions(controlData)}` : ""}`;
+  const managing = state.moduleWorkspaceOpen;
+  return `${pageHeader("modules", managing ? `<button class="button button-secondary" type="button" data-control-action="refresh">刷新控制面</button>` : `<button class="button button-primary" type="button" data-action="open-module-controls">管理模块与配置</button>`)}
+    ${modeBanner()}
+    <div class="view-tabs" role="group" aria-label="能力视图"><button class="view-tab${managing ? "" : " is-active"}" type="button" data-action="show-capability-catalog" aria-pressed="${!managing}">能力目录</button><button class="view-tab${managing ? " is-active" : ""}" type="button" data-action="open-module-controls" aria-pressed="${managing}">模块与配置管理</button></div>
+    ${managing ? `${controlNoticeMarkup()}${renderControlIdentityPanel()}${state.controlStateLoading ? `<section class="panel loading-panel" aria-live="polite">${statusMarkup("loading")}<h2>正在读取模块控制面</h2><p>只读取服务端状态；未返回前不显示假激活状态。</p></section>` : controlData ? `${renderControlReleaseRail(controlData)}<div class="module-workspace">${renderControlModuleTable(controlData)}${renderControlInspector(controlData)}</div>${renderPluginConfigPanel()}<div class="control-detail-grid">${renderControlPreview(controlData)}${renderControlReleaseTrail(controlData)}</div>${renderControlActions(controlData)}<details class="details-panel"><summary>模块状态汇总</summary><div class="details-content">${renderControlStatusCards(controlData)}</div></details>` : ""}` : renderCapabilityCatalog()}
+    <p class="boundary-note">报价、关务与客户数据仍由外部权威系统管理。模块的运行状态以发布后的精确读回为准。</p>`;
 }
 
 export function safeOpaqueReference(value, prefix) {
@@ -1314,6 +1373,10 @@ function renderArchitecture(data) {
 }
 
 function renderView() {
+  if (state.view === "overview") return renderOverview(state.data);
+  if (["customs", "inquiries", "calculator"].includes(state.view)) {
+    return `${modeBanner()}${renderBusinessService(state.view, state.data, businessOptions())}`;
+  }
   if (state.loading) return renderLoading();
   if (state.view === "modules") return renderModuleCenter();
   if (state.error) return renderError();
@@ -1376,7 +1439,10 @@ function render(announce = false) {
   updateContext();
   updateNav();
   content.innerHTML = renderView();
-  content.setAttribute("aria-busy", String(state.loading));
+  const setup = document.querySelector("#business-entry-setup");
+  if (setup) setup.open = state.entrySetupOpen;
+  const businessView = ["overview", "customs", "inquiries", "calculator"].includes(state.view);
+  content.setAttribute("aria-busy", String(businessView ? state.entryStatus === "loading" : state.loading));
   document.querySelector("#app").dataset.state = state.loading ? "loading" : state.error ? "unavailable" : "ready";
   if (announce) liveRegion.textContent = `${VIEW_META[state.view].title}已打开`;
   schedulePreviewExpiryRender();
@@ -1398,6 +1464,7 @@ function schedulePreviewExpiryRender() {
 
 function focusMain() {
   main.focus({ preventScroll: true });
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 function focusArchitectureNode(kind, id) {
@@ -1461,6 +1528,34 @@ async function loadSnapshot() {
   }
   state.loading = false;
   render();
+}
+
+async function loadBusinessEntries() {
+  const request = ++state.entryRequest;
+  state.entryStatus = "loading";
+  state.businessEntries = null;
+  const shouldRender = () => ["overview", "customs", "inquiries", "calculator"].includes(state.view);
+  if (shouldRender()) render();
+  const abort = new AbortController();
+  const timeout = window.setTimeout(() => abort.abort(), 10_000);
+  try {
+    const response = await fetch("/admin/api/v1/business-entrypoints", { headers: { accept: "application/json" }, credentials: "same-origin", cache: "no-store", signal: abort.signal });
+    if (!response.ok) throw new Error("Business entrypoints unavailable");
+    const entries = validateBusinessEntrypoints(await response.json());
+    if (request !== state.entryRequest) return;
+    state.businessEntries = entries;
+    state.entryStatus = "ready";
+  } catch {
+    if (request !== state.entryRequest) return;
+    state.entryStatus = "error";
+    state.businessEntries = null;
+  } finally {
+    window.clearTimeout(timeout);
+    if (request === state.entryRequest && shouldRender()) {
+      render();
+      liveRegion.textContent = state.entryStatus === "ready" ? "业务入口已更新，业务状态仍以原服务为准" : "业务入口读取失败，可以重新读取";
+    }
+  }
 }
 
 function controlIdempotencyKey() {
@@ -2101,6 +2196,22 @@ async function handleControlAction(target) {
 }
 
 if (isBrowser) {
+document.addEventListener("toggle", (event) => {
+  if (event.target instanceof HTMLDetailsElement && event.target.id === "business-entry-setup") state.entrySetupOpen = event.target.open;
+}, true);
+
+function closeMobileNav() {
+  document.querySelector(".sidebar")?.classList.remove("is-mobile-open");
+  document.querySelector("#mobile-nav-toggle")?.setAttribute("aria-expanded", "false");
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && document.querySelector(".sidebar.is-mobile-open")) {
+    closeMobileNav();
+    document.querySelector("#mobile-nav-toggle")?.focus();
+  }
+});
+
 document.addEventListener("click", (event) => {
   const target = event.target instanceof Element ? event.target.closest("button, a") : null;
   if (!target) return;
@@ -2116,7 +2227,9 @@ document.addEventListener("click", (event) => {
   if (view) {
     event.preventDefault();
     state.view = view;
-    window.history.replaceState(null, "", `#${view}`);
+    closeMobileNav();
+    if (view === "tools") state.toolFilter = target.dataset.toolName ?? "all";
+    if (window.location.hash !== `#${view}`) window.history.pushState(null, "", `${window.location.pathname}${window.location.search}#${view}`);
     render(true);
     focusMain();
     if (view === "modules" && state.controlActor && state.controlState) void loadPluginConfigState({ announce: true });
@@ -2133,6 +2246,41 @@ document.addEventListener("click", (event) => {
   }
 
   switch (target.dataset.action) {
+    case "toggle-mobile-nav": {
+      const sidebar = document.querySelector(".sidebar");
+      const open = sidebar.classList.toggle("is-mobile-open");
+      target.setAttribute("aria-expanded", String(open));
+      if (open) (sidebar.querySelector(".nav-list-secondary .nav-item[aria-current=page]") ?? sidebar.querySelector(".nav-list-secondary .nav-item"))?.focus();
+      break;
+    }
+    case "business-setup": {
+      state.entrySetupOpen = true;
+      const setup = document.querySelector("#business-entry-setup");
+      if (setup) { setup.open = true; setup.scrollIntoView({ block: "nearest", behavior: "instant" }); setup.querySelector("summary")?.focus(); }
+      break;
+    }
+    case "retry-business":
+      void loadBusinessEntries();
+      break;
+    case "open-module-controls":
+      state.moduleWorkspaceOpen = true;
+      render(true);
+      focusMain();
+      break;
+    case "show-capability-catalog":
+      state.moduleWorkspaceOpen = false;
+      render(true);
+      focusMain();
+      break;
+    case "show-overview-details": {
+      const details = document.querySelector("#overview-details");
+      if (details) {
+        details.open = true;
+        details.scrollIntoView({ block: "start" });
+        details.querySelector("summary")?.focus();
+      }
+      break;
+    }
     case "retry":
       void loadSnapshot();
       break;
@@ -2168,9 +2316,13 @@ document.addEventListener("change", (event) => {
     liveRegion.textContent = "配置草稿已在当前页面内存中更新，运行时尚未改变";
     return;
   }
-  if (!(target instanceof HTMLSelectElement) || !target.matches("[data-role-filter]")) return;
-  state.roleFilter = target.value;
+  if (!(target instanceof HTMLSelectElement)) return;
+  if (target.matches("[data-role-filter]")) state.roleFilter = target.value;
+  else if (target.matches("[data-tool-filter]")) state.toolFilter = target.value;
+  else return;
+  const filterId = target.id;
   render();
+  document.getElementById(filterId)?.focus();
 });
 
 window.addEventListener("hashchange", () => {
@@ -2196,10 +2348,13 @@ identityDialog?.addEventListener("cancel", (event) => {
 });
 
 window.addEventListener("pagehide", () => {
+  state.businessEntries = null;
+  state.entryRequest += 1;
   controlClient?.clearToken();
   pluginConfigClient?.clearToken();
 });
 
 render();
 void loadSnapshot();
+void loadBusinessEntries();
 }

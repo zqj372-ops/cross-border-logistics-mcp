@@ -10,6 +10,7 @@ import type { AuthClaims, ExecutionContext } from "../platform/context";
 import { isTrustedExecutionContext } from "../platform/context";
 import {
   acknowledgeCredentialDeliveryRequestSchema,
+  createClientRequestSchema,
   createTenantRequestSchema,
   issueCredentialRequestSchema,
   revokeCredentialRequestSchema,
@@ -402,6 +403,8 @@ function mapRepositoryError(error: unknown): never {
       throw new TenantAccessError("credential_not_found", { cause: error });
     case "client_not_active":
       throw new TenantAccessError("client_not_active", { cause: error });
+    case "client_already_exists":
+      throw new TenantAccessError("state_exists", { cause: error });
     case "client_not_found":
       throw new TenantAccessError("client_not_found", { cause: error });
     case "client_status_unchanged":
@@ -622,6 +625,61 @@ export class TenantAccessService {
         replayed: result.replayed,
         data: Object.freeze({
           tenant: tenantDto(result.value),
+          operation: operationDto(result.operation, Object.freeze({})),
+        }),
+        reason_codes: Object.freeze([]),
+      });
+    } catch (error) {
+      mapRepositoryError(error);
+    }
+  }
+
+  async createClient(
+    context: ExecutionContext,
+    input: unknown,
+    rawIdempotencyKey: string,
+  ): Promise<WriteResponse<Readonly<{ client: ClientDto; operation: OperationDto }>>> {
+    assertAdmin(context, this.#repository.managementTenantId);
+    const request = parseRequest(createClientRequestSchema, input);
+    if (request.tenant_id === this.#repository.managementTenantId) {
+      throw new TenantAccessError("management_tenant_forbidden");
+    }
+    const idempotencyKey = validateIdempotencyKey(rawIdempotencyKey);
+    const now = timestamp(this.#clock());
+    const client: ClientRecord = Object.freeze({
+      clientId: request.client_id,
+      tenantId: request.tenant_id,
+      label: request.label,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const event = createEvent(this.#idGenerator, context, now, {
+      tenantId: client.tenantId,
+      clientId: client.clientId,
+      credentialId: null,
+      action: "client.created",
+      reasonCode: "operator_created",
+    });
+    try {
+      const result = await this.#repository.createClient({
+        client,
+        event,
+        idempotencyKey,
+        requestHash: canonicalHash({
+          action: "client.create",
+          actor: context.actorId,
+          request,
+        }),
+      });
+      const tenantStatus = result.snapshot?.tenantStatus ?? null;
+      if (tenantStatus === null) throw new TenantAccessError("schema_mismatch");
+      return Object.freeze({
+        schema_version: TENANT_ACCESS_SCHEMA_VERSION,
+        status: "success",
+        replayed: result.replayed,
+        data: Object.freeze({
+          client: clientDto(result.value, tenantStatus),
           operation: operationDto(result.operation, Object.freeze({})),
         }),
         reason_codes: Object.freeze([]),

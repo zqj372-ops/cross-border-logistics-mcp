@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   T0_TOOL_NAMES,
@@ -13,6 +13,37 @@ const request = (requestedToolNames: readonly string[] = ["cargo.calculate"]) =>
 });
 
 describe("exact T0 token exchange", () => {
+  it("signs a short T0 token for an externally verified application credential and rechecks authority", async () => {
+    const fixture = createSyntheticAccessGatewayFixture({ nowSeconds: 1_787_760_000 });
+    const authorize = vi.fn();
+
+    const result = await fixture.gateway.issueAuthorizedToken({
+      tenantId: "tenant_application",
+      clientId: "client_application",
+      credentialId: "bkey_0123456789abcdef01234567",
+      requestedToolNames: ["cargo.calculate"],
+      clientIp: "198.51.100.19",
+      requestId: "req_application_000001",
+      requestSchemaVersion: "application-exchange@2026-09-06.v1",
+    }, authorize);
+
+    expect(authorize).toHaveBeenCalledTimes(2);
+    expect(result.data.tool_names).toEqual(["cargo.calculate"]);
+    const payload = JSON.parse(Buffer.from(result.data.access_token.split(".")[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      aud: "logistics-mcp",
+      sub: "bkey_0123456789abcdef01234567",
+      actor_id: "bkey_0123456789abcdef01234567",
+      tenant_id: "tenant_application",
+      client_id: "client_application",
+      scopes: ["tool:cargo.calculate"],
+    });
+    expect(fixture.audit.events).toEqual([expect.objectContaining({
+      action: "application_token.exchange",
+      credentialId: "bkey_0123456789abcdef01234567",
+    })]);
+  });
+
   it("issues an RS256 JWT with only server-owned exact claims and scopes", async () => {
     const fixture = createSyntheticAccessGatewayFixture({ nowSeconds: 1_787_760_000 });
     const seeded = await fixture.seedAcknowledgedCredential({

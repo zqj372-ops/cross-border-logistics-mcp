@@ -67,6 +67,7 @@ import {
   createAdminStaticHandler,
   type AdminStaticHandler,
 } from "./admin-static";
+import { businessEntrypointsFromEnvironment } from "./admin-business-entrypoints";
 import {
   createAdminControlApiHandler,
   type AdminControlApiHandler,
@@ -1245,6 +1246,7 @@ export function createRuntimeServer(
       ),
       ...(enabledSetting === undefined ? {} : { enabledSetting }),
       snapshotProvider: () => adminRuntimeSnapshot(composition),
+      businessEntrypointsProvider: () => businessEntrypointsFromEnvironment(process.env, composition.dataMode),
     });
   const trustedProxy = trustedProxyChecker(
     options.trustedProxyAddresses ?? splitSetting("MCP_TRUSTED_PROXY_ADDRESSES", ""),
@@ -1473,6 +1475,11 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
   const instanceId = process.env.MCP_INSTANCE_ID?.trim();
   const jwksUrl = process.env.MCP_JWKS_URL?.trim();
   const allowedOutboundHosts = splitSetting("MCP_ALLOWED_OUTBOUND_HOSTS", "");
+  const applicationAuthorityUrl = process.env.MCP_APPLICATION_AUTHORITY_URL?.trim();
+  const applicationAuthorityAllowedHosts = splitSetting(
+    "MCP_APPLICATION_AUTHORITY_ALLOWED_HOSTS",
+    "",
+  );
   const store =
     databasePath === undefined || databasePath.length === 0
       ? undefined
@@ -1483,6 +1490,18 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
     }
     assertAllowedOutboundUrl(jwksUrl, allowedOutboundHosts);
   }
+  const applicationAuthorityConfigured = applicationAuthorityUrl !== undefined
+    || applicationAuthorityAllowedHosts.length > 0;
+  if (applicationAuthorityConfigured) {
+    if (
+      applicationAuthorityUrl === undefined
+      || applicationAuthorityUrl.length === 0
+      || applicationAuthorityAllowedHosts.length !== 1
+    ) {
+      throw new Error("MCP application authority URL and exactly one allowed host are required together.");
+    }
+    assertAllowedOutboundUrl(applicationAuthorityUrl, applicationAuthorityAllowedHosts);
+  }
   const tokenVerifier =
     tokenPolicy === undefined ||
     jwksUrl === undefined ||
@@ -1492,6 +1511,12 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
       : createProductionTokenVerifier({
           jwksUrl,
           allowedHosts: allowedOutboundHosts,
+          ...(applicationAuthorityUrl === undefined || applicationAuthorityAllowedHosts.length !== 1
+            ? {}
+            : {
+                applicationAuthorityUrl,
+                applicationAuthorityAllowedHosts,
+              }),
         });
   return createProductionComposition({
     dataMode: "production",

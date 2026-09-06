@@ -154,6 +154,15 @@ export const createTenantRequestSchema = z
   })
   .strict();
 
+export const createClientRequestSchema = z
+  .object({
+    schema_version: schemaVersionSchema,
+    tenant_id: identifierSchema,
+    client_id: identifierSchema,
+    label: displayNameSchema,
+  })
+  .strict();
+
 export const setTenantStatusRequestSchema = z
   .object({
     schema_version: schemaVersionSchema,
@@ -205,6 +214,7 @@ export const acknowledgeCredentialDeliveryRequestSchema = z
   .strict();
 
 export type CreateTenantRequest = z.infer<typeof createTenantRequestSchema>;
+export type CreateClientRequest = z.infer<typeof createClientRequestSchema>;
 export type SetTenantStatusRequest = z.infer<typeof setTenantStatusRequestSchema>;
 export type SetClientStatusRequest = z.infer<typeof setClientStatusRequestSchema>;
 export type IssueCredentialRequest = z.infer<typeof issueCredentialRequestSchema>;

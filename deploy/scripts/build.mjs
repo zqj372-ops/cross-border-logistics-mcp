@@ -1,6 +1,24 @@
-import { cpSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
+
+function versionPortalAssets(directory) {
+  const indexPath = resolve(directory, "index.html");
+  let html = readFileSync(indexPath, "utf8");
+  for (const name of ["styles.css", "app.js"]) {
+    const digest = createHash("sha256").update(readFileSync(resolve(directory, name))).digest("hex").slice(0, 16);
+    const plainUrl = `/console/${name}`;
+    html = html.replace(new RegExp(`${plainUrl.replace(".", "\\.")}(?:\\?v=[a-f0-9]{16})?`, "gu"), `${plainUrl}?v=${digest}`);
+  }
+  writeFileSync(indexPath, html);
+}
+
+if (process.argv[2] === "--version-portal-assets") {
+  if (!process.argv[3]) throw new Error("Portal asset directory is required.");
+  versionPortalAssets(process.argv[3]);
+  process.exit(0);
+}
 
 const adminAssetSpecs = [
   { name: "index.html", source: resolve("apps/admin/index.html") },
@@ -33,6 +51,8 @@ const accessConsoleAssetSpecs = [
   { name: "app.js", source: resolve("apps/access-console/app.js") },
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
+execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "apps/console/openapi.json"], { stdio: "inherit" });
+const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg"].map((name) => ({ name, source: resolve("apps/console", name) }));
 const nodeEsmBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
 };
@@ -45,7 +65,7 @@ execFileSync(process.execPath, [
   "src/logistics_mcp/module-runtime/artifact-attestation.ts",
 ], { stdio: "inherit" });
 
-if ([...adminSourcePaths, ...accessConsoleSourcePaths].some((path) => {
+if ([...adminSourcePaths, ...accessConsoleSourcePaths, ...portalAssetSpecs.map(({ source }) => source)].some((path) => {
   try {
     return !statSync(path).isFile();
   } catch {
@@ -135,3 +155,19 @@ mkdirSync(resolve("dist/access-console"), { recursive: true });
 for (const asset of accessConsoleAssetSpecs) {
   cpSync(asset.source, resolve("dist/access-console", asset.name));
 }
+
+mkdirSync(resolve("dist/console"), { recursive: true });
+for (const asset of portalAssetSpecs) cpSync(asset.source, resolve("dist/console", asset.name));
+await build({
+  entryPoints: ["apps/console/app.js"], outfile: "dist/console/app.js", bundle: true,
+  format: "esm", platform: "browser", target: "es2022", sourcemap: false, legalComments: "none",
+});
+versionPortalAssets("dist/console");
+await build({
+  entryPoints: ["deploy/scripts/start-portal-fixture.ts"], outfile: "dist/src/logistics_mcp/server/portal-fixture.mjs", bundle: true,
+  format: "esm", platform: "node", target: "node22", banner: nodeEsmBanner, sourcemap: false, legalComments: "none",
+});
+await build({
+  entryPoints: ["services/access-gateway/portal/start.ts"], outfile: "dist/services/access-gateway/portal/start.mjs", bundle: true,
+  format: "esm", platform: "node", target: "node22", banner: nodeEsmBanner, sourcemap: false, legalComments: "none",
+});

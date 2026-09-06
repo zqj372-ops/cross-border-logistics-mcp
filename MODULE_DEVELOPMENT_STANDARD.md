@@ -16,12 +16,13 @@
 
 | 分类 | 当前结论 |
 | --- | --- |
-| 已确认 | 当前 `main` 仍通过 `phaseOneToolNames`、`registerPhaseOneTools` 和固定 RBAC 表静态注册 Phase 1 工具。 |
+| 已确认 | Module Runtime v0 已实现启动时静态可信模块、manifest、capability、catalog 与 registration lease；`t0-v1` 只挂载 cargo、container、agent-access 三个模块。旧 Phase 1 注册仍用于兼容/fixture。 |
 | 已确认 | 当前统一包络、五种业务状态、Draft 2020-12 Schema、服务端 tenant/actor、幂等、审批和写后读回约束继续有效。 |
-| 目标架构 | 模块控制平面、签名制品仓库、generation router、注册租约和无重启热插拔是本规范定义的下一阶段能力。 |
+| 已确认 | 窄模块控制面已有本地预览、不同 actor 审批、activation 与 exact readback；Portal 的生产发布不解除生产模块控制 POST 的阻断。 |
+| 目标架构 | 通用签名制品仓库、隔离模块运行池、跨版本 generation router 和无重启热插拔仍是本规范定义的下一阶段能力。 |
 | 尚未验证 | 公司级制品签名、SBOM、隔离运行池、完整客户端工具目录刷新兼容性尚未在本仓库形成生产证据。 |
 
-因此：**现在不能声称本仓库已经支持热插拔**。在平台 RFC、Module Contract Schema、加载器和验收测试合并前，业务团队只应按本规范准备独立模块和交付物，不得自行修改静态注册表“抢跑接入”。
+因此：**现在不能声称本仓库已经支持通用热插拔**。v0 依照已接受的 [Module Runtime RFC](docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md) 执行；下述 v1 目标仍需对应 RFC、正式 Schema、加载器和验收，不得通过修改静态注册表绕过。当前产品/业务 API 进度见 [README](README.md) 与 [状态台账](docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)。
 
 ## 1. 目标与非目标
 

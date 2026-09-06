@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/business-exchange-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requested_operations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "business-exchange@2026-09-05.v1"
+    },
+    "requested_operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "customs.query",
+          "customs.tax.estimate",
+          "quote.zone_preview",
+          "quote.ai_extract_preview",
+          "quote.freightcom_ltl.preview"
+        ]
+      }
+    }
+  }
+}

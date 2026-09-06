@@ -1,271 +1,48 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#0b222b">
-    <title>T0 Access Console</title>
-    <link rel="stylesheet" href="/access-console/styles.css">
-  </head>
-  <body>
-    <a class="skip-link" href="#main-content">跳到主要内容</a>
-
-    <div class="console-shell">
-      <aside class="control-rail" aria-label="接入控制导航">
-        <div class="rail-brand">
-          <span class="brand-mark" aria-hidden="true">FC</span>
-          <div>
-            <p>FreightClaw</p>
-            <strong>Access / T0</strong>
-          </div>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="FreightClaw 企业接入管理控制台"><title>接入管理 · FreightClaw</title><link rel="stylesheet" href="/access-console/styles.css"></head>
+<body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="主导航">
+    <a class="brand" href="#overview"><span class="brand-mark">F</span><span><strong>FreightClaw</strong><small>企业工作台</small></span></a>
+    <nav class="main-nav" aria-label="接入管理导航">
+      <button class="nav-item is-active" type="button" data-page="overview"><span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>工作台</button>
+      <button class="nav-item" type="button" data-page="access"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 6v5c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6l8-3Z"/><path d="m9 12 2 2 4-4"/></svg></span>接入管理</button>
+      <button class="nav-item" type="button" data-page="operations"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h13v16H7z"/><path d="M4 7v13h13M10 9h7M10 13h7M10 17h4"/></svg></span>操作记录</button>
+      <button class="nav-item" type="button" data-page="identity"><span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></span>身份设置</button>
+    </nav>
+    <div class="sidebar-bottom"><strong class="admin-link">能力运营中心</strong><p>由部署环境提供独立入口。本页只管理租户、调用方、Key 与 T0 工具权限。</p></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <div><p class="breadcrumb">企业接入 / <span id="current-page-label">工作台</span></p><h1 id="page-title">接入工作台</h1></div>
+      <div class="topbar-actions"><div id="status-card" class="status-card" data-state="working" aria-live="polite" aria-busy="true"><span id="status-dot" class="status-dot working"></span><span><strong id="status-title">正在读取</strong><small id="status-detail">从服务端读取权威状态。</small></span></div><button id="refresh" class="button secondary compact" type="button">刷新状态</button></div>
+    </header>
+    <main id="main-content" tabindex="-1">
+      <section class="page is-active" data-page-panel="overview" aria-labelledby="overview-title">
+        <div class="page-heading"><div><h2 id="overview-title">今天的接入状态</h2><p id="overview-generated">正在读取脱敏快照…</p></div><button class="button" type="button" data-go-page="access">新建接入</button></div>
+        <div id="overview-metrics" class="metric-grid"></div>
+        <div class="overview-layout">
+          <section class="surface"><div class="surface-heading"><div><h3 id="readiness-title">服务可用性</h3><p>运行状态与生产资格分别展示。</p></div><span id="route-qualification" class="status-tag">读取中</span></div><div id="readiness"></div></section>
+          <section class="surface"><div class="surface-heading"><div><h3 id="issues-title">最近需要关注</h3><p>仅显示脱敏后的非成功事件。</p></div></div><div id="recent-issues" class="records compact-records"></div></section>
         </div>
-
-        <div class="rail-environment" aria-label="当前运行边界">
-          <span>ENVIRONMENT</span>
-          <strong>Single-node candidate</strong>
-          <small>生产资格未授予</small>
+        <section class="surface onboarding"><div class="surface-heading"><div><h3 id="onboarding-title">Agent 接入步骤</h3><p>完成 Key 交付后，再由客户端换取短期 JWT。</p></div></div><div id="agent-onboarding" class="records"></div></section>
+      </section>
+      <section class="page" data-page-panel="access" aria-labelledby="access-title" hidden>
+        <div class="page-heading"><div><h2 id="access-title">接入管理</h2><p>先建立租户，再为调用方签发最小权限 Key。</p></div></div>
+        <div class="access-layout">
+          <section class="surface form-surface"><div class="surface-heading"><div><h3 id="tenant-title">创建租户</h3><p>租户标识创建后不可随意变更。</p></div></div><form id="tenant-form" class="stack-form"><label>租户标识<input name="tenant_id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{2,127}" maxlength="128" placeholder="tenant_north_america"></label><label>显示名称<input name="display_name" required maxlength="80" placeholder="北美业务组"></label><button class="button" type="submit">创建租户</button></form></section>
+          <section class="surface form-surface key-issue"><div class="surface-heading"><div><h3 id="key-title">签发 API Key</h3><p>调用方会在首次签发时创建，Key 只显示一次。</p></div></div><form id="key-form" class="stack-form"><div class="field-grid"><label>租户标识<input name="tenant_id" required placeholder="tenant_north_america"></label><label>调用方标识<input name="client_id" required placeholder="codex_ops"></label><label>Key 名称<input name="label" required maxlength="80" placeholder="运营计算权限"></label><label>有效期<select name="expires_in_seconds"><option value="86400">1 天</option><option value="2592000" selected>30 天</option></select></label></div><fieldset id="tool-permissions"><legend>允许调用的工具</legend><label><input type="checkbox" value="cargo.calculate"><span><strong>货物与计费重计算</strong><small>cargo.calculate</small></span></label><label><input type="checkbox" value="container.plan_summary"><span><strong>装柜摘要</strong><small>container.plan_summary</small></span></label><label><input type="checkbox" value="system.agent_context.get"><span><strong>Agent 上下文</strong><small>system.agent_context.get</small></span></label></fieldset><p class="hint">服务端只接受以上精确集合，页面选择不能扩大权限。</p><button class="button" type="submit">签发一次性 Key</button></form><section id="one-time-panel" class="secret-panel" hidden aria-labelledby="one-time-title"><strong id="one-time-title">一次性 Key</strong><p>复制到批准的 Secret Manager 后确认交付；关闭后不可再次显示。</p><output id="one-time-key"></output><div class="button-row"><button id="copy-key" class="button" type="button">复制 Key</button><button id="ack-key" class="button secondary" type="button">确认已安全保存</button><button id="hide-key" class="button ghost" type="button">隐藏</button></div></section></section>
         </div>
-
-        <nav class="rail-nav" aria-label="页面区域">
-          <a href="#overview"><span>01</span>运行总览</a>
-          <a href="#identity"><span>02</span>管理员身份</a>
-          <a href="#access-management"><span>03</span>租户与 Key</a>
-          <a href="#operations-section"><span>04</span>操作回读</a>
-        </nav>
-
-        <div class="rail-boundary">
-          <span class="boundary-light" aria-hidden="true"></span>
-          <p>只管理租户、长期 Key 和三个镜像内置工具权限。</p>
-        </div>
-
-        <p class="rail-foot">CONTROL SURFACE<br>2026-08-30.V1</p>
-      </aside>
-
-      <div class="console-deck">
-        <header class="command-bar">
-          <div class="command-title">
-            <span class="command-code">UAG / CONTROL DECK</span>
-            <span>统一凭证网关</span>
-          </div>
-          <section id="status-card" class="status-card" aria-live="polite" aria-busy="true">
-            <span id="status-dot" class="status-dot" aria-hidden="true"></span>
-            <div>
-              <strong id="status-title">等待身份验证</strong>
-              <p id="status-detail">正在读取服务端状态。</p>
-            </div>
-          </section>
-          <button id="refresh" class="refresh-button" type="button">
-            <span aria-hidden="true">↻</span>刷新状态
-          </button>
-        </header>
-
-        <main id="main-content" tabindex="-1">
-          <section class="hero" aria-labelledby="page-title">
-            <div class="hero-copy">
-              <p class="eyebrow">T0 ACCESS CONTROL / 只读运营面 + 受控凭证面</p>
-              <h1 id="page-title">租户与 API Key<br><span>接入控制塔</span></h1>
-              <p class="hero-lede">把每一次 Agent 访问送进正确航道：长期 Key 只用于兑换，短期 JWT 才能进入 MCP。</p>
-            </div>
-
-            <div class="qualification" aria-label="资格说明">
-              <span>QUALIFICATION</span>
-              <strong>单机候选</strong>
-              <p>页面可验证真实写入；企业身份、托管密钥与托管数据库门禁仍需外部证据。</p>
-            </div>
-
-            <section id="access-route" class="access-route" aria-labelledby="route-title">
-              <div class="route-heading">
-                <div>
-                  <span>AUTHORIZED ROUTE</span>
-                  <h2 id="route-title">一条受控访问链</h2>
-                </div>
-                <strong id="route-qualification">待真实 staging 验证</strong>
-              </div>
-              <ol class="route-track">
-                <li>
-                  <span class="route-index">01</span>
-                  <strong>长期 Key</strong>
-                  <small>仅用于兑换</small>
-                </li>
-                <li>
-                  <span class="route-index">02</span>
-                  <strong>短期 JWT</strong>
-                  <small>60–900 秒</small>
-                </li>
-                <li>
-                  <span class="route-index">03</span>
-                  <strong>MCP</strong>
-                  <small>/mcp</small>
-                </li>
-                <li>
-                  <span class="route-index">04</span>
-                  <strong>3 个 T0 工具</strong>
-                  <small>精确授权目录</small>
-                </li>
-              </ol>
-            </section>
-          </section>
-
-          <section id="overview" class="deck-section" aria-labelledby="overview-title">
-            <div class="section-heading">
-              <div>
-                <p class="section-code">01 / OPERATIONS</p>
-                <h2 id="overview-title">运营概览</h2>
-              </div>
-              <p id="overview-generated" class="section-note">正在读取 24 小时脱敏快照…</p>
-            </div>
-
-            <div id="overview-metrics" class="manifest-strip" aria-live="polite"></div>
-
-            <div class="situation-grid">
-              <section class="situation-panel readiness-panel" aria-labelledby="readiness-title">
-                <div class="subheading">
-                  <span>GATE STATUS</span>
-                  <h3 id="readiness-title">生产门禁</h3>
-                </div>
-                <div id="readiness" class="records"></div>
-              </section>
-              <section class="situation-panel issues-panel" aria-labelledby="issues-title">
-                <div class="subheading">
-                  <span>EXCEPTIONS / 24H</span>
-                  <h3 id="issues-title">最近异常</h3>
-                </div>
-                <div id="recent-issues" class="records"></div>
-              </section>
-              <section class="situation-panel onboarding-panel" aria-labelledby="onboarding-title">
-                <div class="subheading">
-                  <span>CLIENT ROUTE</span>
-                  <h3 id="onboarding-title">Agent 接入</h3>
-                </div>
-                <div id="agent-onboarding" class="records"></div>
-              </section>
-            </div>
-          </section>
-
-          <section id="identity" class="identity-console" aria-labelledby="identity-title">
-            <div class="identity-copy">
-              <p class="section-code">02 / IDENTITY</p>
-              <h2 id="identity-title">管理员身份</h2>
-              <p>令牌只保存在当前页面内存，不写入 URL、Cookie 或浏览器存储。企业入口已注入身份时可留空。</p>
-            </div>
-            <form id="identity-form" class="identity-form">
-              <label for="admin-token">短期管理员 JWT</label>
-              <div class="identity-entry">
-                <input id="admin-token" type="password" autocomplete="off" spellcheck="false" placeholder="仅当前页面内存">
-                <button type="submit">加载并读取</button>
-                <button id="clear-token" class="secondary" type="button">清除</button>
-              </div>
-            </form>
-          </section>
-
-          <section id="access-management" class="deck-section" aria-labelledby="access-title">
-            <div class="section-heading">
-              <div>
-                <p class="section-code">03 / ACCESS</p>
-                <h2 id="access-title">租户与 Key</h2>
-              </div>
-              <p class="section-note">每次写入都必须在服务端读回同一 operation_id。</p>
-            </div>
-
-            <div class="access-grid">
-              <section class="panel tenant-panel" aria-labelledby="tenant-title">
-                <div class="panel-heading">
-                  <div>
-                    <span class="panel-code">TENANT REGISTRY</span>
-                    <h3 id="tenant-title">租户</h3>
-                  </div>
-                  <span class="panel-number">A</span>
-                </div>
-                <form id="tenant-form">
-                  <label>租户标识<input name="tenant_id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{2,127}" maxlength="128" placeholder="tenant_north_america"></label>
-                  <label>显示名称<input name="display_name" required maxlength="80" placeholder="北美业务组"></label>
-                  <button type="submit">创建租户</button>
-                </form>
-                <div id="tenants" class="records"></div>
-              </section>
-
-              <section class="panel key-panel" aria-labelledby="key-title">
-                <div class="panel-heading">
-                  <div>
-                    <span class="panel-code">CREDENTIAL ISSUE</span>
-                    <h3 id="key-title">API Key 与工具权限</h3>
-                  </div>
-                  <span class="panel-number">B</span>
-                </div>
-                <form id="key-form">
-                  <div class="field-pair">
-                    <label>租户标识<input name="tenant_id" required placeholder="tenant_north_america"></label>
-                    <label>调用方标识<input name="client_id" required placeholder="codex_ops"></label>
-                  </div>
-                  <div class="field-pair">
-                    <label>Key 名称<input name="label" required maxlength="80" placeholder="运营计算权限"></label>
-                    <label>有效期
-                      <select name="expires_in_seconds">
-                        <option value="86400">1 天</option>
-                        <option value="2592000" selected>30 天</option>
-                      </select>
-                    </label>
-                  </div>
-                  <fieldset id="tool-permissions">
-                    <legend>允许调用</legend>
-                    <label><input type="checkbox" value="cargo.calculate"><span>cargo.calculate<small>货物与计费重计算</small></span></label>
-                    <label><input type="checkbox" value="container.plan_summary"><span>container.plan_summary<small>装柜摘要</small></span></label>
-                    <label><input type="checkbox" value="system.agent_context.get"><span>system.agent_context.get<small>Agent 上下文</small></span></label>
-                  </fieldset>
-                  <p class="hint">服务端只接受以上精确集合，页面选择不能扩大权限。</p>
-                  <button type="submit">签发一次性 Key</button>
-                </form>
-                <section id="one-time-panel" class="secret-panel" hidden aria-labelledby="one-time-title">
-                  <strong id="one-time-title">一次性 Key</strong>
-                  <p>复制到批准的 Secret Manager 后确认交付；关闭后不可再次显示。</p>
-                  <output id="one-time-key" class="secret-output"></output>
-                  <div class="button-row">
-                    <button id="copy-key" type="button">复制</button>
-                    <button id="ack-key" class="secondary" type="button">确认已安全保存</button>
-                    <button id="hide-key" class="secondary" type="button">隐藏</button>
-                  </div>
-                </section>
-                <div id="credentials" class="records"></div>
-              </section>
-
-              <section class="panel client-panel" aria-labelledby="client-title">
-                <div class="panel-heading">
-                  <div>
-                    <span class="panel-code">CLIENTS</span>
-                    <h3 id="client-title">调用方</h3>
-                  </div>
-                  <span class="panel-number">C</span>
-                </div>
-                <p class="hint">调用方由首次签发 Key 时创建；停用后，该调用方名下全部 Key 立即失效。</p>
-                <div id="clients" class="records"></div>
-              </section>
-            </div>
-          </section>
-
-          <section id="operations-section" class="deck-section operations-section" aria-labelledby="operations-title">
-            <div class="section-heading">
-              <div>
-                <p class="section-code">04 / READBACK</p>
-                <h2 id="operations-title">操作回读</h2>
-              </div>
-              <p class="section-note">状态流转只信任服务端回读，不以按钮点击作为完成证明。</p>
-            </div>
-            <div class="operations-ledger-heading" aria-hidden="true">
-              <span>动作 / 流转</span>
-              <span>状态 / 原因</span>
-              <span>时间 / 操作标识</span>
-            </div>
-            <div id="operations" class="records operation-records"></div>
-          </section>
-        </main>
-
-        <footer class="deck-footer">
-          <span>FreightClaw / Unified Access Gateway</span>
-          <span>不存储完整凭证 · 不扩大工具权限 · 不代替外部生产门禁</span>
-        </footer>
-      </div>
-    </div>
-
-    <script type="module" src="/access-console/app.js"></script>
-  </body>
-</html>
+        <div class="resource-grid"><section class="surface"><div class="surface-heading"><div><h3>租户</h3><p>查看、停用或恢复租户。</p></div></div><div id="tenants" class="records"></div></section><section class="surface"><div class="surface-heading"><div><h3>调用方</h3><p>停用会使名下全部 Key 失效。</p></div></div><div id="clients" class="records"></div></section></div>
+        <section class="surface credential-list"><div class="surface-heading"><div><h3>API Key</h3><p>按目标凭证管理交付、轮换和吊销。</p></div></div><div id="credentials" class="records records-grid"></div></section>
+      </section>
+      <section class="page" data-page-panel="operations" aria-labelledby="operations-title" hidden><div class="page-heading"><div><h2 id="operations-title">操作记录</h2><p>每次变更都以服务端返回的 operation_id 和状态读回为准。</p></div></div><section class="surface"><div id="operations" class="records operation-records"></div></section></section>
+      <section class="page" data-page-panel="identity" aria-labelledby="identity-title" hidden><div class="page-heading"><div><h2 id="identity-title">身份设置</h2><p>企业入口已注入身份时无需手动填写。</p></div></div><section class="surface identity-surface"><div><h3>管理员身份</h3><p>短期 JWT 只保存在当前页面内存，不写入 URL、Cookie 或浏览器存储。</p></div><form id="identity-form" class="identity-form"><label for="admin-token">短期管理员 JWT</label><input id="admin-token" type="password" autocomplete="off" spellcheck="false" placeholder="仅当前页面内存"><div class="button-row"><button class="button" type="submit">加载并读取</button><button id="clear-token" class="button secondary" type="button">清除身份</button></div></form></section><section class="surface boundary-note"><h3>权限边界</h3><p>接入管理员只能管理租户、调用方、长期 Key 和三个 T0 工具权限。能力配置与发布由能力运营中心负责，其地址由部署环境提供。</p></section></section>
+    </main>
+  </div>
+</div>
+<dialog id="rotation-dialog" class="dialog" aria-labelledby="rotation-title"><form method="dialog"><div class="dialog-heading"><div><h2 id="rotation-title">轮换 API Key</h2><p id="rotation-summary">确认目标凭证与权限变化。</p></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div><div id="rotation-current" class="rotation-current"></div><fieldset id="rotation-tools"><legend>新 Key 的工具权限</legend></fieldset><label class="rotation-expiry">新 Key 有效期<select id="rotation-expiry"><option value="86400">1 天</option><option value="2592000" selected>30 天</option></select><small id="rotation-new-expiry">从现在起 30 天</small></label><div id="rotation-diff" class="rotation-diff"></div><p class="warning-note">轮换成功后旧凭证将立即失效。新 Key 仍只显示一次。</p><div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button id="confirm-rotation" class="button" value="default" type="button">确认轮换</button></div></form></dialog>
+<script type="module" src="/access-console/app.js"></script>
+</body></html>

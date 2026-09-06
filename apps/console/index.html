@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>FreightClaw · 物流能力开放平台</title>
+  <link rel="icon" type="image/svg+xml" href="/console/brand-icon.svg">
+  <link rel="stylesheet" href="/console/styles.css">
+  <script type="module" src="/console/app.js"></script>
+</head>
+<body>
+  <!-- Customer direction: Wind-style capability discovery and Agent onboarding.
+  One console owns the application key; people do business work using their login.
+  Actual protocol and source readiness are preserved. Platform operations remain role-specific. -->
+  <a class="skip-link" href="#content">跳到主要内容</a>
+  <div id="app" class="app-shell">
+    <aside id="sidebar" class="sidebar" aria-label="主要导航"></aside>
+    <div class="workspace">
+      <header id="topbar" class="topbar"></header>
+      <div id="environment-note"></div>
+      <main id="content" tabindex="-1" aria-busy="true">
+        <div class="initial-state"><span class="wordmark">FreightClaw</span><h1>正在读取工作台</h1><p>确认当前身份与可用服务。</p></div>
+      </main>
+    </div>
+  </div>
+  <div id="notification" class="notification" role="status" hidden></div>
+  <p id="live-region" class="sr-only" aria-live="polite"></p>
+  <dialog id="secret-dialog" aria-labelledby="secret-heading">
+    <div class="dialog-head"><h2 id="secret-heading">保存 API Key</h2><button type="button" class="button quiet" data-action="close-secret" aria-label="关闭凭证窗口">关闭</button></div>
+    <p>完整 Key 仅显示一次。复制并保存后，点击下方按钮即可自动验证，无需切换页面。</p>
+    <code id="secret-value" class="secret-value"></code>
+    <div id="secret-error" role="alert"></div>
+    <div class="dialog-actions"><button type="button" class="button" data-action="copy-secret">复制 Key</button><button type="button" class="button primary" data-action="ack-secret">已保存，完成</button></div>
+  </dialog>
+</body>
+</html>

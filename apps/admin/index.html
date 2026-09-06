@@ -1,35 +1,45 @@
 <!doctype html>
+<!--
+THESIS: A business-first workbench with direct, trusted access to existing services.
+OWN-WORLD: FreightClaw connects logistics capabilities with governed Agent access.
+STORY: Start a quote, query customs, estimate duties; manage Agent capabilities separately.
+FIRST VIEWPORT: Task navigation, an asymmetric quote/query/estimate launch area, separate entry and service states.
+FORM: Candidate 7, task-oriented enterprise workbench; seed 1154e0c3. Light neutral
+surfaces, restrained blue, system typography, compact lists and explicit status text.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+-->
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="跨境物流 Agent 能力运营：安全调整内置能力，并用服务端读回证明生效。" />
-    <title>跨境物流 Agent 能力运营</title>
+    <meta name="description" content="FreightClaw 工作台：开始询价、查询关务、估算进口税费，管理 Agent 接入。" />
+    <title>FreightClaw · 物流能力工作台</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div id="app" data-state="loading">
       <header class="topbar">
-        <a class="brand" href="#overview" aria-label="跨境物流 Agent 能力运营首页">
+        <a class="brand" href="#overview" data-view="overview" aria-label="FreightClaw 工作台首页">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" role="img">
-              <path d="M6 7.5h20v5H6zM6 15h13v5H6zM6 22.5h20v2H6z" fill="currentColor" />
+              <path d="M8 25V7h17M8 15h12M16 25v-5h9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </span>
           <span>
             <span class="brand-title">FreightClaw</span>
-            <span class="brand-subtitle">能力运营</span>
+            <span class="brand-subtitle">物流能力工作台</span>
           </span>
         </a>
+        <button id="mobile-nav-toggle" class="mobile-menu-toggle button button-secondary" type="button" data-action="toggle-mobile-nav" aria-controls="management-navigation" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>菜单</span></button>
         <div class="topbar-context" aria-label="当前上下文">
           <div class="context-item">
-            <span class="context-label">租户</span>
+            <span class="context-label">当前组织</span>
             <strong id="tenant-name">未连接</strong>
           </div>
           <div class="context-item">
             <span class="context-label">环境</span>
-            <span id="environment-badge" class="status-pill status-neutral">未连接</span>
+            <span id="environment-badge">未连接</span>
           </div>
           <div class="context-item context-version">
             <span class="context-label">当前配置</span>
@@ -45,25 +55,26 @@
 
       <div class="app-layout">
         <aside class="sidebar" aria-label="控制台导航区域">
-          <div class="sidebar-heading">
-            <span class="eyebrow">能力航路账本</span>
-            <span class="muted">只管理接入、配置与发布边界</span>
-          </div>
-          <nav aria-label="控制台主导航">
+          <nav id="workspace-navigation" aria-label="控制台主导航">
+            <div class="nav-group-label">业务工作台</div>
             <ul id="primary-nav" class="nav-list">
-              <li><button class="nav-item is-active" type="button" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true"></span><span>总览</span></button></li>
-              <li><button class="nav-item" type="button" data-view="modules"><span class="nav-icon" aria-hidden="true"></span><span>插件与能力</span><span class="sr-only">模块中心</span></button></li>
-              <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"></span><span>Agent 接入</span></button></li>
-              <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"></span><span>适配器状态</span></button></li>
-              <li><button class="nav-item" type="button" data-view="approvals"><span class="nav-icon" aria-hidden="true"></span><span>审批与发布</span></button></li>
-              <li><button class="nav-item" type="button" data-view="audit"><span class="nav-icon" aria-hidden="true"></span><span>审计日志</span></button></li>
+              <li><button class="nav-item is-active" type="button" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span>工作台</span></button></li>
+              <li><button class="nav-item" type="button" data-view="inquiries"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h11v13H3zM14 10h4l3 4v4h-7M6 8h5M6 11h3"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg></span><span>询价工作台</span></button></li>
+              <li><button class="nav-item" type="button" data-view="customs"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6zM15 3v5h4M9 12h7M9 16h5"/></svg></span><span>关务查询</span></button></li>
+              <li><button class="nav-item" type="button" data-view="calculator"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 6h8M8 11h1m6 0h1M8 15h1m6 0h1M8 19h1m6 0h1"/></svg></span><span>税费估算</span></button></li>
             </ul>
-            <template id="legacy-read-only-views"><button type="button" data-view="tools">工具权限</button><button type="button" data-view="architecture">系统结构</button></template>
+            <div class="nav-group-label nav-management-label">平台管理</div>
+            <ul id="management-navigation" class="nav-list nav-list-secondary">
+              <li><button class="nav-item" type="button" data-view="modules"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z M4 7.5l8 4.5 8-4.5 M12 12v9"/></svg></span><span>能力与配置</span><span class="sr-only">模块中心</span></button></li>
+              <li><button class="nav-item" type="button" data-view="clients"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M12 3v3M8 11v3m8-3v3m-7 8h6"/></svg></span><span>Agent 接入</span></button></li>
+              <li><button class="nav-item" type="button" data-view="approvals"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6M8 11l2 2 5-5M8 17h8"/></svg></span><span>审批与发布</span></button></li>
+              <li><button class="nav-item" type="button" data-view="audit"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h11a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8M8 8H3m5 4H3m5 4H3m9-8h5m-5 4h5m-5 4h3"/></svg></span><span>审计日志</span></button></li>
+              <li><button class="nav-item" type="button" data-view="adapters"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></svg></span><span>数据连接</span><span class="sr-only">适配器状态</span></button></li>
+              <li><button class="nav-item" type="button" data-view="tools"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z M8 12l3 3 5-6"/></svg></span><span>工具权限</span></button></li>
+              <li><button class="nav-item" type="button" data-view="architecture"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 8v4H5v4m7-4h7v4"/></svg></span><span>系统结构</span></button></li>
+            </ul>
           </nav>
-          <div class="sidebar-note">
-            <span class="icon-wrap" aria-hidden="true"></span>
-            <p>报价、关税和装柜数据仍在原系统。本页只调整获准能力，并以服务端读回为准。</p>
-          </div>
+          <div class="sidebar-footer"><span class="brand-subtitle">FreightClaw</span><p>让每项能力有据可查。</p></div>
         </aside>
 
         <main id="main-content" class="main-content" tabindex="-1">
@@ -79,7 +90,7 @@
       </div>
 
       <footer class="app-footer">
-        <span>运营范围：插件能力、受控配置、接入、审批边界和审计状态</span>
+        <span>FreightClaw · 物流能力工作台</span>
         <span id="footer-mode">未连接正式后台</span>
       </footer>
     </div>
@@ -87,7 +98,6 @@
     <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-body">
       <div class="dialog-head">
         <div>
-          <span class="eyebrow">本地预览</span>
           <h2 id="dialog-title">草稿差异</h2>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" aria-label="关闭预览"><span class="close-icon" aria-hidden="true"></span></button>
@@ -102,7 +112,6 @@
       <form id="identity-form" class="identity-form" novalidate>
         <div class="dialog-head">
           <div>
-            <span class="eyebrow">控制面身份</span>
             <h2 id="identity-dialog-title">输入模块作用域身份</h2>
           </div>
           <button class="icon-button" type="button" data-control-action="close-identity" aria-label="关闭身份输入"><span class="close-icon" aria-hidden="true"></span></button>

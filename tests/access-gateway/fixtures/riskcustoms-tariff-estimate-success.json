@@ -1,0 +1,87 @@
+{
+  "contractVersion": "riskcustoms-tariff-estimate.v1",
+  "requestId": "req_12345678",
+  "status": "success",
+  "delegatedActor": {
+    "type": "user",
+    "ref": "user-1",
+    "applicationId": "customs-app"
+  },
+  "result": {
+    "lineId": "line-1",
+    "status": "success",
+    "input": {
+      "lineId": "line-1",
+      "description": "Cotton shirt",
+      "hsCode": "610510",
+      "destinationCountry": "CA",
+      "declaredValue": "100.00",
+      "currency": "CAD",
+      "attributes": {
+        "originCountry": "CN"
+      }
+    },
+    "publication": {
+      "ruleDate": "2026-09-05",
+      "serviceVersion": "riskcustoms-2.0.0",
+      "publishedAt": "2026-09-04T00:00:00.000Z",
+      "releaseIds": ["release-1"],
+      "snapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "releaseHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "evaluatedAt": "2026-09-04T00:00:00.000Z",
+      "lastSourceCheckAt": "2026-09-04T00:00:00.000Z",
+      "testData": false
+    },
+    "exchangeRate": null,
+    "valueForDuty": { "amount": "100.00", "currency": "CAD" },
+    "valueForTax": { "amount": "105.00", "currency": "CAD" },
+    "confirmedSubtotal": { "amount": "10.25", "currency": "CAD" },
+    "customsPayable": { "amount": "10.25", "currency": "CAD" },
+    "lines": [
+      {
+        "id": "base-duty",
+        "label": "Base duty",
+        "category": "base_duty",
+        "rateExpressionRaw": "5%",
+        "ratePercent": "5",
+        "amount": "5.00",
+        "base": "100.00",
+        "status": "included",
+        "effectiveFrom": "2026-01-01",
+        "sourceId": "source-ca",
+        "note": ""
+      },
+      {
+        "id": "gst",
+        "label": "GST",
+        "category": "gst",
+        "rateExpressionRaw": "5%",
+        "ratePercent": "5",
+        "amount": "5.25",
+        "base": "105.00",
+        "status": "included",
+        "effectiveFrom": "2026-01-01",
+        "sourceId": "source-ca",
+        "note": ""
+      }
+    ],
+    "sources": [
+      {
+        "id": "source-ca",
+        "releaseId": "release-1",
+        "artifactId": "artifact-1",
+        "authority": "CBSA",
+        "dataset": "Customs Tariff",
+        "edition": "2026",
+        "revision": "1",
+        "officialUrl": "https://www.cbsa-asfc.gc.ca/trade-commerce/tariff-tarif/",
+        "publishedAt": "2026-01-01",
+        "effectiveFrom": "2026-01-01",
+        "effectiveTo": null,
+        "retrievedAt": "2026-09-04T00:00:00.000Z",
+        "sourceLocator": "opaque://source-ca"
+      }
+    ],
+    "reasonCodes": []
+  }
+}

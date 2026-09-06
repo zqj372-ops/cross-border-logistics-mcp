@@ -5,6 +5,7 @@ import { canonicalJsonHash } from "./canonical-json";
 import {
   ACCESS_GATEWAY_SCHEMA_VERSION,
   T0_TOOL_NAMES,
+  type AuthorizedT0TokenInput,
   type ErrorResponse,
   type ExactToolScope,
   type ExchangeInput,
@@ -146,7 +147,124 @@ export class AccessGateway {
     }
   }
 
-  async exchangeToken(input: ExchangeInput): Promise<ExchangeSuccessResponse> {
+  async issueAuthorizedToken(
+    input: AuthorizedT0TokenInput,
+    authorize: () => void | Promise<void>,
+  ): Promise<ExchangeSuccessResponse> {
+    const parsedTools = z.array(t0ToolNameSchema).min(1).max(3).refine(
+      (values) => new Set(values).size === values.length,
+    ).safeParse(input.requestedToolNames);
+    const requestId = input.requestId ?? this.#providers.randomSource.opaque("req");
+    if (
+      !parsedTools.success ||
+      input.requestSchemaVersion !== "application-exchange@2026-09-06.v1" ||
+      !requestIdPattern.test(requestId) ||
+      typeof input.clientIp !== "string" || input.clientIp.length === 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,255}$/u.test(input.tenantId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,255}$/u.test(input.clientId) ||
+      !/^bkey_[a-f0-9]{24}$/u.test(input.credentialId)
+    ) {
+      throw new AccessGatewayError("invalid_request");
+    }
+    const requestedTools = normalizedTools(parsedTools.data);
+    const nowSeconds = this.#providers.clock.nowSeconds();
+    const requestHash = canonicalJsonHash("access-gateway/application-exchange/v1", {
+      schema_version: input.requestSchemaVersion,
+      requested_tool_names: requestedTools,
+    });
+    let signedJti: string | null = null;
+    try {
+      await authorize();
+      const reserved = await this.#providers.rateLimitRepository.reserve({
+        tenantId: input.tenantId,
+        clientId: input.clientId,
+        credentialId: input.credentialId,
+        clientIp: input.clientIp,
+        nowSeconds,
+      });
+      if (!reserved) throw new AccessGatewayError("rate_limited");
+      const sessionId = this.#providers.randomSource.opaque("auth");
+      const jti = this.#providers.randomSource.opaque("jwt");
+      signedJti = jti;
+      const claims: JwtClaims = {
+        iss: this.#issuer,
+        aud: this.#audience,
+        sub: input.credentialId,
+        iat: nowSeconds,
+        exp: nowSeconds + this.#ttlSeconds,
+        jti,
+        tenant_id: input.tenantId,
+        actor_id: input.credentialId,
+        actor_role: "service",
+        roles: ["service"],
+        scopes: requestedTools.map((toolName): ExactToolScope => `tool:${toolName}`),
+        client_id: input.clientId,
+        session_id: sessionId,
+      };
+      const signed = await this.#providers.jwtSigningProvider.sign(claims);
+      assertSignedJwtMatchesClaims(signed, claims);
+      await authorize();
+      await this.#providers.auditRepository.append({
+        auditId: this.#providers.randomSource.opaque("audit"),
+        action: "application_token.exchange",
+        status: "success",
+        requestId,
+        tenantId: input.tenantId,
+        clientId: input.clientId,
+        credentialId: input.credentialId,
+        toolNames: requestedTools,
+        requestHash,
+        jti,
+        reasonCode: null,
+        createdAt: new Date(nowSeconds * 1_000).toISOString(),
+      });
+      return {
+        schema_version: ACCESS_GATEWAY_SCHEMA_VERSION,
+        status: "success",
+        data: {
+          access_token: signed.token,
+          token_type: "Bearer",
+          expires_in: this.#ttlSeconds,
+          tool_names: requestedTools,
+          session_ref: sessionId,
+          request_id: requestId,
+        },
+        warnings: [],
+        blockers: [],
+      };
+    } catch (error: unknown) {
+      const safe = asUnavailableError(error);
+      try {
+        await this.#providers.auditRepository.append({
+          auditId: this.#providers.randomSource.opaque("audit"),
+          action: "application_token.exchange",
+          status: safe.responseStatus,
+          requestId,
+          tenantId: input.tenantId,
+          clientId: input.clientId,
+          credentialId: input.credentialId,
+          toolNames: requestedTools,
+          requestHash,
+          jti: signedJti,
+          reasonCode: safe.code,
+          createdAt: new Date(nowSeconds * 1_000).toISOString(),
+        });
+      } catch {
+        throw new AccessGatewayError("access_gateway_unavailable");
+      }
+      throw safe;
+    }
+  }
+
+  async exchangeToken(
+    input: ExchangeInput,
+    authorize?: (input: Readonly<{
+      tenantId: string;
+      clientId: string;
+      credentialId: string;
+      requestedToolNames: readonly T0ToolName[];
+    }>) => void | Promise<void>,
+  ): Promise<ExchangeSuccessResponse> {
     const parsedBody = exchangeRequestSchema.safeParse(input.body);
     if (!parsedBody.success || typeof input.clientIp !== "string" || input.clientIp.length === 0) {
       throw new AccessGatewayError("invalid_request");
@@ -212,6 +330,12 @@ export class AccessGateway {
       if (requestedTools.some((toolName) => !record.credential.toolNames.includes(toolName))) {
         throw new AccessGatewayError("tool_entitlement_denied");
       }
+      await authorize?.({
+        tenantId: record.tenant.tenantId,
+        clientId: record.client.clientId,
+        credentialId: record.credential.credentialId,
+        requestedToolNames: requestedTools,
+      });
       const reserved = await this.#providers.rateLimitRepository.reserve({
         tenantId: record.tenant.tenantId,
         clientId: record.client.clientId,
@@ -241,6 +365,14 @@ export class AccessGateway {
       };
       const signed = await this.#providers.jwtSigningProvider.sign(claims);
       assertSignedJwtMatchesClaims(signed, claims);
+      // Authorization may change while a remote KMS signs. Recheck the
+      // caller-supplied current-grant authority before any token is returned.
+      await authorize?.({
+        tenantId: record.tenant.tenantId,
+        clientId: record.client.clientId,
+        credentialId: record.credential.credentialId,
+        requestedToolNames: requestedTools,
+      });
       const markedUsed = await this.#providers.credentialRepository.markUsed(
         record.credential.credentialId,
         new Date(nowSeconds * 1_000).toISOString(),

@@ -1,0 +1,33 @@
+name: freightclaw-portal
+services:
+  portal:
+    image: ${PORTAL_IMAGE:?PORTAL_IMAGE is required}
+    container_name: logistics-mcp-portal
+    command: [node, dist/services/access-gateway/portal/start.mjs]
+    restart: unless-stopped
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    env_file: /data/logistics-mcp/portal/secrets/portal.env
+    volumes:
+      - /data/logistics-mcp/portal/state:/var/lib/freightclaw-portal
+      - /data/logistics-mcp/portal/secrets:/run/portal-secrets:ro
+      - logistics-mcp-gateway-state:/var/lib/access-gateway:ro
+      - /data/logistics-mcp/config/secrets/4d39dcc8cbd0-access-gateway-postgres-password:/run/secrets/access_gateway_postgres_password:ro
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks: [freightclaw]
+    healthcheck:
+      test: [CMD, node, --input-type=module, -e, "import http from 'node:http';const q=http.get('http://127.0.0.1:8082/console/readyz',{headers:{host:'www.freightclaw.net'}},r=>{r.resume();r.on('end',()=>process.exit(r.statusCode===200?0:1))});q.setTimeout(15000,()=>q.destroy());q.on('error',()=>process.exit(1))"]
+      interval: 60s
+      timeout: 20s
+      start_period: 30s
+      retries: 3
+networks:
+  freightclaw:
+    external: true
+    name: freightclaw-net
+volumes:
+  logistics-mcp-gateway-state:
+    external: true

@@ -614,6 +614,7 @@ function snapshotEntityKind(action: string): SnapshotEntityKind {
     case "tenant.create":
     case "tenant.status":
       return "tenant";
+    case "client.create":
     case "client.status":
       return "client";
     case "credential.issue":
@@ -632,6 +633,8 @@ function expectedSnapshotEventActions(action: string): readonly string[] {
       return ["tenant.created"];
     case "tenant.status":
       return ["tenant.active", "tenant.suspended"];
+    case "client.create":
+      return ["client.created"];
     case "client.status":
       return ["client.active", "client.disabled"];
     case "credential.issue":
@@ -754,7 +757,7 @@ function snapshotOperation(
     ) {
       repositoryFailure("corrupt");
     }
-  } else if (action === "client.status") {
+  } else if (action === "client.create" || action === "client.status") {
     if (normalized.clientId !== resultId || normalized.credentialId !== null) {
       repositoryFailure("corrupt");
     }
@@ -1394,6 +1397,50 @@ export class PostgresGatewayStore implements
           value: request.tenant,
           operation: request.event,
           snapshot: resultSnapshotContext(request.tenant.status, null, null),
+        });
+      },
+    ));
+  }
+
+  createClient(request: {
+    readonly client: ClientRecord;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<ClientRecord>> {
+    return this.#transaction((client) => this.#idempotent(
+      client,
+      "client.create",
+      request.idempotencyKey,
+      request.requestHash,
+      request.client.createdAt,
+      async () => {
+        const tenant = await this.#tenant(client, request.client.tenantId, true);
+        if (tenant.status !== "active") repositoryFailure("tenant_not_active");
+        const existing = await client.query(
+          `SELECT 1 FROM ${qualified(this.#configuration.schema, "clients")}
+           WHERE tenant_id = $1 AND client_id = $2 FOR UPDATE`,
+          [request.client.tenantId, request.client.clientId],
+        );
+        if (existing.rowCount !== 0) repositoryFailure("client_already_exists");
+        await client.query(`
+          INSERT INTO ${qualified(this.#configuration.schema, "clients")} (
+            tenant_id, client_id, label, status, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6)
+        `, [
+          request.client.tenantId,
+          request.client.clientId,
+          request.client.label,
+          request.client.status,
+          request.client.createdAt,
+          request.client.updatedAt,
+        ]);
+        await insertEvent(client, this.#configuration.schema, request.event);
+        return Object.freeze({
+          resultId: request.client.clientId,
+          value: request.client,
+          operation: request.event,
+          snapshot: resultSnapshotContext(tenant.status, request.client.status, null),
         });
       },
     ));

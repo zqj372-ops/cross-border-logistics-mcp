@@ -24,10 +24,43 @@ const elements = Object.freeze({
   routeQualification: document.getElementById("route-qualification"),
   oneTimePanel: document.getElementById("one-time-panel"),
   oneTimeKey: document.getElementById("one-time-key"),
+  rotationDialog: document.getElementById("rotation-dialog"),
+  rotationSummary: document.getElementById("rotation-summary"),
+  rotationCurrent: document.getElementById("rotation-current"),
+  rotationTools: document.getElementById("rotation-tools"),
+  rotationDiff: document.getElementById("rotation-diff"),
+  rotationExpiry: document.getElementById("rotation-expiry"),
 });
 
 let adminToken = "";
 let pendingCredentialId = null;
+let pendingRotation = null;
+const rotationsAwaitingReadback = new Set();
+
+const PAGE_LABELS = Object.freeze({
+  overview: ["工作台", "接入工作台"],
+  access: ["接入管理", "租户、调用方与 API Key"],
+  operations: ["操作记录", "操作记录"],
+  identity: ["身份设置", "身份与权限边界"],
+});
+
+function showPage(page) {
+  const selected = Object.hasOwn(PAGE_LABELS, page) ? page : "overview";
+  document.querySelectorAll("[data-page-panel]").forEach((panel) => {
+    const active = panel.dataset.pagePanel === selected;
+    panel.hidden = !active;
+    panel.classList.toggle("is-active", active);
+  });
+  document.querySelectorAll("[data-page]").forEach((button) => {
+    const active = button.dataset.page === selected;
+    button.classList.toggle("is-active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  document.getElementById("current-page-label").textContent = PAGE_LABELS[selected][0];
+  document.getElementById("page-title").textContent = PAGE_LABELS[selected][1];
+  document.getElementById("main-content").focus({ preventScroll: true });
+}
 
 class ApiError extends Error {
   constructor(payload) {
@@ -73,7 +106,7 @@ async function api(path, options = {}) {
       ...authorizationHeaders(),
       ...(method === "POST" ? {
         "Content-Type": "application/json",
-        "Idempotency-Key": idempotencyKey(),
+        "Idempotency-Key": options.idempotencyKey ?? idempotencyKey(),
       } : {}),
     },
     cache: "no-store",
@@ -115,7 +148,7 @@ function actionButton(label, action) {
   button.type = "button";
   button.className = "record-action secondary";
   button.textContent = label;
-  button.addEventListener("click", () => void action());
+  button.addEventListener("click", () => void action(button));
   return button;
 }
 
@@ -124,6 +157,31 @@ function renderEmpty(target) {
   paragraph.className = "empty";
   paragraph.textContent = "暂无记录";
   target.append(paragraph);
+}
+
+function renderUnavailable(target, message) {
+  target.replaceChildren();
+  const paragraph = document.createElement("p");
+  paragraph.className = "empty unavailable";
+  paragraph.textContent = message;
+  target.append(paragraph);
+}
+
+function renderUnavailableState(detail) {
+  elements.overviewGenerated.textContent = "尚未读取 · 服务端状态不可用";
+  elements.overviewMetrics.replaceChildren(
+    metric("有效租户"), metric("有效调用方"), metric("有效 Key"),
+    metric("待确认交付"), metric("24 小时调用"), metric("24 小时非成功"),
+  );
+  renderUnavailable(elements.readiness, "尚未读取运行状态。请先检查管理员身份与接入网关。");
+  renderUnavailable(elements.recentIssues, "异常记录尚未读取，当前不能判断是否存在待处理事件。");
+  renderUnavailable(elements.agentOnboarding, "接入信息尚未读取，请勿根据空白状态配置客户端。");
+  renderUnavailable(elements.tenants, "租户状态尚未读取。");
+  renderUnavailable(elements.clients, "调用方状态尚未读取。");
+  renderUnavailable(elements.credentials, "API Key 状态尚未读取。");
+  renderUnavailable(elements.operations, "操作记录尚未读取。");
+  elements.routeQualification.textContent = "状态不可用";
+  setStatus("blocked", "状态不可用", `请到“身份设置”确认管理员身份，再刷新状态。详情：${detail}`);
 }
 
 function metric(label, value, tone = "neutral") {
@@ -318,10 +376,14 @@ function renderCredentials(records) {
       actions.append(actionButton("确认交付", () => acknowledgeDelivery(credential.credential_id)));
     }
     if (allowed.includes("rotate")) {
-      actions.append(actionButton(
-        "按当前勾选权限轮换",
-        () => rotateCredential(credential.credential_id),
-      ));
+      if (rotationsAwaitingReadback.has(credential.credential_id)) {
+        const pending = document.createElement("span");
+        pending.className = "action-pending";
+        pending.textContent = "轮换已提交，等待状态读回";
+        actions.append(pending);
+      } else {
+        actions.append(actionButton("轮换 Key", (button) => openRotationDialog(credential, button)));
+      }
     }
     if (allowed.includes("revoke")) {
       actions.append(actionButton("吊销", () => revokeCredential(credential.credential_id)));
@@ -411,7 +473,7 @@ async function refreshState(options = {}) {
     setStatus("ready", "状态已读回", "租户、Key 权限、运营计数和状态门禁均来自服务端。");
     return payload;
   } catch (error) {
-    setStatus("blocked", "状态不可用", reason(error));
+    renderUnavailableState(reason(error));
     if (options.propagate === true) throw error;
     return null;
   }
@@ -486,18 +548,114 @@ async function acknowledgeDelivery(credentialId) {
   return payload;
 }
 
-function rotateCredential(credentialId) {
-  const toolNames = selectedTools();
-  if (toolNames.length === 0) {
-    setStatus("blocked", "不能轮换", "请先勾选至少一个内置工具权限。");
-    return Promise.resolve(null);
+function rotationToolNames() {
+  const values = [...elements.rotationTools.querySelectorAll("input:checked")]
+    .map((input) => input.value);
+  return T0_TOOLS.filter((toolName) => values.includes(toolName));
+}
+
+function updateRotationDiff() {
+  if (pendingRotation === null) return;
+  const previous = Array.isArray(pendingRotation.credential.tool_names)
+    ? pendingRotation.credential.tool_names
+    : [];
+  const next = rotationToolNames();
+  const added = next.filter((name) => !previous.includes(name));
+  const removed = previous.filter((name) => !next.includes(name));
+  elements.rotationDiff.textContent = added.length === 0 && removed.length === 0
+    ? "权限不变"
+    : `新增：${added.join("、") || "无"}；移除：${removed.join("、") || "无"}`;
+  document.getElementById("confirm-rotation").disabled = next.length === 0;
+  const seconds = Number(elements.rotationExpiry.value);
+  const expiresAt = new Date(Date.now() + seconds * 1000);
+  const expiryLabel = seconds === 86_400 ? "从现在起 1 天" : "从现在起 30 天";
+  document.getElementById("rotation-new-expiry").textContent =
+    `${expiryLabel}，预计到期 ${expiresAt.toLocaleString("zh-CN", { hour12: false })}`;
+}
+
+function openRotationDialog(credential, trigger) {
+  pendingRotation = { credential, trigger, attempt: null, committed: false, submitting: false };
+  elements.rotationSummary.textContent = `${text(credential.label)} · ${text(credential.tenant_id)} / ${text(credential.client_id)} / Key 后四位 ${text(credential.secret_last_four)}`;
+  elements.rotationCurrent.textContent = `原 Key 到期时间：${text(credential.expires_at)}；当前状态：${text(credential.effective_status)}`;
+  elements.rotationTools.replaceChildren();
+  const currentTools = Array.isArray(credential.tool_names) ? credential.tool_names : [];
+  for (const toolName of T0_TOOLS) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = toolName;
+    input.checked = currentTools.includes(toolName);
+    input.addEventListener("change", updateRotationDiff);
+    const caption = document.createElement("span");
+    caption.textContent = toolName;
+    label.append(input, caption);
+    elements.rotationTools.append(label);
   }
-  return post(`/credentials/${encodeURIComponent(credentialId)}/rotate`, {
-    schema_version: SCHEMA_VERSION,
-    tool_names: toolNames,
-    expires_in_seconds: expirySeconds(),
-    reason_code: "operator_rotated",
-  }, "Key 已轮换");
+  updateRotationDiff();
+  elements.rotationDialog.showModal();
+}
+
+function lockRotationAttempt() {
+  const toolNames = rotationToolNames();
+  if (toolNames.length === 0) {
+    setStatus("blocked", "不能轮换", "请为新 Key 保留至少一个内置工具权限。");
+    return null;
+  }
+  const attempt = Object.freeze({
+    idempotencyKey: idempotencyKey(),
+    body: Object.freeze({
+      schema_version: SCHEMA_VERSION,
+      tool_names: Object.freeze([...toolNames]),
+      expires_in_seconds: Number(elements.rotationExpiry.value),
+      reason_code: "operator_rotated",
+    }),
+  });
+  elements.rotationTools.querySelectorAll("input").forEach((input) => { input.disabled = true; });
+  elements.rotationExpiry.disabled = true;
+  return attempt;
+}
+
+async function submitRotation() {
+  if (pendingRotation === null || pendingRotation.committed || pendingRotation.submitting) return;
+  if (pendingRotation.attempt === null) {
+    pendingRotation.attempt = lockRotationAttempt();
+    if (pendingRotation.attempt === null) return;
+  }
+  pendingRotation.submitting = true;
+  const confirm = document.getElementById("confirm-rotation");
+  confirm.disabled = true;
+  confirm.textContent = "正在轮换…";
+  const credentialId = pendingRotation.credential.credential_id;
+  try {
+    const payload = await api(`/credentials/${encodeURIComponent(credentialId)}/rotate`, {
+      method: "POST",
+      body: pendingRotation.attempt.body,
+      idempotencyKey: pendingRotation.attempt.idempotencyKey,
+    });
+    pendingRotation.committed = true;
+    rotationsAwaitingReadback.add(credentialId);
+    if (typeof payload?.data?.api_key === "string") {
+      pendingCredentialId = payload.data.credential?.credential_id ?? null;
+      elements.oneTimeKey.textContent = payload.data.api_key;
+      elements.oneTimePanel.hidden = false;
+    }
+    confirm.textContent = "已提交";
+    setStatus("working", "Key 已轮换", "新 Key 已返回，正在核验服务端状态。旧 Key 已立即失效。");
+    try {
+      await refreshState({ announce: false, propagate: true });
+      rotationsAwaitingReadback.delete(credentialId);
+      setStatus("ready", "Key 已轮换并读回", "旧 Key 已失效；请立即安全保存新 Key。");
+    } catch {
+      setStatus("blocked", "Key 已轮换，状态待核验", "请保存新 Key 并使用“刷新状态”继续核验；不要再次轮换。");
+    }
+    elements.rotationDialog.close();
+    elements.oneTimePanel.scrollIntoView({ block: "center" });
+  } catch (error) {
+    pendingRotation.submitting = false;
+    confirm.disabled = false;
+    confirm.textContent = "使用同一请求重试";
+    setStatus("blocked", "轮换结果未知", `${reason(error)} 已冻结本次权限和有效期；重试会复用同一幂等请求。`);
+  }
 }
 
 function revokeCredential(credentialId) {
@@ -527,6 +685,32 @@ document.getElementById("clear-token").addEventListener("click", () => {
 });
 
 document.getElementById("refresh").addEventListener("click", () => void refreshState());
+document.querySelectorAll("[data-page]").forEach((button) => {
+  button.addEventListener("click", () => showPage(button.dataset.page));
+});
+document.querySelectorAll("[data-go-page]").forEach((button) => {
+  button.addEventListener("click", () => showPage(button.dataset.goPage));
+});
+elements.rotationExpiry.addEventListener("change", updateRotationDiff);
+document.getElementById("confirm-rotation").addEventListener("click", () => void submitRotation());
+elements.rotationDialog.addEventListener("close", () => {
+  const trigger = pendingRotation?.trigger;
+  pendingRotation = null;
+  elements.rotationTools.replaceChildren();
+  elements.rotationDiff.textContent = "";
+  elements.rotationExpiry.disabled = false;
+  elements.rotationExpiry.value = "2592000";
+  const confirm = document.getElementById("confirm-rotation");
+  confirm.disabled = false;
+  confirm.textContent = "确认轮换";
+  queueMicrotask(() => {
+    if (trigger?.isConnected) trigger.focus();
+    else {
+      elements.credentials.tabIndex = -1;
+      elements.credentials.focus();
+    }
+  });
+});
 document.getElementById("tenant-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const values = new FormData(event.currentTarget);
