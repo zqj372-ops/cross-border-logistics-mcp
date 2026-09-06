@@ -10,9 +10,23 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/**/*.d.ts", "apps/**/*.d.mts", "vitest.config.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "src/**/*.ts",
+    "services/**/*.ts",
+    "tests/**/*.ts",
+    "apps/**/*.d.ts",
+    "apps/**/*.d.mts",
+    "vitest.config.ts",
+    "deploy/scripts/start-portal-fixture.ts",
+    "deploy/scripts/generate-business-schemas.ts",
+    "deploy/scripts/generate-portal-openapi.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

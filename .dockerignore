@@ -1,6 +1,7 @@
 .git
 .github
 .codex
+.runtime
 node_modules
 dist
 coverage

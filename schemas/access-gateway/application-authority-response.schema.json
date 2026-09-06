@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.freightclaw.net/access-gateway/application-authority-response.schema.json",
+  "title": "Application short-token authority check response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "data", "reason_codes"],
+  "properties": {
+    "schema_version": { "const": "application-authority@2026-09-06.v1" },
+    "status": { "const": "success" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active"],
+      "properties": { "active": { "const": true } }
+    },
+    "reason_codes": { "type": "array", "maxItems": 0 }
+  }
+}

@@ -1,6 +1,7 @@
 import type {
   AccessState,
   AdminPrincipal,
+  AuthorizedT0TokenInput,
   AuditEvent,
   ClientRecord,
   JwksResponse,
@@ -9,6 +10,7 @@ import type {
   SignedJwt,
   StoredCredentialRecord,
   TenantRecord,
+  ExchangeSuccessResponse,
 } from "./contracts";
 
 export interface ProviderIdentity {
@@ -105,4 +107,11 @@ export interface GatewayProviders {
   readonly rateLimitRepository: RateLimitRepository;
   readonly revocationRepository: RevocationRepository;
   readonly secretPepperProvider: SecretPepperProvider;
+}
+
+export interface AuthorizedT0TokenIssuer {
+  issueAuthorizedToken(
+    input: AuthorizedT0TokenInput,
+    authorize: () => void | Promise<void>,
+  ): Promise<ExchangeSuccessResponse>;
 }

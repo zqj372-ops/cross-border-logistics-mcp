@@ -84,6 +84,7 @@ export type TenantAccessRepositoryErrorCode =
   | "credential_not_found"
   | "credential_not_active"
   | "client_not_active"
+  | "client_already_exists"
   | "client_not_found"
   | "client_status_unchanged"
   | "idempotency_conflict"
@@ -114,6 +115,12 @@ export interface TenantAccessRepository {
     readonly idempotencyKey: string;
     readonly requestHash: string;
   }): Promise<TenantAccessWriteResult<TenantRecord>>;
+  createClient(request: {
+    readonly client: ClientRecord;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<ClientRecord>>;
   setTenantStatus(request: {
     readonly tenantId: string;
     readonly status: TenantStatus;

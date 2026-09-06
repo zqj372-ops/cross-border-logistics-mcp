@@ -1,8 +1,8 @@
 # Unified Access Gateway
 
-本目录是长期机器 API Key 换取短期 RS256 JWT 的 provider-neutral 服务内核候选，
-不是已可部署的生产 Gateway。MCP Runtime 本身不接受长期 Key，只复用现有
-Bearer JWT/JWKS 验证入口。
+本目录包含长期机器 API Key 换取短期 RS256 JWT 的 provider-neutral 服务内核、既有窄 Access Gateway，以及 `portal/` 下的企业门户、统一 Key 和业务 REST 服务。MCP Runtime 本身不接受长期 Key，只复用 Bearer JWT/JWKS 验证入口。
+
+2026-09-06 已有 Portal 与 MCP Runtime 的生产发布回执。当前统一 Key、真实企业状态和业务缺口见 [状态台账](../../docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)。下面的 T0 v1/`single-node-candidate` 说明只适用于对应装配模式，不能将其未通过门禁推断为整个 Portal 未实现或未发布。
 
 已实现的仓库边界：
 
@@ -27,7 +27,7 @@ Bearer JWT/JWKS 验证入口。
 结构缺失的 provider。这只是启动前的失败闭合组装门，不是真实 provider 的健康
 或生产资格证明。
 
-当前 NO-GO 项：目标环境的 Cloudflare Access 应用/MFA 与真实登录回执、
+`single-node-candidate` 模式的 NO-GO 项：目标环境的 Cloudflare Access 应用/MFA 与真实登录回执、
 非导出 KMS/HSM 签名和 Secret Manager pepper、数据库托管资格、集中审计/告警与
 吊销、Edge denylist、目标负载/告警演练及三类 Agent staging 读回证据。
 `single-node-candidate` 即使切到 PostgreSQL，仍使用文件签名密钥/pepper，并固定报告

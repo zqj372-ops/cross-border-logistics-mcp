@@ -1,0 +1,298 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-05T16:19:29+08:00",
+  "title": "Design System: FreightClaw 管理工作台",
+  "extensions": {
+    "colorMeta": {
+      "brand": {
+        "role": "primary",
+        "displayName": "受控蓝",
+        "canonical": "#3659db"
+      },
+      "brand-dark": {
+        "role": "primary",
+        "displayName": "深受控蓝",
+        "canonical": "#2947bd"
+      },
+      "brand-soft": {
+        "role": "primary",
+        "displayName": "淡蓝底",
+        "canonical": "#eef2ff"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "主墨色",
+        "canonical": "#202939"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "说明灰",
+        "canonical": "#637083"
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "冷灰画布",
+        "canonical": "#f6f7fb"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "白色表面",
+        "canonical": "#ffffff"
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "确认绿",
+        "canonical": "#227a50"
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "复核琥珀",
+        "canonical": "#956317"
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "阻断红",
+        "canonical": "#b23a48"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "页面标题",
+        "purpose": "管理页默认 28px 页面标题；业务 h1 与启动卡标题使用当前页面局部尺寸，不覆盖全站 token。"
+      },
+      "title": {
+        "displayName": "面板标题",
+        "purpose": "卡片和主要内容区域标题。"
+      },
+      "body": {
+        "displayName": "正文",
+        "purpose": "任务说明、表单和数据正文。"
+      },
+      "label": {
+        "displayName": "标签",
+        "purpose": "状态、表头、指标名和元数据。"
+      },
+      "utility": {
+        "displayName": "技术值",
+        "purpose": "凭证、版本、摘要和逐字符辨认的值。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "access-surface-low",
+        "value": "0 1px 2px rgb(16 24 40 / .025)",
+        "purpose": "Access Console 常驻表面的极低环境阴影。"
+      },
+      {
+        "name": "access-dialog",
+        "value": "0 24px 70px rgb(19 31 55 / .2)",
+        "purpose": "Access Console 模态对话框。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "admin-control",
+        "value": "140ms",
+        "purpose": "Admin 按钮颜色和边框状态过渡。"
+      },
+      {
+        "name": "access-control",
+        "value": "150ms",
+        "purpose": "Access 按钮颜色、边框和阴影状态过渡。"
+      },
+      {
+        "name": "access-page-in",
+        "value": "180ms ease-out",
+        "purpose": "Access 视图切换的轻微进入动画。"
+      },
+      {
+        "name": "working-pulse",
+        "value": "1s ease-in-out infinite alternate",
+        "purpose": "Access 进行中状态点；减少动态时关闭。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "admin-density",
+        "value": "1180px"
+      },
+      {
+        "name": "admin-mobile-nav",
+        "value": "900px"
+      },
+      {
+        "name": "admin-single-column",
+        "value": "640px"
+      },
+      {
+        "name": "admin-narrow",
+        "value": "390px"
+      },
+      {
+        "name": "access-density",
+        "value": "1100px"
+      },
+      {
+        "name": "access-mobile-nav",
+        "value": "760px"
+      },
+      {
+        "name": "access-narrow",
+        "value": "460px"
+      }
+    ],
+    "businessWorkspace": {
+      "pageCount": 11,
+      "primaryBusinessEntries": 4,
+      "secondaryManagementEntries": 7,
+      "desktopSidebarWidth": "224px",
+      "desktopLaunchColumns": "1.28fr 1fr",
+      "panelRadius": "12px",
+      "actionMinHeight": "44px",
+      "calculatorSurface": "#f0f3fc",
+      "calculatorLine": "#dce3f4",
+      "mobileNavigationBreakpoint": "900px",
+      "singleColumnBreakpoint": "640px",
+      "entrypointEndpoint": "/admin/api/v1/business-entrypoints",
+      "entrypointDependsOnRuntimeSnapshot": false,
+      "externalLinkSecurity": [
+        "target=_blank",
+        "rel=noopener noreferrer",
+        "referrerpolicy=no-referrer"
+      ],
+      "serverConfiguredOriginsOnly": true
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "当前区域唯一的主要且允许执行的下一步。",
+      "html": "<button class=\"ds-button-primary\" type=\"button\">继续操作</button>",
+      "css": ".ds-button-primary { min-height: 40px; padding: 8px 14px; border: 1px solid var(--brand); border-radius: var(--radius-small); background: var(--brand); color: #fff; font: 680 14px/1.2 var(--body-font); transition: background-color .14s, border-color .14s, color .14s; } .ds-button-primary:hover { border-color: var(--brand-dark); background: var(--brand-dark); } .ds-button-primary:focus-visible { outline: 3px solid rgba(54, 89, 219, .28); outline-offset: 2px; } .ds-button-primary:disabled { border-color: #e0e3e8; background: #eceef2; color: #929aa8; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "刷新、查看、返回和低风险辅助操作。",
+      "html": "<button class=\"ds-button-secondary\" type=\"button\">刷新状态</button>",
+      "css": ".ds-button-secondary { min-height: 40px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-small); background: #fff; color: var(--ink-soft); font: 680 14px/1.2 var(--body-font); transition: background-color .14s, border-color .14s, color .14s; } .ds-button-secondary:hover { border-color: #9da9bc; background: var(--surface-soft); color: var(--ink); } .ds-button-secondary:focus-visible { outline: 3px solid rgba(54, 89, 219, .28); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "带上置标签的单行管理字段。",
+      "html": "<label class=\"ds-field\"><span>名称</span><input type=\"text\" value=\"示例名称\"></label>",
+      "css": ".ds-field { display: grid; gap: 5px; color: var(--ink-soft); font: 650 13px/1.55 var(--body-font); } .ds-field input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-small); background: #fff; color: var(--ink); font: 400 14px/1.55 var(--body-font); } .ds-field input:hover { border-color: #b9c2d0; } .ds-field input:focus-visible { border-color: var(--brand); outline: 3px solid rgba(54, 89, 219, .16); outline-offset: 0; } .ds-field input:disabled { border-color: #e0e3e8; background: #f0f1f4; color: #8d96a5; }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "status-pill",
+      "description": "用文字、符号和颜色共同表达状态。",
+      "html": "<span class=\"ds-status-pill ds-status-warning\"><span aria-hidden=\"true\">!</span>人工复核</span>",
+      "css": ".ds-status-pill { display: inline-flex; width: fit-content; min-height: 25px; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid transparent; border-radius: 999px; font: 680 12px/1.2 var(--body-font); white-space: nowrap; } .ds-status-pill > span { display: inline-grid; width: 13px; height: 13px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 9px; } .ds-status-warning { border-color: #eedaa6; background: var(--warning-soft); color: var(--warning); }"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "navigation-item",
+      "description": "任务名称优先的侧栏或横向导航项。",
+      "html": "<button class=\"ds-nav-item is-active\" type=\"button\" aria-current=\"page\">能力与配置</button>",
+      "css": ".ds-nav-item { display: inline-flex; min-height: 40px; align-items: center; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--radius-small); background: transparent; color: #465266; font: 620 14px/1.2 var(--body-font); } .ds-nav-item:hover { background: #e8eaf0; color: var(--ink); } .ds-nav-item.is-active { border-color: #d9dffc; background: var(--brand-soft); color: var(--brand-dark); } .ds-nav-item:focus-visible { outline: 3px solid rgba(54, 89, 219, .28); outline-offset: 2px; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "通过白色表面和细边框组织高密度管理信息。",
+      "html": "<section class=\"ds-panel\"><h2>状态与下一步</h2><p>先显示结论，再按需展开证据。</p></section>",
+      "css": ".ds-panel { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); font: 400 14px/1.55 var(--body-font); } .ds-panel h2 { margin: 0; font-size: 18px; line-height: 1.25; } .ds-panel p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }"
+    },
+    {
+      "name": "Evidence Disclosure",
+      "kind": "custom",
+      "refersTo": "details-panel",
+      "description": "在主任务之后承载版本、来源、摘要和读回证据。",
+      "html": "<details class=\"ds-details\"><summary>查看技术证据</summary><div>版本、来源与读回结果</div></details>",
+      "css": ".ds-details { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); font: 400 14px/1.55 var(--body-font); } .ds-details summary { padding: 12px 14px; border-radius: var(--radius-small); color: var(--ink-soft); font-weight: 650; cursor: pointer; } .ds-details summary:hover { background: var(--surface-soft); } .ds-details summary:focus-visible { outline: 3px solid rgba(54, 89, 219, .28); outline-offset: 2px; } .ds-details > div { padding: 0 14px 14px; color: var(--muted); }"
+    },
+    {
+      "name": "Business Launch Panel",
+      "kind": "card",
+      "refersTo": "business-panel",
+      "description": "首页与业务详情共享的 12px 圆角面板外壳；各入口保留当前独立内边距，计算器使用浅蓝表面。",
+      "html": "<section class=\"ds-business-panel\"><h2>关税查询</h2><p>打开既有关务服务。</p><a href=\"#\">打开服务</a></section>",
+      "css": ".ds-business-panel { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); } .ds-business-panel.is-calculator { padding: 24px 28px; border-color: #dce3f4; background: #f0f3fc; } .ds-business-panel a { min-height: 44px; border-radius: var(--radius-small); }"
+    },
+    {
+      "name": "Business Launch Action",
+      "kind": "button",
+      "refersTo": "business-button",
+      "description": "仅用于业务启动区的 44px 主动作，不覆盖普通管理按钮。",
+      "html": "<a class=\"ds-business-action\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" referrerpolicy=\"no-referrer\">打开业务服务</a>",
+      "css": ".ds-business-action { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; padding: 8px 14px; border: 1px solid var(--brand); border-radius: var(--radius-small); background: var(--brand); color: #fff; font: 680 14px/1.2 var(--body-font); } .ds-business-action:focus-visible { outline: 3px solid rgba(54, 89, 219, .28); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "受控操作台",
+    "overview": "FreightClaw 是浅色、紧凑、克制的企业工作台。Admin 以 4 个既有业务服务入口为首要任务，并提供 7 个管理页；Access Console 继续保留独立服务、身份和权限边界。",
+    "keyCharacteristics": [
+      "浅灰画布、白色表面、细边框和低阴影。",
+      "首页使用不对称业务启动区，报价为主列，关税和淡蓝税费估算为次列。",
+      "桌面 224px 侧栏展示全部 11 页；手机常驻 4 个业务入口，菜单展开 7 个管理页。",
+      "状态始终同时显示中文文字、形状或符号。",
+      "入口配置、Runtime 快照、原服务访问和最终业务结果分别判断。",
+      "普通运行页面的目录条目和数量来自服务端；显式 fixture 演示单独标明，不用于补齐读取失败。"
+    ],
+    "rules": [
+      {
+        "name": "The Evidence Before Color Rule",
+        "body": "颜色只强化已显示的文字状态，不能独立承担结论。",
+        "section": "colors"
+      },
+      {
+        "name": "The Scoped Status Rule",
+        "body": "成功色只说明对应标签的状态；快照就绪不推导为模块生效、客户端接通或生产就绪。演示与测试保留环境和结果范围说明。",
+        "section": "colors"
+      },
+      {
+        "name": "The Business Name First Rule",
+        "body": "先显示准确中文业务名称，技术标识进入次级信息。",
+        "section": "typography"
+      },
+      {
+        "name": "The Separate Backends Rule",
+        "body": "统一外观不合并 Admin 与 Access 的服务、身份、状态或权限。",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Until Modal Rule",
+        "body": "常驻表面靠边框和背景分层，明显抬升只用于对话框和聚焦状态。",
+        "section": "elevation"
+      },
+      {
+        "name": "The Independent Entry Status Rule",
+        "body": "业务入口由独立端点读取；已配置不代表原服务可访问、用户已登录或业务操作成功。",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "Do 让每页首屏明确显示当前对象、真实状态和一个主要下一步。",
+      "Do 从独立入口端点读取业务服务地址，并分别呈现入口配置、Runtime 与原服务状态。",
+      "Do 普通运行页面从服务端渲染实际目录，不固定条目数量；显式演示模式单独标明。",
+      "Do 在桌面保留 224px 侧栏；手机常驻 4 个业务入口，通过菜单访问 7 个管理页并恢复关闭后的焦点。",
+      "Do 同时使用状态文字、图形和原因。"
+    ],
+    "donts": [
+      "Don't 因入口已配置、目录存在、本地 fixture 通过或运行时读回就显示业务成功或生产已就绪。",
+      "Don't 在前端硬编码报价或关务服务默认 origin。",
+      "Don't 通过业务入口 URL 或表单传递资料，也不要暗示统一登录或共享权限。",
+      "Don't 把业务权威数据做成可自由编辑的 Admin 本地权威表。",
+      "Don't 在状态读取失败或空数据时回退到演示快照或假成功指标。"
+    ]
+  }
+}

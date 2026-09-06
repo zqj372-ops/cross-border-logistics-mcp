@@ -8,7 +8,33 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+    files: ["apps/console/**/*.js"],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: Object.fromEntries(["document", "window", "location", "navigator", "fetch", "Headers", "URL", "URLSearchParams", "FormData", "Blob", "crypto", "CSS", "HTMLElement", "AbortController", "AbortSignal", "matchMedia", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "confirm", "alert", "console", "localStorage", "sessionStorage", "structuredClone"].map((name) => [name, "readonly"])),
+    },
+  },
+  {
+    files: ["apps/console/developer.js"],
+    // Drop credential references promptly, including error and finally paths.
+    rules: { "no-useless-assignment": "off" },
+  },
+  {
+    files: ["deploy/portal/**/*.mjs", "deploy/scripts/build.mjs"],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: Object.fromEntries(["process", "console", "Buffer", "URL", "setTimeout", "clearTimeout"].map((name) => [name, "readonly"])),
+    },
+  },
+  {
+    files: ["tests/e2e/portal-browser/**/*.mjs"],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: Object.fromEntries(["process", "console", "fetch", "URL", "setTimeout", "clearTimeout", "AbortSignal", "document", "window", "location", "innerWidth", "crypto", "FormData"].map((name) => [name, "readonly"])),
+    },
+  },
+  {
+    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

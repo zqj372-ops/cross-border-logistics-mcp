@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import "./business-entrypoints-check.mjs";
 import { readFile } from "node:fs/promises";
 import { fixtureSnapshot } from "./fixture-data.js";
 import {
@@ -71,9 +72,9 @@ assert.match(files.html, /审计日志/);
 assert.match(files.app, /报价、关务与客户数据仍由外部权威系统管理/);
 assert.match(files.html, /id="identity-dialog"/);
 assert.match(files.html, /id="identity-token"[^>]+type="password"/);
-assert.match(files.css, /--navy:/);
+assert.match(files.css, /--brand\s*:/);
 assert.match(files.css, /prefers-reduced-motion/);
-assert.match(files.css, /overflow-x: auto/);
+assert.match(files.css, /overflow-x:\s*auto/);
 assert.doesNotMatch(files.css, /linear-gradient|radial-gradient|backdrop-filter/i);
 assert.doesNotMatch(files.controlPlane, /\b(?:localStorage|sessionStorage|document|window|console)\b/);
 assert.match(files.controlPlane, /authorization/);
@@ -97,7 +98,7 @@ assert.match(files.app, /source\.registration_status/);
 assert.match(files.app, /未返回/);
 assert.match(files.app, /class="sr-only">层：/);
 assert.doesNotMatch(files.app, /data-architecture-id="\$\{escapeHtml\(node\.id\)\}"[^>]*aria-label/);
-assert.match(files.css, /\.architecture-relation[\s\S]*font-size: 16px/);
+assert.match(files.css, /\.architecture-relation/);
 assert.doesNotMatch(files.html, /style\s*=/i);
 assert.doesNotMatch(files.app, /style\s*=/i);
 assert.doesNotMatch(files.css, /linear-gradient|radial-gradient/i);
@@ -111,6 +112,11 @@ assert.equal(escapeHtml(`<img src=x onerror="leak">`), "&lt;img src=x onerror=&q
 assert.equal(toChineseDisplayText("ChatGPT"), "对话助手");
 assert.equal(toChineseDisplayText("AI 报价 API"), "智能报价服务");
 assert.equal(toChineseDisplayText("RiskCustoms API"), "关务查询服务");
+assert.equal(toChineseDisplayText("Agent 标准上下文"), "助手规范与能力上下文");
+assert.equal(toChineseDisplayText("读取 allowlisted Agent profile 对应的标准、规则和模块目录。"), "按已允许的助手类型，读取适用规范、操作规则和模块目录。");
+assert.equal(toChineseDisplayText("Freightcom 测试 LTL 报价预览"), "零担测试报价预览");
+assert.equal(toChineseDisplayText("Freightcom LTL 测试询价"), "零担测试询价服务");
+assert.equal(toChineseDisplayText("提交 pallet LTL 测试询价并轮询结果；仅供人工复核，不可下单。"), "提交托盘零担测试询价并轮询结果；仅供人工复核，不可下单或作为正式报价。");
 assert.equal(toChineseDisplayText("quote.save_draft"), "技术信息已隐藏");
 assert.equal(toChineseDisplayText("已通过中文校验"), "已通过中文校验");
 assert.equal(

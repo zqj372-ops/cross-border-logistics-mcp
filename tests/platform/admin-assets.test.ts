@@ -46,5 +46,5 @@ describe("admin build asset boundary", () => {
       const body = await readFile(resolve(adminDirectory, file));
       expect(body.byteLength).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 });

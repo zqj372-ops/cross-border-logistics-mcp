@@ -26,10 +26,7 @@ import { TenantAccessService } from "../../src/logistics_mcp/control-plane/tenan
 import { createAdminTenantAccessApiHandler } from "../../src/logistics_mcp/server/admin-tenant-access-api";
 import { createProductionAccessGateway } from "./assembly";
 import { createAccessGatewayHttpHandler } from "./http";
-import {
-  FileJwtSigningProvider,
-  FileSecretPepperProvider,
-} from "./production-crypto";
+import { gatewaySecretPaths, openGatewayCrypto, type OpenGatewayCryptoResult } from "./crypto-runtime";
 import {
   RemoteJwksAdminIdentityProvider,
   SystemGatewayClock,
@@ -47,31 +44,14 @@ import { openGatewayStores } from "./store-runtime";
 
 export { migrateSqliteGatewayToPostgresFromEnvironment } from "./postgres-migration";
 
+export { gatewaySecretPaths, openGatewayCrypto } from "./crypto-runtime";
+
 const PROFILE = "single-node-candidate";
 const HEALTH_PATH = "/access/v1/healthz";
 const READINESS_PATH = "/access/v1/readyz";
 const MAX_ADMIN_BODY_BYTES = 32 * 1024;
 const CONTENT_SECURITY_POLICY =
   "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
-
-export interface GatewaySecretPaths {
-  readonly secretsDir: string;
-  readonly jwtSigningKeyPath: string;
-  readonly jwtKeyHistoryPath: string;
-  readonly credentialPepperPath: string;
-  readonly credentialPepperHistoryPath: string;
-}
-
-export function gatewaySecretPaths(applicationRoot: string): GatewaySecretPaths {
-  const secretsDir = join(resolve(applicationRoot), ".secrets");
-  return Object.freeze({
-    secretsDir,
-    jwtSigningKeyPath: join(secretsDir, "jwt-signing-key.pem"),
-    jwtKeyHistoryPath: join(secretsDir, "jwt-key-history.json"),
-    credentialPepperPath: join(secretsDir, "credential-pepper.bin"),
-    credentialPepperHistoryPath: join(secretsDir, "credential-pepper-history.json"),
-  });
-}
 
 function normalizedRoot(applicationRoot: string): string {
   if (!isAbsolute(applicationRoot)) throw new TypeError("Application root must be absolute.");
@@ -433,15 +413,6 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
     30,
     10_000,
   );
-  const secrets = gatewaySecretPaths(applicationRoot);
-  const privateKeyPath = process.env.ACCESS_GATEWAY_JWT_PRIVATE_KEY_PATH?.trim() ||
-    secrets.jwtSigningKeyPath;
-  const keyHistoryPath = process.env.ACCESS_GATEWAY_JWT_KEY_HISTORY_PATH?.trim() ||
-    secrets.jwtKeyHistoryPath;
-  const pepperPath = process.env.ACCESS_GATEWAY_PEPPER_PATH?.trim() ||
-    secrets.credentialPepperPath;
-  const pepperHistoryPath = process.env.ACCESS_GATEWAY_PEPPER_HISTORY_PATH?.trim() ||
-    secrets.credentialPepperHistoryPath;
   const jwtTtlSeconds = positiveIntegerSetting("ACCESS_GATEWAY_JWT_TTL_SECONDS", 300, 900);
   const keyRetentionSeconds = positiveIntegerSetting(
     "ACCESS_GATEWAY_JWT_KEY_RETENTION_SECONDS",
@@ -453,20 +424,6 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
   }
   const clock = new SystemGatewayClock();
   const randomSource = new SystemGatewayRandomSource();
-  const pepper = new FileSecretPepperProvider({
-    pepperPath,
-    pepperVersion,
-    historyPath: pepperHistoryPath,
-  });
-  if (legacyPepperVersion !== undefined && !pepper.supportsPepperVersion(legacyPepperVersion)) {
-    throw new Error("Legacy credential pepper material is unavailable.");
-  }
-  const signer = new FileJwtSigningProvider({
-    privateKeyPath,
-    historyPath: keyHistoryPath,
-    nowSeconds: () => clock.nowSeconds(),
-    retentionSeconds: keyRetentionSeconds,
-  });
   const stores = await openGatewayStores({
     environment: process.env,
     applicationRoot,
@@ -478,13 +435,10 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
       : { legacyCredentialPepperVersion: legacyPepperVersion }),
   });
   const tenantStore = stores.tenantStore;
-  const unsupportedPepperVersion = (await tenantStore.getState()).credentials.find(
-    (credential) => !pepper.supportsPepperVersion(credential.pepperVersion),
-  )?.pepperVersion;
-  if (unsupportedPepperVersion !== undefined) {
-    await stores.close();
-    throw new Error("Stored credential pepper material is unavailable.");
-  }
+  let crypto:OpenGatewayCryptoResult;
+  try{const state=await tenantStore.getState();crypto=await openGatewayCrypto({environment:process.env,applicationRoot,pepperVersion,requiredPepperVersions:Object.freeze([...new Set([pepperVersion,...(legacyPepperVersion?[legacyPepperVersion]:[]),...state.credentials.map(value=>value.pepperVersion)])]),keyRetentionSeconds,nowSeconds:()=>clock.nowSeconds()});}
+  catch(error){await stores.close();throw error;}
+  const pepper=crypto.pepper,signer=crypto.signer;
   const operations = stores.operationalStore;
   const credentials = new TenantAccessGatewayRepository({
     store: tenantStore,
@@ -640,6 +594,7 @@ export async function startAccessGateway(): Promise<AccessGatewayStartHandle> {
       });
       await Promise.all([
         stores.close(),
+        crypto.close(),
         "close" in admin.provider ? admin.provider.close() : Promise.resolve(),
       ]);
     },

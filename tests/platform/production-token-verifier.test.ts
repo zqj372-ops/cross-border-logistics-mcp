@@ -18,6 +18,12 @@ const AUDIENCE = "logistics-mcp";
 const KEY_ID = "signing-key-1";
 type TestFetch = NonNullable<ProductionTokenVerifierOptions["fetchImpl"]>;
 
+function fetchUrl(input: Parameters<TestFetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 let privateKey: CryptoKey;
 let publicJwk: Awaited<ReturnType<typeof exportJWK>>;
 
@@ -104,6 +110,53 @@ describe("production OIDC token verifier", () => {
       method: "GET",
       redirect: "error",
     });
+  });
+
+  it("rechecks bkey JWTs through the bounded application authority on every verification", async () => {
+    const fetchImpl = vi.fn<TestFetch>((input, init) => {
+      const url = fetchUrl(input);
+      if (url === JWKS_URL) return Promise.resolve(jsonResponse({ keys: [publicJwk] }));
+      expect(url).toBe("https://portal.example.invalid/access/v2/application/token/authority");
+      expect(init).toMatchObject({ method: "POST", redirect: "error" });
+      return Promise.resolve(jsonResponse({ schema_version: "application-authority@2026-09-06.v1", status: "success", data: { active: true }, reason_codes: [] }));
+    });
+    const verifier = createProductionTokenVerifier(verifierOptions({
+      fetchImpl,
+      applicationAuthorityUrl: "https://portal.example.invalid/access/v2/application/token/authority",
+      applicationAuthorityAllowedHosts: ["portal.example.invalid"],
+    }));
+    const token = await sign(claims({
+      sub: "bkey_0123456789abcdef01234567",
+      actor_id: "bkey_0123456789abcdef01234567",
+      actor_role: "service",
+      roles: ["service"],
+      scopes: ["tool:cargo.calculate"],
+    }));
+
+    await verifier.verify(token);
+    await verifier.verify(token);
+    const authorityCalls = fetchImpl.mock.calls.filter(([input]) => fetchUrl(input).includes("/application/token/authority"));
+    expect(authorityCalls).toHaveLength(2);
+    expect(new Headers(authorityCalls[0]?.[1]?.headers).get("authorization")).toBe(`Bearer ${token}`);
+  });
+
+  it("rejects bkey JWTs when online application authority is absent or inactive", async () => {
+    const token = await sign(claims({
+      sub: "bkey_0123456789abcdef01234567",
+      actor_id: "bkey_0123456789abcdef01234567",
+      actor_role: "service",
+      roles: ["service"],
+      scopes: ["tool:cargo.calculate"],
+    }));
+    await expect(createProductionTokenVerifier(verifierOptions()).verify(token)).rejects.toThrow(/authority/i);
+    const verifier = createProductionTokenVerifier(verifierOptions({
+      fetchImpl: vi.fn<TestFetch>((input) => fetchUrl(input) === JWKS_URL
+        ? Promise.resolve(jsonResponse({ keys: [publicJwk] }))
+        : Promise.resolve(jsonResponse({ schema_version: "application-authority@2026-09-06.v1", status: "blocked", data: null, reason_codes: ["revoked"] }, { status: 403 }))),
+      applicationAuthorityUrl: "https://portal.example.invalid/access/v2/application/token/authority",
+      applicationAuthorityAllowedHosts: ["portal.example.invalid"],
+    }));
+    await expect(verifier.verify(token)).rejects.toThrow();
   });
 
   it("rejects tampered, unsecured, and non-RS256 tokens", async () => {

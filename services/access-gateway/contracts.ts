@@ -214,6 +214,16 @@ export interface ExchangeInput {
   readonly requestId?: string;
 }
 
+export interface AuthorizedT0TokenInput {
+  readonly tenantId: string;
+  readonly clientId: string;
+  readonly credentialId: string;
+  readonly requestedToolNames: readonly T0ToolName[];
+  readonly clientIp: string;
+  readonly requestSchemaVersion: "application-exchange@2026-09-06.v1";
+  readonly requestId?: string;
+}
+
 export interface GatewayOptions {
   readonly issuer?: string;
   readonly audience?: string;

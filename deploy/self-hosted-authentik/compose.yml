@@ -1,0 +1,106 @@
+name: logistics-authentik
+
+services:
+  postgresql:
+    image: docker.io/library/postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    container_name: logistics-authentik-postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - source: postgres_password
+        target: postgres_password
+        mode: 0400
+    volumes:
+      - ./state/postgresql:/var/lib/postgresql/data
+    networks:
+      - authentik-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  server:
+    image: ghcr.io/goauthentik/server:2026.8.0@sha256:7421753cfea67e89a6d295a1f0173ccea3866b33768c88dad90453b151cdcfd5
+    container_name: logistics-authentik-server
+    command: server
+    restart: unless-stopped
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: file:///run/secrets/postgres_password
+      AUTHENTIK_SECRET_KEY: file:///run/secrets/authentik_secret_key
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    secrets:
+      - source: postgres_password
+        target: postgres_password
+        mode: 0400
+      - source: authentik_secret_key
+        target: authentik_secret_key
+        mode: 0400
+    ports:
+      - "127.0.0.1:19000:9000"
+    shm_size: 512mb
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./state/data:/data
+      - ./state/templates:/templates
+      - ./blueprints:/blueprints/custom:ro
+    networks:
+      - authentik-internal
+      - freightclaw
+
+  worker:
+    image: ghcr.io/goauthentik/server:2026.8.0@sha256:7421753cfea67e89a6d295a1f0173ccea3866b33768c88dad90453b151cdcfd5
+    container_name: logistics-authentik-worker
+    command: worker
+    restart: unless-stopped
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: file:///run/secrets/postgres_password
+      AUTHENTIK_SECRET_KEY: file:///run/secrets/authentik_secret_key
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    secrets:
+      - source: postgres_password
+        target: postgres_password
+        mode: 0400
+      - source: authentik_secret_key
+        target: authentik_secret_key
+        mode: 0400
+    shm_size: 512mb
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./state/data:/data
+      - ./state/certs:/certs
+      - ./state/templates:/templates
+      - ./blueprints:/blueprints/custom:ro
+    networks:
+      - authentik-internal
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres-password
+  authentik_secret_key:
+    file: ./secrets/authentik-secret-key
+
+networks:
+  authentik-internal:
+    name: logistics-authentik-internal
+  freightclaw:
+    external: true
+    name: freightclaw-net

@@ -1,0 +1,210 @@
+{
+  "record_type": "sanitized_historical_release_snapshot",
+  "documentation_audit_date": "2026-09-06",
+  "verified_at": "2026-09-05T17:33:33.767298+00:00",
+  "current_production_probe_performed": false,
+  "source_receipts": [
+    {
+      "file": ".runtime/production-evidence/portal-a42849576004-promotion.json",
+      "sha256": "e6be30de40535aa07a43c6b7bf30cf3689beeeded6d4eaa44301b6eb88c49474"
+    },
+    {
+      "file": ".runtime/production-evidence/portal-a42849576004-public-acceptance.json",
+      "sha256": "cfaf35d0bfd994c364252d84ee4c44272e41df861b747a1b97943e9eadcf9d5a"
+    },
+    {
+      "file": ".runtime/production-evidence/portal-a42849576004-state-backup.json",
+      "sha256": "99586d1b2c99257e1db4727a7443f53f376cb3bbc385d2c67837820553730d96"
+    },
+    {
+      "file": ".runtime/production-evidence/runtime-a42849576004-promotion.json",
+      "sha256": "4280231ddca2017e6eac8732a61fa0a41edaa17e4df8d9d226f3f3d88c77d833"
+    },
+    {
+      "file": ".runtime/production-evidence/portal-a42849576004-enterprise-readback.json",
+      "sha256": "ba5cbb7c60e8c354bc9c613f1cbfa15b2ae35185fb9e76ced970086b08082e76"
+    }
+  ],
+  "build_id": "a428495760049453f5256e6b704dbbc14d0a0a8b29661d2426f6af8b1e7d31fd",
+  "portal": {
+    "promoted": true,
+    "image": "freightclaw-portal:a42849576004",
+    "previous_image": "freightclaw-portal:31235bfaba58",
+    "readiness": {
+      "status": "success",
+      "data": {
+        "service": "freightclaw-portal",
+        "release_id": "portal-20260905",
+        "build_id": "a428495760049453f5256e6b704dbbc14d0a0a8b29661d2426f6af8b1e7d31fd",
+        "ready": true,
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true
+        }
+      },
+      "reason_codes": []
+    }
+  },
+  "runtime": {
+    "promoted": true,
+    "image": "freightclaw-portal:a42849576004",
+    "previous_image": "cross-border-logistics-mcp:bba4ea6ccc39-arm64",
+    "database_integrity": "ok",
+    "readiness": {
+      "status": "ready",
+      "reasons": []
+    }
+  },
+  "public_acceptance": {
+    "passed": true,
+    "checks": [
+      {
+        "check": "portal_readiness",
+        "passed": true,
+        "build_id": "a428495760049453f5256e6b704dbbc14d0a0a8b29661d2426f6af8b1e7d31fd",
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true
+        }
+      },
+      {
+        "check": "runtime_readiness",
+        "passed": true,
+        "status": {
+          "status": "ready",
+          "reasons": []
+        }
+      },
+      {
+        "check": "public_agent_guide",
+        "passed": true,
+        "http": 200,
+        "content_type": "text/markdown; charset=utf-8"
+      },
+      {
+        "check": "published_openapi",
+        "passed": true,
+        "required_paths": [
+          "/access/v2/application/token/exchange",
+          "/api/v2/tools/cargo.calculate",
+          "/api/v2/business/customs/query",
+          "/api/v2/business/quote/zone-preview"
+        ],
+        "exact_source_match": true
+      },
+      {
+        "check": "published_asset",
+        "path": "/console/styles.css?v=6f12b719b40f8e91",
+        "passed": true,
+        "sha256": "6f12b719b40f8e9158fbeafa7ab3cb917ba14fc4b5a0b3f541be67d50f9b05e8"
+      },
+      {
+        "check": "published_asset",
+        "path": "/console/app.js?v=97cde3bbacced52b",
+        "passed": true,
+        "sha256": "97cde3bbacced52be8df1f2032c454a0d4644bae392e471d9f57e6183ec3a796"
+      },
+      {
+        "check": "unauthenticated_denied",
+        "path": "/access/v2/application/token/exchange",
+        "passed": true,
+        "http": 403,
+        "reason_codes": [
+          "machine_request_denied"
+        ]
+      },
+      {
+        "check": "unauthenticated_denied",
+        "path": "/access/v2/application/token/authority",
+        "passed": true,
+        "http": 403,
+        "reason_codes": [
+          "machine_request_denied"
+        ]
+      },
+      {
+        "check": "unauthenticated_denied",
+        "path": "/api/v2/tools/cargo.calculate",
+        "passed": true,
+        "http": 403,
+        "reason_codes": [
+          "machine_request_denied"
+        ]
+      },
+      {
+        "check": "unauthenticated_denied",
+        "path": "/api/v2/business/quote/zone-preview",
+        "passed": true,
+        "http": 401,
+        "reason_codes": [
+          "business_authentication_failed"
+        ]
+      },
+      {
+        "check": "mcp_requires_authentication",
+        "passed": true,
+        "http": 401
+      },
+      {
+        "check": "website_boundary_preserved",
+        "passed": true,
+        "http": 403
+      }
+    ],
+    "production_customer_key_invoked": false,
+    "probe_expectations_corrected": [
+      "authority is an internal runtime route, not a public OpenAPI operation",
+      "Business API missing credentials correctly returns 401"
+    ]
+  },
+  "backup": {
+    "databases": [
+      {
+        "file": "portal.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "sessions.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "business-access.sqlite",
+        "restore_integrity": "ok"
+      }
+    ],
+    "private_configuration_backed_up": true,
+    "cross_store_quiesced": true
+  },
+  "enterprise_access": {
+    "organization_status": "active",
+    "application_status": "active",
+    "key_material_unchanged": true,
+    "credential_count_unchanged": true,
+    "active_credentials": 1,
+    "credential_status": "active",
+    "delivery_status": "acknowledged",
+    "t0_mode": "current_grant",
+    "credential_version": 3,
+    "business_operations": [
+      "customs.query",
+      "customs.tax.estimate",
+      "quote.zone_preview",
+      "quote.ai_extract_preview"
+    ],
+    "last_used_at": null,
+    "active_owners": 1,
+    "production_customer_key_invoked": false
+  },
+  "limitations": [
+    "Historical receipts only; the documentation audit did not access production hosts or business APIs.",
+    "Readiness and unauthenticated probes do not prove customer credentials or source data readiness.",
+    "Customer REST and MCP invocation using the actual saved Key remains unverified.",
+    "No credential material, customer identifiers, database contents or private configuration paths are included."
+  ]
+}

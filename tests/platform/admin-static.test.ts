@@ -10,6 +10,7 @@ import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAdminStaticHandler } from "../../src/logistics_mcp/server/admin-static";
+import { businessEntrypointsFromEnvironment } from "../../src/logistics_mcp/server/admin-business-entrypoints";
 import {
   createFixtureComposition,
   createProductionComposition,
@@ -82,6 +83,107 @@ afterEach(async () => {
 });
 
 describe("admin static runtime boundary", () => {
+  it("serves business entrypoints only after the enabled loopback boundary with GET and HEAD", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const provider = vi.fn(() => businessEntrypointsFromEnvironment({
+      MCP_QUOTE_UI_ORIGIN: "https://quote.example",
+    }, "fixtures"));
+    const { server, baseUrl } = await listen(composition, createAdminStaticHandler({
+      enabledSetting: "true",
+      staticDir: directory,
+      businessEntrypointsProvider: provider,
+    }));
+    try {
+      const get = await fetch(`${baseUrl}/admin/api/v1/business-entrypoints`);
+      expect(get.status).toBe(200);
+      expect(get.headers.get("cache-control")).toBe("no-store");
+      expect(get.headers.get("content-security-policy")).toContain("default-src 'self'");
+      expect(get.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(((await get.json()) as {data:{quote:{sales:string}}}).data.quote.sales).toBe("https://quote.example/quote");
+      const head = await fetch(`${baseUrl}/admin/api/v1/business-entrypoints`, { method: "HEAD" });
+      expect(head.status).toBe(200);
+      expect(await head.text()).toBe("");
+      const post = await fetch(`${baseUrl}/admin/api/v1/business-entrypoints`, { method: "POST" });
+      expect(post.status).toBe(405);
+      expect(post.headers.get("allow")).toBe("GET, HEAD");
+      const wrongHost = await requestStatus(`${baseUrl}/admin/api/v1/business-entrypoints`, {
+        host: "attacker.example.invalid",
+      });
+      expect(wrongHost).toBe(404);
+      expect(provider).toHaveBeenCalledTimes(2);
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+  });
+
+  it("rejects non-canonical loopback Host and Origin values before calling the entrypoint provider", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const provider = vi.fn(() => businessEntrypointsFromEnvironment({}, "fixtures"));
+    const { server, baseUrl } = await listen(composition, createAdminStaticHandler({
+      enabledSetting: "true",
+      staticDir: directory,
+      businessEntrypointsProvider: provider,
+    }));
+    try {
+      for (const host of [
+        "2130706433",
+        "0177.0.0.1",
+        "127.0.0.1.",
+        "user:pass@127.0.0.1",
+        "127.0.0.1\\attacker",
+        "localhost:080",
+        "localhost:65536",
+      ]) {
+        expect(await requestStatus(`${baseUrl}/admin/api/v1/business-entrypoints`, { host })).toBe(404);
+      }
+      for (const origin of [
+        "http://2130706433",
+        "http://0177.0.0.1",
+        "http://127.0.0.1.",
+        "http://user:pass@127.0.0.1",
+        "http:\\127.0.0.1",
+        "http://localhost/path",
+        "http://localhost/?query=x",
+        "HTTP://localhost",
+        "http://localhost:080",
+      ]) {
+        const response = await fetch(`${baseUrl}/admin/api/v1/business-entrypoints`, { headers: { origin } });
+        expect(response.status).toBe(404);
+      }
+      expect(provider).not.toHaveBeenCalled();
+
+      const normal = await fetch(`${baseUrl}/admin/api/v1/business-entrypoints`, {
+        headers: { origin: baseUrl },
+      });
+      expect(normal.status).toBe(200);
+      expect(provider).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+  });
+
+  it("does not expose business entrypoints while the Admin UI is disabled", async () => {
+    const directory = await makeAssets();
+    const composition = createFixtureComposition({ dataMode: "fixtures" });
+    const provider = vi.fn(() => businessEntrypointsFromEnvironment({}, "fixtures"));
+    const { server, baseUrl } = await listen(composition, createAdminStaticHandler({
+      staticDir: directory,
+      businessEntrypointsProvider: provider,
+    }));
+    try {
+      const response = await fetch(`${baseUrl}/admin/api/v1/business-entrypoints`);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ status: "blocked", reason: "admin_ui_disabled" });
+      expect(provider).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+      await composition.close();
+    }
+  });
   it("delegates control routes before static fallback, including when UI assets are disabled", async () => {
     const directory = await makeAssets();
     const composition = createFixtureComposition({ dataMode: "fixtures" });

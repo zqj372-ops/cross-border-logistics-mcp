@@ -247,7 +247,7 @@ describe("standalone Access Gateway runtime", () => {
       ]));
       const consoleResponse = await fetch(`${origin}/`);
       expect(consoleResponse.status).toBe(200);
-      expect(await consoleResponse.text()).toContain("租户与 API Key");
+      expect(await consoleResponse.text()).toContain("接入管理 · FreightClaw");
       const operationsOverview = await fetch(`${origin}/admin/api/v1/access/overview`);
       expect(operationsOverview.status).toBe(401);
       expect(await operationsOverview.json()).toMatchObject({

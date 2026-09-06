@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/business-exchange-response.schema.json",
+  "anyOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "business-access@2026-09-05.v1"
+        },
+        "status": {
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "access_token",
+            "token_type",
+            "expires_in",
+            "operations"
+          ],
+          "properties": {
+            "access_token": {
+              "type": "string",
+              "minLength": 1
+            },
+            "token_type": {
+              "const": "Bearer"
+            },
+            "expires_in": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 300
+            },
+            "operations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "customs.query",
+                  "customs.tax.estimate",
+                  "quote.zone_preview",
+                  "quote.ai_extract_preview",
+                  "quote.freightcom_ltl.preview"
+                ]
+              }
+            }
+          }
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes",
+        "request_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "business-access@2026-09-05.v1"
+        },
+        "status": {
+          "enum": [
+            "needs_input",
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^req_[A-Za-z0-9_-]{8,128}$"
+        }
+      }
+    }
+  ]
+}

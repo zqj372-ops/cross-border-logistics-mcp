@@ -19,6 +19,8 @@ export interface ProductionTokenVerifierOptions {
   readonly timeoutMs?: number;
   readonly maxJwksResponseBytes?: number;
   readonly maxTokenBytes?: number;
+  readonly applicationAuthorityUrl?: string;
+  readonly applicationAuthorityAllowedHosts?: readonly string[];
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -95,6 +97,25 @@ export function createProductionTokenVerifier(
     maxResponseBytes: maxJwksResponseBytes,
     ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
   });
+  const authorityConfigured = options.applicationAuthorityUrl !== undefined
+    || options.applicationAuthorityAllowedHosts !== undefined;
+  if (authorityConfigured && (
+    options.applicationAuthorityUrl === undefined
+    || options.applicationAuthorityAllowedHosts === undefined
+    || options.applicationAuthorityAllowedHosts.length !== 1
+  )) {
+    throw new Error("Application token authority URL and one allowed host must be configured together.");
+  }
+  const applicationAuthority = options.applicationAuthorityUrl === undefined
+    ? undefined
+    : createFetchJsonClient({
+        baseUrl: options.applicationAuthorityUrl,
+        allowedHosts: options.applicationAuthorityAllowedHosts!,
+        enabled: true,
+        timeoutMs,
+        maxResponseBytes: 4 * 1024,
+        ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+      });
   let fetchRetryAfterMs = 0;
   const jwks = createRemoteJWKSet(new URL(options.jwksUrl), {
     timeoutDuration: timeoutMs,
@@ -133,7 +154,36 @@ export function createProductionTokenVerifier(
         throw new Error("Token size is invalid or exceeds the configured limit.");
       }
       await compactVerify(token, jwks, { algorithms: ["RS256"] });
-      return decodeJwt(token);
+      const claims = decodeJwt(token);
+      if (typeof claims.actor_id === "string" && claims.actor_id.startsWith("bkey_")) {
+        if (applicationAuthority === undefined || options.applicationAuthorityUrl === undefined) {
+          throw new Error("Application token authority is required for bkey credentials.");
+        }
+        const result = await applicationAuthority.post(
+          options.applicationAuthorityUrl,
+          { schema_version: "application-authority@2026-09-06.v1" },
+          { authorization: `Bearer ${token}` },
+        );
+        if (
+          typeof result !== "object" || result === null || Array.isArray(result)
+          || Object.keys(result).sort().join(",") !== "data,reason_codes,schema_version,status"
+        ) {
+          throw new Error("Application token authority returned an invalid response.");
+        }
+        const response = result as Record<string, unknown>;
+        const data = response.data;
+        if (
+          response.schema_version !== "application-authority@2026-09-06.v1"
+          || response.status !== "success"
+          || !Array.isArray(response.reason_codes) || response.reason_codes.length !== 0
+          || typeof data !== "object" || data === null || Array.isArray(data)
+          || Object.keys(data).join(",") !== "active"
+          || (data as Record<string, unknown>).active !== true
+        ) {
+          throw new Error("Application token authority denied the credential.");
+        }
+      }
+      return claims;
     },
     async health(): Promise<{ readonly ready: boolean }> {
       try {

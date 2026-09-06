@@ -1,0 +1,644 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/freightcom-ltl-preview-input.schema.json",
+  "type": "object",
+  "properties": {
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "excluded_services": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "details": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "address": {
+              "type": "object",
+              "properties": {
+                "address_line_1": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "address_line_2": {
+                  "type": "string"
+                },
+                "unit_number": {
+                  "type": "string"
+                },
+                "city": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "region": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "country": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{2}$"
+                },
+                "postal_code": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "address_line_1",
+                "city",
+                "region",
+                "country",
+                "postal_code"
+              ],
+              "additionalProperties": false
+            },
+            "residential": {
+              "type": "boolean"
+            },
+            "tailgate_required": {
+              "type": "boolean"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "contact_name": {
+              "type": "string"
+            },
+            "phone_number": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "extension": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number"
+              ],
+              "additionalProperties": false
+            },
+            "email_addresses": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              }
+            },
+            "receives_email_updates": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "additionalProperties": false
+        },
+        "destination": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "address": {
+              "type": "object",
+              "properties": {
+                "address_line_1": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "address_line_2": {
+                  "type": "string"
+                },
+                "unit_number": {
+                  "type": "string"
+                },
+                "city": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "region": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "country": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{2}$"
+                },
+                "postal_code": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "address_line_1",
+                "city",
+                "region",
+                "country",
+                "postal_code"
+              ],
+              "additionalProperties": false
+            },
+            "residential": {
+              "type": "boolean"
+            },
+            "tailgate_required": {
+              "type": "boolean"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "contact_name": {
+              "type": "string"
+            },
+            "phone_number": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "extension": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number"
+              ],
+              "additionalProperties": false
+            },
+            "email_addresses": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              }
+            },
+            "receives_email_updates": {
+              "type": "boolean"
+            },
+            "ready_at": {
+              "type": "object",
+              "properties": {
+                "hour": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 23
+                },
+                "minute": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 59
+                }
+              },
+              "required": [
+                "hour",
+                "minute"
+              ],
+              "additionalProperties": false
+            },
+            "ready_until": {
+              "type": "object",
+              "properties": {
+                "hour": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 23
+                },
+                "minute": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 59
+                }
+              },
+              "required": [
+                "hour",
+                "minute"
+              ],
+              "additionalProperties": false
+            },
+            "signature_requirement": {
+              "type": "string",
+              "enum": [
+                "not-required",
+                "required",
+                "adult-required"
+              ]
+            }
+          },
+          "required": [
+            "address",
+            "ready_at",
+            "ready_until",
+            "signature_requirement"
+          ],
+          "additionalProperties": false
+        },
+        "expected_ship_date": {
+          "type": "object",
+          "properties": {
+            "year": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9999
+            },
+            "month": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "day": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 31
+            }
+          },
+          "required": [
+            "year",
+            "month",
+            "day"
+          ],
+          "additionalProperties": false
+        },
+        "packaging_type": {
+          "type": "string",
+          "const": "pallet"
+        },
+        "packaging_properties": {
+          "type": "object",
+          "properties": {
+            "pallet_type": {
+              "type": "string",
+              "const": "ltl"
+            },
+            "has_stackable_pallets": {
+              "type": "boolean"
+            },
+            "dangerous_goods": {
+              "type": "string",
+              "enum": [
+                "limited-quantity",
+                "exemption-500-kg",
+                "fully-regulated"
+              ]
+            },
+            "dangerous_goods_details": {
+              "type": "object",
+              "properties": {
+                "packaging_group": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "goods_class": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "united_nations_number": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "emergency_contact_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "emergency_contact_phone_number": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "extension": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "packaging_group",
+                "goods_class",
+                "description",
+                "united_nations_number",
+                "emergency_contact_name",
+                "emergency_contact_phone_number"
+              ],
+              "additionalProperties": false
+            },
+            "pallets": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "measurements": {
+                    "type": "object",
+                    "properties": {
+                      "weight": {
+                        "type": "object",
+                        "properties": {
+                          "unit": {
+                            "type": "string",
+                            "enum": [
+                              "kg",
+                              "lb",
+                              "g",
+                              "oz"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
+                          }
+                        },
+                        "required": [
+                          "unit",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "cuboid": {
+                        "type": "object",
+                        "properties": {
+                          "unit": {
+                            "type": "string",
+                            "enum": [
+                              "mm",
+                              "cm",
+                              "m",
+                              "in",
+                              "ft"
+                            ]
+                          },
+                          "l": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
+                          },
+                          "w": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
+                          },
+                          "h": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
+                          }
+                        },
+                        "required": [
+                          "unit",
+                          "l",
+                          "w",
+                          "h"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "weight",
+                      "cuboid"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "freight_class": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "nmfc": {
+                    "type": "string"
+                  },
+                  "contents_type": {
+                    "type": "string"
+                  },
+                  "num_pieces": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "measurements",
+                  "description",
+                  "freight_class"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pallet_service_details": {
+              "type": "object",
+              "properties": {
+                "limited_access_delivery_type": {
+                  "type": "string",
+                  "enum": [
+                    "construction-site",
+                    "fair",
+                    "farm",
+                    "mall",
+                    "mini-storage-unit",
+                    "place-of-worship",
+                    "school",
+                    "secured-location",
+                    "other"
+                  ]
+                },
+                "limited_access_delivery_other_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "in_bond": {
+                  "type": "boolean"
+                },
+                "in_bond_details": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "immediate-exportation",
+                        "transportation-and-exportation"
+                      ]
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "address": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "contact_method": {
+                      "type": "string",
+                      "enum": [
+                        "email-address",
+                        "phone-number",
+                        "fax-number"
+                      ]
+                    },
+                    "contact_email_address": {
+                      "type": "string",
+                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                    },
+                    "contact_phone_number": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "extension": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "name",
+                    "address",
+                    "contact_method"
+                  ],
+                  "additionalProperties": false
+                },
+                "appointment_delivery": {
+                  "type": "boolean"
+                },
+                "protect_from_freeze": {
+                  "type": "boolean"
+                },
+                "threshold_pickup": {
+                  "type": "boolean"
+                },
+                "threshold_delivery": {
+                  "type": "boolean"
+                },
+                "amazon_or_fba_delivery": {
+                  "type": "boolean"
+                },
+                "amazon_or_fba_delivery_details": {
+                  "type": "object",
+                  "properties": {
+                    "fba_number": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "order_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "fba_number",
+                    "order_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false,
+              "required": []
+            }
+          },
+          "required": [
+            "pallet_type",
+            "pallets"
+          ],
+          "additionalProperties": false
+        },
+        "insurance": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "internal",
+                "carrier"
+              ]
+            },
+            "total_cost": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)(?:\\.[0-9]{1,2})?$"
+                }
+              },
+              "required": [
+                "currency",
+                "amount"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "total_cost"
+          ],
+          "additionalProperties": false
+        },
+        "reference_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "shipment_classification": {
+          "type": "string",
+          "enum": [
+            "B2B",
+            "B2C",
+            "C2B",
+            "C2C"
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "destination",
+        "expected_ship_date",
+        "packaging_type",
+        "packaging_properties"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "details"
+  ],
+  "additionalProperties": false
+}

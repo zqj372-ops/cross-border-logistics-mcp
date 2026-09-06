@@ -1,0 +1,77 @@
+export function createBusinessAccessUi(ui) {
+  const { esc, head, panel, field, input, actions, formError, note, table, badge, link, textLink, empty, date } = ui;
+  const names = { 'customs.query': '关税与归类', 'customs.tax.estimate': '单项与批量税费估算', 'quote.zone_preview': '加拿大尾程规则试算', 'quote.ai_extract_preview': '询价资料提取', 'quote.freightcom_ltl.preview': 'Freightcom LTL 承运商询价' };
+  const descriptions = { 'customs.query': '中国、美国与加拿大的完整归类、税率和依据', 'customs.tax.estimate': '按商品、申报价值、币种与税则日期逐项估算', 'quote.zone_preview': '调用已有报价规则，保留费用和适用条件', 'quote.ai_extract_preview': '仅提取客户资料，不自动报价、保存或发送', 'quote.freightcom_ltl.preview': '获取承运商当前费率、附加费和有效期' };
+  let state = { requests: [], grants: [], credentials: [], applications: [] }; let unavailable = false;
+  const platform = () => ['operator', 'reviewer'].includes(ui.model().session?.identity?.platform_role);
+  const operator = () => ui.model().session?.identity?.platform_role === 'operator';
+  const appName = (id) => ui.model().state.applications.find((v) => v.application_id === id)?.name || state.applications?.find((v) => v.application_id === id)?.name || '业务应用';
+  const pills = (ops) => `<div class="pill-list">${ops.map((op) => `<span class="badge info">${esc(names[op] || op)}</span>`).join('')}</div>`;
+  const choose = (selected = [], scope = Object.keys(names)) => `<div class="choice-list">${scope.map((op) => `<label class="choice-row"><input type="checkbox" name="operations" value="${op}" ${selected.includes(op) ? 'checked' : ''}><span class="choice-copy"><strong>${names[op]}</strong><small>${descriptions[op]}</small></span></label>`).join('')}</div>`;
+  const active = (id) => state.grants.filter((g) => g.application_id === id && g.state === 'active' && (!g.expires_at || Date.parse(g.expires_at) > Date.now()));
+  const scopes = (id) => [...new Set(active(id).flatMap((g) => g.operations))];
+  async function load() {
+    const model = ui.model();
+    if (!model.session?.authenticated || (!platform() && !model.session.organization_id)) { reset(); return; }
+    try { state = (await ui.api(`/business-access/${platform() ? 'review-queue' : 'state'}`)).data; unavailable = false; }
+    catch { unavailable = true; state = { requests: [], grants: [], credentials: [], applications: [] }; }
+  }
+  function requestsPanel() {
+    const items = [...state.requests].reverse();
+    return panel('业务 API 申请', '关务与报价使用独立业务权限和凭证', unavailable ? note('业务授权服务当前无法读取，请稍后重试。', 'warning') : items.length ? table(['应用 / 用途', '服务范围', '状态', ''], items.map((v) => `<tr><td><span class="cell-title">${esc(appName(v.application_id))}</span><span class="cell-detail">${esc(v.justification)}</span></td><td>${pills(v.operations)}</td><td>${badge(v.state)}</td><td>${textLink(platform() ? '处理业务申请' : '查看业务申请', `business-request/${v.request_id}`)}</td></tr>`)) : empty('暂无业务 API 申请', '可以先提交申请；服务连接完成并实际开通后，负责人才能领取业务 Key。'), ui.developer() ? link('申请业务 API', 'business-request-new') : '');
+  }
+  function form(id, request) {
+    const apps = ui.model().state.applications.filter((a) => a.status === 'active' && (ui.manager() || a.owner_user_id === ui.model().session.identity.user_id));
+    if (!apps.length) return head('申请业务 API', '先创建应用并明确负责人。') + empty('需要先有一个应用', '关务和报价权限将授予指定应用。', link('创建应用', 'app-new', true));
+    return head(request ? '补充业务申请' : '申请业务 API', '按业务用途申请关务、税费和报价服务，不继承基础 MCP 权限。') + `<div class="form-layout"><form class="panel" data-form="business-access-request" ${request ? `data-id="${request.request_id}"` : ''}><div class="panel-body">${formError}${field('申请应用', 'business-app', `<select id="business-app" name="application_id">${apps.map((a) => `<option value="${a.application_id}" ${(request?.application_id || id) === a.application_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`)}<section class="form-section"><h2>需要的服务</h2>${choose(request?.operations || [])}</section><section class="form-section">${field('业务用途与调用情况', 'business-purpose', `<textarea id="business-purpose" name="justification" required maxlength="1000" placeholder="说明使用对象、业务场景与预计调用量。">${esc(request?.justification || '')}</textarea>`)}</section>${actions(request ? '保存业务申请修改' : '保存业务申请草稿', 'requests')}</div></form><aside class="side-help"><h3>批准与接通分别确认</h3><p>平台先审核用途与服务范围。源服务连接未完成时，批准的申请仍会停留在待开通。</p><p>业务 Key 前缀为 flcbk_，只用于 Business API。它不能调用原基础 MCP 工具。</p></aside></div>`;
+  }
+  function requestPage(id, edit = false) {
+    const value = state.requests.find((r) => r.request_id === id);
+    if (!value) return head('业务申请', '当前身份无法读取该申请。') + empty('未找到业务申请', '请检查当前企业与申请状态。', link('返回申请', 'requests'));
+    if (edit) return form(value.application_id, value);
+    const grant = state.grants.find((g) => g.request_id === id);
+    const editable = !platform() && ['draft', 'needs_input'].includes(value.state) && ui.developer();
+    return head(`${appName(value.application_id)} 的业务 API 申请`, '业务 API 权限精确到每项操作。', badge(value.state)) + (value.review_reason ? note(`审核意见：${value.review_reason}`, value.state === 'approved' ? 'success' : 'warning') : '') + `<div class="form-layout"><div>${panel('申请详情', '', `<div class="panel-body"><dl class="detail-list"><dt>申请应用</dt><dd>${esc(appName(value.application_id))}</dd><dt>服务范围</dt><dd>${pills(value.operations)}</dd><dt>使用说明</dt><dd>${esc(value.justification)}</dd><dt>授权状态</dt><dd>${grant ? badge(grant.state) : '尚未生成授权'}</dd></dl>${editable ? `<div class="form-actions">${link('修改业务申请', `business-request-edit/${id}`)}<button class="button primary" data-action="business-access-submit" data-id="${id}">${value.state === 'needs_input' ? '重新提交业务审核' : '提交业务审核'}</button></div>` : ''}${!platform() && ['submitted', 'needs_input'].includes(value.state) ? `<div class="form-actions"><button class="button" data-action="business-access-withdraw" data-id="${id}">撤回业务申请</button></div>` : ''}</div>`)}${platform() && ['submitted', 'in_review'].includes(value.state) ? panel('审核业务权限', '可只批准申请的一部分服务', `<form class="panel-body" data-form="business-access-decision" data-id="${id}">${formError}${field('业务审核结论', 'business-decision', '<select id="business-decision" name="decision"><option value="approve">通过</option><option value="needs_input">退回补充</option><option value="reject">拒绝</option></select>')}<section class="form-section"><h3>批准范围</h3>${choose(value.operations, value.operations)}</section>${field('业务审核说明', 'business-reason', '<textarea id="business-reason" name="reason" required maxlength="1000"></textarea>')}${actions('提交业务审核结论')}</form>`) : ''}</div><aside class="side-help"><h3>下一步</h3><p>审核通过后由平台核对业务连接，再开通授权。</p><p>只有授权生效后，当前应用负责人才能创建并保存业务凭证。</p></aside></div>`;
+  }
+  function grantsPanel() {
+    return panel('业务 API 授权', '实际开通前会核对企业、应用与服务连接', state.grants.length ? table(['应用 / 服务', '状态', '有效期', ''], state.grants.map((g) => `<tr><td><span class="cell-title">${esc(appName(g.application_id))}</span>${pills(g.operations)}</td><td>${badge(g.state)}</td><td>${g.expires_at ? esc(date(g.expires_at)) : '未设置截止时间'}</td><td>${operator() && g.state === 'provisioning' ? `<button class="text-button" data-action="business-access-activate" data-id="${g.grant_id}">开通业务授权</button>` : ''}${(operator() || ui.manager()) && ['active', 'suspended'].includes(g.state) ? textLink('管理业务授权', `business-grant/${g.grant_id}`) : textLink('查看业务申请', `business-request/${g.request_id}`)}</td></tr>`)) : empty('暂无业务授权', '申请通过后会在这里显示批准范围与开通状态。'));
+  }
+  function grantPage(id) {
+    const grant = state.grants.find((g) => g.grant_id === id);
+    if (!grant) return empty('未找到业务授权', '请返回列表重新读取。', link('返回授权', 'grants'));
+    if (!operator() && !ui.manager()) return head('业务授权详情', appName(grant.application_id), badge(grant.state)) + panel('已批准范围', '授权管理由企业所有者、管理员或平台运维处理', `<div class="panel-body">${pills(grant.operations)}${note('当前身份可查看授权范围，不能暂停、撤销或调整授权。')}</div>`);
+    return head('管理业务授权', `${appName(grant.application_id)} · 当前授权将约束每次 API 调用`, badge(grant.state)) + panel('当前范围', '', `<div class="panel-body">${pills(grant.operations)}${operator() && grant.state === 'active' ? `<form data-form="business-access-scope" data-id="${id}">${formError}<section class="form-section">${choose(grant.operations, grant.operations)}</section>${field('新的到期时间', 'business-expiry', input('business-expiry', 'type="datetime-local" name="expires_at"'), '留空保留原值，只能缩短现有有效期。')}${actions('保存业务授权范围')}</form>` : ''}<div class="form-actions">${grant.state === 'active' ? `<button class="button" data-action="business-access-suspend" data-id="${id}">暂停业务授权</button>` : ''}${grant.state !== 'revoked' ? `<button class="button danger" data-action="business-access-revoke-grant" data-id="${id}">撤销业务授权</button>` : ''}</div></div>`);
+  }
+  function applicationSection(id) {
+    const app = ui.model().state.applications.find((a) => a.application_id === id); const canManage = ui.canCredential(app);
+    const credentials = (state.credentials || []).filter((c) => c.application_id === id);
+    return panel('业务 API 凭证', '关务与报价使用业务 Key，明文只展示一次', `<div class="panel-body">${pills(scopes(id))}${credentials.length ? table(['凭证', '状态', '有效期', ''], credentials.map((c) => `<tr><td><span class="cell-title">${esc(c.label)}</span><span class="cell-detail">flcbk_…${esc(c.secret_last_four)}</span></td><td>${badge(c.status)}<span class="cell-detail">${c.delivery_status === 'acknowledged' ? '已确认交付' : '等待确认交付'}</span></td><td>${esc(date(new Date(c.expires_at * 1000).toISOString()))}</td><td>${canManage && c.status === 'active' ? `<div class="cell-actions">${c.delivery_status === 'acknowledged' ? `<button class="text-button" data-action="business-access-rotate" data-id="${c.credential_id}">轮换业务 Key</button>` : ''}<button class="text-button" data-action="business-access-revoke-key" data-id="${c.credential_id}">撤销业务 Key</button></div>` : '—'}</td></tr>`)) : '<p class="muted">尚未签发业务凭证。批准范围开通后，由负责人领取。</p>'}${canManage ? `<div class="form-actions">${scopes(id).length ? link('创建业务 Key', `business-credential/${id}`, true) : link('申请业务 API', `business-request-new/${id}`, true)}</div>` : note('仅应用负责人可以领取、轮换和撤销业务凭证。')}</div>`);
+  }
+  function credentialPage(id) {
+    const app = ui.model().state.applications.find((item) => item.application_id === id);
+    if (!ui.canCredential(app)) return head('业务凭证', '只有当前应用负责人可以领取与管理凭证。') + empty('当前身份无凭证管理权限', '需要转交时，请由企业管理员更改应用负责人。', link('返回应用', `app/${id}`));
+    const ops = scopes(id); if (!ops.length) return head('创建业务 Key', '需先完成业务授权开通。') + empty('尚无有效业务权限', '请查看服务授权与源服务接入状态。', link('查看授权', 'grants'));
+    return head('创建业务 Key', `${appName(id)} · 仅包含当前批准的业务服务`) + panel('凭证信息', '保存好 Key 后，需要确认交付才可换票', `<form class="panel-body" data-form="business-access-credential" data-id="${id}">${formError}<div class="field-grid">${field('业务凭证名称', 'business-key-label', input('business-key-label', 'required maxlength="80"'))}${field('业务凭证有效期', 'business-key-expiry', '<select id="business-key-expiry" name="expires_in_seconds"><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000">30 天</option></select>')}</div><section class="form-section">${choose(ops, ops)}</section>${actions('创建并显示业务 Key', `app/${id}`)}</form>`);
+  }
+  async function action(button) {
+    const action = button.dataset.action; if (!action?.startsWith('business-access-')) return false;
+    const id = button.dataset.id; const request = state.requests.find((r) => r.request_id === id); const grant = state.grants.find((g) => g.grant_id === id); const credential = (state.credentials || []).find((c) => c.credential_id === id);
+    if (action === 'business-access-submit' || action === 'business-access-withdraw') await ui.mutate(`/business-access/requests/${id}/${action.endsWith('submit') ? 'submit' : 'withdraw'}`, 'POST', { expected_version: request.version });
+    else if (action === 'business-access-activate') await ui.mutate(`/business-access/grants/${id}/activate`, 'POST', { expected_version: grant.version });
+    else if (action === 'business-access-suspend' || action === 'business-access-revoke-grant') { if (!confirm('此操作将影响应用下一次兑换和业务调用，确认继续？')) return true; await ui.mutate(`/business-access/grants/${id}/change`, 'POST', { expected_version: grant.version, state: action.endsWith('suspend') ? 'suspended' : 'revoked' }); }
+    else if (action === 'business-access-revoke-key') { if (!confirm('撤销后，这枚业务 Key 和它签发的 Token 将不能继续调用。')) return true; await ui.mutate(`/business-access/credentials/${id}/revoke`, 'POST', { expected_version: credential.version }); }
+    else if (action === 'business-access-rotate') { if (!confirm('轮换将立即撤销旧 Key。确认创建新的业务凭证？')) return true; const result = await ui.mutate(`/business-access/credentials/${id}/rotate`, 'POST', { expected_version: credential.version, operations: credential.operations, t0_mode: credential.t0_mode || 'none', expires_in_seconds: 86400 }); await ui.refresh(); ui.showSecret(result, credential.application_id, 'business'); return true; }
+    await ui.refresh(); ui.rerender(); ui.notify('业务权限已更新，页面已读取当前状态。'); return true;
+  }
+  async function submit(formElement) {
+    const type = formElement.dataset.form; if (!type?.startsWith('business-access-')) return false;
+    const id = formElement.dataset.id; const data = new FormData(formElement); const get = (key) => String(data.get(key) || '').trim(); const operations = data.getAll('operations').map(String); let next = 'requests';
+    if (type === 'business-access-request') { if (!operations.length) throw Object.assign(new Error('business_operations_invalid'), { code: 'business_operations_invalid' }); const old = state.requests.find((r) => r.request_id === id); const result = await ui.mutate(old ? `/business-access/requests/${id}` : '/business-access/requests', old ? 'PATCH' : 'POST', { operations, justification: get('justification'), ...(old ? { expected_version: old.version } : { application_id: get('application_id') }) }); next = `business-request/${result.data.request_id}`; }
+    else if (type === 'business-access-decision') { const request = state.requests.find((r) => r.request_id === id); await ui.mutate(`/business-access/requests/${id}/decision`, 'POST', { expected_version: request.version, decision: get('decision'), reason: get('reason'), ...(get('decision') === 'approve' ? { approved_operations: operations } : {}) }); next = `business-request/${id}`; }
+    else if (type === 'business-access-scope') { const grant = state.grants.find((g) => g.grant_id === id); await ui.mutate(`/business-access/grants/${id}/scope`, 'POST', { expected_version: grant.version, operations, ...(get('business-expiry') ? { expires_at: new Date(get('business-expiry')).toISOString() } : {}) }); next = 'grants'; }
+    else if (type === 'business-access-credential') { const result = await ui.mutate(`/business-access/applications/${id}/credentials`, 'POST', { label: get('business-key-label'), operations, t0_mode: 'none', expires_in_seconds: Number(get('expires_in_seconds')) }); await ui.refresh(); ui.go(`app/${id}`); ui.rerender(); ui.showSecret(result, id, 'business'); return true; }
+    await ui.refresh(); ui.go(next); ui.rerender(); return true;
+  }
+  function reset() { state = { requests: [], grants: [], credentials: [], applications: [] }; unavailable = false; }
+  return { load, reset, requestsPanel, grantsPanel, form, requestPage, grantPage, applicationSection, credentialPage, action, submit, active, names, descriptions, overview: () => ({ requests: state.requests, grants: state.grants, credentials: state.credentials, unavailable }) };
+}

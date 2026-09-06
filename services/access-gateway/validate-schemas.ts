@@ -8,9 +8,23 @@ export function validateAccessGatewaySchemas(root = resolve(".")) {
   const failures: string[] = [];
   const files = readdirSync(directory).filter((file) => file.endsWith(".schema.json")).sort();
   const ajv = new Ajv2020({ allErrors: true, strict: true });
-  for (const file of files) {
+  const schemas = files.map((file) => ({
+    file,
+    schema: JSON.parse(readFileSync(join(directory, file), "utf8")) as object,
+  }));
+  for (const { file, schema } of schemas) {
     try {
-      ajv.compile(JSON.parse(readFileSync(join(directory, file), "utf8")) as object);
+      ajv.addSchema(schema);
+    } catch (error: unknown) {
+      failures.push(`${file}: ${error instanceof Error ? error.message : "invalid schema"}`);
+    }
+  }
+  for (const { file, schema } of schemas) {
+    try {
+      const id = (schema as { $id?: unknown }).$id;
+      if (typeof id !== "string" || ajv.getSchema(id) === undefined) {
+        throw new Error("schema did not compile");
+      }
     } catch (error: unknown) {
       failures.push(`${file}: ${error instanceof Error ? error.message : "invalid schema"}`);
     }

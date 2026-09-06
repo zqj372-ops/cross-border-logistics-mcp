@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 
 import type { AdminControlApiHandler } from "./admin-control-api";
+import type { BusinessEntrypointsMetadata } from "./admin-business-entrypoints";
 
 const CONTENT_SECURITY_POLICY =
   "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -37,6 +38,7 @@ const ASSETS = [
 ] as const;
 
 const SNAPSHOT_PATH = "/admin/api/v1/snapshot";
+const BUSINESS_ENTRYPOINTS_PATH = "/admin/api/v1/business-entrypoints";
 const CONTROL_API_PATH = "/admin/api/v1/control";
 
 interface LoadedAsset {
@@ -57,6 +59,7 @@ export interface AdminStaticHandlerOptions {
   readonly snapshotProvider?: () =>
     | Readonly<Record<string, unknown>>
     | Promise<Readonly<Record<string, unknown>>>;
+  readonly businessEntrypointsProvider?: () => BusinessEntrypointsMetadata;
 }
 
 export interface AdminStaticHandler {
@@ -148,14 +151,40 @@ function isLoopbackAddress(value: string | undefined): boolean {
   );
 }
 
+function isCanonicalLoopbackAuthority(value: string): boolean {
+  const match = /^(localhost|127\.0\.0\.1|\[::1\])(?::([1-9][0-9]{0,4}))?$/u.exec(value);
+  if (match === null) return false;
+  const port = match[2];
+  return port === undefined || (String(Number(port)) === port && Number(port) <= 65_535);
+}
+
+function isCanonicalLoopbackOrigin(value: string): boolean {
+  if (value !== value.trim() || [...value].some((character) => { const code=character.charCodeAt(0); return code<=31||code===127; })) return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      value === parsed.origin &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === "" &&
+      isCanonicalLoopbackAuthority(parsed.host)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isLoopbackRequest(request: IncomingMessage): boolean {
   if (!isLoopbackAddress(request.socket.remoteAddress)) return false;
   try {
-    const host = new URL(`http://${request.headers.host ?? ""}`).hostname;
+    const host = request.headers.host ?? "";
     const origin = request.headers.origin;
     return (
-      isLoopbackAddress(host) &&
-      (origin === undefined || isLoopbackAddress(new URL(origin).hostname))
+      isCanonicalLoopbackAuthority(host) &&
+      (origin === undefined || isCanonicalLoopbackOrigin(origin))
     );
   } catch {
     return false;
@@ -209,6 +238,20 @@ export function createAdminStaticHandler(options: AdminStaticHandlerOptions): Ad
         } catch {
           sendJson(request, response, 400, { status: "blocked", reason: "invalid_admin_redirect_target" });
         }
+        return true;
+      }
+
+      if (path === BUSINESS_ENTRYPOINTS_PATH) {
+        if (!methodAllowed(request, response, "GET, HEAD")) return true;
+        const metadata = options.businessEntrypointsProvider?.();
+        if (metadata === undefined) {
+          sendJson(request, response, 503, {
+            status: "unavailable",
+            reasons: ["business_entrypoints_provider_missing"],
+          });
+          return true;
+        }
+        sendJson(request, response, 200, metadata);
         return true;
       }
 

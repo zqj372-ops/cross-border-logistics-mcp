@@ -33,19 +33,34 @@ describe("Unified Access Gateway Draft 2020-12 contracts", () => {
     expect(files).toEqual([
       "admin-operations-error.schema.json",
       "admin-operations-overview-response.schema.json",
+      "application-authority-request.schema.json",
+      "application-authority-response.schema.json",
+      "application-exchange-request.schema.json",
+      "application-exchange-response.schema.json",
+      "business-call-request.schema.json",
+      "business-call-response.schema.json",
+      "business-exchange-request.schema.json",
+      "business-exchange-response.schema.json",
       "error-envelope.schema.json",
       "exchange-request.schema.json",
       "exchange-response.schema.json",
+      "freightcom-ltl-preview-input.schema.json",
+      "freightcom-ltl-preview-response.schema.json",
       "jwks-response.schema.json",
+      "portal-error.schema.json",
+      "portal-state.schema.json",
     ]);
 
     const ajv = createAjv();
+    const schemas: Record<string, unknown>[] = [];
     for (const file of files) {
       const schema = JSON.parse(readFileSync(join(schemaDirectory, file), "utf8")) as Record<string, unknown>;
       expect(schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
       assertClosedObjects(schema);
-      expect(() => ajv.compile(schema)).not.toThrow();
+      schemas.push(schema);
     }
+    schemas.forEach((schema) => ajv.addSchema(schema));
+    schemas.forEach((schema) => expect(ajv.getSchema(String(schema.$id))).toBeTypeOf("function"));
   });
 
   it("rejects unknown request fields and non-T0 tools", () => {

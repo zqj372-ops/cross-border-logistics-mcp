@@ -18,6 +18,8 @@
     "start:freightcom-test-mcp": "npm run build:freightcom-keychain-helper && npm run build && MCP_DATA_MODE=fixtures MCP_FREIGHTCOM_TEST_ENABLED=true MCP_PORT=8080 MCP_ADMIN_UI_ENABLED=true MCP_ADMIN_CONTROL_ENABLED=true MCP_INSTANCE_ID=instance_fixture_001 MCP_ADMIN_TENANT_ID=tenant_fixture MCP_FIXTURE_TOKEN=local-fixture-token MCP_FIXTURE_APPROVER_TOKEN=local-fixture-approver-token MCP_JWT_ISSUER=https://issuer.example.invalid/ MCP_JWT_AUDIENCE=logistics-mcp-local MCP_ALLOWED_ORIGINS=http://127.0.0.1:8080 MCP_ALLOWED_HOSTS=127.0.0.1:8080 MCP_ALLOWED_OUTBOUND_HOSTS=customer-external-api.ssd-test.freightcom.com node dist/src/logistics_mcp/server/start.mjs",
     "start:production": "npm run build && node dist/src/logistics_mcp/server/start.mjs",
     "start:access-gateway": "npm run build && node dist/services/access-gateway/start.mjs",
+    "start:portal:production": "npm run build && node dist/services/access-gateway/portal/start.mjs",
+    "start:console:fixture": "npm run build && node dist/src/logistics_mcp/server/portal-fixture.mjs --fixtures",
     "init:access-gateway": "npm run build && node deploy/scripts/init-access-gateway.mjs",
     "migrate:access-gateway-postgres": "npm run build && node deploy/scripts/migrate-access-gateway-postgres.mjs",
     "smoke:t0-deployment": "node dist/services/access-gateway/deployment-smoke.mjs",
@@ -25,9 +27,11 @@
     "test": "vitest run",
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src services tests",
+    "lint": "eslint src services tests apps/console deploy/portal/setup-server.mjs deploy/scripts/build.mjs deploy/scripts/start-portal-fixture.ts deploy/scripts/generate-business-schemas.ts deploy/scripts/generate-portal-openapi.ts",
     "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts && npm run validate:access-gateway-schemas",
     "validate:access-gateway-schemas": "node --import tsx/esm services/access-gateway/validate-schemas.ts",
+    "generate:business-schemas": "node --import tsx/esm deploy/scripts/generate-business-schemas.ts",
+    "generate:portal-openapi": "node --import tsx/esm deploy/scripts/generate-portal-openapi.ts apps/console/openapi.json docs/integrations/openapi.json",
     "validate:agent-standards": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts validate",
     "build:agent-pack": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts build",
     "agent:context": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts context",
@@ -46,7 +50,10 @@
     "decimal.js": "10.6.0",
     "jose": "6.2.8",
     "pg": "8.23.0",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "oci-common": "2.140.0",
+    "oci-keymanagement": "2.140.0",
+    "oci-secrets": "2.140.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -435,6 +435,7 @@ function snapshotEntityKind(action: string): SnapshotEntityKind {
     case "tenant.create":
     case "tenant.status":
       return "tenant";
+    case "client.create":
     case "client.status":
       return "client";
     case "credential.issue":
@@ -453,6 +454,8 @@ function expectedEventActions(action: string): readonly string[] {
       return ["tenant.created"];
     case "tenant.status":
       return ["tenant.active", "tenant.suspended"];
+    case "client.create":
+      return ["client.created"];
     case "client.status":
       return ["client.active", "client.disabled"];
     case "credential.issue":
@@ -568,7 +571,7 @@ function snapshotOperation(
     if (normalized.clientId !== null || normalized.credentialId !== null) {
       repositoryFailure("corrupt");
     }
-  } else if (action === "client.status") {
+  } else if (action === "client.create" || action === "client.status") {
     if (normalized.clientId !== resultId || normalized.credentialId !== null) {
       repositoryFailure("corrupt");
     }
@@ -1357,6 +1360,48 @@ export class SqliteTenantAccessStore implements TenantAccessRepository {
           value: request.tenant,
           operation: request.event,
           snapshot: makeSnapshotMetadata(request.tenant.status, null, null),
+        };
+      },
+    )));
+  }
+
+  createClient(request: {
+    readonly client: ClientRecord;
+    readonly event: TenantAccessEventRecord;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  }): Promise<TenantAccessWriteResult<ClientRecord>> {
+    return Promise.resolve(this.#transaction((database) => this.#idempotent(
+      database,
+      "client.create",
+      request.idempotencyKey,
+      request.requestHash,
+      request.client.createdAt,
+      () => {
+        const tenant = this.#tenant(database, request.client.tenantId);
+        if (tenant.status !== "active") repositoryFailure("tenant_not_active");
+        const existing = database.prepare(`
+          SELECT 1 FROM clients WHERE tenant_id = ? AND client_id = ?
+        `).get(request.client.tenantId, request.client.clientId);
+        if (existing !== undefined) repositoryFailure("client_already_exists");
+        database.prepare(`
+          INSERT INTO clients (
+            tenant_id, client_id, label, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          request.client.tenantId,
+          request.client.clientId,
+          request.client.label,
+          request.client.status,
+          request.client.createdAt,
+          request.client.updatedAt,
+        );
+        insertEvent(database, request.event);
+        return {
+          resultId: request.client.clientId,
+          value: request.client,
+          operation: request.event,
+          snapshot: makeSnapshotMetadata(tenant.status, request.client.status, null),
         };
       },
     )));

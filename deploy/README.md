@@ -1,6 +1,8 @@
 # T0 MCP deployment template
 
-这是 `t0-v1` 的单区域候选部署模板，不是已完成的生产部署。服务只在容器网络暴露
+本文件说明 `t0-v1` 的基础部署模板；模板本身不构成目标环境上线证明。2026-09-06 已保存的 Portal/MCP 发布状态、统一 Key 和业务缺口见 [当前状态](../docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)。新增 Portal 部署入口在 `deploy/portal/`，人员身份配置在 `deploy/self-hosted-authentik/`，业务部署要求见 [Business API v2](../docs/runbooks/business-api-v2.md)。
+
+T0 服务只在容器网络暴露
 `8080`，公网入口必须由企业 TLS/WAF/Edge 提供，并负责受控路由、限流、紧急 denylist
 和告警。Compose 不直接发布公网端口。
 
@@ -26,13 +28,12 @@ release 轨道。`deploy/compose.riskcustoms.override.yml.example` 是历史/后
 
 ## 身份、JWT 与出站
 
-生产 MCP 只接受 `Authorization: Bearer <short-jwt>`。长期 `lmcpk_...` API Key 必须先在
-Unified Access Gateway 兑换短期 JWT，不能直接进入 MCP 实例。生产入口使用：
+生产 MCP 只接受 `Authorization: Bearer <short-jwt>`。统一 `flcbk_...` Key 经 Portal application exchange 换票，旧 `lmcpk_...` Key 经既有 Gateway 换票；长期 Key 不能直接进入 MCP 实例。生产入口使用：
 
 - `MCP_JWKS_URL` 读取 RS256 公钥；
 - `MCP_JWT_ISSUER`、`MCP_JWT_AUDIENCE` 和最长 15 分钟策略校验 claims；
 - JWT 中服务端签发的 tenant、actor、client、service role、精确 `tool:` scope 和 session；
-- `MCP_ALLOWED_OUTBOUND_HOSTS` 只允许 JWKS 主机。T0 Runtime 没有业务 API 出站用途。
+- `MCP_ALLOWED_OUTBOUND_HOSTS` 约束 JWKS 主机。统一 Key 的 JWT 另外通过 `MCP_APPLICATION_AUTHORITY_URL` 与 `MCP_APPLICATION_AUTHORITY_ALLOWED_HOSTS` 指定的精确 authority 路径核对当前授权；它不是业务 API 查询出口。
 
 JWKS 必须使用 HTTPS，并由部署环境配置实际企业域名。示例中的 `.invalid` 地址只用于
 离线 config 检查，不能成为 staging 或 production readback。
