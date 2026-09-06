@@ -1,7 +1,7 @@
 # Include inside the existing HTTPS server, alongside the Portal locations.
 # Revalidate entry HTML on each visit so versioned Portal assets can advance.
 # expires retains the security headers inherited from the enclosing server.
-location ~ ^/(index\.html|inquiry/(index\.html)?)?$ {
+location ~ ^/(index\.html|inquiry/(details/)?(index\.html)?)?$ {
     root /usr/share/nginx/html;
     expires -1;
     try_files $uri $uri/ =404;

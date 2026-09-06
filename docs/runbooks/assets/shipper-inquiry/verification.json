@@ -1,0 +1,225 @@
+{
+  "verifiedAt": "2026-09-06T19:16:51.316443+00:00",
+  "releaseId": "inquiry-584bfabc3ec87057",
+  "sourceHead": "5372903ffd51dceca37df3a2413a6cc211383817",
+  "pullRequest": "https://github.com/zqj372-ops/cross-border-logistics-mcp/pull/20",
+  "ci": {
+    "url": "https://github.com/zqj372-ops/cross-border-logistics-mcp/actions/runs/34053603967",
+    "headSha": "5372903ffd51dceca37df3a2413a6cc211383817",
+    "conclusion": "success",
+    "testFilesPassed": 179,
+    "testsPassed": 1728
+  },
+  "browser": {
+    "surfaces": [
+      "https://www.freightclaw.net/inquiry/",
+      "https://www.freightclaw.net/inquiry/#business",
+      "https://www.freightclaw.net/inquiry/details/"
+    ],
+    "viewports": [
+      {
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "width": 390,
+        "height": 844
+      },
+      {
+        "width": 729,
+        "height": 686
+      }
+    ],
+    "checksPassed": [
+      "All five services and next-step button visible on initial screen",
+      "No horizontal overflow in all three viewports",
+      "FCL review contains selected services and 40HQ x 2 containers",
+      "Email preview explicitly says generated but not sent",
+      "Full inquiry copy reports success",
+      "LCL zero volume and missing weight rejected",
+      "Explicit unknown weight accepted with 12.5 m3 volume",
+      "Switching to LCL excludes prior FCL container fields from review",
+      "Returning to transport fields preserves volume and unknown weight",
+      "Changing details requires confirmation checkbox again",
+      "Business consultation uses its own services and fields",
+      "Full fee directory loads OCEAN-FLOW-2026-07-V4",
+      "Original FCL checkbox and quote-required summary remain functional",
+      "Home, customs, CLI, and full-fee navigation targets correct",
+      "Full-fee link opens in a new tab"
+    ],
+    "consoleWarnings": 0,
+    "consoleErrors": 0,
+    "syntheticDataOnly": true,
+    "emailSent": false,
+    "mailtoActivated": false
+  },
+  "origin": {
+    "nginxConfigTestPassed": true,
+    "reloadCompleted": true,
+    "preservedReadback": true,
+    "backupDirectory": "/data/freightclaw/releases/inquiry-584bfabc3ec87057",
+    "portalImageUnchanged": true,
+    "nginxMainConfigUnchanged": true
+  },
+  "publicHttp": {
+    "allMatch": true,
+    "pathCount": 11,
+    "htmlNormalization": "Remove only Cloudflare-injected known beacon.min.js script before full SHA-256 comparison.",
+    "readbacks": [
+      {
+        "path": "/inquiry/assets/app-140f3dc40e465240.js",
+        "status": 200,
+        "sha256": "140f3dc40e465240dd7f58adfa808cadd1a9a4aee983643b4c7b8536cf04b572",
+        "expected_sha256": "140f3dc40e465240dd7f58adfa808cadd1a9a4aee983643b4c7b8536cf04b572",
+        "match": true,
+        "headers": {
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cache-control": "max-age=14400",
+          "cf-cache-status": "MISS"
+        }
+      },
+      {
+        "path": "/inquiry/assets/styles-2ca3c21c7c1a0c2e.css",
+        "status": 200,
+        "sha256": "2ca3c21c7c1a0c2e2ef6b0b79d744f2eec4b97764731f3ad7a1909b77b5b0321",
+        "expected_sha256": "2ca3c21c7c1a0c2e2ef6b0b79d744f2eec4b97764731f3ad7a1909b77b5b0321",
+        "match": true,
+        "headers": {
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cache-control": "max-age=14400",
+          "cf-cache-status": "MISS"
+        }
+      },
+      {
+        "path": "/inquiry/details/index.html",
+        "status": 200,
+        "sha256": "bb78477d3ab179ed9083a9faa1dd20073719d8a45b7855ed9927acdf5b57d50f",
+        "expected_sha256": "bb78477d3ab179ed9083a9faa1dd20073719d8a45b7855ed9927acdf5b57d50f",
+        "match": true,
+        "headers": {
+          "cache-control": "no-cache",
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cf-cache-status": "DYNAMIC"
+        }
+      },
+      {
+        "path": "/inquiry/details/",
+        "status": 200,
+        "sha256": "bb78477d3ab179ed9083a9faa1dd20073719d8a45b7855ed9927acdf5b57d50f",
+        "expected_sha256": "bb78477d3ab179ed9083a9faa1dd20073719d8a45b7855ed9927acdf5b57d50f",
+        "match": true,
+        "headers": {
+          "cache-control": "no-cache",
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cf-cache-status": "DYNAMIC"
+        }
+      },
+      {
+        "path": "/inquiry/navigation.css",
+        "status": 200,
+        "sha256": "edc2737623cf9cf8b04906c3c5a7bcd19c3b837496be4e9dff85be953fed1980",
+        "expected_sha256": "edc2737623cf9cf8b04906c3c5a7bcd19c3b837496be4e9dff85be953fed1980",
+        "match": true,
+        "headers": {
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cache-control": "max-age=14400",
+          "cf-cache-status": "HIT"
+        }
+      },
+      {
+        "path": "/inquiry/index.html",
+        "status": 200,
+        "sha256": "bf07ad50ea4d120c02b8caf9a1267af277bed30fd13c7134c32454a1a419ce11",
+        "expected_sha256": "bf07ad50ea4d120c02b8caf9a1267af277bed30fd13c7134c32454a1a419ce11",
+        "match": true,
+        "headers": {
+          "cache-control": "no-cache",
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cf-cache-status": "DYNAMIC"
+        }
+      },
+      {
+        "path": "/inquiry/",
+        "status": 200,
+        "sha256": "bf07ad50ea4d120c02b8caf9a1267af277bed30fd13c7134c32454a1a419ce11",
+        "expected_sha256": "bf07ad50ea4d120c02b8caf9a1267af277bed30fd13c7134c32454a1a419ce11",
+        "match": true,
+        "headers": {
+          "cache-control": "no-cache",
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cf-cache-status": "DYNAMIC"
+        }
+      },
+      {
+        "path": "/index.html",
+        "status": 200,
+        "sha256": "1f63f9ea6e56fa3980cfbe411cacb8e52fef0a3a81f6bac8afd04e1945017744",
+        "expected_sha256": "1f63f9ea6e56fa3980cfbe411cacb8e52fef0a3a81f6bac8afd04e1945017744",
+        "match": true,
+        "headers": {
+          "cache-control": "no-cache",
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cf-cache-status": "DYNAMIC"
+        }
+      },
+      {
+        "path": "/assets/index-ET7GCGWL.js",
+        "status": 200,
+        "sha256": "0d36f901d2bc6356233071198471631c7779ffd70a993ec2f36f4eaca44b05dd",
+        "expected_sha256": "0d36f901d2bc6356233071198471631c7779ffd70a993ec2f36f4eaca44b05dd",
+        "match": true,
+        "headers": {
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cache-control": "max-age=14400",
+          "cf-cache-status": "HIT"
+        }
+      },
+      {
+        "path": "/assets/index-5UXRHVWQ.css",
+        "status": 200,
+        "sha256": "5f28e4393f3a4d6f89b3ed2cbb99060fa8a36f6e975e4085a58e8af1891f2816",
+        "expected_sha256": "5f28e4393f3a4d6f89b3ed2cbb99060fa8a36f6e975e4085a58e8af1891f2816",
+        "match": true,
+        "headers": {
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cache-control": "max-age=14400",
+          "cf-cache-status": "HIT"
+        }
+      },
+      {
+        "path": "/pricing/catalog.json",
+        "status": 200,
+        "sha256": "1d2f58801a9fde6a8aacb3987b5275bed613fbb1d2c727c6556b5664816656d8",
+        "expected_sha256": "1d2f58801a9fde6a8aacb3987b5275bed613fbb1d2c727c6556b5664816656d8",
+        "match": true,
+        "headers": {
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "cf-cache-status": "DYNAMIC"
+        }
+      }
+    ]
+  },
+  "scope": "Static inquiry UI and HTML caching. Does not prove mail delivery, formal freight pricing, or customs business readiness."
+}

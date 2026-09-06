@@ -1,0 +1,90 @@
+{
+  "source": "Public production website, direct browser screenshots",
+  "sourceHead": "5372903ffd51dceca37df3a2413a6cc211383817",
+  "captures": [
+    {
+      "file": "01-select-desktop.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "capturedAt": "2026-09-06T19:13:53.373Z",
+      "sha256": "9384ac9fd7d7d9f4f8340f5e05c0b24a975bc4808b500106a18f65380a3db440",
+      "syntheticData": false,
+      "imageEdited": false
+    },
+    {
+      "file": "02-select-mobile.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "capturedAt": "2026-09-06T19:15:00.278Z",
+      "sha256": "284dc0bf1bd27e64172ac0b26f9a036dbef145945b826a12d76408288532cb3f",
+      "syntheticData": false,
+      "imageEdited": false
+    },
+    {
+      "file": "03-select-tablet.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "viewport": {
+        "width": 729,
+        "height": 686
+      },
+      "capturedAt": "2026-09-06T19:15:28.749Z",
+      "sha256": "d0b7b3baeedcc610cef90bf5238517721ae984b16af9dc0c83d0adf869b607a9",
+      "syntheticData": false,
+      "imageEdited": false
+    },
+    {
+      "file": "04-business-mail-mobile.jpg",
+      "url": "https://www.freightclaw.net/inquiry/#business",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "capturedAt": "2026-09-06T19:15:23.726Z",
+      "syntheticData": true,
+      "sha256": "f4cb950b81dff5616b27be1f480f0ead5b2665aec9185b8ea958416b71d5b49d",
+      "imageEdited": false
+    },
+    {
+      "file": "05-fcl-desktop.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "capturedAt": "2026-09-06T19:14:21.590Z",
+      "syntheticData": true,
+      "sha256": "2472aa77dcc483be3018986a9b0c06d6f622ed6faf22ab081c0d1eabfe262446",
+      "imageEdited": false
+    },
+    {
+      "file": "06-mail-desktop.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "capturedAt": "2026-09-06T19:14:36.528Z",
+      "syntheticData": true,
+      "sha256": "3a8f376181454707c91ebdbeae3b76ef861e2248727cc7bef9509f28a81a9248",
+      "imageEdited": false
+    },
+    {
+      "file": "07-details-desktop.jpg",
+      "url": "https://www.freightclaw.net/inquiry/details/",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "capturedAt": "2026-09-06T19:16:13.343Z",
+      "sha256": "0594aab7c61fa372a0fd33b8c066fa187270ec80e399a5a31e4b5603ad4f45c7",
+      "syntheticData": false,
+      "imageEdited": false
+    }
+  ]
+}

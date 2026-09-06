@@ -8,6 +8,7 @@ COPY services ./services
 COPY apps/admin ./apps/admin
 COPY apps/access-console ./apps/access-console
 COPY apps/console ./apps/console
+COPY apps/inquiry ./apps/inquiry
 COPY docs/contracts ./docs/contracts
 COPY docs/agent ./docs/agent
 COPY docs/standards ./docs/standards
@@ -20,6 +21,8 @@ COPY docs/rfcs/2026-08-27-t0-production-profile-v1.md ./docs/rfcs/2026-08-27-t0-
 COPY docs/rfcs/2026-08-27-credential-exchange-v1.md ./docs/rfcs/2026-08-27-credential-exchange-v1.md
 COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
+COPY deploy/scripts/build-inquiry.mjs ./deploy/scripts/build-inquiry.mjs
+COPY deploy/portal/inquiry-navigation.css ./deploy/portal/inquiry-navigation.css
 COPY deploy/scripts/start-portal-fixture.ts ./deploy/scripts/start-portal-fixture.ts
 COPY deploy/scripts/generate-portal-openapi.ts ./deploy/scripts/generate-portal-openapi.ts
 COPY deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
