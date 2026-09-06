@@ -936,12 +936,12 @@ describe("gateway composition modes", () => {
       expect(composition.moduleHost.snapshot().modules.map(({ manifest_digest }) => manifest_digest)).toEqual([
         "sha256:8f1ae992488fe6283a84fd4478297e4772999f8224057c6e6838449ef186b91a",
         "sha256:72ab2ce602d646f2471d0a062b409f24c8f6e5c13c9b5ebc65f79334bda7d849",
-        "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
+        "sha256:8d1c2b0fb1f4253b95d13d0cf04990072fcd66f5f20abb190a6ceeefa7164e0c",
       ]);
       expect(composition.moduleHost.snapshot().modules.map(({ artifact_digest }) => artifact_digest)).toEqual([
         "sha256:f49982fdd8567627f6de5fd7e43fd98f9a43ee48401ebba2f9b273f4a1691b14",
         "sha256:3c50abba8b0f4b0f51f4dd6b12f664359df401fa9e63786bcf7edb0fc26bcd07",
-        "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
+        "sha256:d5e845ed99888664741ada56209251b536e4057fb928583e59b3505c8f987593",
       ]);
       expect(Object.keys(composition.handlers).sort()).toEqual([
         "cargo.calculate",

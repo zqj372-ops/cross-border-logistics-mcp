@@ -1,3 +1,4 @@
+import type { PortalCallLogService } from "./call-log";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isIP } from "node:net";
@@ -36,7 +37,8 @@ export interface PortalHttpOptions {
   readonly service: PortalServicePort;
   readonly bridge?: PortalCredentialBridge;
   readonly organizationBridge?: Pick<OrganizationBridge, "listOrganizationAdmissions" | "createOrganization" | "getOrganizationAdmission" | "setOrganizationStatus">;
-  readonly businessService?: Pick<PortalBusinessService, "describe" | "execute" | "executeBatch"> & Partial<Pick<PortalBusinessService, "records">>;
+  readonly businessService?: Pick<PortalBusinessService, "describe" | "execute" | "executeBatch"> & Partial<Pick<PortalBusinessService, "records" | "customsHistory">>;
+  readonly callLogService?: PortalCallLogService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
   readonly sessions: PortalSessionManager;
@@ -160,7 +162,8 @@ function authenticatedResourcePath(path: string): boolean {
   if (/^\/console\/api\/v1\/business\/quote\/records\/(prepare|save|get|list|review)$/u.test(path)) return true;
   if (path === `${API_PREFIX}/business/quote/review-queue` || /^\/console\/api\/v1\/business\/quote\/review-tasks\/[^/]+\/(?:resolution-preview|resolve)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/business\/quote\/records\/[^/]+\/documents$/u.test(path) || /^\/console\/api\/v1\/business\/quote\/documents\/[^/]+(?:\/content)?$/u.test(path)) return true;
-  if (path === `${API_PREFIX}/my-organizations`) return true;
+  if (path === `${API_PREFIX}/my-organizations` || path === `${API_PREFIX}/calls`) return true;
+  if (/^\/console\/api\/v1\/business\/customs\/history\/(?:list|get)$/u.test(path)) return true;
   if ([`${API_PREFIX}/business/services`, `${API_PREFIX}/business/customs/query`, `${API_PREFIX}/business/customs/tax-estimate`, `${API_PREFIX}/business/customs/tax-estimates/batch`, `${API_PREFIX}/business/quote/preview`, `${API_PREFIX}/business/quote/extract`, `${API_PREFIX}/business/quote/freightcom-ltl-preview`].includes(path)) return true;
   if (path === `${API_PREFIX}/organizations` || /^\/console\/api\/v1\/organizations\/[^/]+(?:\/status)?$/u.test(path)) return true;
   return path === `${API_PREFIX}/state` || path === `${API_PREFIX}/review-queue` || path === `${API_PREFIX}/provisioning-queue` || path === `${API_PREFIX}/platform-state` || path === `${API_PREFIX}/session/organization` || path === `${API_PREFIX}/invitations` || path === `${API_PREFIX}/applications` || path === `${API_PREFIX}/requests`
@@ -192,10 +195,21 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      if (path === `${API_PREFIX}/calls` && request.method === "GET") {
+        if (!options.callLogService) throw new PortalError("call_log_unavailable");
+        const entries=[...url.searchParams.entries()];
+        if(new Set(entries.map(([key])=>key)).size!==entries.length) throw new PortalError("call_query_invalid");
+        json(response,200,await options.callLogService.query(ctx,Object.fromEntries(entries)),undefined,true);return true;
+      }
       if (path === `${API_PREFIX}/state` && request.method === "GET") { json(response, 200, options.service.getState(ctx)); return true; }
       if (path === `${API_PREFIX}/my-organizations` && request.method === "GET") {
         const state = options.service.getState({ ...ctx, organizationId: null });
         json(response, 200, { ...state, data: state.data ? { organizations: state.data.organizations, memberships: state.data.memberships, invitations: state.data.invitations } : null }); return true;
+      }
+      if (/^\/console\/api\/v1\/business\/customs\/history\/(?:list|get)$/u.test(path) && request.method === "POST") {
+        if(!options.businessService?.customsHistory)throw new PortalError("customs_history_source_unconfigured");
+        const payload=await body(request,options.maxBodyBytes??32768);closed(payload,["input"]);
+        json(response,200,await options.businessService.customsHistory(ctx,path.endsWith("/list")?"list":"get",payload.input,id),undefined,true);return true;
       }
       if (path === `${API_PREFIX}/business/services` && request.method === "GET") {
         if (!options.businessService) throw new PortalError("business_connection_unconfigured");

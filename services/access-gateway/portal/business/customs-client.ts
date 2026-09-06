@@ -1,3 +1,4 @@
+import { readBoundedResponse } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { z } from "zod";
 
 export const CUSTOMS_PORTAL_SCHEMA_VERSION = "portal-customs@2026-09-05.v1" as const;
@@ -164,8 +165,8 @@ function sameIdentity(a: Record<string, unknown>, b: Record<string, unknown>): b
     .every((key) => JSON.stringify(a[key]) === JSON.stringify(b[key]));
 }
 
-async function readJson(response: Response, limit: number): Promise<unknown> {
-  const buffer = new Uint8Array(await response.arrayBuffer());
+async function readJson(response: Response, limit: number, signal: AbortSignal): Promise<unknown> {
+  const buffer = await readBoundedResponse(response, limit, signal);
   if (buffer.byteLength > limit) throw new Error("response_too_large");
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer));
 }
@@ -196,7 +197,7 @@ export function createCustomsPortalClient(options: CustomsPortalClientOptions) {
       const response = await fetchImpl(new URL(path, base!), { ...init, redirect: "manual", signal: controller.signal });
       if (response.status >= 300 && response.status < 400) throw new Error("redirect_rejected");
       if (!response.ok) throw new Error(`http_${response.status}`);
-      return await readJson(response, maxBodyBytes);
+      return await readJson(response, maxBodyBytes, controller.signal);
     } finally { clearTimeout(timer); }
   }
 

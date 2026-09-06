@@ -1,3 +1,4 @@
+import type { PortalRuntimeExecutor } from "./runtime-executor";
 import { createHash, randomUUID } from "node:crypto";
 
 import { T0_TOOL_NAMES, type ExchangeInput, type T0ToolName } from "../contracts";
@@ -66,7 +67,8 @@ export interface PortalAccessBridgeOptions {
   readonly applicationTokenVerifier?: PortalMachineTokenVerifier;
   readonly applicationTokenPolicy?: ShortLivedTokenValidationOptions;
   readonly exchangeAudience: string;
-  readonly t0Definitions: readonly ToolDefinition[];
+  readonly t0Definitions?: readonly ToolDefinition[];
+  readonly runtimeExecutor?: PortalRuntimeExecutor;
   readonly applicationCredentialAuthority?: Pick<BusinessAccessService,
     "authorizeT0ApiKey" | "authorizeT0Credential" | "exchangeApplicationToken"
   >;
@@ -208,6 +210,7 @@ export class PortalAccessBridge {
   readonly #restTokenPolicy: ShortLivedTokenValidationOptions;
   readonly #applicationTokenVerifier: PortalMachineTokenVerifier | undefined;
   readonly #applicationTokenPolicy: ShortLivedTokenValidationOptions | undefined;
+  readonly #runtimeExecutor: PortalRuntimeExecutor | undefined;
   readonly #definitions: ReadonlyMap<T0ToolName, ToolDefinition>;
   readonly #applicationCredentials?: PortalAccessBridgeOptions["applicationCredentialAuthority"];
   readonly #id: (prefix: "req" | "audit") => string;
@@ -220,13 +223,15 @@ export class PortalAccessBridge {
       throw new PortalError("rest_audience_not_isolated");
     }
     const definitions = new Map<string, ToolDefinition>();
-    for (const definition of options.t0Definitions) definitions.set(definition.name, definition);
+    for (const definition of options.t0Definitions ?? []) definitions.set(definition.name, definition);
     if (
-      definitions.size !== T0_TOOL_NAMES.length ||
-      T0_TOOL_NAMES.some((toolName) => !definitions.has(toolName))
+      options.dataMode === "fixtures" && (definitions.size !== T0_TOOL_NAMES.length ||
+      T0_TOOL_NAMES.some((toolName) => !definitions.has(toolName)))
     ) {
       throw new PortalError("t0_catalog_invalid");
     }
+    if (options.dataMode === "production" && !options.runtimeExecutor) throw new PortalError("runtime_executor_required");
+    this.#runtimeExecutor = options.runtimeExecutor;
     this.#portal = options.portalService;
     this.#tenantAccess = options.tenantAccessService;
     this.#gateway = options.accessGateway;
@@ -542,6 +547,7 @@ export class PortalAccessBridge {
       expires_at: Math.floor(Date.now() / 1_000) + 60,
     });
     await this.#requireCurrentMachineAuthority(context, input.toolName);
+    if (this.#runtimeExecutor) return this.#runtimeExecutor.execute({ context, toolName: input.toolName, input: input.input, ...(input.signal ? { signal: input.signal } : {}) }, () => this.#requireCurrentMachineAuthority(context, input.toolName));
     const definition = this.#definitions.get(input.toolName);
     if (!definition) throw new PortalError("tool_not_found");
     return executeRegisteredTool(definition, input.input, context, {
@@ -596,6 +602,7 @@ export class PortalAccessBridge {
     }
     const context = claimsContext(claims);
     await this.#requireCurrentMachineAuthority(context, input.toolName);
+    if (this.#runtimeExecutor) return this.#runtimeExecutor.execute({ context, toolName: input.toolName, input: input.input, ...(input.signal ? { signal: input.signal } : {}) }, () => this.#requireCurrentMachineAuthority(context, input.toolName));
     const definition = this.#definitions.get(input.toolName);
     if (definition === undefined) throw new PortalError("tool_not_found");
     return executeRegisteredTool(definition, input.input, context, {

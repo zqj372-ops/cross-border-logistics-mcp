@@ -1,3 +1,5 @@
+import { createCustomsHistoryClient } from "./customs-history-client";
+import type { CallRecorder } from "../call-log";
 import { lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
@@ -25,13 +27,13 @@ const freightcomConnectorSchema = z.object({
 const configSchema = z.object({
   connections: z.array(z.object({
     organizationId: z.string().min(1), tenantId: z.string().min(1),
-    enabledOperations: z.array(operationSchema).min(1), recordOperations: z.array(z.enum(["quote.record_save", "quote.record_read", "quote.review_read", "quote.review_manage", "quote.document_generate", "quote.document_read"])).optional(), customs: connectorSchema.optional(), quote: connectorSchema.optional(), freightcom: freightcomConnectorSchema.optional(),
+    enabledOperations: z.array(operationSchema).min(1), customsHistoryEnabled:z.boolean().optional(), recordOperations: z.array(z.enum(["quote.record_save", "quote.record_read", "quote.review_read", "quote.review_manage", "quote.document_generate", "quote.document_read"])).optional(), customs: connectorSchema.optional(), quote: connectorSchema.optional(), freightcom: freightcomConnectorSchema.optional(),
   }).strict()).max(1_000),
 }).strict();
 type ConnectorConfiguration = z.infer<typeof connectorSchema>;
 
 export interface LoadPortalBusinessServiceOptions {
-  readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>;
+  readonly callRecorder?: CallRecorder; readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>;
   readonly configPath?: string;
   readonly allowLoopbackFixtures?: boolean;
   readonly fetchImpl?: typeof fetch;
@@ -81,6 +83,7 @@ function readConfiguration(path: string): z.infer<typeof configSchema> {
     if (item.recordOperations && (new Set(item.recordOperations).size !== item.recordOperations.length || !item.quote || !item.enabledOperations.includes("quote.zone_preview") ||
       item.recordOperations.includes("quote.record_save") && !item.recordOperations.includes("quote.record_read") ||
       item.recordOperations.includes("quote.document_generate") && (!item.recordOperations.includes("quote.document_read") || !item.recordOperations.includes("quote.record_read")))) throw new Error("portal_business_config_invalid");
+    if(item.customsHistoryEnabled&&!item.customs)throw new Error("portal_business_config_invalid");
     const customsEnabled = item.enabledOperations.some((operation) => operation.startsWith("customs."));
     const quoteEnabled = item.enabledOperations.some((operation) => operation === "quote.zone_preview" || operation === "quote.ai_extract_preview") || (item.recordOperations?.length ?? 0) > 0;
     const freightcomEnabled = item.enabledOperations.includes("quote.freightcom_ltl.preview");
@@ -105,7 +108,7 @@ async function signer(configuration: ConnectorConfiguration) {
 }
 
 export async function loadPortalBusinessService(options: LoadPortalBusinessServiceOptions): Promise<PortalBusinessService> {
-  if (options.configPath === undefined) return new PortalBusinessService({ portalService: options.portalService, connections: [] });
+  if (options.configPath === undefined) return new PortalBusinessService({ ...(options.callRecorder ? { callRecorder: options.callRecorder } : {}), portalService: options.portalService, connections: [] });
   const configuration = readConfiguration(options.configPath);
   const connections: PortalBusinessConnection[] = [];
   for (const item of configuration.connections) {
@@ -113,7 +116,7 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
       throw new Error("portal_business_config_invalid");
     }
     if (item.freightcom?.baseUrl !== undefined && !validBaseUrl(item.freightcom.baseUrl, options.allowLoopbackFixtures === true)) throw new Error("portal_business_config_invalid");
-    const connection: { organizationId: string; tenantId: string; enabledOperations: readonly PortalBusinessOperation[]; serviceActors: {customs?: string; quote?: string}; recordOperations: readonly ("quote.record_save"|"quote.record_read"|"quote.review_read"|"quote.review_manage"|"quote.document_generate"|"quote.document_read")[]; quoteRecordClient?: ReturnType<typeof createQuoteRecordPortalClient>; customsClient?: PortalBusinessConnection["customsClient"]; taxClient?: PortalBusinessConnection["taxClient"]; quoteClient?: PortalBusinessConnection["quoteClient"]; freightcomClient?: PortalBusinessConnection["freightcomClient"] } = {
+    const connection: { organizationId: string; tenantId: string; enabledOperations: readonly PortalBusinessOperation[]; serviceActors: {customs?: string; quote?: string}; recordOperations: readonly ("quote.record_save"|"quote.record_read"|"quote.review_read"|"quote.review_manage"|"quote.document_generate"|"quote.document_read")[]; quoteRecordClient?: ReturnType<typeof createQuoteRecordPortalClient>; customsHistoryClient?:ReturnType<typeof createCustomsHistoryClient>; customsClient?: PortalBusinessConnection["customsClient"]; taxClient?: PortalBusinessConnection["taxClient"]; quoteClient?: PortalBusinessConnection["quoteClient"]; freightcomClient?: PortalBusinessConnection["freightcomClient"] } = {
       organizationId: item.organizationId, tenantId: item.tenantId, serviceActors: { ...(item.customs ? {customs: item.customs.serviceCallerId} : {}), ...(item.quote ? {quote: item.quote.serviceCallerId} : {}) }, recordOperations: Object.freeze(item.recordOperations ?? []), enabledOperations: Object.freeze([...item.enabledOperations]),
     };
     if (item.customs) {
@@ -122,6 +125,7 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
       connectionSecret: readSecret(item.customs.connectionSecretFile), delegationSigner: await signer(item.customs),
       allowLoopbackFixtures: options.allowLoopbackFixtures === true, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) };
       const customs = createCustomsPortalClient(clientOptions);
+      if(item.customsHistoryEnabled)connection.customsHistoryClient=createCustomsHistoryClient(clientOptions);
       const tax = createTaxPortalClient(clientOptions);
       connection.customsClient = { query: (request) => customs.query({ ...request, input: request.input as CustomsPortalQueryInput }) };
       connection.taxClient = {
@@ -154,5 +158,5 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
     }
     connections.push(Object.freeze(connection) as PortalBusinessConnection);
   }
-  return new PortalBusinessService({ portalService: options.portalService, connections: Object.freeze(connections) });
+  return new PortalBusinessService({ ...(options.callRecorder ? { callRecorder: options.callRecorder } : {}), portalService: options.portalService, connections: Object.freeze(connections) });
 }

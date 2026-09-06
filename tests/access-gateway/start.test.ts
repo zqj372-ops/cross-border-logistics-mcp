@@ -52,6 +52,7 @@ function admin() {
 
 const ENV_KEYS = [
   "ACCESS_GATEWAY_PROFILE",
+  "ACCESS_GATEWAY_STORE_BACKEND",
   "ACCESS_GATEWAY_APPLICATION_ROOT",
   "ACCESS_GATEWAY_INSTANCE_ID",
   "ACCESS_GATEWAY_MANAGEMENT_TENANT_ID",
@@ -216,6 +217,7 @@ describe("standalone Access Gateway runtime", () => {
     const origin = `http://${host}`;
     Object.assign(process.env, {
       ACCESS_GATEWAY_PROFILE: "single-node-candidate",
+      ACCESS_GATEWAY_STORE_BACKEND: "sqlite",
       ACCESS_GATEWAY_APPLICATION_ROOT: applicationRoot,
       ACCESS_GATEWAY_INSTANCE_ID: "gateway_01",
       ACCESS_GATEWAY_MANAGEMENT_TENANT_ID: "tenant_management",

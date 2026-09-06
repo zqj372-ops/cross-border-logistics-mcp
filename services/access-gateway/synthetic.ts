@@ -17,7 +17,7 @@ import {
   type ExactToolScope,
   type GatewayOptions,
   type JwksResponse,
-  type JwtClaims,
+  type GatewayJwtClaims,
   type PublicJwk,
   type StoredCredentialRecord,
   type T0ToolName,
@@ -242,7 +242,7 @@ export class SyntheticJwtSigner implements JwtSigningProvider {
   private current = makeSigningKey("synthetic-key-0001");
   private previous: SigningKey | null = null;
 
-  sign(claims: JwtClaims): Promise<{ readonly token: string; readonly kid: string }> {
+  sign(claims: GatewayJwtClaims): Promise<{ readonly token: string; readonly kid: string }> {
     this.signCount += 1;
     const header = Buffer.from(JSON.stringify({
       alg: "RS256",

@@ -19,6 +19,19 @@ jobs:
     name: 编译、测试与镜像
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: capability_fixture
+          POSTGRES_DB: capability_fixture
+          # Isolated CI fixture only; production uses private password files.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U capability_fixture -d capability_fixture"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: 获取代码
         uses: actions/checkout@v7
@@ -31,8 +44,21 @@ jobs:
         run: npm ci
       - name: 编译
         run: npm run build
-      - name: 全量测试
-        run: npm test -- --run
+      - name: 全量测试（含共享数据库迁移与恢复）
+        env:
+          PORTAL_TEST_POSTGRES_PORT: "5432"
+          ACCESS_GATEWAY_TEST_POSTGRES: "1"
+          ACCESS_GATEWAY_STORE_BACKEND: postgresql
+          ACCESS_GATEWAY_POSTGRES_HOST: 127.0.0.1
+          ACCESS_GATEWAY_POSTGRES_PORT: "5432"
+          ACCESS_GATEWAY_POSTGRES_DATABASE: capability_fixture
+          ACCESS_GATEWAY_POSTGRES_USER: capability_fixture
+          ACCESS_GATEWAY_POSTGRES_PASSWORD_FILE: ${{ runner.temp }}/mcp-pg-fixture-password
+          ACCESS_GATEWAY_POSTGRES_SCHEMA: access_gateway_fixture
+          ACCESS_GATEWAY_POSTGRES_SSL_MODE: disable
+        run: |
+          node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync(process.env.ACCESS_GATEWAY_POSTGRES_PASSWORD_FILE,"fixture-password-only",{mode:0o600});'
+          npm test -- --run
       - name: 类型检查
         run: npm run typecheck
       - name: 代码规范
@@ -42,6 +68,9 @@ jobs:
       - name: 演示发布门禁
         run: bash deploy/scripts/check-release.sh --fixture-only
       - name: 容器配置校验
-        run: docker compose --env-file deploy/env.example -f deploy/compose.yml config
+        run: |
+          docker compose --env-file deploy/env.example -f deploy/compose.yml config --quiet
+          MCP_BUSINESS_ENV_FILE="$PWD/deploy/portal/capabilities.env.example" MCP_BUSINESS_RELEASE_DIRECTORY=/tmp/provider-release MCP_BUSINESS_SECRET_DIRECTORY=/tmp/provider-secrets docker compose --env-file deploy/env.example -f deploy/compose.yml -f deploy/portal/compose.business-runtime.yml config --quiet
+          PORTAL_IMAGE=cross-border-logistics-mcp:candidate docker compose -f deploy/portal/compose.yml -f deploy/portal/compose.shared.yml config --no-env-resolution --quiet
       - name: 构建候选镜像
         run: docker build -f deploy/Dockerfile .

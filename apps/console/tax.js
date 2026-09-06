@@ -46,5 +46,5 @@ export function createTaxWorkspace(ui) {
     state.result = await ui.api(`/business/customs/${batch ? 'tax-estimates/batch' : 'tax-estimate'}`, { method: 'POST', body: { input: value }, acceptBusiness: true }); ui.rerender(); document.querySelector('#tax-results')?.scrollIntoView({ block: 'start' }); return true;
   }
   function reset() { state.rows = [{}]; state.openRow = 0; state.result = null; state.date = new Date().toLocaleDateString('en-CA'); }
-  return { page, action, submit, reset };
+  return { page, action, submit, reset, restoreHistory(input) { reset(); state.date = input.ruleDate; state.rows = [structuredClone(input)]; } };
 }

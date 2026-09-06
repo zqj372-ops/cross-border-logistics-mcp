@@ -1,3 +1,4 @@
+import { SqliteCallLogStore, PortalCallLogService, callRecorder } from "../../services/access-gateway/portal/call-log";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
@@ -16,8 +17,9 @@ const origin = `http://127.0.0.1:${port}`;
 const databaseDirectory = resolve(process.env.PORTAL_FIXTURE_DIRECTORY ?? ".runtime/console-fixture");
 const runtime = await createPortalFixtureRuntime({ databaseDirectory });
 const boundaries = { allowedHosts: [`127.0.0.1:${port}`], allowedOrigins: [origin] };
+const callStore = new SqliteCallLogStore(resolve(databaseDirectory, "calls.sqlite"));
 try {
-  const businessService = await loadPortalBusinessService({ portalService: runtime.service, ...(process.env.PORTAL_BUSINESS_CONFIG_FILE ? { configPath: process.env.PORTAL_BUSINESS_CONFIG_FILE } : {}), allowLoopbackFixtures: true });
+  const businessService = await loadPortalBusinessService({ callRecorder: callRecorder(callStore), portalService: runtime.service, ...(process.env.PORTAL_BUSINESS_CONFIG_FILE ? { configPath: process.env.PORTAL_BUSINESS_CONFIG_FILE } : {}), allowLoopbackFixtures: true });
   const pepperPath = resolve(databaseDirectory, "business-fixture.pepper");
   if (!existsSync(pepperPath)) writeFileSync(pepperPath, randomBytes(32), { mode: 0o600, flag: "wx" });
   const pepperStat = lstatSync(pepperPath);
@@ -29,11 +31,11 @@ try {
   const machine = createPortalMachineHttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries });
   const t0Machine = createProductionT0HttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries, trustedProxyAddresses: [] });
   const businessMachine = createBusinessMachineHttpHandler({ mode: "fixtures", service: businessAccess.service, executor: { execute: async (request) => businessService.executeMachine(request) }, ...boundaries, trustedProxyAddresses: [] });
-  const server = await startPortalServer({ mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
+  const server = await startPortalServer({ mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
   console.log(`FreightClaw local acceptance workspace: ${server.origin}/console/`);
   console.log("Isolated fixture identities and local storage. Business availability is verified per request.");
   let closing = false;
-  const close = async () => { if (closing) return; closing = true; await server.close(); businessAccess.repository.close(); await runtime.close(); process.exitCode = 0; };
+  const close = async () => { if (closing) return; closing = true; await server.close(); await callStore.close(); businessAccess.repository.close(); await runtime.close(); process.exitCode = 0; };
   process.once("SIGINT", () => { void close(); });
   process.once("SIGTERM", () => { void close(); });
-} catch (error) { await runtime.close(); throw error; }
+} catch (error) { await callStore.close(); await runtime.close(); throw error; }

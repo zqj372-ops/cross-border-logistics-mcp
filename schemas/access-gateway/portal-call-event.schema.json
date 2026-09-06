@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/portal-call-event.schema.json",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "client_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actor_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+        "customs.query",
+        "customs.tax.estimate",
+        "quote.zone_preview",
+        "quote.ai_extract_preview",
+        "quote.freightcom_ltl.preview"
+      ]
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "needs_input",
+        "manual_review",
+        "blocked",
+        "unavailable"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400000
+    },
+    "created_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T[^\\s]+$"
+    }
+  },
+  "required": [
+    "event_id",
+    "tenant_id",
+    "client_id",
+    "actor_ref",
+    "operation",
+    "request_id",
+    "status",
+    "duration_ms",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

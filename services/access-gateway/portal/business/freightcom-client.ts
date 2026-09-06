@@ -1,3 +1,4 @@
+import { readBoundedResponse, ResponseSizeError } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { z } from "zod";
 
 import {
@@ -204,18 +205,8 @@ function validCredential(value: string): boolean {
   return value.length > 0 && value.length <= 4096 && !/[\r\n\0]/u.test(value);
 }
 
-async function readBoundedJson(response: Response, maximumBytes: number): Promise<unknown> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    const value = Number(declaredLength);
-    if (!Number.isSafeInteger(value) || value < 0 || value > maximumBytes) {
-      throw new ClientFailure("freightcom_upstream_response_too_large", "unavailable");
-    }
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maximumBytes) {
-    throw new ClientFailure("freightcom_upstream_response_too_large", "unavailable");
-  }
+async function readBoundedJson(response: Response, maximumBytes: number, signal: AbortSignal): Promise<unknown> {
+  const bytes = await readBoundedResponse(response, maximumBytes, signal);
   try {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
   } catch {
@@ -360,8 +351,9 @@ export function createFreightcomPortalClient(options: FreightcomPortalClientOpti
       if (response.status >= 300 && response.status < 400) {
         throw new ClientFailure("freightcom_upstream_redirect_rejected", "unavailable");
       }
-      return { status: response.status, body: await readBoundedJson(response, maxBodyBytes) };
+      return { status: response.status, body: await readBoundedJson(response, maxBodyBytes, controller.signal) };
     } catch (error) {
+      if (error instanceof ResponseSizeError) throw new ClientFailure("freightcom_upstream_response_too_large", "unavailable");
       if (error instanceof ClientFailure) throw error;
       if (controller.signal.aborted) {
         throw new ClientFailure(

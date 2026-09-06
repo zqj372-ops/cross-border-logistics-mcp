@@ -318,3 +318,18 @@ form[data-form=service-access] { max-width: 940px; }
   .manual-flow { gap: 8px; }
   .manual-flow span { padding: 8px 10px; font-size: 12px; }
 }
+
+.call-log-filters { display:flex; flex-wrap:wrap; align-items:end; gap:16px; margin:0 0 24px; }
+.call-log-filters label { display:grid; gap:8px; flex:1 1 150px; font-size:13px; }
+.call-log-filters select { width:100%; min-height:42px; }
+.call-log-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; margin:0 0 24px; }
+.call-log-summary > div { padding:20px; border:1px solid var(--border,#e4e7ec); background:var(--surface,#fff); border-radius:10px; }
+.call-log-summary span { display:block; color:var(--muted,#667085); font-size:13px; margin-bottom:10px; }
+.call-log-summary strong { font-size:28px; font-weight:600; }
+.call-log-summary small { font-size:13px; font-weight:400; }
+.call-request-id { overflow-wrap:anywhere; white-space:normal; font-size:11px; }
+@media(max-width:720px) { .call-log-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .call-log-filters button { width:100%; } }
+
+.call-log-filters > .form-error { flex-basis:100%; }
+.call-log-table table { min-width:820px; }
+.call-log-table td { white-space:nowrap; }

@@ -8,8 +8,16 @@
       "version": "2026-08-21.v1",
       "path": "docs/standards/agent-bootstrap.md",
       "priority": 100,
-      "audiences": ["developer", "reviewer", "operator", "caller"],
-      "rule_ids": ["AGENT-BOOT-001", "SEC-BOUNDARY-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "AGENT-BOOT-001",
+        "SEC-BOUNDARY-001"
+      ],
       "summary": "Stable bootstrap, safety boundary and source-of-truth rules."
     },
     {
@@ -17,8 +25,16 @@
       "version": "2026-08-21.v1",
       "path": "docs/standards/platform-contracts.md",
       "priority": 90,
-      "audiences": ["developer", "reviewer", "operator", "caller"],
-      "rule_ids": ["CONTRACT-SCHEMA-001", "STATUS-ENVELOPE-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "CONTRACT-SCHEMA-001",
+        "STATUS-ENVELOPE-001"
+      ],
       "summary": "Schema, status, units, evidence and write-boundary invariants."
     },
     {
@@ -26,8 +42,16 @@
       "version": "2026-08-23.v1",
       "path": "docs/rfcs/2026-08-23-readback-attempt-finalization-v1.md",
       "priority": 87,
-      "audiences": ["developer", "reviewer", "operator"],
-      "rule_ids": ["CONTROL-ATTEMPT-001", "CONTROL-FINALIZE-001", "CONTROL-RECOVERY-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator"
+      ],
+      "rule_ids": [
+        "CONTROL-ATTEMPT-001",
+        "CONTROL-FINALIZE-001",
+        "CONTROL-RECOVERY-001"
+      ],
       "summary": "Accepted terminal-only readback-attempt lineage, atomic finalization, startup recovery and runtime-barrier contract."
     },
     {
@@ -35,8 +59,17 @@
       "version": "2026-08-21.v0",
       "path": "docs/standards/module-runtime-v0.md",
       "priority": 80,
-      "audiences": ["developer", "reviewer", "operator"],
-      "rule_ids": ["MOD-LIFE-001", "MOD-CAP-001", "MOD-TOOL-001", "MOD-MOUNT-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator"
+      ],
+      "rule_ids": [
+        "MOD-LIFE-001",
+        "MOD-CAP-001",
+        "MOD-TOOL-001",
+        "MOD-MOUNT-001"
+      ],
       "summary": "Static trusted modules, capability injection, lifecycle and tool catalog."
     },
     {
@@ -44,8 +77,17 @@
       "version": "2026-08-21.v0",
       "path": "docs/standards/agent-access-v0.md",
       "priority": 80,
-      "audiences": ["developer", "reviewer", "operator", "caller"],
-      "rule_ids": ["AGENT-PROFILE-001", "AGENT-CONTEXT-001", "AGENT-RESOURCE-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "AGENT-PROFILE-001",
+        "AGENT-CONTEXT-001",
+        "AGENT-RESOURCE-001"
+      ],
       "summary": "Allowlisted Agent profiles, context projection and MCP resources."
     },
     {
@@ -53,8 +95,14 @@
       "version": "2026-08-21.v1",
       "path": "docs/standards/active-workstreams.md",
       "priority": 80,
-      "audiences": ["developer", "reviewer", "operator"],
-      "rule_ids": ["WORKSTREAM-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator"
+      ],
+      "rule_ids": [
+        "WORKSTREAM-001"
+      ],
       "summary": "Current workstream ownership and RFC escalation path."
     },
     {
@@ -62,8 +110,16 @@
       "version": "2026-08-22.v1",
       "path": "docs/rfcs/2026-08-22-writable-module-control-plane-v1.md",
       "priority": 85,
-      "audiences": ["developer", "reviewer", "operator"],
-      "rule_ids": ["CONTROL-WRITE-001", "CONTROL-AUTH-001", "CONTROL-RELEASE-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator"
+      ],
+      "rule_ids": [
+        "CONTROL-WRITE-001",
+        "CONTROL-AUTH-001",
+        "CONTROL-RELEASE-001"
+      ],
       "summary": "Accepted local/fixture module-control rules for static mounted modules; profiles provide standard content only, not HTTP permissions; production Admin POST remains blocked."
     },
     {
@@ -71,8 +127,16 @@
       "version": "2026-08-22.v1",
       "path": "docs/rfcs/2026-08-22-admin-control-state-dto-v1.md",
       "priority": 86,
-      "audiences": ["developer", "reviewer", "operator"],
-      "rule_ids": ["CONTROL-STATE-001", "CONTROL-STATE-002", "CONTROL-STATE-003"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator"
+      ],
+      "rule_ids": [
+        "CONTROL-STATE-001",
+        "CONTROL-STATE-002",
+        "CONTROL-STATE-003"
+      ],
       "summary": "Accepted closed, bounded and redacted Admin control-state DTO plus fail-closed producer semantics; contract access grants no Admin write permission or production readiness."
     },
     {
@@ -80,8 +144,18 @@
       "version": "2026-08-27.v1",
       "path": "docs/rfcs/2026-08-27-t0-production-profile-v1.md",
       "priority": 92,
-      "audiences": ["developer", "reviewer", "operator", "caller"],
-      "rule_ids": ["T0-PROFILE-001", "T0-CATALOG-001", "T0-READINESS-001", "T0-AUTH-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "T0-PROFILE-001",
+        "T0-CATALOG-001",
+        "T0-READINESS-001",
+        "T0-AUTH-001"
+      ],
       "summary": "Accepted T0 production profile: exact three-tool/five-resource catalog, static modules, short JWT and readiness gates."
     },
     {
@@ -89,8 +163,18 @@
       "version": "2026-08-27.v1",
       "path": "docs/rfcs/2026-08-27-credential-exchange-v1.md",
       "priority": 93,
-      "audiences": ["developer", "reviewer", "operator", "caller"],
-      "rule_ids": ["ACCESS-EXCHANGE-001", "ACCESS-JWT-001", "ACCESS-REVOKE-001", "ACCESS-AUDIT-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "ACCESS-EXCHANGE-001",
+        "ACCESS-JWT-001",
+        "ACCESS-REVOKE-001",
+        "ACCESS-AUDIT-001"
+      ],
       "summary": "Accepted provider-neutral long-lived API Key to short-lived JWT exchange and revocation boundary; real provider pending verification."
     },
     {
@@ -98,8 +182,14 @@
       "version": "2026-08-21.v1",
       "path": "docs/standards/release-agent-adapters.md",
       "priority": 60,
-      "audiences": ["operator", "caller"],
-      "rule_ids": ["RELEASE-ADAPTER-001", "RELEASE-ADAPTER-002"],
+      "audiences": [
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "RELEASE-ADAPTER-001",
+        "RELEASE-ADAPTER-002"
+      ],
       "summary": "Client transport, authentication, discovery and readiness adaptation rules."
     },
     {
@@ -107,8 +197,14 @@
       "version": "2026-08-21.v0",
       "path": "docs/rfcs/2026-08-21-module-runtime-agent-standard-access-v0.md",
       "priority": 70,
-      "audiences": ["developer", "reviewer", "operator"],
-      "rule_ids": ["RFC-CHANGE-001"],
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator"
+      ],
+      "rule_ids": [
+        "RFC-CHANGE-001"
+      ],
       "summary": "Accepted change record, compatibility boundary and rollback requirements."
     },
     {
@@ -116,9 +212,32 @@
       "version": "2026-08-21.v0",
       "path": "docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md",
       "priority": 40,
-      "audiences": ["developer", "reviewer"],
-      "rule_ids": ["PLAN-TRACE-001"],
+      "audiences": [
+        "developer",
+        "reviewer"
+      ],
+      "rule_ids": [
+        "PLAN-TRACE-001"
+      ],
       "summary": "Implementation traceability, test checkpoints and ownership boundaries."
+    },
+    {
+      "standard_id": "business-mcp.v1",
+      "version": "2026-09-06.v1",
+      "path": "docs/standards/business-mcp-v1.md",
+      "priority": 91,
+      "audiences": [
+        "developer",
+        "reviewer",
+        "operator",
+        "caller"
+      ],
+      "rule_ids": [
+        "BUSINESS-MCP-001",
+        "BUSINESS-MCP-002",
+        "BUSINESS-MCP-003"
+      ],
+      "summary": "Explicit business MCP profile, signed isolated providers, source-owned history and shared Portal persistence."
     }
   ],
   "profiles": [
@@ -141,6 +260,10 @@
     {
       "profile_id": "runtime-caller",
       "path": "docs/agent/profiles/runtime-caller.json"
+    },
+    {
+      "profile_id": "business-runtime-caller",
+      "path": "docs/agent/profiles/business-runtime-caller.json"
     }
   ],
   "modules": [
@@ -148,56 +271,105 @@
       "module_id": "cargo",
       "version": "2026-08-21.v0",
       "risk_level": "T0",
-      "standard_ids": ["module-runtime.v0", "platform.contracts"],
-      "tool_names": ["cargo.calculate"]
+      "standard_ids": [
+        "module-runtime.v0",
+        "platform.contracts"
+      ],
+      "tool_names": [
+        "cargo.calculate"
+      ]
     },
     {
       "module_id": "container",
       "version": "2026-08-21.v0",
       "risk_level": "T0",
-      "standard_ids": ["module-runtime.v0", "platform.contracts"],
-      "tool_names": ["container.plan_summary"]
+      "standard_ids": [
+        "module-runtime.v0",
+        "platform.contracts"
+      ],
+      "tool_names": [
+        "container.plan_summary"
+      ]
     },
     {
       "module_id": "freightcom-ltl",
       "version": "2026-08-26.v1",
       "risk_level": "T1",
-      "standard_ids": ["module-runtime.v0", "platform.contracts"],
-      "tool_names": ["quote.freightcom_ltl.preview"]
+      "standard_ids": [
+        "module-runtime.v0",
+        "platform.contracts"
+      ],
+      "tool_names": [
+        "quote.freightcom_ltl.preview"
+      ]
     },
     {
       "module_id": "agent-access",
       "version": "2026-08-21.v0",
       "risk_level": "T0",
-      "standard_ids": ["module-runtime.v0", "platform.contracts", "agent-access.v0"],
-      "tool_names": ["system.agent_context.get"]
+      "standard_ids": [
+        "module-runtime.v0",
+        "platform.contracts",
+        "agent-access.v0"
+      ],
+      "tool_names": [
+        "system.agent_context.get"
+      ]
+    },
+    {
+      "module_id": "business-api",
+      "version": "1.0.0",
+      "risk_level": "T1",
+      "standard_ids": [
+        "business-mcp.v1",
+        "platform.contracts"
+      ],
+      "tool_names": [
+        "customs.query",
+        "customs.tax.estimate",
+        "quote.zone_preview",
+        "quote.ai_extract_preview"
+      ]
     }
   ],
   "resources": [
     {
       "resource_id": "agent.bootstrap",
       "uri": "logistics://agent/bootstrap",
-      "standard_ids": ["agent.bootstrap"]
+      "standard_ids": [
+        "agent.bootstrap"
+      ]
     },
     {
       "resource_id": "standards.index",
       "uri": "logistics://standards/index",
-      "standard_ids": ["agent.bootstrap", "platform.contracts", "module-runtime.v0", "agent-access.v0"]
+      "standard_ids": [
+        "agent.bootstrap",
+        "platform.contracts",
+        "module-runtime.v0",
+        "agent-access.v0"
+      ]
     },
     {
       "resource_id": "contracts.envelope.current",
       "uri": "logistics://contracts/envelope/current",
-      "standard_ids": ["platform.contracts"]
+      "standard_ids": [
+        "platform.contracts"
+      ]
     },
     {
       "resource_id": "modules.catalog",
       "uri": "logistics://modules/catalog",
-      "standard_ids": ["module-runtime.v0"]
+      "standard_ids": [
+        "module-runtime.v0"
+      ]
     },
     {
       "resource_id": "agent.profiles",
       "uri": "logistics://agent/profiles",
-      "standard_ids": ["agent-access.v0"]
+      "standard_ids": [
+        "agent-access.v0"
+      ]
     }
   ]
 }

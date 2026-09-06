@@ -34,14 +34,22 @@ describe("unified application Key integration",()=>{
     business.service.acknowledgeCredential(owner,credential.credentialId,{idempotencyKey:"unified-key-ack0001",expectedVersion:1,input:{}});
     const bridge=runtime.createUnifiedBridge(business.service);
 
+    expect(business.repository.read().credentials[0]?.lastUsedAt).toBeNull();
+    await expect(business.service.authorizeApiKey(`${key}invalid`,"customs.query")).rejects.toThrow();
+    expect(business.repository.read().credentials[0]?.lastUsedAt).toBeNull();
     await expect(business.service.authorizeApiKey(key,"customs.query")).resolves.toMatchObject({applicationId:application.applicationId});
+    expect(typeof business.repository.read().credentials[0]?.lastUsedAt).toBe("string");
+    expect(business.repository.read().credentials[0]?.version).toBe(2);
     await expect(bridge.executeT0WithApplicationKey({apiKey:key,toolName:"system.agent_context.get",input:{profile_id:"runtime-caller"}})).resolves.toMatchObject({status:"success"});
     const exchanged=await bridge.exchangeApplicationToken({apiKey:key,requestedToolNames:["cargo.calculate"],clientIp:"127.0.0.1",requestId:"req_unified_0000001"});
     await expect(bridge.verifyApplicationTokenAuthority(exchanged.data.access_token)).resolves.toBeUndefined();
+    await expect(business.service.authorizeMcpApiKey(key,["cargo.calculate","customs.query"])).resolves.toMatchObject({applicationId:application.applicationId});
+    await expect(business.service.authorizeMcpApiKey(key,["quote.zone_preview"])).rejects.toThrow("business_authorization_denied");
 
     business.service.revokeCredential(owner,credential.credentialId,{idempotencyKey:"unified-key-revoke01",expectedVersion:2,input:{}});
     await expect(bridge.verifyApplicationTokenAuthority(exchanged.data.access_token)).rejects.toThrow("business_authorization_denied");
     await expect(business.service.authorizeApiKey(key,"customs.query")).rejects.toThrow("business_authorization_denied");
+    await expect(business.service.authorizeMcpApiKey(key,["customs.query"])).rejects.toThrow("business_authorization_denied");
     business.repository.close();await runtime.close();
   });
 });

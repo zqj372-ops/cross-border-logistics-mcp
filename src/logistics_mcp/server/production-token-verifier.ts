@@ -159,9 +159,11 @@ export function createProductionTokenVerifier(
         if (applicationAuthority === undefined || options.applicationAuthorityUrl === undefined) {
           throw new Error("Application token authority is required for bkey credentials.");
         }
+        const businessProfile = claims.mcp_profile === "business-v1";
+        const authorityVersion = businessProfile ? "application-mcp-authority@2026-09-06.v1" : "application-authority@2026-09-06.v1";
         const result = await applicationAuthority.post(
-          options.applicationAuthorityUrl,
-          { schema_version: "application-authority@2026-09-06.v1" },
+          businessProfile ? new URL("/access/v2/application/mcp/token/authority", options.applicationAuthorityUrl).href : options.applicationAuthorityUrl,
+          { schema_version: authorityVersion },
           { authorization: `Bearer ${token}` },
         );
         if (
@@ -173,7 +175,7 @@ export function createProductionTokenVerifier(
         const response = result as Record<string, unknown>;
         const data = response.data;
         if (
-          response.schema_version !== "application-authority@2026-09-06.v1"
+          response.schema_version !== authorityVersion
           || response.status !== "success"
           || !Array.isArray(response.reason_codes) || response.reason_codes.length !== 0
           || typeof data !== "object" || data === null || Array.isArray(data)
@@ -191,6 +193,13 @@ export function createProductionTokenVerifier(
         const snapshot = jwks.jwks();
         const ready = snapshot !== undefined
           && await hasUsableRs256PublicKey(snapshot.keys);
+        if (applicationAuthority && options.applicationAuthorityUrl) {
+          const health = await applicationAuthority.get(new URL("health", options.applicationAuthorityUrl).href);
+          if (typeof health !== "object" || health === null || Array.isArray(health)
+            || Object.keys(health).sort().join(",") !== "ready,schema_version"
+            || (health as Record<string, unknown>).schema_version !== "application-authority-health@2026-09-06.v1"
+            || (health as Record<string, unknown>).ready !== true) return { ready: false };
+        }
         return { ready };
       } catch {
         return { ready: false };

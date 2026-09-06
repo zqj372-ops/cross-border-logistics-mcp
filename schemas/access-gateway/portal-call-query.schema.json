@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/portal-call-query.schema.json",
+  "type": "object",
+  "properties": {
+    "application_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "cargo.calculate",
+        "container.plan_summary",
+        "system.agent_context.get",
+        "customs.query",
+        "customs.tax.estimate",
+        "quote.zone_preview",
+        "quote.ai_extract_preview",
+        "quote.freightcom_ltl.preview"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "needs_input",
+        "manual_review",
+        "blocked",
+        "unavailable"
+      ]
+    },
+    "from": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T[^\\s]+$"
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T[^\\s]+$"
+    },
+    "cursor": {
+      "type": "string",
+      "maxLength": 400
+    },
+    "limit": {
+      "default": 25,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "limit"
+  ],
+  "additionalProperties": false
+}

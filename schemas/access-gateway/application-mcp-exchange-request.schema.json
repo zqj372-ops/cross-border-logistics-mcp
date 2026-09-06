@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/application-mcp-exchange-request.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "application-mcp-exchange@2026-09-06.v1"
+    },
+    "requested_tool_names": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "cargo.calculate",
+          "container.plan_summary",
+          "system.agent_context.get",
+          "customs.query",
+          "customs.tax.estimate",
+          "quote.zone_preview",
+          "quote.ai_extract_preview",
+          "quote.freightcom_ltl.preview"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "requested_tool_names"
+  ],
+  "additionalProperties": false
+}

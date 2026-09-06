@@ -99,6 +99,7 @@ function contextFingerprint(context: ExecutionContext): string {
     scopes: [...context.scopes].sort(),
     clientId: context.clientId,
     sessionId: context.sessionId,
+    ...(context.profile === undefined ? {} : { profile: context.profile }),
   });
   return `sha256:${createHash("sha256").update(normalized).digest("hex")}`;
 }

@@ -156,14 +156,14 @@ describe("Agent standard pack", () => {
     expect(isRuntimeTrustedAgentStandardPack(buildAgentStandardPack(rootDir))).toBe(false);
   });
 
-  it("pins the current thirteen-standard build to the reviewed serialized-byte digest", () => {
+  it("pins the current fourteen-standard build to the reviewed serialized-byte digest", () => {
     const pack = buildAgentStandardPack(rootDir);
     const serialized = serializeAgentStandardPack(pack);
 
-    expect(pack.standards).toHaveLength(13);
-    expect(Buffer.byteLength(serialized, "utf8")).toBe(138_416);
+    expect(pack.standards).toHaveLength(14);
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(143_128);
     expect(sha256(serialized)).toBe(
-      "sha256:6e18315d97cfcf2f5b81b1b8e68d3b1e1c4d3bc651f3f18c00e9bc026bcef264",
+      "sha256:ef9fff883f7515348d9f08b8617d739262494166ad309d5c3fbd1e34b312939d",
     );
   });
 
@@ -225,6 +225,7 @@ describe("Agent standard pack", () => {
       "admin-control-state-dto-v1",
       "agent-access.v0",
       "agent.bootstrap",
+      "business-mcp.v1",
       "credential-exchange-v1",
       "effective-rfc",
       "implementation-plan",
@@ -264,6 +265,7 @@ describe("Agent standard pack", () => {
     });
     expect(first.modules.map((module) => module.module_id).sort()).toEqual([
       "agent-access",
+      "business-api",
       "cargo",
       "container",
       "freightcom-ltl",

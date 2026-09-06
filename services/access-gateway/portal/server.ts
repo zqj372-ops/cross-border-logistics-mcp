@@ -1,3 +1,4 @@
+import type { PortalCallLogService } from "./call-log";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
@@ -26,6 +27,7 @@ export interface StartPortalServerOptions {
   readonly bridge?: PortalCredentialBridge;
   readonly organizationBridge?: OrganizationBridge;
   readonly businessService?: PortalBusinessService;
+  readonly callLogService?: PortalCallLogService;
   readonly businessAccessService?: BusinessAccessService;
   readonly businessMachineHandler?:PortalMachineHandler;
   readonly machineHandler?:PortalMachineHandler;
@@ -109,6 +111,6 @@ export async function startPortalServer(options: StartPortalServerOptions): Prom
   const boundHost=`${host.includes(":")?`[${host}]`:host}:${address.port}`; const origin=configuredOrigin?.origin??`http://${boundHost}`;
   const publicUrl=configuredOrigin??new URL(origin);
   allowedHost=publicUrl.host;
-  portalHandler=createPortalHttpHandler({mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
+  portalHandler=createPortalHttpHandler({mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
   return {server,host,port:address.port,origin,close:()=>new Promise<void>((resolveClose,reject)=>server.close(error=>error?reject(error):resolveClose()))};
 }

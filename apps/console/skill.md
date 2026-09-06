@@ -88,22 +88,26 @@ print(json.dumps({
 
 MCP 入口：`https://www.freightclaw.net/mcp`，使用 Streamable HTTP。
 
-当前 MCP 工具是 `cargo.calculate`、`container.plan_summary`、`system.agent_context.get`。报价与关务通过上表 REST API 提供，不应将其写成已经注册的 MCP 工具。
+`t0-v1` 保留三个工具：`cargo.calculate`、`container.plan_summary`、`system.agent_context.get`。
+
+平台启用 `business-v1` 并激活签名模块后，再开放 `customs.query`、`customs.tax.estimate`、`quote.zone_preview`、`quote.ai_extract_preview`、`quote.freightcom_ltl.preview`。这五项业务的状态、版本和人工复核约束与 REST 一致。请使用下面的新换票接口；只能请求实际获批的工具，客户端以 `tools/list` 的实际响应为准。
 
 使用同一 API Key 兑换短期令牌：
 
 ```http
-POST /access/v2/application/token/exchange
+POST /access/v2/application/mcp/token/exchange
 Authorization: ApiKey <FREIGHTCLAW_API_KEY>
 Content-Type: application/json
 ```
 
 ```json
 {
-  "schema_version": "application-exchange@2026-09-06.v1",
+  "schema_version": "application-mcp-exchange@2026-09-06.v1",
   "requested_tool_names": ["cargo.calculate"]
 }
 ```
+
+旧 T0 换票 `/access/v2/application/token/exchange`（`application-exchange@2026-09-06.v1`）继续兼容。业务 MCP 可读取 `business-runtime-caller` Agent profile；旧 `runtime-caller` 仍只展示 T0。
 
 只有声明过 `current_grant` 模式且具备当前有效 T0 授权的 Key 能兑换该令牌。旧业务 Key 需要负责人在个人中心点击“启用基础工具”，可保留原 Key。
 
@@ -128,3 +132,7 @@ Content-Type: application/json
 ## 后续服务接入
 
 接入新服务时复用当前账户、应用、Key 和授权边界。能力目录只登记已实现的协议、操作与 Schema，不能先将未知接口写成可用能力。源系统仍负责其价格、税则和业务记录，平台保存必要引用与脱敏审计，不复制一份业务权威数据。
+
+## 调用记录与历史
+
+人员登录后在“调用记录”查看当前企业、当前有权应用的调用状态、耗时和请求编号；默认24小时，可选7或30天，最多保留每企业10000条。统计不是商业账单。关务历史需要来源开放独立的只读历史接口，未接入时显示不可用，不在 MCP 复制关税结果。企业微信不属于接入要求。

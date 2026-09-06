@@ -3,6 +3,7 @@ import {
   ForbiddenError,
 } from "./contract-errors";
 import type { ActorRole, ExecutionContext } from "./context";
+import { APPLICATION_MCP_TOOLS, isApplicationMcpIdentity, type BusinessMcpTool } from "./application-tools";
 
 export { CrossTenantAccessError, ForbiddenError } from "./contract-errors";
 
@@ -21,7 +22,7 @@ export const phaseOneToolNames = Object.freeze([
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
 export const agentContextToolName = "system.agent_context.get" as const;
 export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
-type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName | BusinessMcpTool;
 
 export const tenantApiKeyToolNames = Object.freeze([
   "cargo.calculate",
@@ -93,6 +94,10 @@ function freezePolicy(
 }
 
 const toolPolicies: Readonly<Record<KnownToolName, ToolPolicy>> = Object.freeze({
+  "customs.query": freezePolicy("tariff:read", "read", readRoles),
+  "customs.tax.estimate": freezePolicy("tariff:estimate", "read", readRoles),
+  "quote.zone_preview": freezePolicy("quote:calculate", "read", readRoles),
+  "quote.ai_extract_preview": freezePolicy("quote:calculate", "read", readRoles),
   "knowledge.search_curated": freezePolicy("knowledge:read", "read", readRoles),
   "system.get_data_status": freezePolicy("system:read", "read", readRoles),
   "cargo.calculate": freezePolicy("quote:calculate", "read", readRoles),
@@ -119,7 +124,7 @@ function usesExactToolEntitlements(context: ExecutionContext): boolean {
 }
 
 function hasExactToolEntitlement(context: ExecutionContext, toolName: string): boolean {
-  return tenantApiKeyToolNameSet.has(toolName)
+  return (context.profile === "business-v1" ? (APPLICATION_MCP_TOOLS as readonly string[]).includes(toolName) : tenantApiKeyToolNameSet.has(toolName))
     && context.scopes.includes(`tool:${toolName}`);
 }
 
@@ -146,6 +151,7 @@ function assertT0ServiceScopeBoundary(context: ExecutionContext): void {
   // their existing business scope. The production composition separately
   // requires every incoming identity to be an exact T0 service identity.
   if (context.role !== "service" || !usesExactToolEntitlements(context)) return;
+  if (context.profile === "business-v1" && isApplicationMcpIdentity(context)) return;
   if (!isExactT0ServiceIdentity(context)) {
     throw new ForbiddenError("The authenticated scope cannot be used for the T0 production profile.");
   }

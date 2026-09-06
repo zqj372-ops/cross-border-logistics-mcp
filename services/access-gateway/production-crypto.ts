@@ -12,7 +12,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { SignJWT } from "jose";
 
-import type { JwksResponse, JwtClaims, SignedJwt } from "./contracts";
+import type { JwksResponse, GatewayJwtClaims, SignedJwt } from "./contracts";
 import type { JwtSigningProvider, SecretPepperProvider } from "./ports";
 
 const MAX_SECRET_FILE_BYTES = 64 * 1024;
@@ -537,7 +537,7 @@ export class FileJwtSigningProvider implements JwtSigningProvider {
     });
   }
 
-  async sign(claims: JwtClaims): Promise<SignedJwt> {
+  async sign(claims: GatewayJwtClaims): Promise<SignedJwt> {
     const key = this.#jwks.keys[0];
     if (key === undefined) throw new Error("JWT public key is unavailable.");
     const token = await new SignJWT({ ...claims })

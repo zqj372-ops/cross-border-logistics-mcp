@@ -1,0 +1,15 @@
+# Overlay for deploy/compose.yml. Supply a reviewed release directory and shared
+# call-log database config; this does not initialize or migrate production state.
+services:
+  logistics-mcp:
+    env_file: ${MCP_BUSINESS_ENV_FILE:?MCP_BUSINESS_ENV_FILE is required}
+    environment:
+      MCP_RUNTIME_PROFILE: business-v1
+      MCP_BUSINESS_RELEASE_FILE: /run/provider-release/release.json
+      MCP_BUSINESS_SIGNERS_FILE: /run/provider-release/trusted-signers.json
+      MCP_BUSINESS_RELEASE_STATE_PATH: /var/lib/logistics-mcp/provider-activation.json
+      MCP_BUSINESS_PROVIDER_SECRET_FILE: /run/provider-secrets/mcp-provider-secret
+      MCP_CALL_LOG_BACKEND: postgresql
+    volumes:
+      - ${MCP_BUSINESS_RELEASE_DIRECTORY:?MCP_BUSINESS_RELEASE_DIRECTORY is required}:/run/provider-release:ro
+      - ${MCP_BUSINESS_SECRET_DIRECTORY:?MCP_BUSINESS_SECRET_DIRECTORY is required}:/run/provider-secrets:ro

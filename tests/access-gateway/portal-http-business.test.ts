@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PortalBusinessService, type PortalBusinessClientResult } from "../../services/access-gateway/portal/business/service";
 import { type PortalContext, type PortalIdentity, type PortalState, success } from "../../services/access-gateway/portal/contracts";
 import { createPortalFixtureRuntime, type PortalFixtureRuntime } from "../../services/access-gateway/portal/fixture";
+import { PortalCallLogService, SqliteCallLogStore, callRecorder } from "../../services/access-gateway/portal/call-log";
 import { createPortalHttpHandler, type PortalHttpOptions } from "../../services/access-gateway/portal/http";
 import { FixturePortalIdentityProvider } from "../../services/access-gateway/portal/identity";
 import { InMemoryPortalSessionStore, PortalSessionManager } from "../../services/access-gateway/portal/session";
@@ -40,7 +41,7 @@ function portalState(context: PortalContext): PortalState {
 
 const portalService = { getState: (context: PortalContext) => success(portalState(context)) } as unknown as PortalService;
 
-async function start(options: { readonly service?: PortalService; readonly businessService?: PortalHttpOptions["businessService"] } = {}) {
+async function start(options: { readonly service?: PortalService; readonly businessService?: PortalHttpOptions["businessService"]; readonly callLogService?: PortalHttpOptions["callLogService"] } = {}) {
   const handlerRef: { current?: ReturnType<typeof createPortalHttpHandler> } = {};
   const server = createServer((request, response) => {
     void handlerRef.current!.handle(request, response).then((handled) => {
@@ -54,6 +55,7 @@ async function start(options: { readonly service?: PortalService; readonly busin
   handlerRef.current = createPortalHttpHandler({
     mode: "fixtures", service: options.service ?? portalService,
     ...(options.businessService ? { businessService: options.businessService } : {}),
+    ...(options.callLogService ? { callLogService: options.callLogService } : {}),
     identityProvider: new FixturePortalIdentityProvider({ mode: "fixtures", loopback: true }),
     sessions: new PortalSessionManager({ store: new InMemoryPortalSessionStore(), secureCookie: false }),
     allowedHosts: [new URL(origin).host], allowedOrigins: [origin], allowLoopbackHttp: true,
@@ -207,4 +209,24 @@ describe("portal personnel business HTTP", () => {
     expect(records.mock.calls.map((call) => call[1])).toEqual(["reviewQueue", "reviewResolve", "documentDownload"]);
     expect(records.mock.calls[1]?.[2]).toMatchObject({ task_ref: "task_abcdefghijklmnop", decision: "keep_manual_review" });
   });
+});
+
+it("serves customer call records through the authenticated HTTP route and isolates malformed scopes",async()=>{
+  const directory=mkdtempSync(join(tmpdir(),"portal-calls-http-"));directories.push(directory);
+  const store=new SqliteCallLogStore(join(directory,"calls.sqlite"));
+  try{
+    const businessService=new PortalBusinessService({portalService,connections:[],callRecorder:callRecorder(store)});
+    const origin=await start({businessService,callLogService:new PortalCallLogService(store,portalService)});
+    expect((await fetch(`${origin}/console/api/v1/calls`)).status).toBe(401);
+    const session=await login(origin);
+    const result=await post(origin,"/console/api/v1/business/customs/query",session,{input:{query:"Synthetic cotton shirt",ruleDate:"2026-09-05",originCountry:"CN"}});
+    expect(result.status).toBe(200);
+    const response=await fetch(`${origin}/console/api/v1/calls?operation=customs.query&limit=25`,{headers:{cookie:session.cookie}});
+    expect(response.status).toBe(200);expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({schema_version:"portal-call-log@2026-09-06.v1",status:"success",data:{summary:{total:1},events:[{tenant_id:"tenant-a",client_id:null,operation:"customs.query",status:"unavailable"}]}});
+    expect((await fetch(`${origin}/console/api/v1/calls?tenant_id=tenant-b`,{headers:{cookie:session.cookie}})).status).toBe(400);
+    expect((await fetch(`${origin}/console/api/v1/calls?limit=25&limit=50`,{headers:{cookie:session.cookie}})).status).toBe(400);
+    const history=await post(origin,"/console/api/v1/business/customs/history/list",session,{input:{operation:"customs.query"}});
+    expect(history.status).toBe(200);expect((await history.json() as {reason_codes:string[]}).reason_codes).not.toContain("route_not_found");
+  }finally{await store.close();}
 });

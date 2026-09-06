@@ -1,3 +1,4 @@
+import { BUSINESS_MCP_TOOLS, isApplicationMcpIdentity } from "../platform/application-tools";
 import { z } from "zod";
 
 import {
@@ -52,8 +53,8 @@ import {
   T0_PRODUCTION_MODULE_IDS,
   T0_PRODUCTION_RESOURCE_URIS,
   T0_PRODUCTION_TOOL_NAMES,
-  parseT0ProductionProfile,
-  type T0ProductionProfile,
+  parseProductionRuntimeProfile,
+  type ProductionRuntimeProfile,
 } from "../module-runtime";
 import {
   cargoModule,
@@ -189,6 +190,7 @@ export interface ProductionCompositionOptions
   extends Omit<GatewayCompositionOptions, "auditRepository" | "idempotencyRepository"> {
   readonly dataMode: "production";
   readonly profile?: string;
+  readonly businessProvider?: { readonly definitions: readonly ToolDefinition[];readonly catalogDefinitions?:readonly ToolDefinition[];subscribe?(listener:()=>void):()=>void;snapshot?():unknown;health?():Promise<{ready:boolean}>;close?():Promise<void> };
   readonly auditRepository?: DurableAuditRepository;
   readonly idempotencyRepository?: DurableIdempotencyRepository;
   readonly tokenVerifier?: ProductionTokenVerifier;
@@ -200,13 +202,14 @@ export interface ProductionCompositionOptions
 export interface GatewayComposition {
   readonly mode: CompositionMode;
   readonly dataMode: CompositionMode;
-  readonly profile?: T0ProductionProfile;
+  readonly profile?: ProductionRuntimeProfile;
   readonly adapters: FixtureAdapters;
   readonly bundle: Phase1Bundle;
   readonly handlers: ToolHandlerMap;
   readonly contracts: ToolContractMap;
   readonly definitions: readonly ToolDefinition[];
   readonly moduleHost: ModuleHost;
+  readonly businessModuleSnapshot?:()=>unknown;
   readonly agentAccessRuntime: AgentAccessRuntime;
   readonly handler: McpHttpHandler;
   readonly readiness: () => Promise<PlatformReadiness>;
@@ -693,7 +696,7 @@ function buildComposition(
   handler: McpHttpHandler,
   readiness: () => Promise<PlatformReadiness>,
   closeExtra: () => Promise<void> = () => Promise.resolve(),
-  profile?: T0ProductionProfile,
+  profile?: ProductionRuntimeProfile,
 ): GatewayComposition {
   if (options.dataMode !== mode) {
     throw new Error(
@@ -701,7 +704,6 @@ function buildComposition(
     );
   }
 
-  const definitions = tools.definitions;
   return {
     mode,
     dataMode: mode,
@@ -710,7 +712,7 @@ function buildComposition(
     bundle: tools.bundle,
     handlers: tools.handlers,
     contracts: tools.contracts,
-    definitions,
+    get definitions(){return tools.definitions;},
     moduleHost: tools.moduleHost,
     agentAccessRuntime: tools.agentAccessRuntime,
     handler,
@@ -804,7 +806,7 @@ export function createProductionComposition(
   if (options.dataMode !== "production") {
     throw new Error("Production adapters require DATA_MODE=production.");
   }
-  const profile = parseT0ProductionProfile(
+  const profile = parseProductionRuntimeProfile(
     Object.hasOwn(options, "profile") ? options.profile : "t0-v1",
   );
   const runtimeActivation = runtimeActivationFacades(options);
@@ -833,7 +835,13 @@ export function createProductionComposition(
     "token_verifier",
     options.tokenVerifier,
   );
-  const tools = t0CompositionTools(options.agentAccessRuntime, runtimeActivation);
+  const baseTools = t0CompositionTools(options.agentAccessRuntime, runtimeActivation);
+  if (profile === "business-v1" && options.businessProvider) {
+    assertExactStringSet((options.businessProvider.catalogDefinitions??options.businessProvider.definitions).map(tool => tool.name), BUSINESS_MCP_TOOLS, "business_mcp_tool_set_invalid");
+  }
+  const tools = profile === "business-v1" && options.businessProvider
+    ? { ...baseTools, get definitions(){return Object.freeze([...baseTools.definitions, ...options.businessProvider!.definitions]);} }
+    : baseTools;
   const mountedModules = tools.moduleHost.snapshot().modules.map((module) => ({
     module_id: module.module_id,
     version: module.version,
@@ -850,6 +858,8 @@ export function createProductionComposition(
     options.sessionOwnerId !== undefined &&
     /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(options.sessionOwnerId);
   const structuralReasons = [
+    ...(profile === "business-v1" && !options.businessProvider ? ["production_business_provider_missing"] : []),
+    ...(profile !== "business-v1" && options.businessProvider ? ["production_business_provider_wrong_profile"] : []),
     ...platform.reasonCodes,
     ...(allowedOrigins.length === 0 ? ["production_allowed_origins_missing"] : []),
     ...(allowedHosts.length === 0 ? ["production_allowed_hosts_missing"] : []),
@@ -874,6 +884,7 @@ export function createProductionComposition(
     ].filter((check): check is Promise<string | null> => check !== null);
     const liveReasons = await Promise.all(liveChecks);
     reasons.push(...liveReasons.filter((reason): reason is string => reason !== null));
+    if(options.businessProvider?.health){try{if(!(await options.businessProvider.health()).ready)reasons.push("production_business_provider_unhealthy");}catch{reasons.push("production_business_provider_unhealthy");}}
     const uniqueReasons = [...new Set(reasons)];
     return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
   };
@@ -887,11 +898,9 @@ export function createProductionComposition(
           authenticate: async (token) => {
             if (!isCompactJwt(token)) throw new AuthenticationError();
             const claims = await options.tokenVerifier!.verify(token);
-            if (!isExactT0ServiceIdentity({
-              role: claims.actor_role,
-              roles: claims.roles,
-              scopes: claims.scopes,
-            })) {
+            const identity = { role: claims.actor_role, roles: claims.roles, scopes: claims.scopes, profile: claims.mcp_profile };
+            if (!(claims.mcp_profile === undefined ? isExactT0ServiceIdentity(identity)
+              : profile === "business-v1" && isApplicationMcpIdentity(identity))) {
               throw new AuthenticationError();
             }
             return claims;
@@ -900,6 +909,7 @@ export function createProductionComposition(
           handlers: tools.handlers,
           contracts: tools.contracts,
           definitions: tools.definitions,
+          ...(options.businessProvider?.subscribe?{dynamicDefinitions:{get:()=>tools.definitions,subscribe:(listener:()=>void)=>options.businessProvider!.subscribe!(listener)}}:{}),
           agentAccessRuntime: tools.agentAccessRuntime,
           auditRepository: platform.dependencies.auditRepository,
           idempotencyRepository: platform.dependencies.idempotencyRepository,
@@ -911,7 +921,7 @@ export function createProductionComposition(
           requireHttps: true,
         });
 
-  return buildComposition(
+  const composition=buildComposition(
     "production",
     options,
     emptyProductionAdapters,
@@ -921,6 +931,7 @@ export function createProductionComposition(
     async () => {
       const results = await Promise.allSettled([
         platform.close(),
+        ...(options.businessProvider?.close?[options.businessProvider.close()]:[]),
         ...(options.tokenVerifier === undefined ||
         typeof options.tokenVerifier.close !== "function"
           ? []
@@ -932,6 +943,7 @@ export function createProductionComposition(
     },
     profile,
   );
+  return {...composition,get definitions(){return tools.definitions;},...(options.businessProvider?.snapshot?{businessModuleSnapshot:()=>options.businessProvider!.snapshot!()}: {})};
 }
 
 interface ProductionDependencyStatus {

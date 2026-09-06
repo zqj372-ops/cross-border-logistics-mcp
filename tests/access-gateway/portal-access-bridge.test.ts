@@ -607,4 +607,11 @@ describe("portal access bridge", () => {
       dataMode: "production",
     })).toThrowError(expect.objectContaining({ code: "rest_audience_not_isolated" }));
   });
+
+  it("refuses production local execution when no MCP Runtime port is configured", async () => {
+    const value = await fixture();
+    expect(() => createPortalAccessBridge({ ...value.bridgeOptions, dataMode: "production",
+      restTokenPolicy: { ...value.bridgeOptions.restTokenPolicy, audience: "portal-rest" },
+    })).toThrow("runtime_executor_required");
+  });
 });

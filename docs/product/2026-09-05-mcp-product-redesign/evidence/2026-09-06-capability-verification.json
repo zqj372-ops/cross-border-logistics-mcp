@@ -1,0 +1,79 @@
+{
+  "schema_version": "capability-verification@2026-09-06.v1",
+  "baseline_commit": "68bfa352574b3ccbc9f21ecccec132677011436b",
+  "production_deployed": false,
+  "node": "24.14.0",
+  "tests": {
+    "files_passed": 175,
+    "passed": 1689,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 72.06,
+    "postgres": "isolated localhost PostgreSQL 17.10; Gateway and Portal integration enabled"
+  },
+  "build": {
+    "passed": true,
+    "t0_attestation": true,
+    "agent_standards": 14,
+    "profiles": 6,
+    "modules": 5,
+    "resources": 5
+  },
+  "schema_validation": {
+    "mcp": 17,
+    "examples": 11,
+    "access_gateway": 28
+  },
+  "typecheck": true,
+  "lint": true,
+  "agent_adapters": 3,
+  "fixture_release_gate": true,
+  "browser": {
+    "browser": "bundled Chromium via Playwright; Browser plugin unavailable",
+    "fixture_only": true,
+    "checks": [
+      {
+        "check": "owner call readback",
+        "status": "pass",
+        "count": 10
+      },
+      {
+        "check": "status filter and empty state",
+        "status": "pass"
+      },
+      {
+        "check": "operation, time and status filters",
+        "status": "pass"
+      },
+      {
+        "check": "390px responsive layout",
+        "status": "pass"
+      },
+      {
+        "check": "source history fails closed",
+        "status": "pass"
+      },
+      {
+        "check": "history detail and input restore (browser fixture only)",
+        "status": "pass"
+      },
+      {
+        "check": "logout clears state and nonmember cannot see calls",
+        "status": "pass"
+      },
+      {
+        "check": "developer cannot see another personnel actor calls",
+        "status": "pass"
+      }
+    ],
+    "page_errors": []
+  },
+  "external_acceptance_pending": [
+    "riskcustoms_history_endpoints",
+    "published_customs_data",
+    "approved_current_rates",
+    "freightcom_enterprise_credentials",
+    "real_customer_key_invocation",
+    "production_rollout"
+  ]
+}

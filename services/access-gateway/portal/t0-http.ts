@@ -12,16 +12,23 @@ export function createProductionT0HttpHandler(options:{
   allowedHosts:readonly string[];
   trustedProxyAddresses:readonly string[];
   mode?:"fixtures"|"production";
+  authorityHealth?:()=>Promise<boolean>;
 }){
   return {handle(req:IncomingMessage,res:ServerResponse){
     const path=(req.url??"").split("?",1)[0]!;
     const tool=paths.get(path),legacyExchange=path==="/access/v2/tools/token/exchange",applicationExchange=path==="/access/v2/application/token/exchange",authorityCheck=path==="/access/v2/application/token/authority";
-    if(!tool&&!legacyExchange&&!applicationExchange&&!authorityCheck)return false;
+    const healthCheck=path==="/access/v2/application/token/health";
+    if(!tool&&!legacyExchange&&!applicationExchange&&!authorityCheck&&!healthCheck)return false;
     void(async()=>{try{
       const remote=req.socket.remoteAddress??"",local=req.socket.localAddress??"",loopback=(value:string)=>["127.0.0.1","::1","::ffff:127.0.0.1"].includes(value);
       const transport=options.mode==="fixtures"
         ? loopback(remote)&&loopback(local)
         : count(req,"x-forwarded-proto")===1&&options.trustedProxyAddresses.includes(remote)&&req.headers["x-forwarded-proto"]==="https";
+      if(healthCheck){
+        if(req.method!=="GET"||req.url!==path||count(req,"host")!==1||req.headers.cookie!==undefined||req.headers.authorization!==undefined||!options.allowedHosts.includes(String(req.headers.host))||!transport)throw new PortalError("machine_request_denied");
+        const ready=await options.authorityHealth?.().catch(()=>false)??false;
+        send(res,ready?200:503,{schema_version:"application-authority-health@2026-09-06.v1",ready});return;
+      }
       if(req.method!=="POST"||(req.url??"")!==path||count(req,"host")!==1||count(req,"authorization")!==1||count(req,"content-type")!==1||!options.allowedHosts.includes(String(req.headers.host))||!transport||!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(String(req.headers["content-type"]??"")))throw new PortalError("machine_request_denied");
       const value=await body(req);
       if(authorityCheck){

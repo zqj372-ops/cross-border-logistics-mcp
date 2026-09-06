@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/customs-history-get-request.schema.json",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "customs.query",
+        "customs.tax.estimate"
+      ]
+    },
+    "record_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    }
+  },
+  "required": [
+    "operation",
+    "record_ref"
+  ],
+  "additionalProperties": false
+}
