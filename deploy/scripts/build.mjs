@@ -1,3 +1,4 @@
+import { buildInquiry } from "./build-inquiry.mjs";
 import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -176,3 +177,5 @@ await build({entryPoints:["services/access-gateway/portal/postgres-worker.ts"],o
 
 await build({entryPoints:["services/access-gateway/portal/postgres-migration.ts"],outfile:"dist/services/access-gateway/portal/postgres-migration.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
 await build({entryPoints:["src/logistics_mcp/module-runtime/provider-release-cli.ts"],outfile:"dist/src/logistics_mcp/module-runtime/provider-release-cli.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
+
+await buildInquiry();

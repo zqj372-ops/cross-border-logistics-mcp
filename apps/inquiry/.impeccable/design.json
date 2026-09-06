@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-06T18:52:06.901238+00:00",
+  "title": "Design System: FreightClaw 询价",
+  "extensions": {
+    "shadows": [
+      {
+        "name": "selected-service",
+        "value": "inset 0 0 0 1px var(--blue)",
+        "purpose": "选中服务的内描边。"
+      },
+      {
+        "name": "sticky-actions",
+        "value": "0 -8px 12px -12px #24344b55",
+        "purpose": "959px 及以下底部粘附操作区。"
+      }
+    ],
+    "focus": {
+      "outline": "3px solid #3659db",
+      "outlineOffset": "3px"
+    },
+    "motion": [
+      {
+        "name": "control-colors",
+        "value": "background-color 150ms, border-color 150ms",
+        "purpose": "仅在 prefers-reduced-motion: no-preference 时启用。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "1180px"
+      },
+      {
+        "name": "single-column-shell",
+        "value": "959px"
+      },
+      {
+        "name": "phone",
+        "value": "540px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "主按钮",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "现有主操作按钮；预览文字用于识别样式。",
+      "html": "<button class=\"ds-primary\">主操作</button>",
+      "css": ".ds-primary{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:14px;font-weight:600;line-height:1.5;min-height:44px;padding:10px 19px;border-radius:7px;cursor:pointer;border:1px solid transparent;color:#fff;background:var(--blue,#3659db)}.ds-primary:hover{background:#2949c3}.ds-primary:active{background:#213da6}.ds-primary:focus-visible{outline:3px solid var(--blue,#3659db);outline-offset:3px;}@media(prefers-reduced-motion:no-preference){.ds-primary{transition:background-color 150ms,border-color 150ms}}"
+    },
+    {
+      "name": "次按钮",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "白底描边次操作。",
+      "html": "<button class=\"ds-secondary\">次操作</button>",
+      "css": ".ds-secondary{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:14px;font-weight:600;line-height:1.5;min-height:44px;padding:10px 19px;border-radius:7px;cursor:pointer;border:1px solid #cbd3e1;color:#35415a;background:#fff}.ds-secondary:hover{background:#f3f5f9}.ds-secondary:focus-visible{outline:3px solid var(--blue,#3659db);outline-offset:3px;}@media(prefers-reduced-motion:no-preference){.ds-secondary{transition:background-color 150ms,border-color 150ms}}"
+    },
+    {
+      "name": "文字按钮",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "核对区修改等轻操作。",
+      "html": "<button class=\"ds-text\">修改</button>",
+      "css": ".ds-text{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:13px;min-height:34px;background:none;color:var(--blue,#3659db);padding:7px 0;border:0;cursor:pointer}.ds-text:hover{text-decoration:underline}.ds-text:focus-visible{outline:3px solid var(--blue,#3659db);outline-offset:3px;}"
+    },
+    {
+      "name": "原生文本输入",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "现有标签、可选提示、输入与错误文字组合。",
+      "html": "<div class=\"ds-field\"><label class=\"ds-label\" for=\"ds-inquiry-input\">资料 <span class=\"ds-optional\">选填</span></label><input class=\"ds-input\" id=\"ds-inquiry-input\" placeholder=\"填写资料\"><p class=\"ds-error\" hidden>请检查此项</p></div>",
+      "css": ".ds-field{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;color:#19263b}.ds-label{display:flex;gap:8px;align-items:baseline;font-size:13px;font-weight:600;margin-bottom:8px}.ds-optional{font-size:12px;font-weight:400;color:var(--muted,#626d80)}.ds-input{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:14px;display:block;width:100%;min-height:44px;padding:10px 12px;border:1px solid #bcc6d6;border-radius:6px;background:#fff;color:#19263b;line-height:1.5}.ds-input::placeholder{color:var(--muted,#626d80);opacity:1}.ds-input:focus-visible{outline:3px solid var(--blue,#3659db);outline-offset:3px;}.ds-input:disabled{background:#f2f4f8;color:#748199;cursor:not-allowed}.ds-input[aria-invalid=true]{border-color:#ba3847}.ds-error{font-size:12px;color:#af2835;margin-top:6px}@media(max-width:540px){.ds-input{font-size:16px}}"
+    },
+    {
+      "name": "页头导航",
+      "kind": "nav",
+      "description": "沿用页头的普通文字链接；这里只提取链接样式。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"导航样式预览\"><a class=\"ds-nav-link\" href=\"#\">费用目录</a><a class=\"ds-nav-link\" href=\"#\">服务详情</a></nav>",
+      "css": ".ds-nav{display:flex;gap:26px;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif}.ds-nav-link{font-size:13px;color:#44536b;padding:10px 0;text-decoration:none}.ds-nav-link:hover{text-decoration:underline}.ds-nav-link:focus-visible{outline:3px solid var(--blue,#3659db);outline-offset:3px;}@media(max-width:540px){.ds-nav{gap:14px}.ds-nav-link{font-size:12px}.ds-nav-link:first-child{display:none}}"
+    },
+    {
+      "name": "摘要面板",
+      "kind": "card",
+      "refersTo": "summary",
+      "description": "现有白色摘要容器与原生展开行为；只展示可复用结构。",
+      "html": "<aside class=\"ds-summary\"><details class=\"ds-details\" open><summary class=\"ds-summary-title\">询价摘要 <span class=\"ds-summary-meta\">待确认</span></summary><div class=\"ds-summary-body\">已选服务与路线显示在这里。</div></details></aside>",
+      "css": ".ds-summary{font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;color:#19263b;background:#fff;padding:24px;border:1px solid var(--line,#dfe4ee);border-radius:var(--radius,10px)}.ds-summary-title{font-size:16px;font-weight:600;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px}.ds-summary-title::-webkit-details-marker{display:none}.ds-summary-title:focus-visible{outline:3px solid var(--blue,#3659db);outline-offset:3px;}.ds-summary-meta{font-size:12px;font-weight:400;color:var(--muted,#626d80)}.ds-summary-body{padding:18px 0 22px;font-size:13px;color:var(--muted,#626d80)}@media(max-width:959px){.ds-summary{padding:0 26px 16px;border-top:0;border-radius:0}.ds-summary-title{padding:14px 0;border-top:1px solid var(--line,#dfe4ee);font-size:14px}.ds-summary-title:after{content:\"＋\";font-size:18px;font-weight:400;color:var(--muted,#626d80)}.ds-details[open] .ds-summary-title:after{content:\"−\"}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "清晰的物流询价单",
+    "overview": "延续 FreightClaw 的蓝色、系统字体栈与白色表单，以浅灰画布、细边界和明确字级组织信息。界面保持紧凑、平实，让填写者看清当前操作、已选内容和下一步。\n\n本规范提取当前询价页面的实际样式和已确认交互。具体服务条件与业务字段仍以页面实现和 BRIEF.md 为准；视觉文档不构成生产可用性或报价能力的证明。",
+    "keyCharacteristics": [
+      "单一蓝色强调操作与选中状态；正文与辅助文字保持明确层次。",
+      "白色工作区承载原生表单；大屏并列摘要，小屏按任务顺序收拢。",
+      "反馈给出可读文字，错误、待确认与未发送状态不只依赖颜色。"
+    ],
+    "rules": [
+      {
+        "name": "The Action Color Rule",
+        "body": "蓝色用于链接、主要操作、当前步骤、选中项和键盘焦点；不增加与任务无关的装饰色。",
+        "section": "colors"
+      },
+      {
+        "name": "The Native Field Rule",
+        "body": "保留原生复选框、单选框、选择框、日期与文本输入的行为；标签、可选提示和错误信息要与对应字段一起出现。",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do 保持服务可独立多选且初始无预选，选中状态同时呈现原生复选框与蓝色边界。",
+      "Do 保留桌面与 729 像素窗口的两列服务；手机改为单列。",
+      "Do 根据所选服务和运输方式显示必要字段，对未知数量保留“待确认”。",
+      "Do 明确区分邮件已生成和尚未发送；复制、手动复制及可选邮件应用入口均属于用户后续操作。",
+      "Do 对键盘焦点、错误字段和长地址保持可读与可定位。"
+    ],
+    "donts": [
+      "Don't 把蓝色品牌表单扩展成大幅宣传区、渐变背景或装饰卡片。",
+      "Don't 用自绘控件替换现有原生输入行为，或隐藏错误文字只留下红框。",
+      "Don't 将侧栏摘要当作已获得价格、正式报价或已经发送的证明。",
+      "Don't 把独立企业草稿、客户询价草稿和原费用目录混成同一个流程。"
+    ]
+  }
+}

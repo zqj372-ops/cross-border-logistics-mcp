@@ -8,7 +8,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ["apps/console/**/*.js"],
+    files: ["apps/console/**/*.js", "apps/inquiry/**/*.js"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: Object.fromEntries(["document", "window", "location", "navigator", "fetch", "Headers", "URL", "URLSearchParams", "FormData", "Blob", "crypto", "CSS", "HTMLElement", "AbortController", "AbortSignal", "matchMedia", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "confirm", "alert", "console", "localStorage", "sessionStorage", "structuredClone"].map((name) => [name, "readonly"])),
@@ -20,7 +20,7 @@ export default tseslint.config(
     rules: { "no-useless-assignment": "off" },
   },
   {
-    files: ["deploy/portal/**/*.mjs", "deploy/scripts/build.mjs", "deploy/cli/**/*.mjs"],
+    files: ["deploy/portal/**/*.mjs", "deploy/scripts/build.mjs", "deploy/scripts/build-inquiry.mjs", "deploy/cli/**/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: Object.fromEntries(["process", "console", "Buffer", "URL", "setTimeout", "clearTimeout"].map((name) => [name, "readonly"])),
@@ -34,7 +34,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "deploy/cli/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
+    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/inquiry/**/*.ts", "deploy/cli/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

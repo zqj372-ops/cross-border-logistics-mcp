@@ -9,11 +9,11 @@ import tarfile
 root = Path(__file__).resolve().parents[2]
 output = root / '.runtime/production-evidence'
 output.mkdir(parents=True, exist_ok=True)
-directories = ['src', 'services', 'apps/admin', 'apps/access-console', 'apps/console',
+directories = ['src', 'services', 'apps/admin', 'apps/access-console', 'apps/console', 'apps/inquiry',
                'docs/contracts', 'docs/agent', 'docs/standards', 'docs/rfcs',
                'docs/superpowers/plans', 'deploy/scripts', 'schemas']
 files = {'package.json', 'package-lock.json', 'tsconfig.json', 'vitest.config.ts',
-         'deploy/Dockerfile', '.dockerignore'}
+         'deploy/Dockerfile', 'deploy/portal/inquiry-navigation.css', '.dockerignore'}
 for directory in directories:
     for path in (root / directory).rglob('*'):
         if path.is_file() and not path.is_symlink() and path.suffix in {

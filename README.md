@@ -11,6 +11,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
 - [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；官网提供可直接安装的 npm 包。
 - [官网与 CLI 入口图文说明](docs/runbooks/unified-service-entry.md)：六张线上截图说明统一首页、保留的整柜询价及桌面/手机 CLI 入口，并记录发布和回滚步骤。
+- [简明海运询价图文说明](docs/runbooks/shipper-inquiry.md)：三步整理运输需求；完整费用目录保留，企业与合规咨询单独进入，邮件由客户自行确认发送。
 - [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)：四张实测截图说明安装后的命令选择、连接检查、输入校验与结果处理。
 
 发布记录、当前代码、本地测试和真实业务调用分别留证。下文生产状态引用已保存回执，不代表读取 README 时刚刚重新探测了生产。`ready=false`、测试数据、证据冲突和写后读回失败不得提升为 `success`。
@@ -20,7 +21,8 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | 入口 | 用途 |
 | --- | --- |
 | [官网服务首页](https://www.freightclaw.net/) | 海运询价、关税查询、税费估算与系统接入的统一入口 |
-| [整柜 / 海运询价](https://www.freightclaw.net/inquiry/) | 保留原全流程费用选择、分币种汇总和邮件询价 |
+| [整柜 / 海运询价](https://www.freightclaw.net/inquiry/) | 选择服务、填写运输信息、确认需求并生成询价邮件 |
+| [全部服务与费用](https://www.freightclaw.net/inquiry/details/) | 保留原 84 项费用目录、分币种汇总和完整询价表单 |
 | [能力市场](https://www.freightclaw.net/console/#market) | 浏览能力、查询实际协议和接口、打开在线工作台 |
 | [业务工作台](https://www.freightclaw.net/console/#workbench) | 企业成员通过登录会话处理询价、关务和税费，无需粘贴 API Key |
 | [API Key](https://www.freightclaw.net/console/#api-keys) | 应用负责人管理统一 Key、服务范围、交付、轮换和撤销 |
@@ -90,10 +92,11 @@ flowchart LR
 
 具体请求、Schema 和状态以 [统一 Key RFC](docs/rfcs/2026-09-06-unified-application-key-v1.md)、[Business API v2](docs/runbooks/business-api-v2.md) 和 OpenAPI 为准。
 
-## 三个界面的职责
+## 界面职责
 
 | 目录 | 职责 | 边界 |
 | --- | --- | --- |
+| `apps/inquiry` | 公开海运需求整理与企业咨询 | 三步生成邮件；不保存客户资料、不代发、不计算运价 |
 | `apps/console` | 当前企业门户、能力市场、人员工作台与统一 Key | 主用户入口；来源不可用时保留真实失败状态 |
 | `apps/access-console` | 既有 Access Gateway 的窄管理界面 | 保留租户、客户端、旧凭证、运营概览和接入诊断 |
 | `apps/admin` | MCP 模块控制与本地隔离管理流程 | 本地模块管理与生产 Portal 不等价；旧生产模块控制 POST 仍被阻断；业务模块使用独立签名发布文件 |

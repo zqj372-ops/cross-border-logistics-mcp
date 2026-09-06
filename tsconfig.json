@@ -21,6 +21,7 @@
     "services/**/*.ts",
     "tests/**/*.ts",
     "deploy/cli/**/*.ts",
+    "apps/inquiry/**/*.ts",
     "apps/**/*.d.ts",
     "apps/**/*.d.mts",
     "vitest.config.ts",
