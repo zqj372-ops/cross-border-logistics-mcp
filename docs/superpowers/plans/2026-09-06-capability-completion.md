@@ -21,3 +21,7 @@
 最终本地回归：175个文件、1689项通过，0失败、0跳过；共享 PostgreSQL 两个集成组均启用。桌面/手机浏览器8项通过，零页面异常；来源历史恢复表单使用浏览器 fixture，不代表真实来源已经实现。构建、类型、lint、Schema、Agent标准/适配器和隔离发布检查通过。详见[当前状态及脱敏回执](../../product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)。
 
 交付通过 `codex/complete-mcp-capabilities-20260906` 进入 main，保留必要 CI 检查。未执行生产部署；原工作区的本地技能和重复 Admin 文件继续保留。
+
+## RiskCustoms 来源接口后续实现
+
+用户补充授权后，来源历史 list/get、人员委托查询/税费快照和批量逐行恢复已完成；实际 MCP main 客户端通过本地 Node HTTP/SQLite 来源进行查询、估算、历史读取与输入/快照逐项相等验证。来源端还验证了租户/应用/人员隔离、分页、过期、审计失败和重启恢复。早期浏览器 fixture 证据保留为当时 UI 验证，当前接口交付见[来源说明](../../runbooks/riskcustoms-history-source.md)。未部署生产或发布税则。
