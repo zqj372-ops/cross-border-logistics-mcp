@@ -1,0 +1,7 @@
+/* Kept separate from the existing inquiry application and its pricing rules. */
+.freightclaw-entry-nav { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:10px max(20px,calc((100vw - 1220px)/2)); border-bottom:1px solid #dfe5ef; background:#f5f7fc; font:12px/1.6 'PingFang SC','Microsoft YaHei',sans-serif; }
+.freightclaw-entry-nav a { color:#294994; text-decoration:none; }
+.freightclaw-entry-nav a:hover { text-decoration:underline; }
+.freightclaw-entry-nav a:focus-visible { outline:2px solid #3659db; outline-offset:4px; }
+.freightclaw-entry-nav div { display:flex; gap:20px; }
+@media(max-width:480px) { .freightclaw-entry-nav { font-size:11px; gap:12px; } .freightclaw-entry-nav div { gap:12px; } }
