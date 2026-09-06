@@ -1,0 +1,14 @@
+{
+  "postal_code": "A0A 0A0",
+  "cbm": "1.2",
+  "weight_kg": "100",
+  "piece_count": 1,
+  "packaging_type": "pallet",
+  "address_type": "commercial",
+  "requires_liftgate": false,
+  "requires_pallet_jack": false,
+  "requires_appointment": false,
+  "explicit_pallet_count": 1,
+  "is_stackable": false,
+  "detention_minutes": 0
+}

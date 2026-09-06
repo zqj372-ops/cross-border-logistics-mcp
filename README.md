@@ -9,6 +9,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [2026-09-06 生产交付记录](docs/product/2026-09-05-mcp-product-redesign/17-market-manual-production-delivery.md) / [生产交付台账](docs/product/2026-09-05-mcp-product-redesign/15-implementation-delivery.md)
 - [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
+- [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；通过本地 npm 安装包交付。
 
 发布记录、当前代码、本地测试和真实业务调用分别留证。下文生产状态引用已保存回执，不代表读取 README 时刚刚重新探测了生产。`ready=false`、测试数据、证据冲突和写后读回失败不得提升为 `success`。
 
@@ -21,6 +22,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | [API Key](https://www.freightclaw.net/console/#api-keys) | 应用负责人管理统一 Key、服务范围、交付、轮换和撤销 |
 | [操作手册](https://www.freightclaw.net/console/#guide) | 账号、授权、REST、MCP 和结果处理 |
 | [Agent 指南](https://www.freightclaw.net/console/skill.md) / [OpenAPI](https://www.freightclaw.net/console/openapi.json) | 按实际 Schema 接入；仓库副本见 [skill.md](apps/console/skill.md) 和 [openapi.json](docs/integrations/openapi.json) |
+| [CLI](deploy/cli/README.md) | `freightclaw` 命令行调用货物、装柜、报价、关务和税费；沿用统一应用 Key，人员历史仍使用网页登录 |
 
 当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
 

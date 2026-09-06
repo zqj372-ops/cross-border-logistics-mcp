@@ -44,6 +44,8 @@ jobs:
         run: npm ci
       - name: 编译
         run: npm run build
+      - name: 构建独立 CLI 安装包目录
+        run: npm run build:cli
       - name: 全量测试（含共享数据库迁移与恢复）
         env:
           PORTAL_TEST_POSTGRES_PORT: "5432"
