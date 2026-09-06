@@ -1,0 +1,82 @@
+{
+  "captured_at": "2026-09-06T16:59:42.216Z",
+  "cli_version": "0.1.0",
+  "source_commit": "c4e208d88426178fd8e90fd70ef59eaf6d7c4877",
+  "node": "v24.14.0",
+  "display": "Browser screenshots of verbatim CLI stdout and stderr; captions are editorial.",
+  "captures": [
+    {
+      "id": "01-commands",
+      "kind": "local_offline",
+      "commands": [
+        {
+          "command": "freightclaw --version",
+          "started_at": "2026-09-06T16:59:42.236Z",
+          "exit_code": 0,
+          "stdout": "0.1.0\n",
+          "stderr": ""
+        },
+        {
+          "command": "freightclaw --help",
+          "started_at": "2026-09-06T16:59:42.855Z",
+          "exit_code": 0,
+          "stdout": "FreightClaw CLI 0.1.0\n\n用法：freightclaw <命令> [选项]\n\n  status                   检查 Portal 就绪状态（不证明业务数据已就绪）\n  commands                 查看本版本支持的命令（不代表账号已经获权）\n  schema <命令>            输出该命令的输入 JSON Schema\n  cargo calculate          货物体积、重量与分泡计算\n  container plan           装柜容量与装载摘要\n  agent context            读取已授权的 Agent 标准上下文\n  customs query            关税与归类查询\n  customs tax              单项税费估算\n  customs tax-batch        批量税费估算，最多20项\n  quote zone               加拿大尾程报价预览\n  quote extract            从询价文字提取输入并预览\n  quote freightcom         Freightcom LTL 询价预览\n\n选项：\n  --input, -i <文件|->      业务输入 JSON；- 表示标准输入\n  --key-file <私有文件>     从文件读取既有统一 API Key；也可使用 FREIGHTCLAW_API_KEY\n  --endpoint <origin>       默认 https://www.freightclaw.net；仅 HTTPS 或本机 HTTP\n  --timeout <秒>            网络及标准输入等待上限，1–60，默认15\n  --json                    紧凑 JSON；默认使用缩进 JSON\n  --help, -h                显示帮助\n  --version, -v             显示 CLI 版本\n\n不接受命令行明文 Key，不保存 Key 或业务响应，不跟随重定向，不自动重试。\n业务输入不需要包装成 {schema_version,input}；CLI 按现有 API 合同包装。\n个人关务历史和保存、审核、PDF 等人员操作使用网页登录，API Key 不代替人员身份。\n退出码：0成功，1网络/响应错误，2参数/输入/凭证配置错误，3需补输入，4人工复核，5被阻止，6不可用。\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "id": "02-readiness",
+      "kind": "production_public_no_credentials",
+      "commands": [
+        {
+          "command": "freightclaw status",
+          "started_at": "2026-09-06T16:59:42.912Z",
+          "exit_code": 0,
+          "stdout": "{\n  \"status\": \"success\",\n  \"data\": {\n    \"service\": \"freightclaw-portal\",\n    \"release_id\": \"portal-history-20260907\",\n    \"build_id\": \"593b537df6c438ecc002cadab5554044d750e258312af364cb7246b4ffb84475\",\n    \"ready\": true,\n    \"checks\": {\n      \"portal_database\": true,\n      \"session_database\": true,\n      \"business_access_database\": true,\n      \"identity\": true,\n      \"business_configuration\": true,\n      \"call_log_database\": true\n    }\n  },\n  \"reason_codes\": []\n}\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "id": "03-input-validation",
+      "kind": "local_validation_no_network",
+      "input": {
+        "query": "保温杯",
+        "ruleDate": "2026-09-07",
+        "attributes": {}
+      },
+      "input_file": "input-missing-origin.json",
+      "commands": [
+        {
+          "command": "freightclaw customs query --input input-missing-origin.json",
+          "started_at": "2026-09-06T16:59:43.791Z",
+          "exit_code": 2,
+          "stdout": "",
+          "stderr": "{\n  \"cli_error\": {\n    \"code\": \"input_schema_invalid\",\n    \"message\": \"输入不符合 customs query 合同；可用 schema customs query 查看字段、单位和金额格式。\"\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "04-unavailable",
+      "kind": "local_synthetic_http_fixture",
+      "commands": [
+        {
+          "command": "freightclaw customs query --input customs-query.json --endpoint http://127.0.0.1:61926",
+          "started_at": "2026-09-06T16:59:43.862Z",
+          "exit_code": 6,
+          "stdout": "{\n  \"schema_version\": \"portal-customs@2026-09-05.v1\",\n  \"status\": \"unavailable\",\n  \"data\": null,\n  \"reason_codes\": [\n    \"source_not_ready\"\n  ]\n}\n",
+          "stderr": ""
+        }
+      ],
+      "http_receipt": {
+        "method": "POST",
+        "path": "/api/v2/business/customs/query",
+        "credential": "synthetic fixture only; omitted",
+        "request_schema": "business-call@2026-09-05.v1",
+        "input_matches_example": true,
+        "http_status": 200
+      }
+    }
+  ]
+}
