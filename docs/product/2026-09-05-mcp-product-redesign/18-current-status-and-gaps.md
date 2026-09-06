@@ -1,6 +1,6 @@
 # 当前进度、功能边界与验收状态
 
-更新日期：2026-09-06。当前实现以 main `68bfa352574b3ccbc9f21ecccec132677011436b` 为基线，在 `codex/complete-mcp-capabilities-20260906` 完成。范围依据为[功能补齐 RFC](../../rfcs/2026-09-06-capability-completion-v1.md)。企业微信已从需求和待办中移除。
+更新日期：2026-09-07。功能补齐以 main `68bfa352574b3ccbc9f21ecccec132677011436b` 为基线，在 `codex/complete-mcp-capabilities-20260906` 完成并合入 main。2026-09-07已部署 main `712cddf7e355` 的 Portal 和 RiskCustoms main `18c113bf3243` 的来源服务，执行历史迁移及连接启用。范围依据为[功能补齐 RFC](../../rfcs/2026-09-06-capability-completion-v1.md)和[后续生产记录](../../runbooks/riskcustoms-history-deployment-2026-09-07.md)。企业微信已从需求和待办中移除。
 
 ## 1. 代码完成情况
 
@@ -8,11 +8,11 @@
 | --- | --- | --- |
 | 业务 MCP | 五项已有业务能力进入显式 `business-v1`；统一 Key 兑换包含当前精确权限的短 JWT；与三项 T0 共八项 | 客户端实际初始化、列工具、调用；私有 Provider 检查 JWT 和工作负载密钥，来源不可用保留 unavailable |
 | 调用记录与用量 | 企业/应用/人员隔离、服务/状态/时间筛选、分页、数量和平均耗时；网页和机器调用共用持久记录 | 仅保留身份引用、请求号、状态、耗时和时间；默认30天、每企业1万条，不保存原始业务输入或响应，不是商业计费 |
-| 关务/税费历史 | 来源列表与单条读回适配器、闭合 Schema、身份与记录校验、历史详情及恢复表单 | MCP 适配与页面、RiskCustoms 来源存储及 list/get 均完成；实际客户端隔离 HTTP 联调及来源重启恢复通过，生产部署待验收 |
+| 关务/税费历史 | 来源列表与单条读回适配器、闭合 Schema、身份与记录校验、历史详情及恢复表单 | 实现、隔离联调、生产部署与迁移均完成；生产两类空列表及重启后的审计持久化通过，人员详情和恢复待真实记录验收 |
 | 模块切换 | Ed25519 签名、制品/SBOM 摘要、出站主机白名单、持久版本序号、挂载、在途固定、排空取消、停用/回滚、MCP 目录变更通知 | 使用经过批准的私有 HTTP Provider；无任意代码安装入口；签名不代替实际 Provider 镜像和数据核对 |
 | Portal 多实例 | PostgreSQL 共享账号、授权、Key、会话、幂等及调用记录；显式 SQLite 迁移与写后核对；代理/Compose 示例 | 隔离 PostgreSQL 验证跨进程并发、会话单次消费、撤销保留、迁移和连接中断恢复；Runtime 自身仍保留实例会话绑定 |
 | 稳定性修复 | 响应实际字节上限、Key 最近使用时间、生产 T0 REST 经 MCP Runtime 持久审计、在线应用权威就绪检查 | 包含流式超限取消、签发期间撤权、审计编号读回、权威中断与恢复 |
-| 文档与交付 | README、手册、Agent 指南、OpenAPI、Schemas、新 Agent profile、运维说明和 CI 数据库验证 | [完整操作说明](../../runbooks/capability-completion-v1.md)；新功能须按配置启用，此轮未部署生产 |
+| 文档与交付 | README、手册、Agent 指南、OpenAPI、Schemas、新 Agent profile、运维说明和 CI 数据库验证 | [完整操作说明](../../runbooks/capability-completion-v1.md)；来源与 Portal 已部署，业务 MCP Provider 和 PostgreSQL 多实例仍须独立发布 |
 
 `cargo.calculate`、`container.plan_summary`、`system.agent_context.get` 的旧 `t0-v1` 精确白名单保留。五项业务为 `customs.query`、`customs.tax.estimate`、`quote.zone_preview`、`quote.ai_extract_preview`、`quote.freightcom_ltl.preview`。税费批量估算仍走已有 REST；MCP 对应单项估算。
 
@@ -22,22 +22,24 @@
 
 | 项目 | 当前可确认的证据 | 仍需完成 |
 | --- | --- | --- |
-| 正式关务数据 | 最近保存回执为15 staged、0 published、0 publication snapshot | 来源负责人审核适用性、动态措施、版本并发布正式 release/复合快照，再核对真实查询与估算 |
+| 正式关务数据 | 2026-09-07生产读回15 staged、0 published、0 publication snapshot；查询和税费均503未就绪 | 来源负责人审核适用性、动态措施、版本并发布正式 release/复合快照，再核对真实查询与估算 |
 | 当前报价和正式文件 | 历史试算来源版本2026-06-03；人员保存、审核、PDF 和历史适配已实现 | 核实当前获批价格与有效期，真实企业人员完成报价到正式 PDF 的读回 |
 | Freightcom 企业接入 | 只读适配器、权限、原币种费用和有效期校验已实现 | 提供正式企业凭证、账号映射并取得可核对的真实 rate |
 | 真实客户统一 Key | 旧回执未执行客户 Key 调用；本轮修复了 lastUsedAt 未更新 | 实际企业 REST/MCP 调用、当前权限和暂停/撤销验证；旧 lastUsedAt=null 不能单独证明从未调用 |
-| 关务来源历史 | 后续已按用户授权完成 RiskCustoms 查询/税费 list/get、人员快照、批量按行、隔离及重启恢复；与本仓库现有客户端真实 HTTP 联调通过 | 来源部署并迁移至 0008，代理显式加入两条历史路径，再启用 `customsHistoryEnabled` 并完成生产人员读回 |
-| 新代码部署 | 本地、CI 和 main 集成与生产发布分别留证 | 将候选按运维说明部署到明确环境，验证实际发布身份、共享库、签名 Provider、业务授权及来源状态 |
+| 关务来源历史 | 来源部署、0008迁移、代理路径与 `customsHistoryEnabled` 已完成；生产两类历史列表成功返回0条，重启后审计保留 | 登录后的真实人员历史详情与恢复；旧记录不自动回填，不虚构记录完成验收 |
+| 新代码部署 | main `712cddf7e355` 的 Portal 已上线，六项就绪和七项公网检查通过；Runtime 保留旧版 | 业务 MCP 的签名 Provider、`business-v1` 授权与多实例共享库分别部署和验收 |
 
-本轮未连接生产数据库、服务器或业务 API。用户随后明确授权实现 RiskCustoms 接口，已在来源仓库补齐实际接口并完成跨仓库隔离联调；原开发工作区及无关数据工作保留。来源接口代码完成与生产部署分别验收。税则 staged 数量和报价版本来自此前保存回执，并非本轮线上刷新；版本日期本身不证明价格有效或失效。
+2026-09-06的实现阶段未连接生产数据库、服务器或业务 API。用户随后明确授权部署来源、执行迁移、配置代理并启用历史，2026-09-07已执行并保存独立生产回执；原开发工作区及无关数据工作保留。税则 staged 数量已在本次线上刷新，报价版本仍来自此前保存回执；版本日期本身不证明价格有效或失效。
 
 自动对客发送、订舱、付款、正式报关、商业套餐计费和任意模块代码远程安装不属于已批准的本轮范围。企业微信不需要。
 
 ## 3. 生产身份与历史证据
 
-最近保存的 Portal/MCP 发布为 `freightclaw-portal:a42849576004`，完整 build ID `a428495760049453f5256e6b704dbbc14d0a0a8b29661d2426f6af8b1e7d31fd`。公网快照时间为 `2026-09-05T17:33:33.767298Z`，12项通过，客户 Key 未调用；Portal 三库及 Runtime 恢复检查是此前记录。
+最新 Portal 为 `freightclaw-portal:593b537df6c4`，完整 build ID `593b537df6c438ecc002cadab5554044d750e258312af364cb7246b4ffb84475`，release `portal-history-20260907`；公网回执时间 `2026-09-06T16:17:08.591701+00:00`（北京时间2026-09-07）。来源版本为 `0.2.3-history-18c113bf3243`。详见[当前部署回执](evidence/2026-09-07-customs-history-deployment.json)。本次未调用客户 Key。
 
-该镜像由原工作树362个构建输入的清单标识。本次 Git 提交不改变历史镜像身份，不自动发布新镜像。证据入口：[生产交付记录](17-market-manual-production-delivery.md)、[生产台账](15-implementation-delivery.md)、[脱敏发布摘要](evidence/2026-09-06-release-snapshot.json)。本地原始回执、运行库和凭证继续留在忽略目录。
+MCP Runtime 保留此前发布 `freightclaw-portal:a42849576004`，完整 build ID `a428495760049453f5256e6b704dbbc14d0a0a8b29661d2426f6af8b1e7d31fd`。旧 Portal/MCP 公网快照时间为 `2026-09-05T17:33:33.767298Z`，12项通过，客户 Key 未调用；此前 Portal 三库及 Runtime 恢复检查仍作为历史记录。
+
+旧镜像由原工作树362个构建输入的清单标识；新 Portal 由已提交 main 的392个输入文件构建。文档提交不改变历史或当前制品身份。旧证据入口：[生产交付记录](17-market-manual-production-delivery.md)、[生产台账](15-implementation-delivery.md)、[脱敏发布摘要](evidence/2026-09-06-release-snapshot.json)。本地原始回执、运行库和凭证继续留在忽略目录。
 
 ## 4. 本轮验证
 
@@ -72,3 +74,5 @@
 ## 6. RiskCustoms 来源接口后续交付
 
 2026-09-06 按用户补充要求实现来源历史 list/get，并整理合入已有新版查询、税费单项/批量和 Node 持久化接口。已通过真实 HTTP 查询→来源保存→MCP 历史读取→原输入/快照相等的联调；当前发布未就绪时仍可读取历史，重启恢复经过验证。详见[来源历史交付](../../runbooks/riskcustoms-history-source.md)和[脱敏联调回执](evidence/2026-09-06-riskcustoms-history-readback.json)。企业微信仍不在需求中。
+
+2026-09-07 已按后续授权完成来源和 Portal 生产部署。来源0008迁移通过，六条代理路径已切换；历史人员委托读回、访问审计重启持久化、门户版本及四库完整性通过。验收未创建人员登录会话、未生成虚假业务历史、未发布候选税则。完整操作、实际命令输出与回滚位置见[生产部署记录](../../runbooks/riskcustoms-history-deployment-2026-09-07.md)。
