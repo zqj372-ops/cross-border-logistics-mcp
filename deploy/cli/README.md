@@ -6,17 +6,17 @@
 
 ## 安装与开始
 
-需要 Node.js 22.13 或更新版本。当前交付为本地 npm 安装包，尚未发布到公共 npm registry。
+需要 Node.js 22.13 或更新版本。[官网 CLI 页面](https://www.freightclaw.net/console/#cli) 提供安装包、校验文件和输入示例。当前通过官网托管的 npm 包交付，尚未发布到公共 npm registry。
 
 ```sh
-npm install --global /absolute/path/freightclaw-cli-0.1.0.tgz
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.1.0.tgz
 freightclaw --version
 freightclaw commands
 freightclaw status
 freightclaw schema customs query
 ```
 
-`status` 不需要 Key，只检查 Portal 就绪状态；它不证明关税、报价来源或供应商凭证可用。`commands` 是当前 CLI 支持的命令列表，不代表你的应用已开通全部服务。
+也可先下载 `.tgz`，把安装命令中的网址换成本地文件的实际路径。`status` 不需要 Key，只检查 Portal 就绪状态；它不证明关税、报价来源或供应商凭证可用。`commands` 是当前 CLI 支持的命令列表，不代表你的应用已开通全部服务。
 
 应用负责人在 [API Key 页面](https://www.freightclaw.net/console/#api-keys) 管理已有统一 Key。由本机凭证工具或 CI secret 注入 `FREIGHTCLAW_API_KEY`；也可以把既有 Key 放在本人私有文件中，通过 `--key-file` 读取。macOS/Linux 文件须归本人所有且无其他用户权限（例如600）；Windows 需自行设置仅本人可读的文件 ACL。Key 文件只放 Key 文本，可有一个末尾换行。两种来源不能同时使用。
 

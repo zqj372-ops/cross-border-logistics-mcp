@@ -9,8 +9,8 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [2026-09-06 生产交付记录](docs/product/2026-09-05-mcp-product-redesign/17-market-manual-production-delivery.md) / [生产交付台账](docs/product/2026-09-05-mcp-product-redesign/15-implementation-delivery.md)
 - [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
-- [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；通过本地 npm 安装包交付。
-- [官网与 CLI 入口发布说明](docs/runbooks/unified-service-entry.md)：官网与控制台复用同一首页，原海运询价保留为独立服务。
+- [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；官网提供可直接安装的 npm 包。
+- [官网与 CLI 入口图文说明](docs/runbooks/unified-service-entry.md)：六张线上截图说明统一首页、保留的整柜询价及桌面/手机 CLI 入口，并记录发布和回滚步骤。
 - [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)：四张实测截图说明安装后的命令选择、连接检查、输入校验与结果处理。
 
 发布记录、当前代码、本地测试和真实业务调用分别留证。下文生产状态引用已保存回执，不代表读取 README 时刚刚重新探测了生产。`ready=false`、测试数据、证据冲突和写后读回失败不得提升为 `success`。
@@ -30,9 +30,21 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 
 当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
 
+下图为 2026-09-07 的官网实际页面。整柜询价和关税查询从同一首页进入，完整操作见 [图文说明](docs/runbooks/unified-service-entry.md)。
+
+![FreightClaw 官网统一服务入口](docs/runbooks/assets/unified-service-entry/01-home-desktop.jpg)
+
 ### CLI 快速开始
 
 `freightclaw` 为本机脚本、CI 和 Agent 提供统一命令入口。下图展示实际版本输出与帮助中的命令目录节选；完整步骤及另外三张实测图见 [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)。
+
+需要 Node.js 22.13 或更新版本。可从 [CLI 页面](https://www.freightclaw.net/console/#cli) 下载，或直接安装：
+
+```sh
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.1.0.tgz
+freightclaw --version
+freightclaw status
+```
 
 ![FreightClaw CLI 版本及九条接口命令总览](docs/runbooks/assets/freightclaw-cli/01-commands.jpg)
 
