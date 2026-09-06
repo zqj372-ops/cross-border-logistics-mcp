@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 五项业务 MCP | 关务查询、税费估算、尾程报价、资料提取、Freightcom；与现有 REST 共用来源适配器 | 显式 `business-v1`、当前应用授权、签名发布、私有 Provider |
 | 调用记录 | 当前企业/应用/人员范围、操作/结果/时间筛选、分页、数量与平均耗时 | Portal 与 Runtime 使用同一调用记录库 |
-| 关务历史 | 来源列表、单条快照、身份/记录校验、恢复输入表单 | 来源实现新历史合同后显式配置；当前来源未实现，返回 unavailable |
+| 关务历史 | 来源列表、单条快照、身份/记录校验、恢复输入表单 | 来源接口和跨仓库隔离联调完成；生产部署、迁移和连接开关须独立核验 |
 | 模块切换 | Ed25519 签名、制品及 SBOM 摘要、出站域名白名单、挂载验证、持久代次、在途固定、排空、回滚、MCP 目录通知 | 运维发布私有 Provider；不安装或导入任意代码 |
 | Portal 多实例 | PostgreSQL 共享账户、授权、凭证、会话、幂等及调用记录；断连重建连接 | 所有副本使用同一权威库、相同签名及 pepper 配置 |
 | 原有缺陷 | 实际响应字节限制、最近使用时间、T0 REST 经 Runtime 审计、在线应用权威 readiness | 正式 T0 REST 不在 Portal 内运行领域计算 |
@@ -35,7 +35,7 @@
 
 关务来源新增合同位于 `schemas/access-gateway/customs-history-*.schema.json`。来源路由为 `POST /api/m2m/v2/history/list` 与 `/get`，请求包含 `schema_version=customs-history-request@2026-09-06.v1` 和对应请求 Schema 字段；单独委派 scope 为 `customs.history.read`。响应必须绑定当前 request_id、tenant_id、actor_ref、application_id，并返回来源签发的 record_ref、历史版本及闭合的原快照。
 
-Portal 中对相应企业连接设置 `customsHistoryEnabled: true` 才会创建该客户端。未配置、404、来源身份或记录不匹配、超限、异常快照均不会返回恢复成功。现有 RiskCustoms 源码没有这两个端点；本仓库已完成适配与页面，来源实现仍为**待适配验证**。不得用本地复制关税结果替代来源历史。恢复按钮仅填回表单，用户核对日期后重新提交。
+Portal 中对相应企业连接设置 `customsHistoryEnabled: true` 才会创建该客户端。未配置、404、来源身份或记录不匹配、超限、异常快照均不会返回恢复成功。RiskCustoms 已补齐两个来源端点、人员调用快照保存、批量按行历史和 Node/Worker 持久化，并用本仓库 main `8517de1` 的真实客户端完成 HTTP 联调。来源接口的代码缺口已关闭；本次未执行生产部署和开关配置。详见[来源历史交付](riskcustoms-history-source.md)。不得用本地复制关税结果替代来源历史。恢复按钮仅填回表单，用户核对日期后重新提交。
 
 ## PostgreSQL 迁移与多实例
 

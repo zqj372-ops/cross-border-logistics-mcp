@@ -1,0 +1,15 @@
+{
+  "verifiedAt": "2026-09-06T15:36:29.348Z",
+  "source": "isolated Node HTTP + SQLite fixture",
+  "freightclawCommit": "8517de1e4706d8d9daaeee50a27757b483e143f7",
+  "checks": [
+    "MCP query client against source HTTP",
+    "MCP tax client against source HTTP",
+    "source query history list/get",
+    "source tax history list/get",
+    "restored query and tax inputs equal originals",
+    "stored snapshots equal original source responses"
+  ],
+  "status": "passed",
+  "productionDeployed": false
+}
