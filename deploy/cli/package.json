@@ -1,0 +1,10 @@
+{
+  "name": "@freightclaw/cli",
+  "version": "0.1.0",
+  "description": "FreightClaw command line client for the existing application-key APIs",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "bin": { "freightclaw": "bin/freightclaw.mjs" },
+  "files": ["bin", "README.md", "examples", "THIRD-PARTY-NOTICES.txt"]
+}

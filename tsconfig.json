@@ -20,6 +20,7 @@
     "src/**/*.ts",
     "services/**/*.ts",
     "tests/**/*.ts",
+    "deploy/cli/**/*.ts",
     "apps/**/*.d.ts",
     "apps/**/*.d.mts",
     "vitest.config.ts",

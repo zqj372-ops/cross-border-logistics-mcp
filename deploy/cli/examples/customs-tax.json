@@ -1,0 +1,14 @@
+{
+  "lineId": "example_1",
+  "description": "合成示例保温杯，请替换为实际商品",
+  "destinationCountry": "CA",
+  "declaredValue": "100.00",
+  "currency": "CAD",
+  "attributes": {
+    "originCountry": "CN",
+    "material": "stainless steel",
+    "use": "drinking",
+    "contains_steel_aluminum": true
+  },
+  "ruleDate": "2026-09-07"
+}

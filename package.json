@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "node deploy/scripts/build.mjs",
+    "build:cli": "node deploy/cli/build.mjs",
     "build:freightcom-keychain-helper": "node apps/freightcom-credential/build-helper.mjs",
     "start:freightcom-quote": "node --import tsx/esm apps/freightcom-quote/server.mjs",
     "credential:freightcom-test": "npm run build:freightcom-keychain-helper && node apps/freightcom-credential/server.mjs",
@@ -27,7 +28,7 @@
     "test": "vitest run",
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src services tests apps/console deploy/portal/setup-server.mjs deploy/scripts/build.mjs deploy/scripts/start-portal-fixture.ts deploy/scripts/generate-business-schemas.ts deploy/scripts/generate-portal-openapi.ts",
+    "lint": "eslint src services tests apps/console deploy/cli deploy/portal/setup-server.mjs deploy/scripts/build.mjs deploy/scripts/start-portal-fixture.ts deploy/scripts/generate-business-schemas.ts deploy/scripts/generate-portal-openapi.ts",
     "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts && npm run validate:access-gateway-schemas",
     "validate:access-gateway-schemas": "node --import tsx/esm services/access-gateway/validate-schemas.ts",
     "generate:business-schemas": "node --import tsx/esm deploy/scripts/generate-business-schemas.ts",

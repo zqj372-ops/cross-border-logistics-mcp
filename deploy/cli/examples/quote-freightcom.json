@@ -1,0 +1,60 @@
+{
+  "details": {
+    "origin": {
+      "address": {
+        "address_line_1": "1 Example Street",
+        "city": "Example City",
+        "region": "ON",
+        "country": "CA",
+        "postal_code": "A0A 0A0"
+      }
+    },
+    "destination": {
+      "address": {
+        "address_line_1": "2 Example Street",
+        "city": "Example City",
+        "region": "ON",
+        "country": "CA",
+        "postal_code": "A0A 0A0"
+      },
+      "ready_at": {
+        "hour": 9,
+        "minute": 0
+      },
+      "ready_until": {
+        "hour": 17,
+        "minute": 0
+      },
+      "signature_requirement": "not-required"
+    },
+    "expected_ship_date": {
+      "year": 2026,
+      "month": 9,
+      "day": 7
+    },
+    "packaging_type": "pallet",
+    "packaging_properties": {
+      "pallet_type": "ltl",
+      "has_stackable_pallets": false,
+      "pallets": [
+        {
+          "measurements": {
+            "weight": {
+              "unit": "kg",
+              "value": "100"
+            },
+            "cuboid": {
+              "unit": "cm",
+              "l": "120",
+              "w": "100",
+              "h": "100"
+            }
+          },
+          "description": "Synthetic example only",
+          "freight_class": "100",
+          "num_pieces": 1
+        }
+      ]
+    }
+  }
+}
