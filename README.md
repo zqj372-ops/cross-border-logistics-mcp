@@ -10,6 +10,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
 - [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；通过本地 npm 安装包交付。
+- [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)：四张实测截图说明安装后的命令选择、连接检查、输入校验与结果处理。
 
 发布记录、当前代码、本地测试和真实业务调用分别留证。下文生产状态引用已保存回执，不代表读取 README 时刚刚重新探测了生产。`ready=false`、测试数据、证据冲突和写后读回失败不得提升为 `success`。
 
@@ -25,6 +26,12 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | [CLI](deploy/cli/README.md) | `freightclaw` 命令行调用货物、装柜、报价、关务和税费；沿用统一应用 Key，人员历史仍使用网页登录 |
 
 当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
+
+### CLI 快速开始
+
+`freightclaw` 为本机脚本、CI 和 Agent 提供统一命令入口。下图展示实际版本输出与帮助中的命令目录节选；完整步骤及另外三张实测图见 [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)。
+
+![FreightClaw CLI 版本及九条接口命令总览](docs/runbooks/assets/freightclaw-cli/01-commands.jpg)
 
 ## 当前能力与可用边界
 

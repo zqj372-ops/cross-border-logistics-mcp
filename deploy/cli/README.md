@@ -2,6 +2,8 @@
 
 `freightclaw` 直接调用现有 FreightClaw REST API。沿用同一个账号及统一应用 Key；企业、服务范围、人员角色和来源数据的判断由服务器负责。CLI 不计算价格或税率，也不保存业务记录。
 
+首次使用可从 [图文使用指南（含四张实测截图）](https://github.com/zqj372-ops/cross-border-logistics-mcp/blob/main/docs/runbooks/freightclaw-cli-illustrated.md) 开始，按安装、命令选择、连接检查、输入校验和结果处理逐步操作。
+
 ## 安装与开始
 
 需要 Node.js 22.13 或更新版本。当前交付为本地 npm 安装包，尚未发布到公共 npm registry。

@@ -1,0 +1,39 @@
+{
+  "source_commit": "c4e208d88426178fd8e90fd70ef59eaf6d7c4877",
+  "method": "Browser screenshots of real CLI output rendered as a read-only guide; browser default viewport; no bitmap edits. Help output is explicitly excerpted to the command directory.",
+  "record": "capture-record.json",
+  "images": [
+    {
+      "file": "01-commands.jpg",
+      "format": "JPEG",
+      "width": 1280,
+      "height": 720,
+      "sha256": "54cb59540073ff84aca1b26b736863eaeaf8b445399fe2b5f4155caa025c80e3",
+      "bytes": 73876
+    },
+    {
+      "file": "02-readiness.jpg",
+      "format": "JPEG",
+      "width": 1280,
+      "height": 720,
+      "sha256": "c4a07219cd6bbcbe2796baecad7b5e9b9c4b3ef9debb6d98106b2dfc51e375ae",
+      "bytes": 66736
+    },
+    {
+      "file": "03-input-validation.jpg",
+      "format": "JPEG",
+      "width": 1280,
+      "height": 720,
+      "sha256": "89eb4b37146cdbc99c2987b194d613b06b5cc5c12eb6d3141667954435e59edb",
+      "bytes": 62269
+    },
+    {
+      "file": "04-unavailable.jpg",
+      "format": "JPEG",
+      "width": 1280,
+      "height": 720,
+      "sha256": "983e64978ce397886b239752dd0ea0464aa9557e5bdec5e8a0a0b8ca0ab51a8e",
+      "bytes": 54904
+    }
+  ]
+}
