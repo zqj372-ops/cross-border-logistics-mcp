@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 
+import { withRequestCredential } from "./request-credential";
 import {
   AuthenticationError,
   parseExecutionContext,
@@ -74,6 +75,7 @@ export interface McpHttpOptions {
   readonly handlers?: ToolHandlerMap;
   readonly contracts?: ToolContractMap;
   readonly definitions?: readonly ToolDefinition[];
+  readonly dynamicDefinitions?: {get():readonly ToolDefinition[];subscribe(listener:()=>void):()=>void};
   readonly agentAccessRuntime?: AgentAccessRuntime;
   readonly auditRepository: AuditRepository;
   readonly idempotencyRepository: IdempotencyRepository;
@@ -656,12 +658,13 @@ function registerMcpTools(
   auditRepository: AuditRepository,
   idempotencyRepository: IdempotencyRepository,
   requestSignals: AsyncLocalStorage<AbortSignal>,
-): void {
+): () => void {
+  const registered:ReturnType<McpServer["registerTool"]>[]=[];
   const missingContractInputSchema = z.object({}).catchall(z.unknown());
   const outputSchema = envelopeSchema.meta({ $schema: JSON_SCHEMA_2020_12 });
   for (const definition of definitions) {
     if (!toolVisibleForContext(context, definition.name)) continue;
-    server.registerTool(
+    registered.push(server.registerTool(
       definition.name,
       {
         title: definition.title,
@@ -738,8 +741,9 @@ function registerMcpTools(
         }
         return responseForToolEnvelope(envelope);
       },
-    );
+    ));
   }
+  return ()=>{for(const tool of registered)tool.remove();};
 }
 
 function registerAgentResources(
@@ -840,9 +844,9 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       { instructions: SERVER_INSTRUCTIONS },
     );
     const requestIdForCall = () => `req_${randomUUID()}`;
-    registerMcpTools(
+    let unregister=registerMcpTools(
       server,
-      definitions,
+      options.dynamicDefinitions?.get()??definitions,
       context,
       requestIdForCall,
       auditRepository,
@@ -855,6 +859,10 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     ) {
       registerAgentResources(server, options.agentAccessRuntime, context);
     }
+    const unsubscribe=options.dynamicDefinitions?.subscribe(()=>{
+      try{unregister();unregister=registerMcpTools(server,options.dynamicDefinitions!.get(),context,requestIdForCall,auditRepository,idempotencyRepository,requestSignals);}catch{void server.close().catch(()=>undefined);}
+    });
+    server.server.onclose=()=>{unsubscribe?.();};
     const runtime: SessionRuntimeHandle = { transport, server };
     let registered = false;
     try {
@@ -964,6 +972,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
           client_id: verified.client_id,
           session_id: verified.session_id,
           expires_at: verified.exp,
+          ...(verified.mcp_profile === undefined ? {} : { mcp_profile: verified.mcp_profile }),
         });
       }
     } catch (error: unknown) {
@@ -1033,11 +1042,11 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
     }
 
     try {
-      const response = await requestSignals.run(signal, () =>
+      const response = await withRequestCredential(match[1]!, () => requestSignals.run(signal, () =>
         session.transport.handleRequest(
           request,
           request.method === "POST" ? { parsedBody: body } : undefined,
-        ));
+        )));
       assertRequestActive(signal);
       if (response.status >= 400) {
         if (newSessionId !== null) {

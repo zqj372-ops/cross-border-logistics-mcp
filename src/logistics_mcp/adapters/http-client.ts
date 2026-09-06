@@ -1,3 +1,4 @@
+import { readBoundedResponse, ResponseSizeError } from "../platform/bounded-response";
 import {
   assertAllowedOutboundUrl,
   SecurityPolicyError,
@@ -162,55 +163,12 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
-async function readBoundedText(
-  response: Response,
-  maxResponseBytes: number,
-): Promise<string> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    const parsed = Number(declaredLength);
-    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maxResponseBytes) {
-      cancelResponseBody(response);
-      throw new HttpAdapterError(
-        "upstream_response_too_large",
-        "The upstream response exceeds the configured size limit.",
-      );
-    }
-  }
-
-  if (response.body === null) {
-    const text = await response.text();
-    if (new TextEncoder().encode(text).byteLength > maxResponseBytes) {
-      throw new HttpAdapterError(
-        "upstream_response_too_large",
-        "The upstream response exceeds the configured size limit.",
-      );
-    }
-    return text;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
-  let totalBytes = 0;
+async function readBoundedText(response: Response, maxResponseBytes: number, signal: AbortSignal): Promise<string> {
   try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      totalBytes += next.value.byteLength;
-      if (totalBytes > maxResponseBytes) {
-        await reader.cancel();
-        throw new HttpAdapterError(
-          "upstream_response_too_large",
-          "The upstream response exceeds the configured size limit.",
-        );
-      }
-      chunks.push(decoder.decode(next.value, { stream: true }));
-    }
-    chunks.push(decoder.decode());
-    return chunks.join("");
-  } finally {
-    reader.releaseLock();
+    return new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedResponse(response, maxResponseBytes, signal));
+  } catch (error) {
+    if (error instanceof ResponseSizeError) throw new HttpAdapterError("upstream_response_too_large", "The upstream response exceeds the configured size limit.");
+    throw error;
   }
 }
 
@@ -312,7 +270,7 @@ export function createFetchJsonClient(
         );
       }
       const text = await Promise.race([
-        readBoundedText(response, maxResponseBytes),
+        readBoundedText(response, maxResponseBytes, controller.signal),
         ...abortables,
       ]);
       if (!response.ok && !(allowedStatuses?.includes(response.status) ?? false)) {

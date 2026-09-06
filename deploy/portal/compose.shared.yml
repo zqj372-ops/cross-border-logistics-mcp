@@ -1,0 +1,11 @@
+# Apply after the offline Portal migration and before starting a second replica.
+services:
+  portal:
+    container_name: !reset null
+    environment:
+      PORTAL_STORE_BACKEND: postgresql
+      PORTAL_MCP_PROVIDER_SECRET_FILE: /run/portal-secrets/mcp-provider-secret
+    # Signing/pepper material is an immutable deployment secret shared by replicas.
+    # Rotate it as a coordinated release; never generate different keys per pod.
+    deploy:
+      replicas: 2

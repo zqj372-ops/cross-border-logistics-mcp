@@ -1,3 +1,4 @@
+import { readBoundedResponse } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { z } from "zod";
 
 import type { PortalBusinessClientResult } from "./service";
@@ -155,8 +156,8 @@ function publicationMatches(status: z.infer<typeof statusSchema>, value: z.infer
   return value.testData === false && ["serviceVersion", "publishedAt", "ruleDate", "releaseIds", "snapshotHash", "releaseHash", "evaluatedAt", "lastSourceCheckAt"]
     .every((key) => JSON.stringify(status[key as keyof typeof status]) === JSON.stringify(value[key as keyof typeof value]));
 }
-async function readJson(responseValue: Response, limit: number): Promise<unknown> {
-  const body = new Uint8Array(await responseValue.arrayBuffer());
+async function readJson(responseValue: Response, limit: number, signal: AbortSignal): Promise<unknown> {
+  const body = await readBoundedResponse(responseValue, limit, signal);
   if (body.byteLength > limit) throw new Error("response_too_large");
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
 }
@@ -194,7 +195,7 @@ export function createTaxPortalClient(options: TaxPortalClientOptions) {
       const upstream = await fetchImpl(new URL(path, base!), { ...init, redirect: "manual", signal: controller.signal });
       if (upstream.status >= 300 && upstream.status < 400) throw new Error("redirect_rejected");
       if (!acceptedStatuses.includes(upstream.status)) throw new Error(`http_${upstream.status}`);
-      return await readJson(upstream, maxBodyBytes);
+      return await readJson(upstream, maxBodyBytes, controller.signal);
     } finally { clearTimeout(timer); }
   }
 

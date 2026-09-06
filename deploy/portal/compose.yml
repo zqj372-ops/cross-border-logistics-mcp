@@ -9,7 +9,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    env_file: /data/logistics-mcp/portal/secrets/portal.env
+    env_file: ${PORTAL_ENV_FILE:-/data/logistics-mcp/portal/secrets/portal.env}
     volumes:
       - /data/logistics-mcp/portal/state:/var/lib/freightclaw-portal
       - /data/logistics-mcp/portal/secrets:/run/portal-secrets:ro

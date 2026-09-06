@@ -16,6 +16,11 @@ export const T0_PRODUCTION_PROFILES = Object.freeze([
 
 export type T0ProductionProfile = (typeof T0_PRODUCTION_PROFILES)[number];
 
+export type ProductionRuntimeProfile = T0ProductionProfile | "business-v1";
+export function parseProductionRuntimeProfile(value: unknown): ProductionRuntimeProfile {
+  return value === "business-v1" ? value : parseT0ProductionProfile(value);
+}
+
 export const T0_PRODUCTION_MODULE_IDS = Object.freeze([
   "cargo",
   "container",
@@ -381,8 +386,8 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    artifact_digest: "sha256:3e56ae64965822d45dbdd013605024d94c90bfd6d6efc545c8e8b7c07b590049",
-    manifest_digest: "sha256:c294cb810e6e2de0885ffe99e66d990aefa252e125bb1e3d15e371c591e7dd96",
+    artifact_digest: "sha256:d5e845ed99888664741ada56209251b536e4057fb928583e59b3505c8f987593",
+    manifest_digest: "sha256:8d1c2b0fb1f4253b95d13d0cf04990072fcd66f5f20abb190a6ceeefa7164e0c",
   }),
 ]);
 

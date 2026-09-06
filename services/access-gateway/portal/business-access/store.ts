@@ -3,23 +3,41 @@ import { DatabaseSync } from "node:sqlite";
 import type { BusinessAccessData } from "./contracts";
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from "../production-persistence";
 
-export interface BusinessAccessRepository { readonly kind:"synthetic"|"production"; read():BusinessAccessData; transact<T>(scope:string,key:string,hash:string,mutate:(data:BusinessAccessData)=>T):{value:T;replayed:boolean}; close():void }
+export interface BusinessAccessRepository { readonly kind:"synthetic"|"production"; read():BusinessAccessData; recordUse(credentialId:string,now:number):void; transact<T>(scope:string,key:string,hash:string,mutate:(data:BusinessAccessData)=>T):{value:T;replayed:boolean}; close():void }
 const EMPTY:BusinessAccessData={requests:[],grants:[],credentials:[],audit:[]};
 const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 export const businessMutationHash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+function recordUse(db:DatabaseSync, credentialId:string, now:number):void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const data=JSON.parse(String(db.prepare("SELECT payload FROM business_access_state WHERE singleton=1").get()!.payload)) as BusinessAccessData;
+    const credential=data.credentials.find(value=>value.credentialId===credentialId);
+    if(!credential || credential.status!=="active" || credential.deliveryStatus!=="acknowledged" || credential.expiresAt<=now) throw new BusinessAccessStoreError("business_authorization_denied");
+    const usedAt=new Date(now*1000).toISOString();
+    if(credential.lastUsedAt===null || credential.lastUsedAt<usedAt) {
+      credential.lastUsedAt=usedAt;
+      db.prepare("UPDATE business_access_state SET payload=? WHERE singleton=1").run(JSON.stringify(data));
+    }
+    db.exec("COMMIT");
+  } catch(error) {db.exec("ROLLBACK");throw error;}
+}
+
 export class SqliteSyntheticBusinessAccessStore implements BusinessAccessRepository{
   readonly kind="synthetic" as const; readonly #db:DatabaseSync;
   constructor(options:{databasePath:string}){this.#db=new DatabaseSync(options.databasePath);this.#db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS business_access_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS business_access_idempotency(scope TEXT NOT NULL,key TEXT NOT NULL,hash TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scope,key));`);this.#db.prepare("INSERT OR IGNORE INTO business_access_state VALUES(1,?)").run(JSON.stringify(EMPTY));}
   read(){return clone(JSON.parse(String(this.#db.prepare("SELECT payload FROM business_access_state WHERE singleton=1").get()!.payload)) as BusinessAccessData);}
   transact<T>(scope:string,key:string,hash:string,mutate:(data:BusinessAccessData)=>T):{value:T;replayed:boolean}{if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,199}$/u.test(key))throw new BusinessAccessStoreError("idempotency_key_invalid");this.#db.exec("BEGIN IMMEDIATE");try{const prior=this.#db.prepare("SELECT hash,result FROM business_access_idempotency WHERE scope=? AND key=?").get(scope,key) as {hash:string;result:string}|undefined;if(prior){if(prior.hash!==hash)throw new BusinessAccessStoreError("idempotency_conflict");this.#db.exec("COMMIT");return {value:clone(JSON.parse(prior.result) as T),replayed:true};}const data=this.read();const result=mutate(data);this.#db.prepare("UPDATE business_access_state SET payload=? WHERE singleton=1").run(JSON.stringify(data));this.#db.prepare("INSERT INTO business_access_idempotency VALUES(?,?,?,?)").run(scope,key,hash,JSON.stringify(result));this.#db.exec("COMMIT");return {value:clone(result),replayed:false};}catch(error){this.#db.exec("ROLLBACK");throw error;}}
+  recordUse(credentialId:string,now:number){recordUse(this.#db,credentialId,now);}
   close(){this.#db.close();}
 }
-export class UnavailableBusinessAccessStore implements BusinessAccessRepository{readonly kind="production" as const;read():never{throw new BusinessAccessStoreError("business_access_store_unavailable");}transact<T>():{value:T;replayed:boolean}{throw new BusinessAccessStoreError("business_access_store_unavailable");}close(){} }
+export class UnavailableBusinessAccessStore implements BusinessAccessRepository{readonly kind="production" as const;recordUse():never{throw new BusinessAccessStoreError("business_access_store_unavailable");}read():never{throw new BusinessAccessStoreError("business_access_store_unavailable");}transact<T>():{value:T;replayed:boolean}{throw new BusinessAccessStoreError("business_access_store_unavailable");}close(){} }
 export class BusinessAccessStoreError extends Error{}
 export class SqliteProductionBusinessAccessStore implements BusinessAccessRepository{
   readonly kind="production" as const;readonly #db:DatabaseSync;readonly #path:string;
   constructor(options:{databasePath:string}){this.#path=options.databasePath;this.#db=openPortalProductionDatabase(this.#path,"freightclaw-business-access");this.#db.exec(`CREATE TABLE IF NOT EXISTS business_access_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS business_access_idempotency(scope TEXT NOT NULL,key TEXT NOT NULL,hash TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scope,key));`);this.#db.prepare("INSERT OR IGNORE INTO business_access_state VALUES(1,?)").run(JSON.stringify(EMPTY));securePortalDatabaseFiles(this.#path);}
   read(){return clone(JSON.parse(String(this.#db.prepare("SELECT payload FROM business_access_state WHERE singleton=1").get()!.payload)) as BusinessAccessData);}
   transact<T>(scope:string,key:string,hash:string,mutate:(data:BusinessAccessData)=>T):{value:T;replayed:boolean}{if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,199}$/u.test(key))throw new BusinessAccessStoreError("idempotency_key_invalid");this.#db.exec("BEGIN IMMEDIATE");try{const prior=this.#db.prepare("SELECT hash,result FROM business_access_idempotency WHERE scope=? AND key=?").get(scope,key) as {hash:string;result:string}|undefined;if(prior){if(prior.hash!==hash)throw new BusinessAccessStoreError("idempotency_conflict");this.#db.exec("COMMIT");return{value:clone(JSON.parse(prior.result) as T),replayed:true};}const data=this.read(),result=mutate(data);this.#db.prepare("UPDATE business_access_state SET payload=? WHERE singleton=1").run(JSON.stringify(data));this.#db.prepare("INSERT INTO business_access_idempotency VALUES(?,?,?,?)").run(scope,key,hash,JSON.stringify(result));this.#db.exec("COMMIT");securePortalDatabaseFiles(this.#path);return{value:clone(result),replayed:false};}catch(error){this.#db.exec("ROLLBACK");throw error;}}
+  recordUse(credentialId:string,now:number){recordUse(this.#db,credentialId,now);}
   close(){this.#db.close();securePortalDatabaseFiles(this.#path);}
 }

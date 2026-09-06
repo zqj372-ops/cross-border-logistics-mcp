@@ -1,3 +1,4 @@
+import { readBoundedResponse, ResponseSizeError } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
@@ -273,10 +274,7 @@ export function createQuoteRecordPortalClient(options: QuoteRecordPortalClientOp
         if (body !== null) init.body = JSON.stringify(body);
         const response = await fetchImpl(new URL(path, base), init);
         if (response.status >= 300 && response.status < 400) return localResult(sourceSchema, "unavailable", requestId, "quote_upstream_redirect_rejected");
-        const declaredLength = Number(response.headers.get("content-length"));
-        if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) return localResult(sourceSchema, "unavailable", requestId, "quote_upstream_response_too_large");
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength > maxBodyBytes) return localResult(sourceSchema, "unavailable", requestId, "quote_upstream_response_too_large");
+        const bytes = await readBoundedResponse(response, maxBodyBytes, controller.signal);
         const envelopeSchema = z.object({ schema_version: z.literal(sourceSchema), status: STATUS, data: z.unknown().nullable(),
           reason_codes: z.array(z.string().regex(ID)).max(50), source_refs: z.array(refsSchema).max(50), request_id: z.string().regex(REQUEST_ID) }).strict();
         const parsedEnvelope = envelopeSchema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
@@ -293,6 +291,7 @@ export function createQuoteRecordPortalClient(options: QuoteRecordPortalClientOp
           data, reason_codes: outcome.reasonCodes, source_refs: source.source_refs as readonly (SourceRef | QuoteDocumentSourceRef)[], request_id: requestId };
       } finally { clearTimeout(timer); }
     } catch (error) {
+      if (error instanceof ResponseSizeError) return localResult(sourceSchema, "unavailable", requestId, "quote_upstream_response_too_large");
       if (error instanceof Error && error.name === "AbortError") return localResult(sourceSchema, "unavailable", requestId, "quote_upstream_timeout");
       return localResult(sourceSchema, "unavailable", requestId, "quote_upstream_unavailable");
     }
@@ -405,7 +404,7 @@ export function createQuoteRecordPortalClient(options: QuoteRecordPortalClientOp
             headers: { authorization: `Bearer ${options.connectionSecret}`, "x-freightclaw-delegation": signed.token, "x-request-id": parsed.data.requestId } });
           if (response.status !== 200 || response.headers.get("content-type")?.split(";", 1)[0] !== "application/pdf") return localResult(QUOTE_DOCUMENT_CREATE_SCHEMA_VERSION, "unavailable", parsed.data.requestId, "quote_document_download_invalid");
           const declared = response.headers.get("content-length"); if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) !== metadata.data.content_length)) return localResult(QUOTE_DOCUMENT_CREATE_SCHEMA_VERSION, "unavailable", parsed.data.requestId, "quote_document_download_invalid");
-          const bytes = new Uint8Array(await response.arrayBuffer());
+          const bytes = await readBoundedResponse(response, Math.min(metadata.data.content_length, 10_485_760), controller.signal);
           const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
           if (bytes.byteLength !== metadata.data.content_length || bytes.byteLength > 10_485_760 || hash !== metadata.data.content_sha256 || !bytes.subarray(0, 5).every((value, index) => value === [37, 80, 68, 70, 45][index])) return localResult(QUOTE_DOCUMENT_CREATE_SCHEMA_VERSION, "unavailable", parsed.data.requestId, "quote_document_download_invalid");
           const etag = response.headers.get("etag"); if (etag !== null && etag !== `"${hash.slice(7)}"`) return localResult(QUOTE_DOCUMENT_CREATE_SCHEMA_VERSION, "unavailable", parsed.data.requestId, "quote_document_download_invalid");

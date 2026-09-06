@@ -140,6 +140,25 @@ describe("production OIDC token verifier", () => {
     expect(new Headers(authorityCalls[0]?.[1]?.headers).get("authorization")).toBe(`Bearer ${token}`);
   });
 
+  it("includes online authority health even while JWKS remains cached and recovers", async () => {
+    let available = true;
+    const fetchImpl = vi.fn<TestFetch>((input) => {
+      if (fetchUrl(input) === JWKS_URL) return Promise.resolve(jsonResponse({ keys: [publicJwk] }));
+      expect(fetchUrl(input)).toBe("https://portal.example.invalid/access/v2/application/token/health");
+      return Promise.resolve(jsonResponse({ schema_version: "application-authority-health@2026-09-06.v1", ready: available }, { status: available ? 200 : 503 }));
+    });
+    const verifier = createProductionTokenVerifier(verifierOptions({ fetchImpl,
+      applicationAuthorityUrl: "https://portal.example.invalid/access/v2/application/token/authority",
+      applicationAuthorityAllowedHosts: ["portal.example.invalid"],
+    }));
+    await expect(verifier.health()).resolves.toEqual({ ready: true });
+    available = false;
+    await expect(verifier.health()).resolves.toEqual({ ready: false });
+    available = true;
+    await expect(verifier.health()).resolves.toEqual({ ready: true });
+    expect(fetchImpl.mock.calls.filter(([input]) => fetchUrl(input) === JWKS_URL)).toHaveLength(1);
+  });
+
   it("rejects bkey JWTs when online application authority is absent or inactive", async () => {
     const token = await sign(claims({
       sub: "bkey_0123456789abcdef01234567",

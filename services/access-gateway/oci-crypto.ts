@@ -6,7 +6,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 
-import type { JwksResponse, JwtClaims, PublicJwk, SignedJwt } from "./contracts";
+import type { JwksResponse, GatewayJwtClaims, PublicJwk, SignedJwt } from "./contracts";
 import type { JwtSigningProvider, SecretPepperProvider } from "./ports";
 import {
   deriveCredentialSecretHash,
@@ -468,7 +468,7 @@ export class OciKmsJwtSigningProvider implements JwtSigningProvider {
     );
   }
 
-  async sign(claims: JwtClaims): Promise<SignedJwt> {
+  async sign(claims: GatewayJwtClaims): Promise<SignedJwt> {
     const key = this.#jwks.keys[0];
     if (key === undefined) throw new Error("OCI KMS JWT public key is unavailable.");
     const encodedHeader = Buffer.from(JSON.stringify({

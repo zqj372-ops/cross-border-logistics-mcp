@@ -1,3 +1,7 @@
+import { PostgresCallLogStore } from "../../../services/access-gateway/portal/postgres-call-log";
+import { postgresConfigurationFromEnvironment } from "../../../services/access-gateway/postgres-store";
+import { SqliteCallLogStore, withCallLogAudit } from "../../../services/access-gateway/portal/call-log";
+import { loadManagedBusinessProvider } from "./managed-business-provider";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -44,7 +48,7 @@ import {
   CapabilityRegistry,
   ModuleHost,
   normalizeCapabilityRequirement,
-  parseT0ProductionProfile,
+  parseProductionRuntimeProfile,
 } from "../module-runtime";
 import {
   cargoModule,
@@ -370,6 +374,7 @@ async function adminRuntimeSnapshot(
       },
     },
     blockers,
+    ...(composition.businessModuleSnapshot?{business_module:composition.businessModuleSnapshot()}:{}),
     clients: [],
     roles: Object.entries(ROLE_PRESENTATION).map(([key, [label, description]]) => ({
       key,
@@ -936,7 +941,7 @@ async function createManagedFixtureRuntime(
       fatalFence: pluginConfigFatalFence,
     });
     await pluginConfigService.recoverInterruptedAttempts();
-    composition = makeComposition({
+    composition = await makeComposition({
       managementTenantId: config.managementTenantId,
       authenticate: mcpAuthenticate,
       activation: assembly.activation,
@@ -1372,7 +1377,7 @@ export async function startRuntime(
     resources = mode === "fixtures"
       ? await createManagedFixtureRuntime(applicationRoot)
       : {
-          composition: makeComposition(),
+          composition: await makeComposition(),
           adminControlApi: createProductionAdminControlApi(),
           adminTenantAccessApi: createProductionAdminTenantAccessApi(),
           adminPluginConfigApi: createProductionAdminPluginConfigApi(),
@@ -1435,7 +1440,7 @@ interface CompositionWiring {
   readonly freightcomRateAdapter?: FreightcomRatePort;
 }
 
-function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
+async function makeComposition(wiring: CompositionWiring = {}): Promise<GatewayComposition> {
   const mode = process.env.MCP_DATA_MODE;
   const common = {
     requestTimeoutMs: RUNTIME_REQUEST_TIMEOUT_MS,
@@ -1470,7 +1475,7 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
   const profileSetting = Object.hasOwn(process.env, "MCP_RUNTIME_PROFILE")
     ? process.env.MCP_RUNTIME_PROFILE ?? ""
     : "t0-v1";
-  const profile = parseT0ProductionProfile(profileSetting);
+  const profile = parseProductionRuntimeProfile(profileSetting);
   const databasePath = process.env.MCP_STATE_DB_PATH?.trim();
   const instanceId = process.env.MCP_INSTANCE_ID?.trim();
   const jwksUrl = process.env.MCP_JWKS_URL?.trim();
@@ -1518,14 +1523,19 @@ function makeComposition(wiring: CompositionWiring = {}): GatewayComposition {
                 applicationAuthorityAllowedHosts,
               }),
         });
+  const callLogPath = process.env.MCP_CALL_LOG_DATABASE_PATH?.trim();
+  const callBackend=process.env.MCP_CALL_LOG_BACKEND?.trim()||"sqlite";
+  if(!["sqlite","postgresql"].includes(callBackend))throw new Error("mcp_call_log_backend_invalid");
+  const calls = callBackend==="postgresql" ? await PostgresCallLogStore.open(postgresConfigurationFromEnvironment(process.env)) : callLogPath && store ? new SqliteCallLogStore(callLogPath) : undefined;
   return createProductionComposition({
     dataMode: "production",
     profile,
+    ...(profile === "business-v1" ? { businessProvider: await loadManagedBusinessProvider(process.env) } : {}),
     ...common,
     ...(store === undefined
       ? {}
       : {
-          auditRepository: store,
+          auditRepository: calls ? withCallLogAudit(store, calls) : store,
           idempotencyRepository: store,
           sessionBindingStore: store,
         }),

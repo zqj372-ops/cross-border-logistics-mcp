@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/customs-history-list-request.schema.json",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "customs.query",
+        "customs.tax.estimate"
+      ]
+    },
+    "limit": {
+      "default": 25,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "operation",
+    "limit"
+  ],
+  "additionalProperties": false
+}

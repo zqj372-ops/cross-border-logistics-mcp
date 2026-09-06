@@ -1,3 +1,4 @@
+import { readBoundedResponse, ResponseSizeError } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { z } from "zod";
 
 import type { SourceRef } from "../../../../src/logistics_mcp/platform/envelope.js";
@@ -138,10 +139,7 @@ export function createQuotePortalClient(options: QuotePortalClientOptions) {
         const response = await fetchImpl(new URL(path, base), { method: "POST", redirect: "manual", signal: controller.signal,
           headers: { authorization: `Bearer ${options.connectionSecret}`, "content-type": "application/json", "x-freightclaw-delegation": signed.token, "x-request-id": requestId }, body: JSON.stringify(body) });
         if (response.status >= 300 && response.status < 400) return localResult("unavailable", requestId, "quote_upstream_redirect_rejected");
-        const declaredLength = Number(response.headers.get("content-length"));
-        if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) return localResult("unavailable", requestId, "quote_upstream_response_too_large");
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength > maxBodyBytes) return localResult("unavailable", requestId, "quote_upstream_response_too_large");
+        const bytes = await readBoundedResponse(response, maxBodyBytes, controller.signal);
         const parsedEnvelope = sourceEnvelopeSchema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
         if (!parsedEnvelope.success) return localResult("unavailable", requestId, "quote_upstream_contract_invalid");
         const source = parsedEnvelope.data;
@@ -158,6 +156,7 @@ export function createQuotePortalClient(options: QuotePortalClientOptions) {
           request_id: requestId, preview_only: true, saved: false, sendable: false };
       } finally { clearTimeout(timer); }
     } catch (error) {
+      if (error instanceof ResponseSizeError) return localResult("unavailable", requestId, "quote_upstream_response_too_large");
       if (error instanceof Error && error.name === "AbortError") return localResult("unavailable", requestId, "quote_upstream_timeout");
       return localResult("unavailable", requestId, "quote_upstream_unavailable");
     }

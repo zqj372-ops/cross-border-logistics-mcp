@@ -1,3 +1,4 @@
+import type { ApplicationMcpTool } from "../../src/logistics_mcp/platform/application-tools";
 export const ACCESS_GATEWAY_SCHEMA_VERSION = "2026-08-27.v1" as const;
 
 export const T0_TOOL_NAMES = Object.freeze([
@@ -165,6 +166,12 @@ export interface JwtClaims {
   readonly client_id: string;
   readonly session_id: string;
 }
+
+export interface ApplicationMcpJwtClaims extends Omit<JwtClaims, "scopes"> {
+  readonly mcp_profile: "business-v1";
+  readonly scopes: readonly `tool:${ApplicationMcpTool}`[];
+}
+export type GatewayJwtClaims = JwtClaims | ApplicationMcpJwtClaims;
 
 export interface SignedJwt {
   readonly token: string;

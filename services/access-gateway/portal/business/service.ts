@@ -1,3 +1,5 @@
+import type { createCustomsHistoryClient } from "./customs-history-client";
+import type { CallRecorder } from "../call-log";
 import { z } from "zod";
 import type { createQuoteRecordPortalClient } from "./quote-record-client";
 import type { QuotePortalZoneInput } from "./quote-client";
@@ -25,10 +27,10 @@ export interface PortalBusinessConnection {
   readonly serviceActors?: Readonly<{ customs?: string; quote?: string }>;
   readonly recordOperations?: readonly ("quote.record_save"|"quote.record_read"|"quote.review_read"|"quote.review_manage"|"quote.document_generate"|"quote.document_read")[];
   readonly quoteRecordClient?: ReturnType<typeof createQuoteRecordPortalClient>;
-  readonly customsClient?: CustomsBusinessClientPort; readonly taxClient?: TaxBusinessClientPort; readonly quoteClient?: QuoteBusinessClientPort;
+  readonly customsHistoryClient?: ReturnType<typeof createCustomsHistoryClient>; readonly customsClient?: CustomsBusinessClientPort; readonly taxClient?: TaxBusinessClientPort; readonly quoteClient?: QuoteBusinessClientPort;
   readonly freightcomClient?: FreightcomBusinessClientPort;
 }
-export interface PortalBusinessServiceOptions { readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>; readonly connections: readonly PortalBusinessConnection[] }
+export interface PortalBusinessServiceOptions { readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>; readonly connections: readonly PortalBusinessConnection[]; readonly callRecorder?: CallRecorder }
 export interface PortalBusinessDescription { readonly organization_id: string; readonly operations: ReadonlyArray<{ readonly operation: PortalBusinessOperation; readonly configured: boolean; readonly reason_code: string | null }> }
 export type PortalBusinessEnvelope<T> = Readonly<{ schema_version: typeof PORTAL_BUSINESS_SCHEMA_VERSION; status: PortalBusinessStatus; data: T | null; reason_codes: readonly string[] }>;
 interface BusinessAccess { readonly organizationId: string; readonly tenantId: string; readonly role: "owner" | "admin" | "developer" | "viewer"; readonly connection: PortalBusinessConnection | null }
@@ -39,8 +41,9 @@ const failure = (status: "blocked" | "unavailable", code: string): PortalBusines
 
 export class PortalBusinessService {
   readonly #portal: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>;
+  readonly #recorder: CallRecorder | undefined;
   readonly #connections: readonly PortalBusinessConnection[];
-  constructor(options: PortalBusinessServiceOptions) { this.#portal = options.portalService; this.#connections = Object.freeze([...options.connections]); }
+  constructor(options: PortalBusinessServiceOptions) { this.#recorder = options.callRecorder; this.#portal = options.portalService; this.#connections = Object.freeze([...options.connections]); }
 
   #access(ctx: PortalContext): BusinessAccess {
     if (ctx.identity.platformRole !== null) throw new PortalError("business_personnel_session_required");
@@ -68,7 +71,29 @@ export class PortalBusinessService {
     }
   }
 
-  async execute(ctx: PortalContext, operation: PortalBusinessOperation, input: unknown, requestId: string): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
+  async #logged(identity:{tenantId:string;clientId:string|null;actorRef:string},operation:PortalBusinessOperation,requestId:string,run:()=>Promise<PortalBusinessClientResult|PortalBusinessEnvelope<never>>) {
+    const start=Date.now();
+    let result:PortalBusinessClientResult|PortalBusinessEnvelope<never>;
+    try { result=await run(); } catch { result=failure("unavailable","business_provider_unavailable"); }
+    try { await this.#recorder?.({tenant_id:identity.tenantId,client_id:identity.clientId,actor_ref:identity.actorRef,operation,request_id:requestId,status:result.status,duration_ms:Math.max(0,Date.now()-start)}); }
+    catch { return failure("unavailable","business_call_log_unavailable"); }
+    return result;
+  }
+  execute(ctx:PortalContext,operation:PortalBusinessOperation,input:unknown,requestId:string) {
+    let access:BusinessAccess;
+    try { access=this.#access(ctx); } catch { return this.#execute(ctx,operation,input,requestId); }
+    return this.#logged({tenantId:access.tenantId,clientId:null,actorRef:ctx.identity.userId},operation,requestId,()=>this.#execute(ctx,operation,input,requestId));
+  }
+  executeBatch(ctx:PortalContext,input:unknown,requestId:string) {
+    let access:BusinessAccess;
+    try { access=this.#access(ctx); } catch { return this.#executeBatch(ctx,input,requestId); }
+    return this.#logged({tenantId:access.tenantId,clientId:null,actorRef:ctx.identity.userId},"customs.tax.estimate",requestId,()=>this.#executeBatch(ctx,input,requestId));
+  }
+  executeMachine(request:{operation:PortalBusinessOperation;input:unknown;requestId:string;batch:boolean;recordCall?:boolean;machine:{tenantId:string;clientId:string;applicationId:string;credentialId:string}}) {
+    if(request.recordCall===false) return this.#executeMachine(request);
+    return this.#logged({tenantId:request.machine.tenantId,clientId:request.machine.clientId,actorRef:request.machine.credentialId},request.operation,request.requestId,()=>this.#executeMachine(request));
+  }
+  async #execute(ctx: PortalContext, operation: PortalBusinessOperation, input: unknown, requestId: string): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
     if (!OPERATIONS.includes(operation) || !ID.test(requestId)) return failure("blocked", "business_request_invalid");
     let access: BusinessAccess;
     try { access = this.#access(ctx); } catch (error) { return failure("blocked", error instanceof PortalError ? error.code : "business_access_denied"); }
@@ -83,7 +108,7 @@ export class PortalBusinessService {
     return operation === "quote.zone_preview" ? connection.quoteClient.preview(request) : connection.quoteClient.extract(request);
   }
 
-  async executeBatch(ctx: PortalContext, input: unknown, requestId: string): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
+  async #executeBatch(ctx: PortalContext, input: unknown, requestId: string): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
     if (!ID.test(requestId)) return failure("blocked", "business_request_invalid");
     let access: BusinessAccess;
     try { access = this.#access(ctx); } catch (error) { return failure("blocked", error instanceof PortalError ? error.code : "business_access_denied"); }
@@ -100,7 +125,7 @@ export class PortalBusinessService {
     return item.enabledOperations.includes(operation) && (operation === "customs.query" ? !!item.customsClient : operation === "customs.tax.estimate" ? !!item.taxClient : operation === "quote.freightcom_ltl.preview" ? !!item.freightcomClient : !!item.quoteClient);
   }
 
-  async executeMachine(request: { operation: PortalBusinessOperation; input: unknown; requestId: string; batch: boolean; machine: { tenantId: string; clientId: string; applicationId: string; credentialId: string } }): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
+  async #executeMachine(request: { operation: PortalBusinessOperation; input: unknown; requestId: string; batch: boolean; machine: { tenantId: string; clientId: string; applicationId: string; credentialId: string } }): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
     const { operation, input, requestId, machine, batch } = request;
     if (!OPERATIONS.includes(operation) || !ID.test(requestId) || batch && operation !== "customs.tax.estimate") return failure("blocked", "business_request_invalid");
     let application;
@@ -115,6 +140,16 @@ export class PortalBusinessService {
     if (operation === "customs.query") return connection.customsClient!.query(call);
     if (operation === "customs.tax.estimate") return batch ? connection.taxClient!.estimateBatch(call) : connection.taxClient!.estimate(call);
     return operation === "quote.zone_preview" ? connection.quoteClient!.preview(call) : connection.quoteClient!.extract(call);
+  }
+
+  async customsHistory(ctx:PortalContext,action:"list"|"get",input:unknown,requestId:string){
+    try {const access=this.#access(ctx);const operation=typeof input==="object"&&input!==null&&"operation" in input?input.operation:null;
+      if(operation!=="customs.query"&&operation!=="customs.tax.estimate")return failure("blocked","customs_history_input_invalid");
+      if(!access.connection?.enabledOperations.includes(operation))return failure("blocked","business_operation_not_enabled");
+      if(!access.connection.customsHistoryClient)return failure("unavailable","customs_history_source_unconfigured");
+      const result=await access.connection.customsHistoryClient.read({action,input,actorId:ctx.identity.userId,requestId});
+      this.#access(ctx);return result;
+    }catch{return failure("blocked","business_access_denied");}
   }
 
   async records(ctx: PortalContext, action: "prepare"|"save"|"get"|"list"|"review"|"reviewQueue"|"reviewPrepare"|"reviewResolve"|"documentCreate"|"documentGet"|"documentDownload", input: unknown, requestId: string, idempotencyKey?: string): Promise<unknown> {

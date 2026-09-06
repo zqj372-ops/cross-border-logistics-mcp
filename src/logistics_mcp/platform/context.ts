@@ -35,6 +35,7 @@ const authClaimsSchema = z
     client_id: identifierSchema,
     session_id: identifierSchema,
     expires_at: z.number().int().positive(),
+    mcp_profile: z.literal("business-v1").optional(),
   })
   .strict();
 
@@ -49,6 +50,7 @@ export interface ExecutionContext {
   readonly clientId: string;
   readonly sessionId: string;
   readonly expiresAt: number;
+  readonly profile?: "business-v1";
 }
 
 const trustedExecutionContexts = new WeakSet<object>();
@@ -101,6 +103,7 @@ export function parseExecutionContext(input: unknown): ExecutionContext {
     clientId: claims.client_id,
     sessionId: claims.session_id,
     expiresAt: claims.expires_at,
+    ...(claims.mcp_profile === undefined ? {} : { profile: claims.mcp_profile }),
   });
   trustedExecutionContexts.add(context);
   return context;

@@ -10,7 +10,7 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  visit(document);
  for(const ref of refs){expect(ref.startsWith("#/components/schemas/")).toBe(true);let value:unknown=document;for(const part of ref.slice(2).split("/")){value=(value as Record<string,unknown>)[part];}expect(value,ref).toBeDefined();}
  const paths=document.paths as Record<string,{post?:{requestBody:{content:{"application/json":{schema:unknown}}}}}>;
- expect(Object.keys(paths)).toHaveLength(13);
+ expect(Object.keys(paths)).toHaveLength(17);
  const ajv=new Ajv2020({strict:false});addFormats(ajv);
  ajv.addSchema({...document,$id:"https://test.invalid/openapi"});
  const pointer="https://test.invalid/openapi#/paths/~1api~1v2~1business~1customs~1query/post/requestBody/content/application~1json/schema";
@@ -28,4 +28,11 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  const validateApplicationExchange=ajv.compile({$ref:"https://test.invalid/openapi#/paths/~1access~1v2~1application~1token~1exchange/post/requestBody/content/application~1json/schema"});
  expect(validateApplicationExchange({schema_version:"application-exchange@2026-09-06.v1",requested_tool_names:["cargo.calculate"]})).toBe(true);
  expect(validateApplicationExchange({schema_version:"application-exchange@2026-09-06.v1",requested_tool_names:["quote.zone_preview"]})).toBe(false);
+ const businessMcp=ajv.compile({$ref:"https://test.invalid/openapi#/paths/~1access~1v2~1application~1mcp~1token~1exchange/post/requestBody/content/application~1json/schema"});
+ const request={schema_version:"application-mcp-exchange@2026-09-06.v1",requested_tool_names:["cargo.calculate","customs.query"]};
+ expect(businessMcp(request)).toBe(true);expect(businessMcp({...request,tenant_id:"other"})).toBe(false);expect(businessMcp({...request,requested_tool_names:["customs.query","customs.query"]})).toBe(false);
+ const historyResult=ajv.compile({$ref:"https://test.invalid/openapi#/paths/~1console~1api~1v1~1business~1customs~1history~1list/post/responses/200/content/application~1json/schema"});
+ expect(historyResult({schema_version:"portal-business@2026-09-05.v1",status:"unavailable",data:null,reason_codes:["customs_history_source_unconfigured"]})).toBe(true);
+ const mcpError=ajv.compile({$ref:"https://test.invalid/openapi#/paths/~1access~1v2~1application~1mcp~1token~1exchange/post/responses/403/content/application~1json/schema"});
+ expect(mcpError({schema_version:"application-mcp-access@2026-09-06.v1",status:"blocked",data:null,reason_codes:["business_access_denied"]})).toBe(true);
 });

@@ -327,6 +327,7 @@ describe("Agent standard registry", () => {
     expect(registry.standards.some((candidate) => candidate.path === "docs/superpowers/plans/2026-08-22-writable-mcp-control-plane-plan.md")).toBe(false);
     expect(registry.modules.map((module) => module.module_id).sort()).toEqual([
       "agent-access",
+      "business-api",
       "cargo",
       "container",
       "freightcom-ltl",

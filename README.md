@@ -2,8 +2,9 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。报价、关务、税费和业务记录由既有权威系统负责；平台负责身份、企业与应用授权、凭证、窄接口适配、审计和失败闭合。
 
-**状态更新：2026-09-06。** 统一门户与统一 API Key 已有生产发布回执，业务闭环仍有正式数据、供应商凭证和实际客户验收缺口。当前能力市场包含 **3 项 MCP/REST 基础能力和 5 项业务 REST 能力**，不是 8 个 MCP 工具。
+**状态更新：2026-09-06。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。旧 `t0-v1` 保留三项；五项业务 MCP 由 `business-v1` 与签名发布显式启用。此轮尚未部署生产；正式数据、供应商凭证与真实客户验收仍须独立完成。
 
+- [功能补齐与发布操作](docs/runbooks/capability-completion-v1.md)
 - [当前进度、功能缺口与验收顺序](docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)
 - [2026-09-06 生产交付记录](docs/product/2026-09-05-mcp-product-redesign/17-market-manual-production-delivery.md) / [生产交付台账](docs/product/2026-09-05-mcp-product-redesign/15-implementation-delivery.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
@@ -20,7 +21,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | [操作手册](https://www.freightclaw.net/console/#guide) | 账号、授权、REST、MCP 和结果处理 |
 | [Agent 指南](https://www.freightclaw.net/console/skill.md) / [OpenAPI](https://www.freightclaw.net/console/openapi.json) | 按实际 Schema 接入；仓库副本见 [skill.md](apps/console/skill.md) 和 [openapi.json](docs/integrations/openapi.json) |
 
-当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信登录尚未接入。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
+当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
 
 ## 当前能力与可用边界
 
@@ -29,11 +30,11 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | `cargo.calculate` | MCP + REST | CBM、重量、体积重、分泡和计费重的确定性计算 | 客户客户端调用仍需按实际身份验收 |
 | `container.plan_summary` | MCP + REST | 理论/运营容量、超方超重和装载顺序摘要 | 不提供三维坐标或实际装载承诺 |
 | `system.agent_context.get` | MCP + REST | 受限 profile、生成的标准包和固定资源 | 不能代替业务授权或来源就绪检查 |
-| `quote.zone_preview` | REST | 原报价系统的只读尾程试算；已有真实租户 service actor 调用回执 | 当前有效价格复核和真实人员业务验收 |
-| `quote.ai_extract_preview` | REST | 原系统只读资料提取；已有成功回执且业务记录计数未变 | 上游曾超时，稳定性仍需运行指标支持 |
-| `customs.query` | REST | 中、美、加完整结果适配及真实 M2M 连接 | 正式数据发布、复合快照及动态措施依赖未闭合 |
-| `customs.tax.estimate` | REST，单项及批量 | 服务器估算接口、批量结果和来源校验 | 正式关务数据未就绪时保持 `unavailable` |
-| `quote.freightcom_ltl.preview` | REST | 正式接口适配、企业权限、原币种费用和有效期校验 | 企业正式凭证、账号映射和真实生产 rate 读回 |
+| `quote.zone_preview` | REST + 业务 MCP | 原报价系统的只读尾程试算；已有真实租户 service actor 调用回执 | 当前有效价格复核和真实人员业务验收 |
+| `quote.ai_extract_preview` | REST + 业务 MCP | 原系统只读资料提取；已有成功回执且业务记录计数未变 | 上游曾超时，稳定性仍需运行指标支持 |
+| `customs.query` | REST + 业务 MCP | 中、美、加完整结果适配及真实 M2M 连接 | 正式数据发布、复合快照及动态措施依赖未闭合 |
+| `customs.tax.estimate` | MCP 单项 + REST 单项/批量 | 服务器估算接口、批量结果和来源校验 | 正式关务数据未就绪时保持 `unavailable` |
+| `quote.freightcom_ltl.preview` | REST + 业务 MCP | 正式接口适配、企业权限、原币种费用和有效期校验 | 企业正式凭证、账号映射和真实生产 rate 读回 |
 | 报价保存、历史、人工审核、PDF | 人员会话业务 API | 专用接口、预览、幂等、角色门禁和读回实现；有隔离流程测试记录 | 真实企业保存—审核—正式 PDF 完整验收；未开放为机器写权限 |
 
 最近已保存的关务来源状态为 15 个 staged、0 个 published、0 个 publication snapshot；查询/估算返回 `data_not_ready` 或 `unavailable`。最近尾程试算来源版本为 `2026-06-03`，版本日期本身既不证明失效，也不证明当前价格已获批准。详见 [关务来源验收](docs/runbooks/customs-candidate-production-api.md) 与 [报价来源验收](docs/runbooks/quote-candidate-production-api.md)。
@@ -47,7 +48,7 @@ flowchart LR
   A[企业应用 / Agent] --> K[统一 API Key]
   K --> R[固定 REST 路由]
   K --> E[兑换短期 MCP JWT]
-  E --> M[MCP Runtime · 3 个 T0 工具]
+  E --> M[MCP Runtime · T0 与签名业务模块]
   R --> T[同一 T0 确定性实现]
   R --> B[业务接口适配与委托]
   P --> B
@@ -55,12 +56,12 @@ flowchart LR
 ```
 
 - 固定 REST 路由支持 `Authorization: ApiKey <key>`。业务路由也兼容既有短期 Bearer JWT。
-- MCP 使用 `POST /access/v2/application/token/exchange` 兑换短期 JWT，再访问 `/mcp`。MCP Runtime 不接受长期 Key。
+- MCP 使用版本化换票接口获取短期 JWT，再访问 `/mcp`；旧三项基础工具使用 `/access/v2/application/token/exchange`，包含业务工具时使用下述新接口。MCP Runtime 不接受长期 Key。
 - 统一 Key 复用既有 Business 凭证权威，前缀为 `flcbk_`；旧 `lmcpk_` 路由保持兼容。
 - 老 Business Key 获得基础工具范围需要负责人明确启用；新增业务服务后通过“更新服务”明确轮换，普通轮换不隐式增权。
 - 换票及调用均核对当前企业、应用、负责人、授权、交付状态、有效期和撤销状态。已签发 JWT 不能绕过后来发生的撤销。
 - 完整 Key 只显示一次，不进入浏览器持久存储、日志、代码或文档。
-- 当前市场中的报价和关务能力通过 REST 提供，不自动进入 MCP `tools/list`。
+- 五项业务 MCP 使用 `/access/v2/application/mcp/token/exchange` 与 `application-mcp-exchange@2026-09-06.v1`，当前批准的精确工具范围进入短 JWT；工具列表同时受签名模块发布控制。旧换票合同不变。
 
 具体请求、Schema 和状态以 [统一 Key RFC](docs/rfcs/2026-09-06-unified-application-key-v1.md)、[Business API v2](docs/runbooks/business-api-v2.md) 和 OpenAPI 为准。
 
@@ -70,7 +71,7 @@ flowchart LR
 | --- | --- | --- |
 | `apps/console` | 当前企业门户、能力市场、人员工作台与统一 Key | 主用户入口；来源不可用时保留真实失败状态 |
 | `apps/access-console` | 既有 Access Gateway 的窄管理界面 | 保留租户、客户端、旧凭证、运营概览和接入诊断 |
-| `apps/admin` | MCP 模块控制与本地隔离管理流程 | 本地模块管理与生产 Portal 不等价；生产模块控制 POST 仍被阻断 |
+| `apps/admin` | MCP 模块控制与本地隔离管理流程 | 本地模块管理与生产 Portal 不等价；旧生产模块控制 POST 仍被阻断；业务模块使用独立签名发布文件 |
 
 Module Runtime v0 已有静态可信模块、manifest、capability、catalog 与 registration lease。它只在启动时挂载模块，尚未完成远程安装、通用隔离模块运行池及无重启热插拔。现有 Admin 的预览、不同操作者审批、activation 与 exact readback 只证明相应控制流程，不代表任意新代码可在线安装。
 
@@ -99,7 +100,7 @@ Module Runtime v0 已有静态可信模块、manifest、capability、catalog 与
 3. Freightcom 企业正式凭证与生产费率读回。
 4. 现有统一 Key 的真实 REST/MCP 调用和权限变更验收。
 
-尚缺客户侧业务调用日志/用量视图、关务及税费历史恢复、企业微信登录、通用模块热插拔与多实例高可用。当前“操作记录”只展示成员、应用和授权变更。Portal 为单实例 SQLite，不能把同一卷用于多主机并发写入。自动客户发送、订舱、付款、正式报关和商业计费不在本阶段默认范围。
+个人中心新增“调用记录”和“关务历史”。调用记录包含脱敏身份、状态、耗时和请求编号；历史读取必须连接来源接口，当前 RiskCustoms 尚无该合同，保持不可用。签名私有 Provider 支持无重启切换、排空、回滚和目录通知。Portal 提供经隔离并发、迁移及断连恢复验证的 PostgreSQL 模式；SQLite 继续限于单实例，不能跨主机共享写入。自动客户发送、订舱、付款、正式报关和商业计费不在本阶段默认范围。
 
 ## 开发与本地验证
 

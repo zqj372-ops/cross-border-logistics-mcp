@@ -70,6 +70,22 @@ function client(fetchImpl: typeof fetch, delegationSigner: CustomsDelegationSign
 const request = { input: { query: "测试商品", ruleDate: RULE_DATE, codeCountry: "CN" as const, selectedHs6: "123456", attributes: { originCountry: "CN" as const, contains_steel_aluminum: "unknown" as const, vacuumInsulated: "unknown" as const } }, actor: { type: "user" as const, id: "user-1" }, requestId: "request-1" };
 
 describe("customs portal client", () => {
+  it("cancels an oversized chunked response before consuming the full body", async () => {
+    let pulls = 0;
+    const cancel = vi.fn();
+    const fetchImpl = vi.fn(() => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(256 * 1024));
+        if (pulls === 20) controller.close();
+      },
+      cancel,
+    }))));
+    await expect(client(fetchImpl, signer()).query(request)).resolves.toMatchObject({ status: "unavailable" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulls).toBeLessThan(8);
+  });
+
   it("returns the complete v2 projection after bound delegation and comparable status checks", async () => {
     let signInput: CustomsDelegationSignInput | undefined;
     const fake = fixtureFetch([{ body: status() }, { body: queryResponse() }, { body: status() }]);

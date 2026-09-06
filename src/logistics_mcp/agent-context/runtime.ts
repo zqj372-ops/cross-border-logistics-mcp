@@ -248,7 +248,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
       return false;
     }
     if (this.authorizationCallback === null) {
-      return profile.profile_id === RUNTIME_PROFILE_ID && profile.audience === "caller";
+      return profile.audience === "caller" && (profile.profile_id === RUNTIME_PROFILE_ID || profile.profile_id === "business-runtime-caller" && context.profile === "business-v1");
     }
     const request: AgentContextAuthorizationRequest = {
       context,
@@ -360,6 +360,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         "The requested Agent resource request is invalid.",
       );
     }
+    const runtimeProfileId=context.profile==="business-v1"?"business-runtime-caller":RUNTIME_PROFILE_ID;
     const knownResource = CANONICAL_AGENT_RESOURCES.find((resource) => resource.uri === uri);
     if (knownResource === undefined) {
       throw new AgentAccessRuntimeError(
@@ -389,7 +390,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         "The requested Agent resource is not registered.",
       );
     }
-    if (!this.isProfileAuthorized(pack, RUNTIME_PROFILE_ID, undefined, context, canonical)) {
+    if (!this.isProfileAuthorized(pack, runtimeProfileId, undefined, context, canonical)) {
       throw new AgentAccessRuntimeError(
         "resource_not_authorized",
         "The requested Agent resource is not authorized for this caller.",
@@ -403,7 +404,7 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
     }
     if (resource.resource_id === "modules.catalog") {
       const runtimeCaller = pack.profiles.find(
-        (profile) => profile.profile_id === RUNTIME_PROFILE_ID,
+        (profile) => profile.profile_id === runtimeProfileId,
       );
       if (runtimeCaller === undefined || runtimeCaller.audience !== "caller") {
         throw new AgentAccessRuntimeError(
@@ -416,14 +417,14 @@ class DefaultAgentAccessRuntime implements AgentAccessRuntime {
         mimeType: canonical.mimeType,
         text: JSON.stringify({
           modules: pack.modules.filter((module) =>
-            module.risk_level === "T0" && runtimeCaller.allowed_module_ids.includes(module.module_id),
+            (module.risk_level === "T0" || context.profile === "business-v1" && module.risk_level === "T1") && runtimeCaller.allowed_module_ids.includes(module.module_id),
           ),
         }, null, 2),
       };
     }
     if (resource.resource_id === "agent.profiles") {
       const runtimeCaller = pack.profiles.find(
-        (profile) => profile.profile_id === RUNTIME_PROFILE_ID,
+        (profile) => profile.profile_id === runtimeProfileId,
       );
       if (runtimeCaller === undefined || runtimeCaller.audience !== "caller") {
         throw new AgentAccessRuntimeError(

@@ -2,6 +2,7 @@ import { importPKCS8, SignJWT } from "jose";
 
 export const DELEGATION_CLAIMS_VERSION = "freightclaw-delegation@2026-09-05.v1" as const;
 export type PortalDelegationScope =
+  | "customs.history.read"
   | "customs.query"
   | "customs.tax.estimate"
   | "quote.zone_preview"

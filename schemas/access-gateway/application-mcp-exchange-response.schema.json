@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/schemas/application-mcp-exchange-response.schema.json",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "application-mcp-access@2026-09-06.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "access_token": {
+              "type": "string",
+              "minLength": 1
+            },
+            "token_type": {
+              "type": "string",
+              "const": "Bearer"
+            },
+            "expires_in": {
+              "type": "number",
+              "const": 300
+            },
+            "mcp_profile": {
+              "type": "string",
+              "const": "business-v1"
+            },
+            "tool_names": {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "cargo.calculate",
+                  "container.plan_summary",
+                  "system.agent_context.get",
+                  "customs.query",
+                  "customs.tax.estimate",
+                  "quote.zone_preview",
+                  "quote.ai_extract_preview",
+                  "quote.freightcom_ltl.preview"
+                ]
+              }
+            }
+          },
+          "required": [
+            "access_token",
+            "token_type",
+            "expires_in",
+            "mcp_profile",
+            "tool_names"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "maxItems": 0,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "application-mcp-access@2026-09-06.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

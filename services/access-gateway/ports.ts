@@ -5,7 +5,7 @@ import type {
   AuditEvent,
   ClientRecord,
   JwksResponse,
-  JwtClaims,
+  GatewayJwtClaims,
   ProviderKind,
   SignedJwt,
   StoredCredentialRecord,
@@ -50,7 +50,7 @@ export interface SecretPepperProvider extends ProviderIdentity {
 }
 
 export interface JwtSigningProvider extends ProviderIdentity {
-  sign(claims: JwtClaims): Promise<SignedJwt>;
+  sign(claims: GatewayJwtClaims): Promise<SignedJwt>;
   getJwks(): Promise<JwksResponse>;
 }
 
