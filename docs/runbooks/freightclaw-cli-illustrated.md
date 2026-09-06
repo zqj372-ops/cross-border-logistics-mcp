@@ -6,13 +6,15 @@
 
 ## 1. 安装后确认命令可用
 
-需要 Node.js 22.13 或更新版本。目前使用 npm 安装包交付，尚未发布到公共 npm registry。拿到 `.tgz` 安装包后，将下方路径替换为文件的实际位置：
+需要 Node.js 22.13 或更新版本。[官网 CLI 页面](https://www.freightclaw.net/console/#cli) 提供安装包、校验文件和可下载的输入示例。目前使用官网托管的 npm 安装包交付，尚未发布到公共 npm registry：
 
 ```sh
-npm install --global /absolute/path/freightclaw-cli-0.1.0.tgz
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.1.0.tgz
 freightclaw --version
 freightclaw --help
 ```
+
+也可以下载 `.tgz` 后，将安装命令中的网址替换为本地文件的实际路径。
 
 若从 GitHub 源码构建，在仓库根目录执行：
 

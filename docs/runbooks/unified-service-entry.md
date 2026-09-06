@@ -36,7 +36,9 @@ git diff --check
 2. 将旧根页面保留到 `/inquiry/index.html`，只更新 canonical/分享地址并增加返回首页导航；原 `/assets/`、`/pricing/` 和其他业务文件保持原路径。`inquiry-navigation.css` 仅作用于新增导航。
 3. 发布并读回 CLI 安装包、SHA-256 文件和包内九份合成 JSON 示例。安装包使用已验证制品，已存在的同版本文件不得静默覆盖成不同内容。
 4. 按既有 Portal 发布流程切换候选镜像，核对 build ID、就绪状态及权限边界。读取候选 `dist/console/index.html`，确认带版本的静态资源可访问。
-5. 原子替换根 `index.html` 为同一构建的 `dist/console/index.html`。根站继续通过已有 Nginx 静态路由服务；不增加新的 API 代理或改变鉴权配置。
+5. 原子替换根 `index.html` 为同一构建的 `dist/console/index.html`。在既有 HTTPS server 中包含 `deploy/portal/service-entry-locations.nginx`，使首页和询价 HTML 每次访问重新校验，避免浏览器按旧文件日期长期缓存；原脚本、样式和下载文件保持既有缓存策略。先运行 `nginx -t`，通过后 reload，并读回 HTML 的 `Cache-Control: no-cache` 及原安全响应头。不增加新的 API 代理或改变鉴权配置。
 6. 从公网浏览器读回 `/`、`/inquiry/` 和 `/console/#cli`，验证入口、旧询价选项、资源与安装包校验值。数据库不需要迁移。
 
-回滚时先恢复备份的旧根 `index.html`，再按 Portal 既有流程恢复上一镜像及配置并核对就绪状态。原海运脚本和费用目录保持原样，新增下载文件与 `/inquiry/` 可保留；不得用旧备份覆盖运行数据库。
+公网 HTML 会被 Cloudflare 追加统计脚本。比较构建内容时仅剔除该已知脚本，然后核对完整 HTML 和其引用的版本化 JS/CSS；安装包、JSON、业务脚本和样式必须逐字节相同。已经缓存旧首页的浏览器首次需要刷新；新响应会要求每次重新校验。
+
+回滚时先恢复备份的旧根 `index.html`，再按 Portal 既有流程恢复上一镜像及配置并核对就绪状态。需要撤回 HTML 缓存设置时恢复 Nginx 配置备份，经 `nginx -t` 后 reload。原海运脚本和费用目录保持原样，新增下载文件与 `/inquiry/` 可保留；不得用旧备份覆盖运行数据库。
