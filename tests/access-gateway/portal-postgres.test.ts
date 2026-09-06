@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
+import { spawn } from "node:child_process";
 import { build } from "esbuild";
 import { Pool } from "pg";
 import { beforeAll, afterAll, expect, it, vi } from "vitest";
@@ -53,8 +53,9 @@ it.skipIf(!enabled)("shares durable account mutations and idempotency, preserves
 
 it.skipIf(!enabled)("serializes concurrent changes from separate processes without lost updates",async()=>{
   const run=(prefix:string)=>new Promise<void>((resolve,reject)=>{
-    const worker=new Worker(`const {workerData,parentPort}=require('node:worker_threads'); (async()=>{const {PostgresPortalStores}=await import(workerData.module);const s=new PostgresPortalStores({configuration:workerData.config});try {for(let i=0;i<12;i++)s.business.transact('concurrency',workerData.prefix+'-concurrent-key-'+i,'hash',data=>{data.audit.push({auditId:workerData.prefix+i,organizationId:null,actorRef:'fixture',action:'test',objectRef:'counter',status:'success',requestId:'fixture',createdAt:new Date().toISOString()});return true;});parentPort.postMessage('done');}finally{s.close();}})().catch(()=>process.exit(1));`,{eval:true,workerData:{module:pathToFileURL(join(root,"postgres-stores.mjs")).href,config,prefix}});
-    worker.on("message",()=>resolve());worker.on("error",reject);worker.on("exit",code=>{if(code!==0)reject(new Error(`worker_exit_${code}`));});
+    const script=`const {PostgresPortalStores}=await import(process.argv[1]);const s=new PostgresPortalStores({configuration:JSON.parse(process.argv[2])});try{for(let i=0;i<12;i++)s.business.transact('concurrency',process.argv[3]+'-concurrent-key-'+i,'hash',data=>{data.audit.push({auditId:process.argv[3]+i,organizationId:null,actorRef:'fixture',action:'test',objectRef:'counter',status:'success',requestId:'fixture',createdAt:new Date().toISOString()});return true;});}finally{s.close();}`;
+    const child=spawn(process.execPath,["--input-type=module","-e",script,pathToFileURL(join(root,"postgres-stores.mjs")).href,JSON.stringify(config),prefix],{stdio:"ignore"});
+    child.on("error",reject);child.on("exit",code=>{if(code===0)resolve();else reject(new Error(`process_exit_${code}`));});
   });
   await Promise.all([run("a"),run("b")]);
   expect(a.business.read().audit).toHaveLength(24);

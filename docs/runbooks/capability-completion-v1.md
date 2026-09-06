@@ -50,7 +50,7 @@ node dist/services/access-gateway/portal/postgres-migration.mjs \
 新安装无历史状态时明确使用 `--empty`。连接设置沿用 `ACCESS_GATEWAY_STORE_BACKEND=postgresql` 和 `ACCESS_GATEWAY_POSTGRES_*`；密码、CA 只用私有文件路径。启动程序不会自动初始化缺失的共享表。
 
 3. 迁移先检查数据库身份及版本，保留账户、授权、撤销 Key、摘要、会话和幂等结果；逐项核对写后的账户/授权、幂等、会话和调用记录，以及来源未变化后提交。目标非空或迁移指纹不匹配时拒绝覆盖。成功只输出指纹和状态，不输出凭证。保留源库及备份。
-4. 设置 `PORTAL_STORE_BACKEND=postgresql`，先启一个副本核对，再使用 `compose.yml` 加 `compose.shared.yml` 扩为两个 Portal 副本。需要支持 `!reset` 的 Docker Compose；入口改用 `portal-shared-locations.nginx`（替换原 locations include），通过 `portal` 服务名与 Docker DNS 每10秒更新副本地址；该示例仅适用于同一 Docker 网络。
+4. 设置 `PORTAL_STORE_BACKEND=postgresql`，先启一个副本核对，再使用 `compose.yml` 加 `compose.shared.yml` 扩为两个 Portal 副本。需要支持 `!reset` 的 Docker Compose；宿主环境可用 `PORTAL_ENV_FILE` 指定私有环境文件，默认路径沿用现有部署；入口改用 `portal-shared-locations.nginx`（替换原 locations include），通过 `portal` 服务名与 Docker DNS 每10秒更新副本地址；该示例仅适用于同一 Docker 网络。
 5. 每个副本使用同一发行配置、同一 Gateway JWT 和 Business JWT、同一 pepper 版本与历史。密钥轮换必须作为协调发布执行。JWT 历史文件仍按现有配置使用可写私有状态路径，不把不同副本生成的材料混在一起。
 6. Runtime 设置 `MCP_CALL_LOG_BACKEND=postgresql`，配置相同 schema 的调用记录表。运行角色只需调用记录表访问权，不需要 Portal 授权表的修改权。迁移角色先建表。
 
@@ -68,7 +68,7 @@ node dist/services/access-gateway/portal/postgres-migration.mjs \
 {"schema_version":"private-provider@2026-09-06.v1","base_url":"https://provider-version.example.invalid/","contract_version":"business-mcp-result@2026-09-06.v1","tools":["customs.query","customs.tax.estimate","quote.zone_preview","quote.ai_extract_preview","quote.freightcom_ltl.preview"]}
 ```
 
-Provider 必须通过 TLS 和白名单限制，健康路由为 `/access/v2/application/mcp/provider/health`，需要工作负载密钥。为不同实现版本使用独立部署和明确的版本路由；旧版本在排空完成前继续存在。签名证明描述文件、SBOM 和所声明源码身份获批，不是远端进程镜像或业务数据的独立证明，发布前仍需核对目标实际部署。
+Provider 必须通过 TLS 和白名单限制，健康路由为 `/access/v2/application/mcp/provider/health`，需要工作负载密钥。为不同实现版本使用独立部署和明确的版本路由；旧版本在排空完成前继续存在。若版本域名与 Portal 的 `PORTAL_PUBLIC_ORIGIN` 不同，私有反向代理必须将 Host 设置为该 Portal 实例配置的主机名，同时保留 Authorization 与工作负载头；不要关闭 Portal 的主机检查。签名证明描述文件、SBOM 和所声明源码身份获批，不是远端进程镜像或业务数据的独立证明，发布前仍需核对目标实际部署。
 
 payload 的完整闭合 Schema 是 `provider-release.schema.json`：版本、递增 revision、enabled、两个文件的 SHA-256 摘要、source_commit、签发/到期时间。有效期最多31天；签名使用 schema 顺序的紧凑 payload JSON 字节。`trusted-signers.json` 为 key_id 到 Ed25519 公钥 PEM 的对象；私钥只在发布机。
 

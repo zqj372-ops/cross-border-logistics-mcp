@@ -75,5 +75,13 @@
     "freightcom_enterprise_credentials",
     "real_customer_key_invocation",
     "production_rollout"
-  ]
+  ],
+  "postgres_process_recheck": {
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "concurrent_node_processes": 2,
+    "concurrent_mutations": 24,
+    "duration_seconds": 8.74
+  }
 }

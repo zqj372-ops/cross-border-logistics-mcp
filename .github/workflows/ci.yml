@@ -71,6 +71,6 @@ jobs:
         run: |
           docker compose --env-file deploy/env.example -f deploy/compose.yml config --quiet
           MCP_BUSINESS_ENV_FILE="$PWD/deploy/portal/capabilities.env.example" MCP_BUSINESS_RELEASE_DIRECTORY=/tmp/provider-release MCP_BUSINESS_SECRET_DIRECTORY=/tmp/provider-secrets docker compose --env-file deploy/env.example -f deploy/compose.yml -f deploy/portal/compose.business-runtime.yml config --quiet
-          PORTAL_IMAGE=cross-border-logistics-mcp:candidate docker compose -f deploy/portal/compose.yml -f deploy/portal/compose.shared.yml config --no-env-resolution --quiet
+          PORTAL_IMAGE=cross-border-logistics-mcp:candidate PORTAL_ENV_FILE="$PWD/deploy/portal/capabilities.env.example" docker compose -f deploy/portal/compose.yml -f deploy/portal/compose.shared.yml config --no-env-resolution --quiet
       - name: 构建候选镜像
         run: docker build -f deploy/Dockerfile .
