@@ -1,0 +1,425 @@
+{
+  "recorded_at": "2026-09-06T16:19:26.211428+00:00",
+  "deployment_date": "2026-09-07",
+  "timezone": "Asia/Shanghai",
+  "scope": [
+    "RiskCustoms source deployment",
+    "SQLite migration 0008",
+    "six exact source proxy routes",
+    "Portal deployment and customs history flag"
+  ],
+  "source": {
+    "preparation": {
+      "release": "/var/www/riskcustoms-hs-published-candidate/releases/20260906-history-18c113bf3243",
+      "runtime_pair": "/var/lib/riskcustoms-hs-published-candidate/history-18c113bf3243",
+      "backup": "/var/lib/riskcustoms-hs-published-candidate/backups/20260906-history-18c113bf3243",
+      "source_head": "18c113bf3243a45339c561a6560b2d4998fb3e6c",
+      "artifact_verified": true,
+      "backup_restore_integrity": "ok",
+      "authority_sha256": "6fe756e4f1e77e99bdbab0cf86074fc755e35797e01ba2a5ca2db84041fc7382",
+      "release_states": [
+        [
+          "staged",
+          15
+        ]
+      ],
+      "snapshot_count": 0,
+      "migrations": [
+        "0001_core.sql",
+        "0002_search.sql",
+        "0003_audit.sql",
+        "0004_m2m_audit.sql",
+        "0005_m2m_delegation.sql",
+        "0006_m2m_tariff_estimate_audit.sql",
+        "0007_cn_trade_measure.sql",
+        "0008_m2m_customs_history.sql"
+      ],
+      "migration_result": {
+        "command": "migrate:node-customs",
+        "status": "pass",
+        "applied": [
+          "0008_m2m_customs_history.sql"
+        ],
+        "baselined": [],
+        "current": true
+      },
+      "production_proxy_changed": false
+    },
+    "restart": {
+      "history_access_audit_rows": 4,
+      "audit_sha256": "52b561908f46df2a74a3ea2f484de6f7fcf29c2f954b66352a5f0cb44781ace7",
+      "history_records": 0,
+      "persisted_after_restart": true
+    },
+    "final_state": {
+      "verified_at": "2026-09-06T16:12:44.282840+00:00",
+      "authority_sha256": "6fe756e4f1e77e99bdbab0cf86074fc755e35797e01ba2a5ca2db84041fc7382",
+      "source_release_states": [
+        [
+          "staged",
+          15
+        ]
+      ],
+      "publication_snapshots": 0,
+      "history_records": 0,
+      "history_access_audit_rows": 12,
+      "general_site_http": 200,
+      "general_site_sha256": "b51c6a20e36ea84ae9ba666e7778aa039b6be2f862d43969f4a2a079ccd1b5ea",
+      "processes": [
+        {
+          "name": "riskcustoms-hs-live-20260825113223-handshake-fee75a2",
+          "status": "online",
+          "restarts": 0
+        },
+        {
+          "name": "riskcustoms-hs-published-candidate-v3",
+          "status": "stopped",
+          "restarts": 2
+        },
+        {
+          "name": "riskcustoms-hs-history-v1",
+          "status": "online",
+          "restarts": 1
+        }
+      ],
+      "pm2_saved": true,
+      "previous_service_stopped": true,
+      "previous_release_and_data_preserved": true
+    },
+    "proxy": {
+      "source_commit": "18c113bf3243a45339c561a6560b2d4998fb3e6c",
+      "service_version": "0.2.3-history-18c113bf3243",
+      "m2m_proxy_port": 13119,
+      "exact_routes": 6,
+      "other_upstream_port": 13108,
+      "nginx_test": "passed",
+      "nginx_sha256": "a81339fc59a931562c6a9a197d55c8fbc1fa4160143cc378f19c7953f3f2d76e",
+      "current": "/var/www/riskcustoms-hs-published-candidate/releases/20260906-history-18c113bf3243",
+      "previous_current": "/var/www/riskcustoms-hs-published-candidate/releases/20260905144958-published-v3-d7edd1b-02"
+    },
+    "pm2_boot_service": "enabled"
+  },
+  "source_artifact": {
+    "source_head": "18c113bf3243a45339c561a6560b2d4998fb3e6c",
+    "build_id": "e96e641dce6a000278df92dd561ee3a02148a38f7c8a86cb07686dcf312e0e9d",
+    "archive": "riskcustoms-18c113bf3243.tar.gz",
+    "archive_sha256": "aa8ab17dc3a362b50c81581be8d09f87c8b73d4a67792b5bd21ab1fe86d8932e",
+    "bytes": 1665416,
+    "files": 102
+  },
+  "source_https_readback": {
+    "verifiedAt": "2026-09-06T16:11:43.391Z",
+    "source": "production HTTPS from Portal host",
+    "mcpCommit": "712cddf7e355a008a09dfc56aa205eba64289e27",
+    "authority": "existing active organization and verified owner",
+    "browserSessionUsed": false,
+    "checks": [
+      {
+        "action": "service_connection",
+        "path": "/api/m2m/status?ruleDate=2026-09-07",
+        "http": 503,
+        "status": "data_not_ready",
+        "serviceVersion": "0.2.3-history-18c113bf3243",
+        "requestMatched": null,
+        "customerHistoryWritten": false
+      },
+      {
+        "action": "service_connection",
+        "path": "/api/m2m/v2/query",
+        "http": 503,
+        "status": "data_not_ready",
+        "serviceVersion": "0.2.3-history-18c113bf3243",
+        "requestMatched": true,
+        "customerHistoryWritten": false
+      },
+      {
+        "action": "service_connection",
+        "path": "/api/m2m/v1/tariff-estimate",
+        "http": 503,
+        "status": "unavailable",
+        "serviceVersion": null,
+        "requestMatched": true,
+        "customerHistoryWritten": false
+      },
+      {
+        "action": "service_connection",
+        "path": "/api/m2m/v1/tariff-estimates/batch",
+        "http": 503,
+        "status": "unavailable",
+        "serviceVersion": null,
+        "requestMatched": true,
+        "customerHistoryWritten": false
+      },
+      {
+        "operation": "customs.query",
+        "action": "list",
+        "status": "success",
+        "records": 0
+      },
+      {
+        "operation": "customs.query",
+        "action": "missing_record",
+        "status": "unavailable",
+        "contentReturned": false
+      },
+      {
+        "operation": "customs.tax.estimate",
+        "action": "list",
+        "status": "success",
+        "records": 0
+      },
+      {
+        "operation": "customs.tax.estimate",
+        "action": "missing_record",
+        "status": "unavailable",
+        "contentReturned": false
+      }
+    ],
+    "requests": [
+      {
+        "path": "/api/m2m/status",
+        "http": 503,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v2/query",
+        "http": 503,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v1/tariff-estimate",
+        "http": 503,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v1/tariff-estimates/batch",
+        "http": 503,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v2/history/list",
+        "http": 200,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v2/history/get",
+        "http": 200,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v2/history/list",
+        "http": 200,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      },
+      {
+        "path": "/api/m2m/v2/history/get",
+        "http": 200,
+        "contentType": "application/json; charset=utf-8",
+        "noStore": true,
+        "edgeChallenge": null
+      }
+    ],
+    "status": "passed"
+  },
+  "portal_promotion": {
+    "promoted": true,
+    "image": "freightclaw-portal:593b537df6c4",
+    "previous_image": "freightclaw-portal:a42849576004",
+    "source_head": "712cddf7e355a008a09dfc56aa205eba64289e27",
+    "config_backup": "/data/logistics-mcp/portal/backups/history-promotion-593b537df6c4",
+    "customs_history_enabled": true,
+    "enabled_connection_count": 1,
+    "runtime_image": "freightclaw-portal:a42849576004",
+    "readiness": {
+      "status": "success",
+      "data": {
+        "service": "freightclaw-portal",
+        "release_id": "portal-history-20260907",
+        "build_id": "593b537df6c438ecc002cadab5554044d750e258312af364cb7246b4ffb84475",
+        "ready": true,
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true,
+          "call_log_database": true
+        }
+      },
+      "reason_codes": []
+    }
+  },
+  "portal_state": {
+    "verified_at": "2026-09-06T16:13:22.930920+00:00",
+    "history_enabled_connections": 1,
+    "containers": [
+      {
+        "name": "logistics-mcp-portal",
+        "image": "freightclaw-portal:593b537df6c4",
+        "state": "running",
+        "health": "healthy",
+        "restart_count": 0,
+        "restart_policy": "unless-stopped"
+      },
+      {
+        "name": "logistics-mcp-runtime",
+        "image": "freightclaw-portal:a42849576004",
+        "state": "running",
+        "health": "healthy",
+        "restart_count": 0,
+        "restart_policy": "unless-stopped"
+      },
+      {
+        "name": "freightclaw-web",
+        "image": "nginx:1.27-alpine",
+        "state": "running",
+        "health": null,
+        "restart_count": 0,
+        "restart_policy": "unless-stopped"
+      }
+    ],
+    "databases": [
+      {
+        "file": "portal.sqlite",
+        "quick_check": "ok",
+        "foreign_key_errors": 0
+      },
+      {
+        "file": "sessions.sqlite",
+        "quick_check": "ok",
+        "foreign_key_errors": 0
+      },
+      {
+        "file": "business-access.sqlite",
+        "quick_check": "ok",
+        "foreign_key_errors": 0
+      },
+      {
+        "file": "calls.sqlite",
+        "quick_check": "ok",
+        "foreign_key_errors": 0
+      }
+    ],
+    "isolated_canary_stopped": true,
+    "storage_backend": "sqlite_single_instance"
+  },
+  "portal_public_readback": {
+    "verified_at": "2026-09-06T16:17:08.591701+00:00",
+    "origin": "https://www.freightclaw.net",
+    "vantage": "Oracle host via public HTTPS",
+    "http_user_agent": "browser compatibility probe",
+    "checks": [
+      {
+        "path": "/console/readyz",
+        "http": 200,
+        "content_type": "application/json; charset=utf-8",
+        "sha256": "f8ba33d900908a1f163e1c80dcac994978b70373849d45de5d36e91a103acd50",
+        "no_store": true
+      },
+      {
+        "path": "/console/",
+        "http": 200,
+        "content_type": "text/html; charset=utf-8",
+        "sha256": "d4c73cc4aea6cabb31d1597515b8a2721638b80b6f412fb9ff715a48c89a9356",
+        "no_store": true
+      },
+      {
+        "path": "/console/app.js?v=b7371d4704d2629f",
+        "http": 200,
+        "content_type": "text/javascript; charset=utf-8",
+        "sha256": "b7371d4704d2629fe726619bd87fdc58a4ee4eeedf13b8fa32c7bd51c2008fd8",
+        "no_store": false
+      },
+      {
+        "path": "/console/styles.css?v=3e09ca281ab2385b",
+        "http": 200,
+        "content_type": "text/css; charset=utf-8",
+        "sha256": "3e09ca281ab2385b6bdf27e76963ce48003c5d112945fadfe9184ad26291919d",
+        "no_store": false
+      },
+      {
+        "path": "/console/openapi.json",
+        "http": 200,
+        "content_type": "application/json; charset=utf-8",
+        "sha256": "72b99580d81eda4c1816d93466ca91485f050841d73c771d7f7d664d024d9bed",
+        "no_store": false
+      },
+      {
+        "path": "/console/api/v1/business/customs/history/list",
+        "http": 401,
+        "content_type": "application/json; charset=utf-8",
+        "sha256": "443819995833927f7ec61bebac0a73cdc36f224f628da1d853263ec3a9f37ad8",
+        "no_store": true
+      },
+      {
+        "path": "/console/api/v1/business/customs/history/get",
+        "http": 401,
+        "content_type": "application/json; charset=utf-8",
+        "sha256": "d1a8f171083fb6349bce7d60df55498d9634fb42d76673b78e462c50d9d3eb70",
+        "no_store": true
+      }
+    ],
+    "browser_login_exercised": false,
+    "customer_api_key_invoked": false,
+    "readiness": {
+      "status": "success",
+      "data": {
+        "service": "freightclaw-portal",
+        "release_id": "portal-history-20260907",
+        "build_id": "593b537df6c438ecc002cadab5554044d750e258312af364cb7246b4ffb84475",
+        "ready": true,
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true,
+          "call_log_database": true
+        }
+      },
+      "reason_codes": []
+    },
+    "status": "passed"
+  },
+  "browser": {
+    "browser": "Edge",
+    "url": "https://www.freightclaw.net/console/#customs-history",
+    "observed": "login page rendered",
+    "page_errors": 0,
+    "person_login_completed": false
+  },
+  "not_performed": [
+    "formal customs data publication",
+    "successful production tax calculation",
+    "non-empty production history detail and form restoration",
+    "customer API key invocation",
+    "business-v1 Provider rollout",
+    "PostgreSQL migration or multi-instance rollout"
+  ],
+  "evidence_limits": [
+    "Source history currently contains zero business records; positive snapshot and form restoration were verified only in prior isolated tests.",
+    "Existing verified owner delegation was used for operator source acceptance without creating a browser session.",
+    "A transient local TLS failure and a Cloudflare 1010 response occurred during HTTP probing; final public checks and normal Edge rendering passed without changing Cloudflare rules."
+  ],
+  "portal_artifact": {
+    "source_head": "712cddf7e355a008a09dfc56aa205eba64289e27",
+    "build_id": "593b537df6c438ecc002cadab5554044d750e258312af364cb7246b4ffb84475",
+    "archive_sha256": "d08b7ca63ef2e94ddc445b3fda5a37d6fa7550e3304ecba2433f156cd42c05bf",
+    "image_id": "sha256:96a3d59ab94345809a53bc1d6133eb6843ae75564b5a936746ae69e35e1bd27a",
+    "files": 392
+  }
+}

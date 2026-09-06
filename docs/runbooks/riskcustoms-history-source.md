@@ -1,6 +1,8 @@
 # RiskCustoms 来源历史接口交付
 
-2026-09-06，按用户追加授权在 RiskCustoms 仓库完成来源端接口。与 FreightClaw main `8517de1e4706d8d9daaeee50a27757b483e143f7` 现有客户端进行了真实 loopback HTTP 联调，数据全部来自隔离测试库。本次未连接或部署生产环境。
+2026-09-06，按用户追加授权在 RiskCustoms 仓库完成来源端接口。与 FreightClaw main `8517de1e4706d8d9daaeee50a27757b483e143f7` 现有客户端进行了真实 loopback HTTP 联调，数据全部来自隔离测试库；该实现阶段未连接或部署生产环境。
+
+2026-09-07 已按后续授权完成来源生产部署、迁移0008、六条代理路径和 Portal 历史开关配置。生产查询历史与税费历史均读回空列表，来源重启后审计保留，Portal 六项就绪检查通过。详见[部署记录及回滚位置](riskcustoms-history-deployment-2026-09-07.md)。
 
 来源新增 `POST /api/m2m/v2/history/list`、`POST /api/m2m/v2/history/get`。请求版本为 `customs-history-request@2026-09-06.v1`，返回版本为 `customs-history@2026-09-06.v1`，与本仓库已有合同兼容。企业、调用方、应用和用户来自已验证的 Bearer 绑定及 RS256 委托；scope 精确为 `customs.history.read`，且只接受人员身份。
 
@@ -14,4 +16,4 @@
 
 来源参考：[完整 OpenAPI](https://github.com/zqj372-ops/riskcustoms-hs/blob/main/docs/contracts/riskcustoms-delegated.openapi.json)、[接口与迁移说明](https://github.com/zqj372-ops/riskcustoms-hs/blob/main/docs/operations/customs-history.md)。联调回执见[脱敏记录](../product/2026-09-05-mcp-product-redesign/evidence/2026-09-06-riskcustoms-history-readback.json)。
 
-来源实现已提交至 `5733eee`，对应 [RiskCustoms PR](https://github.com/zqj372-ops/riskcustoms-hs/pull/5)。生产验收仍按本说明单独进行。
+来源实现 `5733eee` 已通过 [RiskCustoms PR](https://github.com/zqj372-ops/riskcustoms-hs/pull/5) 合入 main `18c113bf3243`，本次生产部署使用该 main 制品。真实人员登录、非空历史详情和恢复仍单独验收；来源正式发布数据保持未就绪。

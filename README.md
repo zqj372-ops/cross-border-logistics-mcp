@@ -2,11 +2,12 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。报价、关务、税费和业务记录由既有权威系统负责；平台负责身份、企业与应用授权、凭证、窄接口适配、审计和失败闭合。
 
-**状态更新：2026-09-06。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。旧 `t0-v1` 保留三项；五项业务 MCP 由 `business-v1` 与签名发布显式启用。此轮尚未部署生产；正式数据、供应商凭证与真实客户验收仍须独立完成。
+**状态更新：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 
 - [功能补齐与发布操作](docs/runbooks/capability-completion-v1.md)
 - [当前进度、功能缺口与验收顺序](docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)
 - [2026-09-06 生产交付记录](docs/product/2026-09-05-mcp-product-redesign/17-market-manual-production-delivery.md) / [生产交付台账](docs/product/2026-09-05-mcp-product-redesign/15-implementation-delivery.md)
+- [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
 
 发布记录、当前代码、本地测试和真实业务调用分别留证。下文生产状态引用已保存回执，不代表读取 README 时刚刚重新探测了生产。`ready=false`、测试数据、证据冲突和写后读回失败不得提升为 `success`。
@@ -91,6 +92,8 @@ Module Runtime v0 已有静态可信模块、manifest、capability、catalog 与
 
 2026-09-06 保存的回执记录 Portal 与 MCP Runtime 镜像为 `freightclaw-portal:a42849576004`，公网检查 12 项通过，Portal 三库及 Runtime 备份恢复完成。生产来源是以 `34e1e95` 为基线的工作树文件清单；该发布身份不会因为后来代码提交到 main 而改变。
 
+2026-09-07 新回执确认 Portal 已更新为 main `712cddf7e355` 构建的 `freightclaw-portal:593b537df6c4`，六项就绪检查、七项公网检查通过；MCP Runtime 仍为 `a42849576004`。RiskCustoms main `18c113bf3243` 已部署、迁移至0008并接通六条来源路径，对应企业的关务历史开关已开启。正式关务数据仍为15 staged、0 published、0 publication snapshot。详见[本次部署及回滚记录](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)。
+
 最新企业回执记录一个有效且已确认交付的统一 Key，但明确 `production_customer_key_invoked=false`、`last_used_at=null`。历史测试通过、服务端只读样例和用户真实客户端验收分别记录。
 
 优先完成：
@@ -100,7 +103,7 @@ Module Runtime v0 已有静态可信模块、manifest、capability、catalog 与
 3. Freightcom 企业正式凭证与生产费率读回。
 4. 现有统一 Key 的真实 REST/MCP 调用和权限变更验收。
 
-个人中心新增“调用记录”和“关务历史”。调用记录包含脱敏身份、状态、耗时和请求编号；RiskCustoms 来源历史接口已完成，并通过现有 MCP 客户端的本地真实 HTTP 联调；生产环境需先部署来源迁移和路由，再启用连接。签名私有 Provider 支持无重启切换、排空、回滚和目录通知。Portal 提供经隔离并发、迁移及断连恢复验证的 PostgreSQL 模式；SQLite 继续限于单实例，不能跨主机共享写入。自动客户发送、订舱、付款、正式报关和商业计费不在本阶段默认范围。
+个人中心新增“调用记录”和“关务历史”。调用记录包含脱敏身份、状态、耗时和请求编号；RiskCustoms 来源历史接口已通过本地真实 HTTP 联调，并于2026-09-07完成生产部署、迁移、路由及连接启用。查询与税费历史目前均为空，真实人员历史详情和恢复仍待业务记录验收。签名私有 Provider 支持无重启切换、排空、回滚和目录通知。Portal 提供经隔离并发、迁移及断连恢复验证的 PostgreSQL 模式；当前生产仍为单实例 SQLite，不能跨主机共享写入。自动客户发送、订舱、付款、正式报关和商业计费不在本阶段默认范围。
 
 ## 开发与本地验证
 
