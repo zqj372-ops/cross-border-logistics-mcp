@@ -1,3 +1,6 @@
+import { rememberLoginDestination, consumeLoginDestination } from './login-destination.js';
+import { createCliGuide } from './cli-guide.js';
+import { createServiceHome } from './home.js';
 import { createCustomsHistoryUi } from "./customs-history.js";
 import { createCallLogUi } from "./calls.js";
 import { createBusinessWorkspace } from './business.js';
@@ -140,7 +143,9 @@ async function refresh() {
   model.admissions = null;
 }
 function brand() { return `<a class="brand" href="#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
+function loginStorage() { try { return window.sessionStorage; } catch { return null; } }
 function renderLogin() {
+  rememberLoginDestination(route().page, loginStorage());
   document.title = '登录 · FreightClaw';
   app.className = 'login-shell';
   app.innerHTML = `<section class="login-story">${brand()}<h1>物流能力，<br>一个账号连接。</h1><p>使用询价、关务与货物工具，也能把已开通的能力接入你的系统和 Agent。</p><div class="login-features"><div class="login-feature">${icon('users')}团队成员与权限统一管理</div><div class="login-feature">${icon('grid')}业务服务在工作台内完成</div><div class="login-feature">${icon('key')}一把 Key 接入系统与 Agent</div></div></section><section class="login-panel"><h2>${model.session?.mode === 'fixtures' ? '进入本地验收工作台' : '登录工作台'}</h2><p>${model.session?.mode === 'fixtures' ? '选择身份，体验真实的申请、审核与凭证流程。' : '使用已验证的邮箱和密码登录，继续你的工作。'}</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? `<div class="identity-list">${model.session.fixture_identities.map((identity) => `<button class="identity-option" type="button" data-action="login" data-id="${esc(identity.user_id)}"><span class="avatar">${esc(identity.display_name.slice(0, 1))}</span><span class="identity-copy"><strong>${esc(identity.display_name)}</strong><small>${esc(identity.email)}</small></span>${icon('arrow')}</button>`).join('')}</div><p class="login-fineprint">这里使用隔离的本地测试企业与身份，提交内容会保存在本地。测试结果不代表生产账号、正式报价或关税数据已接通。</p>` : '<a class="button primary" href="/console/auth/login">邮箱账号登录</a>'}</section>`;
@@ -154,8 +159,8 @@ function ensureShell() {
 function customerNav() {
   const { page } = route();
   const center = model.session?.authenticated && !developer() ? (model.session.organization_id ? 'workbench' : 'members') : 'api-keys';
-  const active = page === 'home' ? 'home' : ['market', 'catalog', 'service'].includes(page) ? 'market' : ['guide', 'diagnostics'].includes(page) ? 'guide' : center;
-  const targets = [['首页', 'home'], ['市场', 'market'], ['操作手册', 'guide'], ['个人中心', center]];
+  const active = page === 'cli' ? 'cli' : page === 'home' ? 'home' : ['market', 'catalog', 'service'].includes(page) ? 'market' : ['guide', 'diagnostics'].includes(page) ? 'guide' : center;
+  const targets = [['首页', 'home'], ['市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide'], ['个人中心', center]];
   const navItems = targets.map(([title, target]) => `<button type="button" class="nav-item" data-go="${target}" ${active === target ? 'aria-current="page"' : ''}>${title}</button>`).join('');
   const signedIn = model.session?.authenticated;
   const account = signedIn ? `<span class="customer-avatar" aria-hidden="true">${esc(model.session.identity.display_name.slice(0, 1))}</span><button class="button quiet" type="button" data-action="logout">退出</button>` : '<button class="button primary" type="button" data-go="login">登录 / 注册</button>';
@@ -305,14 +310,14 @@ async function loadCredentials(id) {
 }
 function render() {
   const { page, id } = route();
-  const publicPages = ['home', 'market', 'catalog', 'service', 'guide'];
+  const publicPages = ['home', 'market', 'catalog', 'service', 'guide', 'cli'];
   if (page === 'login' || (!model.session?.authenticated && (!publicPages.includes(page) || new URLSearchParams(location.search).has('auth_error')))) { renderLogin(); return; }
   ensureShell(); nav();
   const main = document.querySelector('#content');
-  if (reviewer() && !model.session.organization_id && !['home', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'home')); return; }
-  const pages = { apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => reviewer() ? dashboard() : market.page(true), market: () => market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => market.workbench(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
+  if (reviewer() && !model.session.organization_id && !['home', 'cli', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'home')); return; }
+  const pages = { apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => reviewer() && location.pathname.startsWith('/console') ? dashboard() : serviceHome(), cli: () => cli.page(), market: () => market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => market.workbench(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
   const requiresOrganization = ['calls', 'customs-history', 'quote', 'quote-history', 'customs', 'tax'];
-  main.innerHTML = requiresOrganization.includes(page) && !model.session.organization_id ? market.workbench() : (pages[page] || (() => market.page(true)))();
+  main.innerHTML = requiresOrganization.includes(page) && !model.session.organization_id ? market.workbench() : (pages[page] || serviceHome)();
   if (page === 'api-keys' && model.verification) main.insertAdjacentHTML('beforeend', verificationPanel());
   main.setAttribute('aria-busy', 'false');
   document.title = `${main.querySelector('h1')?.textContent || '工作台'} · FreightClaw`;
@@ -356,6 +361,7 @@ function showSecret(result, applicationId, kind = 't0') {
   model.secret = { key, credentialId, applicationId, kind, version: data?.credential?.version }; document.querySelector('#secret-value').textContent = key; dialog.showModal();
 }
 async function runAction(button) {
+  if (await cli.action(button)) return;
   if (await market.action(button)) return;
   if (await apiKeys.action(button)) return;
   if (await serviceAccess.action(button)) return;
@@ -368,8 +374,8 @@ async function runAction(button) {
   if (action === 'menu') { const open = !document.querySelector('#sidebar').classList.contains('open'); if (!open) closeMenu(); else { document.querySelector('#sidebar').classList.add('open'); button.setAttribute('aria-expanded', 'true'); document.querySelector('#content').inert = true; document.querySelector('#sidebar .nav-item')?.focus(); } return; }
   if (action === 'close-secret') { closeSecret(); return; }
   if (action === 'copy-secret') { if (model.secret) { await navigator.clipboard.writeText(model.secret.key); notify('Key 已复制，请妥善保存。'); } return; }
-  if (action === 'login') { model.session = await mutate('/fixture-login', 'POST', { identity_id: id }); await refresh(); go('home'); render(); return; }
-  if (action === 'logout') { closeSecret(); model.verificationAbort?.abort(); model.verification = null; business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); render(); return; }
+  if (action === 'login') { model.session = await mutate('/fixture-login', 'POST', { identity_id: id }); await refresh(); go(consumeLoginDestination(loginStorage()) || 'home'); render(); return; }
+  if (action === 'logout') { consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); render(); return; }
   if (action === 'ack-secret') { await acknowledgeSecret(); return; }
   const currentRequest = model.state?.requests.find((v) => v.request_id === id);
   const currentGrant = model.state?.grants.find((v) => v.grant_id === id);
@@ -419,6 +425,8 @@ const developerGuide = createDeveloperGuide({ esc, head, panel, field, input, ac
 const businessAccess = createBusinessAccessUi({ esc, head, panel, field, input, actions, formError, note, table, badge, link, textLink, empty, date, developer, manager, canCredential, api: request, mutate, refresh, go, notify, showSecret, rerender: render, model: () => model });
 const market = createCapabilityMarket({ esc, icon, head, panel, note, empty, link, notify, rerender: render, model: () => model });
 const manual = createOperationManual({ esc, icon, link });
+const cli = createCliGuide({ esc, icon, link, notify });
+const serviceHome = createServiceHome({ icon, link });
 const apiKeys = createApiKeysUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, showSecret, render, businessAccess, model: () => model });
 const serviceAccess = createServiceAccessUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, render, businessAccess, model: () => model });
 document.addEventListener('click', async (event) => {
@@ -442,6 +450,7 @@ document.addEventListener('submit', async (event) => {
 document.addEventListener('change', async (event) => {
   if (serviceAccess.change(event)) return;
   if (developerGuide.change(event)) return;
+  if (cli.change(event)) return;
   if (event.target.id !== 'organization') return;
   try { model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go('home'); render(); } catch (error) { notify(errorMessage(error), true); render(); }
 });
@@ -458,7 +467,7 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault(); nodes[next]?.focus();
   }
 });
-try { model.session = await request('/session'); if (model.session.authenticated) await refresh(); render(); }
+try { model.session = await request('/session'); if (model.session.authenticated) { await refresh(); const destination = consumeLoginDestination(loginStorage()); if (destination && ['home', 'login'].includes(route().page)) go(destination); } render(); }
 catch (error) { content.innerHTML = empty('工作台暂时无法读取', errorMessage(error), '<button class="button primary" data-action="reload">重新加载</button>'); document.addEventListener('click', (event) => { if (event.target.closest('[data-action=reload]')) location.reload(); }); }
 
 // Native validation can focus a field inside a collapsed batch item.

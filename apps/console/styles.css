@@ -333,3 +333,76 @@ form[data-form=service-access] { max-width: 940px; }
 .call-log-filters > .form-error { flex-basis:100%; }
 .call-log-table table { min-width:820px; }
 .call-log-table td { white-space:nowrap; }
+/* Shared public entrance and CLI guide; the same shell serves / and /console/. */
+.entry-eyebrow { margin: 0 0 14px; color: #52637c; font: 600 11px/1.5 'Avenir Next', 'PingFang SC', sans-serif; letter-spacing: .1em; }
+.service-home-intro { display: grid; grid-template-columns: 1.4fr 1fr; align-items: center; gap: 48px; padding: 22px 0 38px; }
+.service-home-intro h1, .cli-intro h1 { color: #202e52; font-family: 'Avenir Next', 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: clamp(32px,3.3vw,46px); line-height: 1.32; letter-spacing: -.035em; }
+.service-home-intro h1 + p, .cli-intro h1 + p { color: #5b6679; font-size: 15px; line-height: 1.9; margin-top: 20px; }
+.home-route { display: grid; grid-template-columns: auto 1fr auto 1fr auto; align-items: center; gap: 12px; padding: 28px 0 0; font-size: 12px; font-weight: 600; color: #3659db; }
+.home-route i { height: 1px; background: #bdc9e8; position: relative; }
+.home-route i::after { content: ''; position: absolute; right: 0; top: -2px; width: 5px; height: 5px; border-top: 1px solid #3659db; border-right: 1px solid #3659db; transform: rotate(45deg); }
+.home-route p { grid-column: 1/-1; color: #6c788c; font-weight: 400; margin-top: 8px; text-align: center; }
+.service-entry-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; }
+.service-entry { position: relative; min-width: 0; padding: 32px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; overflow: hidden; }
+.service-entry.ocean { background: #edf2ff; border-color: #d9e2f9; }
+.service-entry.customs { background: #f1f8f6; border-color: #dbeae5; }
+.service-entry .entry-icon { float: right; display: grid; place-items: center; width: 52px; height: 52px; color: #3659db; }
+.entry-icon svg { width: 44px; height: 44px; }
+.service-entry.customs .entry-icon { color: #177469; }
+.service-entry h2 { font-size: 28px; margin: 9px 0 14px; color: #202e52; letter-spacing: -.02em; }
+.service-entry h2 + p { color: #5b6679; font-size: 14px; line-height: 1.85; max-width: 30em; margin: 0 0 26px; min-height: 52px; }
+.service-entry.customs .button.primary { background: #177469; border-color: #177469; }
+.service-entry.customs .button.primary:hover { background: #115d53; }
+.entry-caption { display: block; color: #607870; font-size: 11px; margin-top: 13px; }
+.home-quick-links { display: flex; gap: 12px; flex-wrap: wrap; padding: 20px 0 34px; }
+.home-quick-links .button { background: #fff; }
+.home-developer { border-top: 1px solid #dfe5ef; display: grid; grid-template-columns: 1fr 1.35fr; gap: 42px; padding-top: 32px; align-items: center; }
+.home-developer h2 { font-size: 23px; color: #202e52; margin: 0 0 12px; }
+.home-developer > div > p:last-child { color: #5b6679; font-size: 13px; }
+.home-developer-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.home-dev-option { display: flex; align-items: center; gap: 14px; padding: 20px 18px; border: 1px solid #dfe5ef; border-radius: 9px; background: #fff; color: #202e52; text-decoration: none; min-width: 0; }
+.home-dev-option:hover { border-color: #3659db; background: #f8faff; }
+.home-dev-option > span:nth-child(2) { flex: 1; min-width: 0; }
+.home-dev-option strong { display: block; font-size: 15px; }
+.home-dev-option small { display: block; color: #5b6679; font-size: 11px; line-height: 1.7; margin-top: 7px; }
+.home-dev-option svg { width: 19px; height: 19px; flex-shrink: 0; }
+.home-dev-symbol { font: 700 21px/1.3 'SFMono-Regular', Consolas, monospace; color: #3659db; }
+.entry-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+.cli-intro { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 56px; padding: 20px 0 42px; }
+.cli-intro .entry-eyebrow span { display: inline-block; margin-left: 8px; color: #3659db; font-family: monospace; letter-spacing: 0; }
+.cli-requirement { margin-top: 14px; color: #6b7587; font-size: 11px; line-height: 1.8; }
+.cli-terminal { background: #202e52; color: #f3f6ff; border-radius: 12px; min-width: 0; overflow: hidden; }
+.cli-terminal-bar { border-bottom: 1px solid #405070; padding: 17px 22px; display: flex; justify-content: space-between; gap: 12px; font: 11px/1.5 'SFMono-Regular', Consolas, monospace; color: #c3cfe7; }
+.cli-terminal pre { font: 12px/1.9 'SFMono-Regular', Consolas, monospace; padding: 22px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminal-comment { color: #aec1e0; }
+.cli-terminal > p { color: #aec1e0; font-size: 11px; padding: 0 22px 18px; margin: 0; }
+.cli-body { display: grid; grid-template-columns: minmax(0,1fr) 252px; gap: 58px; border-top: 1px solid #dfe5ef; padding-top: 35px; }
+.cli-step { margin-bottom: 40px; }
+.cli-step-title { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.cli-step-title > span { display: grid; place-items: center; width: 29px; height: 29px; background: #e9efff; color: #3659db; border-radius: 7px; font: 600 13px/1 'SFMono-Regular', Consolas, monospace; }
+.cli-step-title h2 { margin: 0; font-size: 21px; }
+.cli-step p, .cli-aside p { font-size: 13px; color: #5b6679; line-height: 1.9; margin: 13px 0; }
+.cli-code { display: flex; align-items: center; gap: 12px; border: 1px solid #dfe5ef; background: #fff; border-radius: 8px; padding: 14px 16px; margin: 14px 0; min-width: 0; }
+.cli-code pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.8 'SFMono-Regular', Consolas, monospace; color: #344254; }
+.cli-code .button { font-size: 11px; min-height: 32px; flex-shrink: 0; padding: 5px 10px; }
+.cli-select-label { display: block; font-size: 12px; font-weight: 600; margin: 20px 0 8px; }
+#cli-command { width: 100%; max-width: 520px; }
+.cli-example-links { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0 4px; }
+.cli-example-links > span { color: #6b7587; font-size: 11px; }
+.cli-detail { margin-top: 20px; border-top: 1px solid #dfe5ef; padding-top: 15px; }
+.cli-detail > summary { cursor: pointer; font-size: 13px; color: #3659db; padding: 4px 0; }
+.cli-detail .table-wrap { margin-top: 18px; }
+.cli-exits { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; }
+.cli-exits > div { padding: 16px 0; border-bottom: 1px solid #dfe5ef; }
+.cli-exits dt { font-size: 13px; font-weight: 600; }
+.cli-exits dt code { display: inline-block; min-width: 45px; color: #3659db; }
+.cli-exits dd { margin: 8px 0 0; font-size: 12px; color: #5b6679; }
+.cli-aside { align-self: start; position: sticky; top: 98px; padding-left: 24px; border-left: 1px solid #dfe5ef; }
+.cli-aside h2 { font-size: 15px; margin: 0 0 20px; }
+.cli-aside > a { display: flex; gap: 10px; justify-content: space-between; color: #3659db; font-size: 12px; margin: 16px 0; text-decoration: none; }
+.cli-aside > a svg { width: 16px; height: 16px; }
+.cli-aside > div { border-top: 1px solid #dfe5ef; margin-top: 24px; padding-top: 20px; }
+.cli-aside h3 { font-size: 13px; }
+@media(max-width: 1120px) { .home-developer { grid-template-columns: 1fr; gap: 22px; } .cli-intro { gap: 30px; } .cli-body { gap: 30px; grid-template-columns: minmax(0,1fr) 210px; } }
+@media(max-width: 900px) { .service-home-intro { gap: 25px; } .home-route { gap: 8px; font-size: 10px; } .cli-intro { grid-template-columns: 1fr; } .cli-terminal { max-width: 680px; } .cli-body { grid-template-columns: minmax(0,1fr); } .cli-aside { position: static; padding-left: 0; border: 0; } .customer-navigation { gap: 20px; } }
+@media(max-width: 640px) { .service-home-intro { grid-template-columns: 1fr; gap: 4px; padding: 12px 0 28px; } .service-home-intro h1, .cli-intro h1 { font-size: 32px; } .service-home-intro h1 + p { font-size: 13px; } .home-route { max-width: 400px; padding-top: 18px; } .service-entry-grid { grid-template-columns: minmax(0,1fr); gap: 16px; } .service-entry { padding: 24px; } .service-entry h2 { font-size: 25px; } .service-entry h2 + p { min-height: 0; font-size: 13px; } .home-quick-links { gap: 9px; padding: 16px 0 25px; } .home-quick-links .button { flex: 1 1 44%; font-size: 11px; padding: 8px; } .home-developer-options { grid-template-columns: minmax(0,1fr); } .home-developer { padding-top: 25px; } .home-developer h2 { font-size: 22px; } .cli-intro { padding: 8px 0 28px; gap: 28px; } .cli-terminal pre { padding: 18px; font-size: 11px; } .cli-code { align-items: flex-start; flex-direction: column; } .cli-code pre { width: 100%; } .cli-code .button { align-self: flex-end; } .cli-exits { grid-template-columns: minmax(0,1fr); } }

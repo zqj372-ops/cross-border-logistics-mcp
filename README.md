@@ -10,6 +10,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
 - [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；通过本地 npm 安装包交付。
+- [官网与 CLI 入口发布说明](docs/runbooks/unified-service-entry.md)：官网与控制台复用同一首页，原海运询价保留为独立服务。
 - [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)：四张实测截图说明安装后的命令选择、连接检查、输入校验与结果处理。
 
 发布记录、当前代码、本地测试和真实业务调用分别留证。下文生产状态引用已保存回执，不代表读取 README 时刚刚重新探测了生产。`ready=false`、测试数据、证据冲突和写后读回失败不得提升为 `success`。
@@ -18,12 +19,14 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 
 | 入口 | 用途 |
 | --- | --- |
+| [官网服务首页](https://www.freightclaw.net/) | 海运询价、关税查询、税费估算与系统接入的统一入口 |
+| [整柜 / 海运询价](https://www.freightclaw.net/inquiry/) | 保留原全流程费用选择、分币种汇总和邮件询价 |
 | [能力市场](https://www.freightclaw.net/console/#market) | 浏览能力、查询实际协议和接口、打开在线工作台 |
 | [业务工作台](https://www.freightclaw.net/console/#workbench) | 企业成员通过登录会话处理询价、关务和税费，无需粘贴 API Key |
 | [API Key](https://www.freightclaw.net/console/#api-keys) | 应用负责人管理统一 Key、服务范围、交付、轮换和撤销 |
 | [操作手册](https://www.freightclaw.net/console/#guide) | 账号、授权、REST、MCP 和结果处理 |
 | [Agent 指南](https://www.freightclaw.net/console/skill.md) / [OpenAPI](https://www.freightclaw.net/console/openapi.json) | 按实际 Schema 接入；仓库副本见 [skill.md](apps/console/skill.md) 和 [openapi.json](docs/integrations/openapi.json) |
-| [CLI](deploy/cli/README.md) | `freightclaw` 命令行调用货物、装柜、报价、关务和税费；沿用统一应用 Key，人员历史仍使用网页登录 |
+| [CLI 安装与使用](https://www.freightclaw.net/console/#cli) | `freightclaw` 命令行调用货物、装柜、报价、关务和税费；沿用统一应用 Key，人员历史仍使用网页登录 |
 
 当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
 
