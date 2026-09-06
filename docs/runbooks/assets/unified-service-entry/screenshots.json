@@ -1,0 +1,63 @@
+{
+  "capture_date": "2026-09-07",
+  "timezone": "Asia/Shanghai",
+  "application_source_commit": "9c73103ecccb23a06d7664d06ba538bd85fef535",
+  "portal_build_id": "9dd46df9052f0e3bd095a17709f4652fc2e06358274896c96915b28b22a3ce22",
+  "method": "Direct viewport screenshots of the public website in Codex in-app browser via CUA. No image editing. Anonymous UI checks; no customer information, API keys, business queries or emails submitted.",
+  "images": [
+    {
+      "file": "01-home-desktop.jpg",
+      "url": "https://www.freightclaw.net/",
+      "width": 1280,
+      "height": 720,
+      "format": "JPEG",
+      "bytes": 58738,
+      "sha256": "d862ce8c0c618c66e64972fc35198803ce978ccc888d52643ea4e38e984e0a84"
+    },
+    {
+      "file": "02-cli-desktop.jpg",
+      "url": "https://www.freightclaw.net/console/#cli",
+      "width": 1280,
+      "height": 720,
+      "format": "JPEG",
+      "bytes": 69826,
+      "sha256": "b23a47f5aeee7d00e0242806868e2007ab62cc546a27562f7d9148248c36b77e"
+    },
+    {
+      "file": "03-inquiry-desktop.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "width": 1280,
+      "height": 720,
+      "format": "JPEG",
+      "bytes": 94175,
+      "sha256": "2cc6886d8f934158bf4bed3998cb81711a04290b9032870537370296ea2500aa"
+    },
+    {
+      "file": "04-inquiry-fcl.jpg",
+      "url": "https://www.freightclaw.net/inquiry/",
+      "width": 1280,
+      "height": 720,
+      "format": "JPEG",
+      "bytes": 102093,
+      "sha256": "0594aab7c61fa372a0fd33b8c066fa187270ec80e399a5a31e4b5603ad4f45c7"
+    },
+    {
+      "file": "05-home-mobile.jpg",
+      "url": "https://www.freightclaw.net/",
+      "width": 390,
+      "height": 844,
+      "format": "JPEG",
+      "bytes": 40427,
+      "sha256": "04caf5409cf1e7728bcf438e901c736a5df2432ad70c2792bd7d4e5587c28724"
+    },
+    {
+      "file": "06-cli-mobile.jpg",
+      "url": "https://www.freightclaw.net/#cli",
+      "width": 390,
+      "height": 844,
+      "format": "JPEG",
+      "bytes": 41242,
+      "sha256": "fc9aa3fc24881b4cc74e01871621525b9f9b5eb92a927fa81efc715cf351c733"
+    }
+  ]
+}
