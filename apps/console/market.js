@@ -11,7 +11,7 @@ export const marketServices = Object.freeze([
 
 export function filterMarketServices({ query = '', protocol = 'all', category = 'all' } = {}) {
   const search = query.trim().toLocaleLowerCase();
-  return marketServices.filter((item) => (protocol === 'all' || protocol === 'mcp' || item.protocol === protocol) && (category === 'all' || item.category === category) && (!search || `${item.id} ${item.name} ${item.description} ${item.provider}`.toLocaleLowerCase().includes(search)));
+  return marketServices.filter((item) => (protocol === 'all' || item.protocol === protocol) && (category === 'all' || item.category === category) && (!search || `${item.id} ${item.name} ${item.description} ${item.provider}`.toLocaleLowerCase().includes(search)));
 }
 export function agentInstallPrompt(serviceId = '') {
   const service = marketServices.find((item) => item.id === serviceId);
@@ -22,7 +22,7 @@ export function createCapabilityMarket(ui) {
   const { esc, icon, link, head, panel, note, empty } = ui;
   const filters = { query: '', protocol: 'all', category: 'all' };
   const categoryNames = { all: '全部分类', quote: '运费询价', customs: '关务与税费', cargo: '货物与装载', agent: 'Agent 工具' };
-  const protocolName = () => 'MCP · REST';
+  const protocolName = (item) => item.protocol === 'mcp' ? 'MCP · REST' : 'REST API';
   const stamp = (item) => `<span class="cap-icon ${item.tone}">${icon(item.icon)}</span>`;
   const copy = (id = '', label = '复制接入指令') => `<button type="button" class="button primary" data-action="market-copy" data-id="${esc(id)}">${icon('code')}${esc(label)}</button>`;
   function installBox(id = '') { return `<div class="install-command"><code>${esc(agentInstallPrompt(id))}</code>${copy(id, '复制指令')}</div>`; }
@@ -35,7 +35,7 @@ export function createCapabilityMarket(ui) {
   }
   function page(home = false) {
     const intro = home ? `<section class="market-intro"><h1>把物流能力，接入你的工作流。</h1><p>询价、关税、货物计算与装柜规划。在线使用，或交给你的 Agent。</p><div class="hero-install"><span class="install-label">把这句话交给 Agent，开始接入</span>${installBox()}</div></section>` : head('能力市场', '找到业务需要的能力，查看说明后在线使用或接入你的系统。');
-    return `${intro}<section class="market-browser" aria-label="浏览物流能力"><div class="market-toolbar"><div class="market-protocols" role="group" aria-label="接入方式">${[['all', '全部能力', 8], ['mcp', 'MCP', 8], ['api', '业务 API', 5]].map(([key, title, count]) => `<button type="button" data-action="market-protocol" data-id="${key}" class="market-tab${filters.protocol === key ? ' selected' : ''}" aria-pressed="${filters.protocol === key}">${title}<span>${count}</span></button>`).join('')}</div><div class="market-search">${icon('search')}<label class="sr-only" for="market-search">搜索能力</label><input id="market-search" type="search" value="${esc(filters.query)}" placeholder="搜索能力、业务或服务" autocomplete="off"></div></div><div class="market-layout"><nav class="market-categories" aria-label="能力分类">${Object.entries(categoryNames).map(([key, title]) => `<button type="button" class="market-category${filters.category === key ? ' selected' : ''}" data-action="market-category" data-id="${key}" aria-pressed="${filters.category === key}">${esc(title)}</button>`).join('')}<a href="#guide" class="market-help">接入指南 ${icon('arrow')}</a></nav><div id="market-results">${results()}</div></div></section><div class="market-bottom"><p>业务人员直接使用工作台；系统与 Agent 通过 API Key 接入。</p>${link('打开业务工作台', 'workbench')}</div>`;
+    return `${intro}<section class="market-browser" aria-label="浏览物流能力"><div class="market-toolbar"><div class="market-protocols" role="group" aria-label="接入方式">${[['all', '全部能力'], ['mcp', 'MCP'], ['api', '业务 API']].map(([key, title]) => `<button type="button" data-action="market-protocol" data-id="${key}" class="market-tab${filters.protocol === key ? ' selected' : ''}" aria-pressed="${filters.protocol === key}">${title}<span>${filterMarketServices({ protocol: key }).length}</span></button>`).join('')}</div><div class="market-search">${icon('search')}<label class="sr-only" for="market-search">搜索能力</label><input id="market-search" type="search" value="${esc(filters.query)}" placeholder="搜索能力、业务或服务" autocomplete="off"></div></div><div class="market-layout"><nav class="market-categories" aria-label="能力分类">${Object.entries(categoryNames).map(([key, title]) => `<button type="button" class="market-category${filters.category === key ? ' selected' : ''}" data-action="market-category" data-id="${key}" aria-pressed="${filters.category === key}">${esc(title)}</button>`).join('')}<a href="#guide" class="market-help">接入指南 ${icon('arrow')}</a></nav><div id="market-results">${results()}</div></div></section><div class="market-bottom"><p>业务人员直接使用工作台；系统与 Agent 通过 API Key 接入。</p>${link('打开业务工作台', 'workbench')}</div>`;
   }
   function detail(id) {
     const item = marketServices.find((value) => value.id === id);

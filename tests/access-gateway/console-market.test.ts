@@ -18,7 +18,9 @@ describe('public capability market', () => {
   });
   it('combines Chinese search, protocol and business category filters', () => {
     expect(filterMarketServices({ query: '关税' }).map((item: { id: string }) => item.id)).toContain('customs.query');
-    expect(filterMarketServices({ protocol: 'mcp', category: 'customs' }).map(item=>item.id)).toEqual(['customs.query','customs.tax.estimate']);
+    expect(filterMarketServices({ protocol: 'mcp', category: 'customs' })).toEqual([]);
+    expect(filterMarketServices({ protocol: 'mcp' }).map(item => item.id)).toEqual(['cargo.calculate', 'container.plan_summary', 'system.agent_context.get']);
+    expect(filterMarketServices({ protocol: 'api', category: 'customs' }).map(item => item.id)).toEqual(['customs.query', 'customs.tax.estimate']);
     expect(filterMarketServices({ query: '<script>missing</script>' })).toEqual([]);
     expect(filterMarketServices({ query: 'Cargo.Calculate' }).map((item: { id: string }) => item.id)).toEqual(['cargo.calculate']);
   });
