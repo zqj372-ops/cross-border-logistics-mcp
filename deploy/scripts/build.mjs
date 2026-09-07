@@ -53,7 +53,7 @@ const accessConsoleAssetSpecs = [
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
 execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "apps/console/openapi.json"], { stdio: "inherit" });
-const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg", "asset-licenses.md"].map((name) => ({ name, source: resolve("apps/console", name) }));
+const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "workspace-cli.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg", "asset-licenses.md"].map((name) => ({ name, source: resolve("apps/console", name) }));
 const nodeEsmBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
 };

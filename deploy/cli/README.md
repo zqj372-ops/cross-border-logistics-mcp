@@ -1,6 +1,6 @@
 # FreightClaw CLI
 
-`freightclaw` 直接调用现有 FreightClaw REST API。沿用同一个账号及统一应用 Key；企业、服务范围、人员角色和来源数据的判断由服务器负责。CLI 不计算价格或税率，也不保存业务记录。
+`freightclaw` 直接调用现有 FreightClaw REST API。沿用同一个账号及统一应用 Key；企业、服务范围、人员角色和来源数据的判断由服务器负责。CLI 不计算价格或税率；业务记录保存在服务端。开发分支新增独立人员会话与 `workspace` 命令，说明见下方。
 
 首次使用可从 [图文使用指南（含四张实测截图）](https://github.com/zqj372-ops/cross-border-logistics-mcp/blob/main/docs/runbooks/freightclaw-cli-illustrated.md) 开始，按安装、命令选择、连接检查、输入校验和结果处理逐步操作。
 
@@ -68,7 +68,7 @@ HTTP 鉴权失败若有有效 API 错误包络，会保留原响应并返回对�
 - `--endpoint <origin>`，也可设置 `FREIGHTCLAW_ENDPOINT`；默认 `https://www.freightclaw.net`。地址只允许 HTTPS origin 或本机 HTTP，不允许路径、用户密码、查询参数或片段。只能填自己信任的服务地址。
 - `--timeout <秒>`：1–60的整数，默认15；分别限制标准输入等待及整个网络请求（包括响应读取）。
 - 输入与完整 API 请求均不超过32 KiB；响应最多2 MiB；Key 文件最多4 KiB。
-- 不自动重试，不跟随重定向，不发送浏览器 Cookie，不提供任意 URL/工具调用或 tenant/actor 覆盖参数。
+- 查询命令不自动重试，不跟随重定向，不发送浏览器 Cookie，不提供任意 URL/工具调用或 tenant/actor 覆盖参数。
 - CLI 的 Schema 随安装包冻结；服务器更新合同后，应安装对应新版本，不能通过关闭校验继续调用。
 - 个人关务历史、报价保存、人工审核和 PDF 等人员操作使用网页登录。统一应用 Key 不能替代人员身份。
 - RiskCustoms 的正式数据未发布时，CLI 会保留 `unavailable`。安装完成不代表来源数据、正式供应商凭证或真实客户身份验收完成。
@@ -82,3 +82,9 @@ npm pack ./dist/cli
 ```
 
 构建将运行代码、当前 OpenAPI Schema 和所需校验库打包到 `dist/cli`，不需要运行时下载合同或访问源码目录。安装包不包含服务器、凭证和业务数据库。第三方许可列于包内 `THIRD-PARTY-NOTICES.txt`。
+
+## 后台人员操作（本地开发版）
+
+渠道与仓库、询价管理已新增 `workspace` 命令，与网页调用同一 API。使用浏览器核对代码后签发的独立 CLI 会话，不复用浏览器 Cookie，不提升应用 Key 权限。官网 v0.1.0 安装包尚未包含该扩展；本地从本分支构建。
+
+完整登录、输入、命令与范围说明：[管理 CLI 使用说明](../../apps/console/workspace-cli.md)。`workspace commands` 返回 18 个具名管理操作，另有登录、退出、帮助与渠道写入 Schema 命令。既有成员/授权/个人历史等功能的 CLI 尚待补齐。

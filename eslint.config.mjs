@@ -34,7 +34,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/inquiry/**/*.ts", "deploy/cli/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-case-schemas.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
+    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/inquiry/**/*.ts", "deploy/cli/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-case-schemas.ts", "deploy/scripts/generate-channel-schemas.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

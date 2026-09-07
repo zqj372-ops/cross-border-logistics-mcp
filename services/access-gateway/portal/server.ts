@@ -1,3 +1,4 @@
+import type { ChannelService } from "./channels";
 import type { CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
@@ -32,6 +33,7 @@ export interface StartPortalServerOptions {
   readonly publicCustoms?: PortalPublicCustomsService;
   readonly callLogService?: PortalCallLogService;
   readonly caseService?: CaseService;
+  readonly channelService?: ChannelService;
   readonly businessAccessService?: BusinessAccessService;
   readonly businessMachineHandler?:PortalMachineHandler;
   readonly machineHandler?:PortalMachineHandler;
@@ -115,6 +117,6 @@ export async function startPortalServer(options: StartPortalServerOptions): Prom
   const boundHost=`${host.includes(":")?`[${host}]`:host}:${address.port}`; const origin=configuredOrigin?.origin??`http://${boundHost}`;
   const publicUrl=configuredOrigin??new URL(origin);
   allowedHost=publicUrl.host;
-  portalHandler=createPortalHttpHandler({...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
+  portalHandler=createPortalHttpHandler({ ...(options.channelService ? {channelService: options.channelService} : {}),...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
   return {server,host,port:address.port,origin,close:()=>new Promise<void>((resolveClose,reject)=>server.close(error=>error?reject(error):resolveClose()))};
 }

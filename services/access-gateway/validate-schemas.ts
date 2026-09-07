@@ -2,12 +2,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 
 export function validateAccessGatewaySchemas(root = resolve(".")) {
   const directory = join(root, "schemas", "access-gateway");
   const failures: string[] = [];
   const files = readdirSync(directory).filter((file) => file.endsWith(".schema.json")).sort();
   const ajv = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(ajv);
   const schemas = files.map((file) => ({
     file,
     schema: JSON.parse(readFileSync(join(directory, file), "utf8")) as object,

@@ -1,3 +1,6 @@
+import { CliAuthorization } from "./cli-auth";
+import type { ChannelService } from "./channels";
+import { CHANNEL_VERSION, channelHistorySchema, channelViewSchema, channelListSchema, channelPreviewSchema } from "./channel-contracts";
 import { FixtureFormLogin } from "./form-login";
 import { CASE_VERSION, caseResponseSchema, type CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
@@ -44,6 +47,7 @@ export interface PortalHttpOptions {
   readonly publicCustoms?: PortalPublicCustomsService;
   readonly callLogService?: PortalCallLogService;
   readonly caseService?: CaseService;
+  readonly channelService?: ChannelService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
   readonly sessions: PortalSessionManager;
@@ -96,7 +100,7 @@ function json(response: ServerResponse, status: number, body: unknown, cookie?: 
   response.statusCode = status; commonHeaders(response); response.setHeader("content-type", "application/json; charset=utf-8"); if (cookie) response.setHeader("set-cookie", cookie); response.end(JSON.stringify(preserveSourceShape ? body : wire(body)));
 }
 function errorStatus(code: string): number {
-  if (code === "case_daily_limit") return 429;
+  if (code === "case_daily_limit" || code === "cli_rate_limited") return 429;
   if (code === "case_transition_invalid") return 409;
   if (code === "login_rate_limited") return 429;
   if (code === "login_invalid" || code === "authentication_required") return 401;
@@ -166,6 +170,7 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
+  if (/^\/console\/api\/v1\/admin\/channels(?:\/[0-9a-f-]{36}(?:\/(?:save|preview|publish|disable|history|rollback))?)?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/cases(?:\/[0-9a-f-]{36}(?:\/(?:update|reply))?)?$/u.test(path)) return true;
   if (path.startsWith(`${API_PREFIX}/business-access/`)) return true;
   if (/^\/console\/api\/v1\/business\/quote\/records\/(prepare|save|get|list|review)$/u.test(path)) return true;
@@ -180,6 +185,7 @@ function authenticatedResourcePath(path: string): boolean {
 }
 
 export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpHandler {
+  const cliAuth=options.mode === "fixtures" ? new CliAuthorization(options.sessions) : null;
   const formLogin=options.mode==="fixtures"&&options.identityProvider.kind==="fixture"?new FixtureFormLogin():null;
   return { async handle(request, response): Promise<boolean> {
     const url = new URL(request.url ?? "/", "http://portal.invalid"); const path = url.pathname; const id = requestId(request);
@@ -190,6 +196,19 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       boundary(request, options, write);
       boundaryPassed = true;
       if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, sessionBody(options, ensured.session), ensured.setCookie); return true; }
+      if(path.startsWith(`${API_PREFIX}/cli-auth/`)){
+        if(!cliAuth)throw new PortalError("cli_auth_unavailable");
+        if(url.search)throw new PortalError("body_invalid");
+        if(request.method!=="POST"){json(response,405,{status:"blocked",reason_codes:["method_not_allowed"]});return true;}
+        const input=await body(request,1024);let data:unknown;
+        if(path===`${API_PREFIX}/cli-auth/start`){closed(input,[]);data=cliAuth.start(request.socket.remoteAddress??"unknown");}
+        else if(path===`${API_PREFIX}/cli-auth/poll`){closed(input,["device_secret"]);data=cliAuth.poll(text(input,"device_secret"));}
+        else {const browser=sessionFor(request,options);csrf(request,options,browser);closed(input,["user_code"]);options.service.getState(context(browser));
+          if(path===`${API_PREFIX}/cli-auth/inspect`)data=cliAuth.inspect(text(input,"user_code"));
+          else if(path===`${API_PREFIX}/cli-auth/approve`)data=cliAuth.approve(text(input,"user_code"),browser);
+          else throw new PortalError("route_not_found");}
+        json(response,200,{schema_version:"portal-cli-auth@2026-09-07.v1",status:"success",data,reason_codes:[]});return true;
+      }
       if(path===`${API_PREFIX}/login/captcha`||path===`${API_PREFIX}/login/password`){
         if(!formLogin||!options.identityProvider.authenticateFixture)throw new PortalError("fixture_identity_forbidden");
         const current=sessionFor(request,options,false),address=request.socket.remoteAddress??"unknown";
@@ -247,6 +266,17 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      const channelMatch=/^\/console\/api\/v1\/admin\/channels(?:\/([0-9a-f-]{36})(?:\/(save|preview|publish|disable|history|rollback))?)?$/u.exec(path);
+      if(channelMatch){
+        if(!options.channelService)throw new PortalError("channels_unavailable");const service=options.channelService,cid=channelMatch[1],action=channelMatch[2];let data:unknown;
+        if(request.method==="GET"){
+          const release=url.searchParams.get("release_id");if(url.search && !(action==="preview"&&release&&[...url.searchParams.keys()].length===1))throw new PortalError("channel_input_invalid");
+          if(!cid)data=channelListSchema.parse(service.list(ctx));else if(!action)data=channelViewSchema.parse(service.get(ctx,cid));else if(action==="preview")data=channelPreviewSchema.parse(service.preview(ctx,cid,release??undefined));else if(action==="history")data=channelHistorySchema.parse(service.history(ctx,cid));else throw new PortalError("method_not_allowed");
+        }else if(request.method==="POST"&&!url.search){const input=await body(request,8192),key=idempotency(request);
+          if(!cid)data=service.create(ctx,input,key);else if(action==="save")data=service.save(ctx,cid,input,key);else if(action==="publish")data=service.publish(ctx,cid,input,key);else if(action==="disable")data=service.disable(ctx,cid,input,key);else if(action==="rollback")data=service.rollback(ctx,cid,input,key);else throw new PortalError("method_not_allowed");data=channelViewSchema.parse(data);
+        }else throw new PortalError("method_not_allowed");
+        json(response,200,{schema_version:CHANNEL_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;
+      }
       const caseMatch = /^\/console\/api\/v1\/cases(?:\/([0-9a-f-]{36})(?:\/(update|reply))?)?$/u.exec(path);
       if (caseMatch) {
         if (!options.caseService) throw new PortalError("cases_unavailable");
