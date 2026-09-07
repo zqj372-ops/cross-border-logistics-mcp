@@ -10,7 +10,7 @@ import { createRs256DelegationSigner } from "./delegation";
 import { createFreightcomPortalClient, type FreightcomPortalRateInput } from "./freightcom-client";
 import { createQuotePortalClient, type QuotePortalExtractInput, type QuotePortalZoneInput } from "./quote-client";
 import { createQuoteRecordPortalClient } from "./quote-record-client";
-import { PortalBusinessService, type PortalBusinessConnection, type PortalBusinessOperation } from "./service";
+import { PortalBusinessService, type PortalBusinessConnection, type PortalBusinessOperation, type PortalPublicAccess } from "./service";
 import { createTaxPortalClient, type TaxPortalEstimateBatchInput, type TaxPortalEstimateInput } from "./tax-client";
 
 const MAX_CONFIG_BYTES = 256 * 1024;
@@ -24,7 +24,12 @@ const connectorSchema = z.object({
 const freightcomConnectorSchema = z.object({
   connectionId: z.string().min(1), credentialFile: z.string().min(1), baseUrl: z.string().min(1).optional(),
 }).strict();
+const publicAccessSchema = z.object({
+  organizationId: z.string().min(1), tenantId: z.string().min(1), applicationId: z.string().min(1), clientId: z.string().min(1),
+  enabledOperations: z.array(z.enum(["customs.query", "customs.tax.estimate"])).min(1).max(2).refine(v => new Set(v).size === v.length),
+}).strict();
 const configSchema = z.object({
+  publicAccess: publicAccessSchema.optional(),
   connections: z.array(z.object({
     organizationId: z.string().min(1), tenantId: z.string().min(1),
     enabledOperations: z.array(operationSchema).min(1), customsHistoryEnabled:z.boolean().optional(), recordOperations: z.array(z.enum(["quote.record_save", "quote.record_read", "quote.review_read", "quote.review_manage", "quote.document_generate", "quote.document_read"])).optional(), customs: connectorSchema.optional(), quote: connectorSchema.optional(), freightcom: freightcomConnectorSchema.optional(),
@@ -33,6 +38,7 @@ const configSchema = z.object({
 type ConnectorConfiguration = z.infer<typeof connectorSchema>;
 
 export interface LoadPortalBusinessServiceOptions {
+  readonly publicAuthority?: (binding: PortalPublicAccess) => Promise<void>;
   readonly callRecorder?: CallRecorder; readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>;
   readonly configPath?: string;
   readonly allowLoopbackFixtures?: boolean;
@@ -88,6 +94,11 @@ function readConfiguration(path: string): z.infer<typeof configSchema> {
     const quoteEnabled = item.enabledOperations.some((operation) => operation === "quote.zone_preview" || operation === "quote.ai_extract_preview") || (item.recordOperations?.length ?? 0) > 0;
     const freightcomEnabled = item.enabledOperations.includes("quote.freightcom_ltl.preview");
     if (customsEnabled !== (item.customs !== undefined) || quoteEnabled !== (item.quote !== undefined) || freightcomEnabled !== (item.freightcom !== undefined)) throw new Error("portal_business_config_invalid");
+  }
+  const publisher = parsed.data.publicAccess;
+  if (publisher) {
+    const connection = parsed.data.connections.find(c => c.organizationId === publisher.organizationId && c.tenantId === publisher.tenantId);
+    if (!connection || publisher.enabledOperations.some(operation => !connection.enabledOperations.includes(operation))) throw new Error("portal_business_config_invalid");
   }
   return parsed.data;
 }
@@ -158,5 +169,5 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
     }
     connections.push(Object.freeze(connection) as PortalBusinessConnection);
   }
-  return new PortalBusinessService({ ...(options.callRecorder ? { callRecorder: options.callRecorder } : {}), portalService: options.portalService, connections: Object.freeze(connections) });
+  return new PortalBusinessService({ ...(configuration.publicAccess ? { publicAccess: configuration.publicAccess } : {}), ...(options.publicAuthority ? { publicAuthority: options.publicAuthority } : {}), ...(options.callRecorder ? { callRecorder: options.callRecorder } : {}), portalService: options.portalService, connections: Object.freeze(connections) });
 }

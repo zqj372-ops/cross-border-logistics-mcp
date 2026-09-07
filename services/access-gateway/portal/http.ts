@@ -1,3 +1,4 @@
+import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -38,6 +39,7 @@ export interface PortalHttpOptions {
   readonly bridge?: PortalCredentialBridge;
   readonly organizationBridge?: Pick<OrganizationBridge, "listOrganizationAdmissions" | "createOrganization" | "getOrganizationAdmission" | "setOrganizationStatus">;
   readonly businessService?: Pick<PortalBusinessService, "describe" | "execute" | "executeBatch"> & Partial<Pick<PortalBusinessService, "records" | "customsHistory">>;
+  readonly publicCustoms?: PortalPublicCustomsService;
   readonly callLogService?: PortalCallLogService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
@@ -191,6 +193,34 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       }
       if (path === "/console/auth/callback" && request.method === "GET") {
         if (!options.identityProvider.complete) throw new PortalError("oidc_not_configured"); const state = url.searchParams.get("state") ?? ""; const code = url.searchParams.get("code") ?? ""; const current = sessionFor(request, options, false); const transaction = options.sessions.consumeOidc(current.sessionId, state); const identity = await options.identityProvider.complete({ code, state, transaction }); const authenticated = options.sessions.authenticate(current.sessionId, identity); response.statusCode = 303; commonHeaders(response); response.setHeader("set-cookie", authenticated.setCookie); response.setHeader("location", "/console/"); response.end(); return true;
+      }
+      const publicRoutes: Readonly<Record<string, { operation: PortalBusinessOperation; batch: boolean }>> = {
+        [`${API_PREFIX}/public/customs/query`]: { operation: "customs.query", batch: false },
+        [`${API_PREFIX}/public/customs/tax-estimate`]: { operation: "customs.tax.estimate", batch: false },
+        [`${API_PREFIX}/public/customs/tax-estimates/batch`]: { operation: "customs.tax.estimate", batch: true },
+      };
+      const publicRoute = publicRoutes[path];
+      if (publicRoute || path === `${API_PREFIX}/public/customs/quota`) {
+        if (url.search) throw new PortalError("public_query_invalid");
+        if (!options.publicCustoms) throw new PortalError("public_customs_unavailable");
+        const remote = request.socket.remoteAddress!;
+        const address = (options.trustedProxyAddresses ?? []).includes(remote) ? String(request.headers["x-forwarded-for"]).trim() : remote;
+        if (!publicRoute && request.method === "GET") {
+          json(response, 200, { schema_version: PORTAL_SCHEMA_VERSION, status: "success", data: options.publicCustoms.status(address), reason_codes: [] }); return true;
+        }
+        if (publicRoute && request.method === "POST") {
+          csrf(request, options, sessionFor(request, options, false));
+          const payload = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(payload, ["input"]);
+          const result = await options.publicCustoms.execute(address, publicRoute.operation, payload.input, id, publicRoute.batch);
+          if (result.quota) {
+            response.setHeader("x-freightclaw-quota-limit", result.quota.limit);
+            response.setHeader("x-freightclaw-quota-remaining", result.quota.remaining);
+            response.setHeader("x-freightclaw-quota-reset", result.quota.resets_at);
+            if (result.httpStatus === 429) response.setHeader("retry-after", Math.max(1, Math.ceil((Date.parse(result.quota.resets_at) - Date.now()) / 1000)));
+          }
+          json(response, result.httpStatus, result.body, undefined, true); return true;
+        }
+        json(response, 405, { schema_version: PORTAL_SCHEMA_VERSION, status: "blocked", data: null, reason_codes: ["method_not_allowed"] }); return true;
       }
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);

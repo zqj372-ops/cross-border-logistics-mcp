@@ -2,7 +2,7 @@ export function createTaxWorkspace(ui) {
   const { esc, head, panel, field, input, actions, formError, note, icon } = ui;
   const state = { rows: [{}], openRow: 0, date: new Date().toLocaleDateString('en-CA'), result: null };
   const labels = { success: '估算完成', needs_input: '资料待补充', manual_review: '需要复核', blocked: '未获授权', unavailable: '来源不可用' };
-  const reasons = { business_connection_unconfigured: '当前企业尚未配置税费 API 连接，请由平台运维接入关务服务。', business_operation_not_enabled: '当前企业尚未开通税费估算。', customs_status_not_ready: '关务发布数据未就绪，暂时无法给出税额。', estimate_input_incomplete: '商品、金额或目的国资料不完整。', tariff_rate_requires_review: '税率包含需要人工确认的条件，无法确定全部应缴金额。', tax_source_unavailable: '未能核验当前税则或汇率来源，请稍后重试。' };
+  const reasons = { public_daily_limit_insufficient: '今日剩余额度不足，请减少批量商品数后重试。', public_daily_limit_reached: '今日访客额度已用完，请于北京时间零点后再试，或登录已开通服务的账号。', public_customs_unavailable: '关税查询暂时无法连接，请稍后重试。', public_customs_input_invalid: '请检查商品资料和查询日期后重试。', business_connection_unconfigured: '当前企业尚未配置税费 API 连接，请由平台运维接入关务服务。', business_operation_not_enabled: '当前企业尚未开通税费估算。', customs_status_not_ready: '关务发布数据未就绪，暂时无法给出税额。', estimate_input_incomplete: '商品、金额或目的国资料不完整。', tariff_rate_requires_review: '税率包含需要人工确认的条件，无法确定全部应缴金额。', tax_source_unavailable: '未能核验当前税则或汇率来源，请稍后重试。' };
   const displayMoney = (value) => value ? `${esc(value.amount)} <small>${esc(value.currency)}</small>` : '<span class="muted">待确认</span>';
   function rowInput(row, i) {
     const suffix = `_${i}`;
