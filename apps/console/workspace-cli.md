@@ -67,3 +67,5 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 ## 交付范围
 
 目前完成渠道配置和询价处理的网页、API、CLI 共用流程。运价、邮编分区、附加费、原生关务发布、OCR、报价导出、邮件订舱和 SO 识别仍按路线图推进；既有成员、授权、个人历史等页面的 CLI 覆盖也待补齐。后续功能以三端一起验收为完成条件，不能把页面存在或命令存在视为业务已经可用。邮件及订舱等外发操作仍需明确确认。
+
+关务、私人地址运价、Freightcom 配置与人员身份查询：参见 [业务操作说明](native-business.md)。新增操作与网站共用当前企业配置和权限。

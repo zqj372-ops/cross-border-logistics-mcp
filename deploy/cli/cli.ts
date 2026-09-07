@@ -115,20 +115,20 @@ async function credential(env: NodeJS.ProcessEnv, filename: string | undefined):
   return value;
 }
 
-async function readResponse(response: Response): Promise<string> {
+async function readResponse(response: Response, maximum=MAX_RESPONSE): Promise<string> {
   if (!/^application\/json(?:\s*;|$)/iu.test(response.headers.get("content-type") ?? "") || !response.body) {
     await response.body?.cancel(); throw new CliError("response_not_json", 1, "服务未返回预期的 JSON 响应；原始页面或错误正文已隐藏。");
   }
   const length = response.headers.get("content-length");
-  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > MAX_RESPONSE)) {
-    await response.body.cancel(); throw new CliError("response_too_large", 1, "响应超过2 MiB上限。");
+  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
+    await response.body.cancel(); throw new CliError("response_too_large", 1, "响应超过当前命令的读取上限。");
   }
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
   try {
     for (;;) {
       const item = await reader.read(); if (item.done) break;
       size += item.value.length;
-      if (size > MAX_RESPONSE) { await reader.cancel(); throw new CliError("response_too_large", 1, "响应超过2 MiB上限。"); }
+      if (size > maximum) { await reader.cancel(); throw new CliError("response_too_large", 1, "响应超过当前命令的读取上限。"); }
       chunks.push(item.value);
     }
     return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));

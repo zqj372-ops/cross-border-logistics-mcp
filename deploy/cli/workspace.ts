@@ -1,3 +1,11 @@
+import { commands as publicCommands, validateResponse as validatePublicResponse } from './contracts';
+import { inputSchema as customsInput } from '../../services/access-gateway/portal/business/customs-client';
+import { singleInputSchema as taxInput, batchInputSchema as taxBatchInput } from '../../services/access-gateway/portal/business/tax-client';
+import { zoneInputSchema } from '../../services/access-gateway/portal/business/quote-client';
+import { freightcomInputSchema } from '../../services/access-gateway/portal/business/freightcom-client';
+import { customsHistoryListInput, customsHistoryGetInput, customsHistoryListResponse, customsHistoryGetResponse } from '../../services/access-gateway/portal/business/customs-history-client';
+import { customsSaveSchema, residentialSaveSchema, nativePublishSchema, nativeRollbackSchema, nativeDisableSchema } from '../../services/access-gateway/portal/native-admin-contracts';
+import { freightcomSaveSchema, freightcomDisableSchema, nativeDataSchema, nativeResponseSchema, freightcomViewSchema } from '../../services/access-gateway/portal/native-admin-contracts';
 import { caseSchemas, validCaseInput, validateCaseResponse } from './workspace-contracts';
 import { constants } from 'node:fs';
 import { open, mkdir, unlink } from 'node:fs/promises';
@@ -7,13 +15,31 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CliIO } from './cli';
 import { channelInput, channelSave, channelPublish, channelDisable, channelRollback, channelViewSchema, channelListSchema, channelPreviewSchema, channelHistorySchema, CHANNEL_VERSION } from '../../services/access-gateway/portal/channel-contracts';
-type Helpers={endpoint:(s:string)=>URL;readFileBounded:(s:string,n:number,secret?:boolean)=>Promise<Buffer>;readStdin:(s:NodeJS.ReadStream,n:number)=>Promise<Buffer>;parseJson:(b:Uint8Array)=>unknown;readResponse:(r:Response)=>Promise<string>};
+type Helpers={endpoint:(s:string)=>URL;readFileBounded:(s:string,n:number,secret?:boolean)=>Promise<Buffer>;readStdin:(s:NodeJS.ReadStream,n:number)=>Promise<Buffer>;parseJson:(b:Uint8Array)=>unknown;readResponse:(r:Response,maximum?:number)=>Promise<string>};
 const map=[
  ['whoami','GET','/session','当前登录身份'],['state','GET','/state','当前企业、成员与应用'],['organizations','GET','/my-organizations','可进入的企业'],['use','POST','/session/organization','切换当前企业'],
  ['cases list','GET','/cases','查询询价列表'],['cases get','GET','/cases/:id','读取询价与进度'],['cases create','POST','/cases','提交询价'],['cases update','POST','/cases/:id/update','管理询价进度'],['cases reply','POST','/cases/:id/reply','补充询价资料'],
  ['channels list','GET','/admin/channels','查看渠道与仓库'],['channels get','GET','/admin/channels/:id','读取渠道草稿与发布版本'],['channels create','POST','/admin/channels','新增渠道草稿'],['channels save','POST','/admin/channels/:id/save','保存渠道草稿'],['channels preview','GET','/admin/channels/:id/preview','预览发布或回退'],['channels publish','POST','/admin/channels/:id/publish','确认发布渠道信息'],['channels disable','POST','/admin/channels/:id/disable','停用渠道'],['channels history','GET','/admin/channels/:id/history','发布版本与操作记录'],['channels rollback','POST','/admin/channels/:id/rollback','确认回退指定版本'],
+ ['customs-data get','GET','/admin/customs-data','关务数据 get'],
+ ['customs-data save','POST','/admin/customs-data/save','关务数据 save'],
+ ['customs-data preview','GET','/admin/customs-data/preview','关务数据 preview'],
+ ['customs-data publish','POST','/admin/customs-data/publish','关务数据 publish'],
+ ['customs-data disable','POST','/admin/customs-data/disable','关务数据 disable'],
+ ['customs-data rollback','POST','/admin/customs-data/rollback','关务数据 rollback'],
+ ['residential-rates get','GET','/admin/residential-rates','私人地址运价 get'],
+ ['residential-rates save','POST','/admin/residential-rates/save','私人地址运价 save'],
+ ['residential-rates preview','GET','/admin/residential-rates/preview','私人地址运价 preview'],
+ ['residential-rates publish','POST','/admin/residential-rates/publish','私人地址运价 publish'],
+ ['residential-rates disable','POST','/admin/residential-rates/disable','私人地址运价 disable'],
+ ['residential-rates rollback','POST','/admin/residential-rates/rollback','私人地址运价 rollback'],
+ ['freightcom get','GET','/admin/freightcom','承运商配置 get'],
+ ['freightcom save','POST','/admin/freightcom/save','承运商配置 save'],
+ ['freightcom disable','POST','/admin/freightcom/disable','承运商配置 disable'],
+ ['customs query','POST','/business/customs/query','关务查询'],['tax estimate','POST','/business/customs/tax-estimate','税费估算'],['tax batch','POST','/business/customs/tax-estimates/batch','批量税费估算'],['quote self','POST','/business/quote/preview','自有运价试算'],['quote freightcom','POST','/business/quote/freightcom-ltl-preview','承运商实时报价'],['customs-history list','POST','/business/customs/history/list','本人关务历史'],['customs-history get','POST','/business/customs/history/get','读取历史快照'],
 ] as const;
 const schemas:Record<string,z.ZodType>={'channels create':channelInput,'channels save':channelSave,'channels publish':channelPublish,'channels disable':channelDisable,'channels rollback':channelRollback};
+for(const name of ['customs-data','residential-rates']){schemas[name+' save']=name==='customs-data'?customsSaveSchema:residentialSaveSchema;schemas[name+' publish']=nativePublishSchema;schemas[name+' rollback']=nativeRollbackSchema;schemas[name+' disable']=nativeDisableSchema;}schemas['freightcom save']=freightcomSaveSchema;schemas['freightcom disable']=freightcomDisableSchema;
+Object.assign(schemas,{'customs query':customsInput,'tax estimate':taxInput,'tax batch':taxBatchInput,'quote self':zoneInputSchema,'quote freightcom':freightcomInputSchema,'customs-history list':customsHistoryListInput,'customs-history get':customsHistoryGetInput});
 const token=z.string().regex(/^[A-Za-z0-9_-]{32,128}$/u);
 const sessionSchema=z.object({origin:z.string(),session_token:token,csrf_token:token,expires_at:z.number()}).strict();
 const pendingSchema=z.object({origin:z.string(),device_secret:token,user_code:z.string().regex(/^[A-F0-9]{8}$/u),expires_at:z.number()}).strict();
@@ -33,7 +59,7 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   const base=helpers.endpoint(suppliedOrigin??(typeof stored?.origin==='string'?stored.origin:'https://www.freightclaw.net'));if(stored&&base.origin!==stored.origin)throw new Failure('session_origin_mismatch');
   const request=async(path:string,method='GET',body?:unknown,authenticated=true)=>{
    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
-   try{const response=await(io.fetch??fetch)(new URL('/console/api/v1'+path,base),{method,redirect:'error',credentials:'omit',signal:controller.signal,headers:{accept:'application/json',origin:base.origin,...(authenticated?{cookie:`fc_portal_session=${String(stored!.session_token)}`,'x-csrf-token':String(stored!.csrf_token)}:{}),...(method==='GET'?{}:{'content-type':'application/json','idempotency-key':values['idempotency-key']??randomUUID()})},...(method==='GET'?{}:{body:JSON.stringify(body??{})})});const text=await helpers.readResponse(response);let data:Record<string,unknown>;try{data=JSON.parse(text) as Record<string,unknown>;}catch{throw new Failure('response_invalid',1);}if(!data||typeof data!=='object')throw new Failure('response_invalid',1);
+   try{const response=await(io.fetch??fetch)(new URL('/console/api/v1'+path,base),{method,redirect:'error',credentials:'omit',signal:controller.signal,headers:{accept:'application/json',origin:base.origin,...(authenticated?{cookie:`fc_portal_session=${String(stored!.session_token)}`,'x-csrf-token':String(stored!.csrf_token)}:{}),...(method==='GET'?{}:{'content-type':'application/json','idempotency-key':values['idempotency-key']??randomUUID()})},...(method==='GET'?{}:{body:JSON.stringify(body??{})})});const text=await helpers.readResponse(response,name.startsWith('customs-data ')||name.startsWith('residential-rates ')?40*1024*1024:undefined);let data:Record<string,unknown>;try{data=JSON.parse(text) as Record<string,unknown>;}catch{throw new Failure('response_invalid',1);}if(!data||typeof data!=='object')throw new Failure('response_invalid',1);
     if(authenticated&&[stored!.session_token,stored!.csrf_token].some(t=>text.includes(String(t)))&&path!=='/session'&&path!=='/session/organization'&&path!=='/logout')throw new Failure('credential_reflected',1);
     if(!response.ok){const status=String(data.status);throw new Failure(status==='blocked'?'permission_or_session_denied':status==='needs_input'?'input_or_version_invalid':'service_unavailable',status==='blocked'?5:status==='needs_input'?3:6);}return data;
    }finally{clearTimeout(timer);}
@@ -45,11 +71,14 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   if(name==='logout'){await request('/logout','POST',{});await unlink(filename);emit({status:'success'});return 0;}
   const command=map.find(c=>c[0]===name);if(!command)throw new Failure('command_unknown');
   let path:string=command[2];if(path.includes(':id')){if(!values.id||!/^[A-Za-z0-9_-]{1,128}$/u.test(values.id))throw new Failure('id_required');path=path.replace(':id',encodeURIComponent(values.id));}else if(values.id)throw new Failure('unexpected_id');
-  let input:unknown={};if(values.input){input=helpers.parseJson(values.input==='-'?await helpers.readStdin((io.stdin??process.stdin) as NodeJS.ReadStream,15000):await helpers.readFileBounded(values.input,32768));}if(!input||typeof input!=='object'||Array.isArray(input))throw new Failure('input_invalid');
+  let input:unknown={};if(values.input){input=helpers.parseJson(values.input==='-'?await helpers.readStdin((io.stdin??process.stdin) as NodeJS.ReadStream,name.startsWith("customs-data ")||name.startsWith("residential-rates ")?16*1024*1024:15000):await helpers.readFileBounded(values.input,name.startsWith("customs-data ")||name.startsWith("residential-rates ")?16*1024*1024:32768,name==="freightcom save"));}if(!input||typeof input!=='object'||Array.isArray(input))throw new Failure('input_invalid');
   if(!validCaseInput(name,input)||schemas[name]&&!schemas[name].safeParse(input).success)throw new Failure('input_schema_invalid');
-  if(command[1]==='POST'&&(!values['idempotency-key']||!/^[A-Za-z0-9._:-]{16,128}$/u.test(values['idempotency-key'])))throw new Failure('idempotency_key_required');
+  if(command[1]==='POST'&&!path.startsWith('/business/')&&(!values['idempotency-key']||!/^[A-Za-z0-9._:-]{16,128}$/u.test(values['idempotency-key'])))throw new Failure('idempotency_key_required');
   if(command[1]==='GET'){const query=new URLSearchParams();for(const[k,v]of Object.entries(input)){if(!['string','number','boolean'].includes(typeof v))throw new Failure('query_invalid');query.set(k,String(v));}if(query.size)path+='?'+query.toString();}
-  const response=await request(path,command[1],input);
+  const response=await request(path,command[1],path.startsWith('/business/')?{input}:input);
+  if(response.data!==null){const publicName=({'customs query':'customs query','tax estimate':'customs tax','tax batch':'customs tax-batch','quote self':'quote zone','quote freightcom':'quote freightcom'} as Record<string,string>)[name];if(publicName&&!validatePublicResponse(publicCommands.find(c=>c.name===publicName)!,200,response))throw new Failure('response_invalid',1);}
+  if(name.startsWith('customs-history ')&&response.data!==null&&!(name.endsWith(' list')?customsHistoryListResponse:customsHistoryGetResponse).safeParse(response).success)throw new Failure('response_invalid',1);
+  if(response.status==='success'&&(name.startsWith('customs-data ')||name.startsWith('residential-rates ')||name.startsWith('freightcom '))){const schema=name.startsWith('freightcom ')?freightcomViewSchema:nativeDataSchema(name.startsWith('customs-data ')?'customs':'residential',name.endsWith(' preview'));if(!nativeResponseSchema(schema).safeParse(response).success)throw new Failure('response_invalid',1);}
   if(name.startsWith('channels ')&&response.status==='success'){const dataSchema=name==='channels list'?channelListSchema:name==='channels preview'?channelPreviewSchema:name==='channels history'?channelHistorySchema:channelViewSchema;if(!z.object({schema_version:z.literal(CHANNEL_VERSION),status:z.literal('success'),data:dataSchema,reason_codes:z.array(z.string()).length(0)}).strict().safeParse(response).success)throw new Failure('response_invalid',1);}
   if(name.startsWith('cases ')&&response.status==='success'&&!validateCaseResponse(response))throw new Failure('response_invalid',1);
   if(name==='whoami'||name==='use'){if(response.authenticated!==true)throw new Failure('session_expired',5);if(typeof response.csrf_token==='string'&&response.csrf_token!==stored!.csrf_token){await save({...stored,csrf_token:response.csrf_token});}const {csrf_token:_secret,fixture_identities:_fixtures,...publicSession}=response;void _secret;void _fixtures;emit(publicSession);}else{if(!['success','needs_input','manual_review','blocked','unavailable'].includes(String(response.status)))throw new Failure('response_invalid',1);emit(response);return ({success:0,needs_input:3,manual_review:4,blocked:5,unavailable:6} as Record<string,number>)[String(response.status)]!;}

@@ -1,0 +1,17 @@
+import { z } from 'zod';
+import { customsDatasetSchema } from '../../customs-native/contracts';
+import { residentialRatesSchema } from '../../quote-native/contracts';
+export const NATIVE_ADMIN_VERSION='portal-native-admin@2026-09-07.v1';
+export type NativeKind='customs'|'residential';
+export const nativePublishSchema=z.object({expected_version:z.number().int().nonnegative(),preview_hash:z.string().regex(/^[a-f0-9]{64}$/u),confirmation:z.literal('reviewed_sources_and_conditions')}).strict();
+export const nativeDisableSchema=z.object({expected_version:z.number().int().nonnegative()}).strict();
+export const nativeRollbackSchema=nativePublishSchema.extend({release_id:z.uuid()});
+export const customsSaveSchema=z.object({expected_version:z.number().int().nonnegative(),input:customsDatasetSchema}).strict();
+export const residentialSaveSchema=z.object({expected_version:z.number().int().nonnegative(),input:residentialRatesSchema}).strict();
+export function nativeDataSchema(kind:NativeKind,preview=false){const input=kind==='customs'?customsDatasetSchema:residentialRatesSchema,hash=z.string().regex(/^[a-f0-9]{64}$/u),version=z.number().int().nonnegative();if(preview)return z.object({kind:z.literal(kind),version,input,release_id:z.uuid().nullable(),preview_hash:hash,can_publish:z.boolean(),blockers:z.array(z.string())}).strict();return z.object({kind:z.literal(kind),version,draft:input.nullable(),active_release:z.object({release_id:z.uuid(),version,input,published_at:z.iso.datetime(),digest:hash}).strict().nullable(),history:z.array(z.object({release_id:z.uuid(),version,label:z.string(),published_at:z.iso.datetime(),digest:hash}).strict()).max(50)}).strict();}
+export const freightcomSaveSchema=z.object({expected_version:z.number().int().nonnegative(),label:z.string().trim().min(1).max(100),credential:z.string().min(8).max(4096).regex(/^[^\s]+$/u),confirmation:z.literal('use_for_current_organization')}).strict();
+export const freightcomDisableSchema=nativeDisableSchema;
+export const freightcomViewSchema=z.object({version:z.number().int().nonnegative(),label:z.string(),credential_present:z.boolean(),updated_at:z.iso.datetime().nullable(),provider:z.literal('Freightcom'),live_rate_verified:z.literal(false)}).strict();
+export function nativeResponseSchema(data:z.ZodType){return z.object({schema_version:z.literal(NATIVE_ADMIN_VERSION),status:z.literal('success'),data,reason_codes:z.array(z.string()).length(0)}).strict();}
+
+export const nativeSchemas={customs_save:customsSaveSchema,residential_save:residentialSaveSchema,publish:nativePublishSchema,rollback:nativeRollbackSchema,disable:nativeDisableSchema,freightcom_save:freightcomSaveSchema,freightcom_response:nativeResponseSchema(freightcomViewSchema),customs_response:nativeResponseSchema(nativeDataSchema("customs")),customs_preview:nativeResponseSchema(nativeDataSchema("customs",true)),residential_response:nativeResponseSchema(nativeDataSchema("residential")),residential_preview:nativeResponseSchema(nativeDataSchema("residential",true))};

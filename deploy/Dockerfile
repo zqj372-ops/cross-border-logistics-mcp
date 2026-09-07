@@ -43,6 +43,8 @@ COPY --from=build /app/docs/contracts ./docs/contracts
 COPY --from=build /app/deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
 COPY --from=build /app/deploy/scripts/migrate-access-gateway-postgres.mjs ./deploy/scripts/migrate-access-gateway-postgres.mjs
 
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
   && mkdir -p /var/lib/logistics-mcp /var/lib/access-gateway \
   && chown -R mcp:mcp /app /var/lib/logistics-mcp /var/lib/access-gateway

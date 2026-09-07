@@ -1,3 +1,6 @@
+import type { NativeFreightcomService } from './native-freightcom';
+import type { NativeAdminService } from './native-admin';
+import { NATIVE_ADMIN_VERSION, nativeDataSchema, freightcomViewSchema, type NativeKind } from './native-admin-contracts';
 import { CliAuthorization } from "./cli-auth";
 import type { ChannelService } from "./channels";
 import { CHANNEL_VERSION, channelHistorySchema, channelViewSchema, channelListSchema, channelPreviewSchema } from "./channel-contracts";
@@ -48,6 +51,8 @@ export interface PortalHttpOptions {
   readonly callLogService?: PortalCallLogService;
   readonly caseService?: CaseService;
   readonly channelService?: ChannelService;
+  readonly nativeAdmin?: NativeAdminService;
+  readonly nativeFreightcom?: NativeFreightcomService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
   readonly sessions: PortalSessionManager;
@@ -170,6 +175,8 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
+  if (/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/channels(?:\/[0-9a-f-]{36}(?:\/(?:save|preview|publish|disable|history|rollback))?)?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/cases(?:\/[0-9a-f-]{36}(?:\/(?:update|reply))?)?$/u.test(path)) return true;
   if (path.startsWith(`${API_PREFIX}/business-access/`)) return true;
@@ -185,7 +192,7 @@ function authenticatedResourcePath(path: string): boolean {
 }
 
 export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpHandler {
-  const cliAuth=options.mode === "fixtures" ? new CliAuthorization(options.sessions) : null;
+  const cliAuth=new CliAuthorization(options.sessions);
   const formLogin=options.mode==="fixtures"&&options.identityProvider.kind==="fixture"?new FixtureFormLogin():null;
   return { async handle(request, response): Promise<boolean> {
     const url = new URL(request.url ?? "/", "http://portal.invalid"); const path = url.pathname; const id = requestId(request);
@@ -266,6 +273,16 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      const nativeFreightcom=/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.exec(path);
+      if(nativeFreightcom){if(!options.nativeFreightcom)throw new PortalError("native_admin_unavailable");if(url.search)throw new PortalError("native_input_invalid");const action=nativeFreightcom[1];let data:unknown;if(request.method==="GET"&&!action)data=options.nativeFreightcom.get(ctx);else if(request.method==="POST"&&action)data=options.nativeFreightcom.change(ctx,await body(request,8192),idempotency(request),action==="disable");else throw new PortalError("method_not_allowed");data=freightcomViewSchema.parse(data);json(response,200,{schema_version:NATIVE_ADMIN_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;}
+      const nativeMatch=/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.exec(path);
+      if(nativeMatch){
+        if(!options.nativeAdmin)throw new PortalError("native_admin_unavailable");const service=options.nativeAdmin,kind:NativeKind=nativeMatch[1]==="customs-data"?"customs":"residential",action=nativeMatch[2];let data:unknown;
+        if(request.method==="GET"){const release=url.searchParams.get("release_id");if(url.search&&!(action==="preview"&&release&&/^[0-9a-f-]{36}$/u.test(release)&&[...url.searchParams.keys()].length===1))throw new PortalError("native_input_invalid");if(!action)data=service.get(ctx,kind);else if(action==="preview")data=service.preview(ctx,kind,release??undefined);else throw new PortalError("method_not_allowed");}
+        else if(request.method==="POST"&&!url.search){const input=await body(request,16*1024*1024),key=idempotency(request);if(action==="save")data=service.save(ctx,kind,input,key);else if(action==="publish")data=service.publish(ctx,kind,input,key);else if(action==="disable")data=service.disable(ctx,kind,input,key);else if(action==="rollback")data=service.rollback(ctx,kind,input,key);else throw new PortalError("method_not_allowed");}else throw new PortalError("method_not_allowed");
+        data=nativeDataSchema(kind,action==="preview").parse(data);
+        json(response,200,{schema_version:NATIVE_ADMIN_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;
+      }
       const channelMatch=/^\/console\/api\/v1\/admin\/channels(?:\/([0-9a-f-]{36})(?:\/(save|preview|publish|disable|history|rollback))?)?$/u.exec(path);
       if(channelMatch){
         if(!options.channelService)throw new PortalError("channels_unavailable");const service=options.channelService,cid=channelMatch[1],action=channelMatch[2];let data:unknown;

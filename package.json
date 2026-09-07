@@ -28,7 +28,7 @@
     "test": "vitest run",
     "verify:runtime": "vitest run tests/e2e/runtime-smoke.test.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src services tests apps/console apps/inquiry deploy/cli deploy/portal/setup-server.mjs deploy/scripts/build.mjs deploy/scripts/build-inquiry.mjs deploy/scripts/start-portal-fixture.ts deploy/scripts/generate-case-schemas.ts deploy/scripts/generate-channel-schemas.ts deploy/scripts/generate-business-schemas.ts deploy/scripts/generate-portal-openapi.ts",
+    "lint": "eslint src services tests apps/console apps/inquiry deploy/cli deploy/portal/setup-server.mjs deploy/scripts/build.mjs deploy/scripts/build-inquiry.mjs deploy/scripts/start-portal-fixture.ts deploy/scripts/generate-case-schemas.ts deploy/scripts/generate-channel-schemas.ts deploy/scripts/generate-business-schemas.ts deploy/scripts/generate-portal-openapi.ts deploy/scripts/generate-native-schemas.ts",
     "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts && npm run validate:access-gateway-schemas",
     "validate:access-gateway-schemas": "node --import tsx/esm services/access-gateway/validate-schemas.ts",
     "generate:business-schemas": "node --import tsx/esm deploy/scripts/generate-business-schemas.ts",
@@ -41,7 +41,8 @@
     "test:mcp-resources": "vitest run tests/e2e/mcp-resources.test.ts --pool=forks --no-file-parallelism --maxWorkers=1 --testTimeout=5000 --hookTimeout=5000",
     "validate:agent-adapters": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts adapters",
     "test:access-gateway": "vitest run tests/access-gateway --pool=forks --no-file-parallelism --maxWorkers=1",
-    "build:inquiry": "node deploy/scripts/build-inquiry.mjs"
+    "build:inquiry": "node deploy/scripts/build-inquiry.mjs",
+    "generate:native-schemas": "node --import tsx/esm deploy/scripts/generate-native-schemas.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
