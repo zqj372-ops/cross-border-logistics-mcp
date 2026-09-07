@@ -58,3 +58,7 @@ python3 deploy/scripts/prepare-residential-source.py --directory /absolute/priva
 镜像内运行 `node dist/deploy/verify-pdf-renderer.mjs /tmp/pdf-check.pdf`，输出仅含合成样张的字节数及 SHA-256，文件必须是新路径。它使用与正式导出相同的渲染器和中文字体，不访问企业资料。生产 Compose 保留 non-root、cap_drop ALL、只读根文件系统及 no-new-privileges；专用 seccomp 来源为 Playwright v1.58.2 的 `utils/docker/seccomp_profile.json`，增加 chroot 系统调用以供 Chromium 在自身用户命名空间内隔离根目录。内核仍校验能力，未授予容器主机 SYS_CHROOT 或 SYS_ADMIN。每次导出使用独立临时配置与缓存目录，结束后清理。
 
 来源：[Playwright Docker 沙箱说明](https://playwright.dev/docs/docker)、[固定版本 seccomp](https://github.com/microsoft/playwright/blob/v1.58.2/utils/docker/seccomp_profile.json)。不得使用 --no-sandbox 或 privileged 绕过。
+
+## 公司资料由用户自行配置
+
+平台部署不预置公司名称、电话、邮箱或地址，也不要求所有企业先完成报价模板才能上线。各企业负责人或管理员通过服务市场 → 报价单 → 企业模板自行填写；CLI 使用 `workspace documents config` 和 `workspace documents config-save`。首次制作报价单需要公司名称和适用条款，其他业务功能不依赖此模板。此处的开放配置不改变企业数据隔离，也不将示例公司当作默认出单主体。
