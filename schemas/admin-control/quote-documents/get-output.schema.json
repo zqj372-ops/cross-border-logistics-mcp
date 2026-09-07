@@ -16,7 +16,8 @@
       "type": "string",
       "enum": [
         "draft",
-        "approved"
+        "approved",
+        "rejected"
       ]
     },
     "input": {
@@ -341,6 +342,573 @@
     },
     "owner_id": {
       "type": "string"
+    },
+    "native_quote_v1": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "type": "object",
+          "properties": {
+            "address_line": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "postal_code": {
+              "type": "string",
+              "pattern": "^[A-Za-z]\\d[A-Za-z][ -]?\\d[A-Za-z]\\d$"
+            },
+            "city": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "province": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cbm": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+            },
+            "weight_kg": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+            },
+            "piece_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "packaging_type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "longest_side_cm": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "address_type": {
+              "type": "string",
+              "enum": [
+                "commercial",
+                "residential",
+                "private",
+                "rural_residential"
+              ]
+            },
+            "requires_liftgate": {
+              "type": "boolean"
+            },
+            "requires_pallet_jack": {
+              "type": "boolean"
+            },
+            "requires_appointment": {
+              "type": "boolean"
+            },
+            "explicit_pallet_count": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "is_stackable": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "detention_minutes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "extensions": {
+              "type": "object",
+              "properties": {
+                "cargo_lines_v1": {
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "quantity": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100000
+                      },
+                      "packaging_type": {
+                        "type": "string",
+                        "enum": [
+                          "carton",
+                          "crate",
+                          "pallet",
+                          "bag",
+                          "other"
+                        ]
+                      },
+                      "length_cm": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,8})(?:\\.[0-9]{1,8})?$"
+                      },
+                      "width_cm": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,8})(?:\\.[0-9]{1,8})?$"
+                      },
+                      "height_cm": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,8})(?:\\.[0-9]{1,8})?$"
+                      },
+                      "weight": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "unit_weight",
+                              "line_total_weight"
+                            ]
+                          },
+                          "value_kg": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9][0-9]{0,8})(?:\\.[0-9]{1,8})?$"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "value_kg"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "quantity",
+                      "packaging_type",
+                      "length_cm",
+                      "width_cm",
+                      "height_cm",
+                      "weight"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "origin_v1": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "postal_code",
+            "cbm",
+            "weight_kg",
+            "piece_count",
+            "packaging_type",
+            "address_type",
+            "requires_liftgate",
+            "requires_pallet_jack",
+            "requires_appointment",
+            "explicit_pallet_count",
+            "is_stackable",
+            "detention_minutes"
+          ],
+          "additionalProperties": false
+        },
+        "preview": {
+          "type": "object",
+          "properties": {
+            "currency": {
+              "type": "string",
+              "const": "USD"
+            },
+            "source_type": {
+              "type": "string",
+              "enum": [
+                "zone_matrix",
+                "llm_auxiliary_advice",
+                "hermes_agent_correction",
+                "learned_manual_quote",
+                "manual_required"
+              ]
+            },
+            "confidence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "postal_code": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "postal_prefix": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "preferred_city": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "city": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "province": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "zone": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "billing_pallets": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pallet_breakdown": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "base_price": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fuel": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "accessorials": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+              }
+            },
+            "total_price": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "risk_tags": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "manual_review_required": {
+              "type": "boolean"
+            },
+            "matched_rule": {
+              "type": "string"
+            },
+            "matched_by": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "candidate_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "match_trace": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "sales_note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "currency",
+            "source_type",
+            "confidence",
+            "postal_code",
+            "postal_prefix",
+            "preferred_city",
+            "city",
+            "province",
+            "origin",
+            "zone",
+            "billing_pallets",
+            "pallet_breakdown",
+            "base_price",
+            "fuel",
+            "accessorials",
+            "total_price",
+            "risk_tags",
+            "manual_review_required",
+            "matched_rule",
+            "matched_by",
+            "candidate_count",
+            "match_trace",
+            "sales_note"
+          ],
+          "additionalProperties": false
+        },
+        "source_refs": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+              },
+              "source_type": {
+                "type": "string",
+                "enum": [
+                  "internal_system",
+                  "official_source",
+                  "tenant_record",
+                  "user_input",
+                  "opaque_reference",
+                  "fixture"
+                ]
+              },
+              "system": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "locator": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "retrieved_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "authority": {
+                "type": "string",
+                "enum": [
+                  "authoritative",
+                  "supporting",
+                  "user_provided",
+                  "opaque"
+                ]
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "source_id",
+              "source_type",
+              "system",
+              "locator",
+              "version",
+              "retrieved_at",
+              "authority",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "release_id": {
+          "type": "string"
+        },
+        "release_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "request_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "request",
+        "preview",
+        "source_refs",
+        "release_id",
+        "release_digest",
+        "request_hash"
+      ],
+      "additionalProperties": false
+    },
+    "rejection": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        }
+      },
+      "required": [
+        "reason",
+        "actor",
+        "at"
+      ],
+      "additionalProperties": false
     },
     "approval": {
       "anyOf": [

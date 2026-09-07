@@ -2,7 +2,7 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**本地开发进度：2026-09-08。** 私人地址资料解析已接入本地网页、人员 CLI 和现有业务 API，支持逐行货物、混合单位和冲突确认，见 [解析器迁移与使用说明](docs/product/2026-09-08-native-extraction.md)。关务数据、自有住宅运价与 Freightcom 连接后台已实现，网页和 CLI 共用发布版本；配置从空白开始。当前未部署生产，正式数据、运价与承运商凭证未录入。后台配置已按服务市场模块统一入口，见 [模块配置图解](docs/product/2026-09-08-market-module-configuration.md)；私人地址使用固定配置、不设渠道；工作台展示实际询价进度。见 [后台页面调整图解](docs/product/2026-09-07-business-admin-pages.md) / [图文交付与验证边界](docs/product/2026-09-07-native-customs-residential-delivery.md) / [配置和 CLI 操作说明](apps/console/native-business.md)。
+**本地开发进度：2026-09-08。** 混装计价、原生报价保存／审核／退回／PDF、完整关务快照更新，以及两种询价共用资料已实现网页和人员 CLI 流程。已只读迁入线上 Toronto / Calgary 共 754 档价格和完整法规快照供本地验收；运价截止为用户确认的 2027-01-01，报价单有效期 7 天。175 项冲突邮编保持人工复核；关务来源仍为 15 staged、0 发布快照，未启用正式查询。当前未部署生产，Freightcom 正式报价、企业模板和目标容器仍待验收。见 [本次图文进度与真实数据边界](docs/product/2026-09-08-native-business-completion.md)、[部署与回滚手册](docs/runbooks/native-business-completion-2026-09-08.md)及[配置和 CLI 操作说明](apps/console/native-business.md)。
 
 **既有生产记录：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 
@@ -125,7 +125,7 @@ Module Runtime v0 已有静态可信模块、manifest、capability、catalog 与
 - 输入输出采用闭合、版本化 Schema。金额使用十进制字符串及三位币种，物理量携带单位；Freightcom 保留已接受合同规定的源整数最小货币单位，不做测试币种重标或隐式 FX。
 - `unit_weight`、`piece_weights`、`line_total_weight` 是互斥重量证据；缺失或冲突不能猜测。
 - 写操作使用服务端身份、精确权限、必要预览/审批、幂等和目标系统读回。未知写结果保留原操作引用，不盲目新建一笔。
-- 平台不复制报价、关税、客户或文档权威主表；只保留必要引用、接入状态与脱敏审计。
+- MCP 适配层只保留必要引用、接入状态与脱敏审计；本次原生业务迁移由独立报价、关务和文档服务维护业务数据及发布版本，见已接受的原生业务 RFC。
 - 单个上游失败只影响依赖它的能力；平台身份、审计或会话基础依赖失败才阻断更大范围。
 
 原 [Phase 1 工具目录](docs/contracts/tool-catalog.md) 和 [权威矩阵](docs/contracts/authority-matrix.md) 继续约束对应旧 MCP 工具。`customs.ca.estimate`、`quote.save_draft` 等旧工具的未启用状态不能用于推断新 Portal REST/人员接口不存在；两条合同轨道必须分别核对。
@@ -196,4 +196,4 @@ npm run start:fixture
 
 ### 原生报价单模块
 
-服务市场 → **报价单制作**：企业模板、分币种费用、草稿记录、人工核对和 PDF 导出；网页与八个 `freightclaw workspace documents` 命令共享人员权限及业务存储。代码移植自用户的 `quote-pdf-builder`，没有依赖旧站 API。详情、部署条件与截图见 [报价单模块说明](docs/product/2026-09-08-native-quote-documents.md)。当前为本地完成的功能，线上部署需单独验证；账单、收款和旧 PDF 回导尚未迁移。
+服务市场 → **报价单制作**：企业模板、分币种费用、草稿记录、人工核对和 PDF 导出；网页与十个 `freightclaw workspace documents` 命令共享人员权限及业务存储。代码移植自用户的 `quote-pdf-builder`，没有依赖旧站 API。详情、部署条件与截图见 [报价单模块说明](docs/product/2026-09-08-native-quote-documents.md)。当前为本地完成的功能，线上部署需单独验证；账单、收款和旧 PDF 回导尚未迁移。

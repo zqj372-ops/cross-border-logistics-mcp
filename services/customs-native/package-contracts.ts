@@ -1,0 +1,10 @@
+import {customsBrowseInput,customsBrowseResult} from './catalog';
+import {z} from 'zod';
+import {SourceRowSchema} from './contracts';
+const sha=z.string().regex(/^[a-f0-9]{64}$/u);
+export const packageImport=z.object({filename:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.sqlite$/u),sha256:sha,label:z.string().trim().min(1).max(100)}).strict();
+export const packagePublish=z.object({id:z.uuid(),sha256:sha,expected_active:z.uuid().nullable(),confirmation:z.literal('reviewed_sources_and_conditions')}).strict();
+export const packageDisable=z.object({expected_active:z.uuid()}).strict();
+export const packageView=z.object({id:z.uuid(),label:z.string(),sha256:sha,created_at:z.iso.datetime(),state:z.enum(['ready','blocked']),rule_date:z.string().nullable(),counts:z.record(z.string(),z.number().int().nonnegative()),sources:z.array(SourceRowSchema).max(100),blockers:z.array(z.string())}).strict();
+export const packageList=z.object({selected:z.boolean(),active_id:z.uuid().nullable(),items:z.array(packageView).max(100)}).strict();
+export const packageSchemas={import:packageImport,publish:packagePublish,disable:packageDisable,list:packageList,browse:customsBrowseInput,browse_output:customsBrowseResult};

@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {parseRateSheet,mergeRateSheet,buildPriceMatrix} from '../../services/quote-native/admin-tables';
+import {parseRateSheet,mergeRateSheet,buildPriceMatrix,selectRateOrigin} from '../../services/quote-native/admin-tables';
 import {config} from './fixture';
 describe('ported fixed residential spreadsheet workflow',()=>{
  it('reads source wide matrix, preserves zero, previews merge without mutating saved input',()=>{
@@ -39,3 +39,5 @@ it('fuel-only sheet updates never reactivate a disabled zone',()=>{
  const p=parseRateSheet([['zone','1托','燃油比例'],['1','100','12']], 'rates',config.origin);
  expect(mergeRateSheet(d,p).extensions.zone_controls_v1[0]).toEqual({zone:1,enabled:false,fuel_percent:'12'});
 });
+
+it('selects an origin for CLI tables without dropping the other prices or shared policy',()=>{const multi={...config,extensions:{zone_controls_v1:[],quote_valid_days_v1:7,origins_v1:[{origin:'calgary',zones:config.zones,rates:[{zone:1,pallets:1,amount:'555'}],zone_controls_v1:[]}]}};const selected=selectRateOrigin(multi,'calgary');expect(selected.origin).toBe('calgary');expect(selected.rates[0]!.amount).toBe('555');expect(selected.extensions!.origins_v1![0]!.rates).toEqual(config.rates);expect(selected.extensions!.quote_valid_days_v1).toBe(7);expect(()=>selectRateOrigin(multi,'unknown')).toThrow('rate_origin_not_found');});

@@ -36,6 +36,7 @@ FROM node:22.13.0-bookworm-slim@sha256:f5a0871ab03b035c58bdb3007c3d177b001c2145c
 
 ENV NODE_ENV=production
 ENV MCP_PORT=8080
+ENV PORTAL_PDF_BROWSER_EXECUTABLE=/usr/bin/chromium
 WORKDIR /app
 
 COPY --from=build /app/dist ./dist
@@ -43,7 +44,7 @@ COPY --from=build /app/docs/contracts ./docs/contracts
 COPY --from=build /app/deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
 COPY --from=build /app/deploy/scripts/migrate-access-gateway-postgres.mjs ./deploy/scripts/migrate-access-gateway-postgres.mjs
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends python3 chromium && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
   && mkdir -p /var/lib/logistics-mcp /var/lib/access-gateway \

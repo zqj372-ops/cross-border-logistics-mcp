@@ -22,7 +22,8 @@
             "type": "string",
             "enum": [
               "draft",
-              "approved"
+              "approved",
+              "rejected"
             ]
           },
           "created_at": {

@@ -1,3 +1,4 @@
+import {cargoLinesSchema} from '../../../quote-native/cargo-lines';
 import { readBoundedResponse, ResponseSizeError } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { z } from "zod";
 
@@ -27,6 +28,7 @@ export const zoneInputSchema = z.object({
   requires_liftgate: z.boolean(), requires_pallet_jack: z.boolean(), requires_appointment: z.boolean(),
   explicit_pallet_count: z.number().int().min(1).nullable(), is_stackable: z.boolean().nullable(),
   detention_minutes: z.number().int().min(0),
+  extensions:z.object({cargo_lines_v1:cargoLinesSchema.optional(),origin_v1:z.string().trim().min(1).max(100).optional()}).strict().optional(),
 }).strict();
 export const extractInputSchema = z.object({ customer_message: z.string().trim().min(1).max(20_000) }).strict();
 const requestBaseSchema = z.object({ actor: actorSchema, requestId: z.string().regex(REQUEST_ID) });
@@ -166,6 +168,7 @@ export function createQuotePortalClient(options: QuotePortalClientOptions) {
     async preview(request: { readonly input: QuotePortalZoneInput; readonly actor: QuotePortalActor; readonly requestId: string }): Promise<QuotePortalResult<QuoteZonePreviewData>> {
       const parsed = previewRequestSchema.safeParse(request);
       if (!parsed.success) return localResult("needs_input", request.requestId, "quote_request_invalid");
+      if(parsed.data.input.extensions)return localResult("needs_input",request.requestId,"quote_source_cargo_lines_unsupported");
       return call("/api/v1/m2m/quote/zone-preview", { schema_version: QUOTE_SOURCE_SCHEMA_VERSION, request: parsed.data.input }, parsed.data.actor, parsed.data.requestId, "quote.zone_preview", zoneDataSchema);
     },
     async extract(request: { readonly input: QuotePortalExtractInput; readonly actor: QuotePortalActor; readonly requestId: string }): Promise<QuotePortalResult<QuoteExtractPreviewData>> {

@@ -5,7 +5,7 @@
 服务市场新增「报价单制作」，后台通过同一模块卡片进入「企业模板」，沿用 FreightClaw 前台字体与布局。
 
 1. 企业负责人或管理员填写公司资料、客户条款和常用费用，确认保存模板。
-2. 成员新建报价单，填写客户、有效期与费用；也可从成功的尾程试算点击「制作报价单」，带入试算总额和来源说明，再人工核对。
+2. 成员新建报价单，填写客户、有效期与费用；也可从成功的尾程试算点击「制作报价单」，由服务器重算并绑定费用、原始请求和来源版本，再人工核对。
 3. 核对费用与合计，确认保存草稿。记录固定保存时的模板版本、费用与汇率，后续改模板不会改旧报价。
 4. 可立即导出有草稿标识的 PDF。负责人/管理员逐项核对价格、来源和条款，填写核对依据后确认，才可在有效期内导出正式版。
 5. 网页与人员 CLI 操作同一数据库。PDF 下载检查长度、文件标识与 SHA-256；CLI 不覆盖已有文件。
@@ -16,7 +16,7 @@
 
 源仓库：`zqj372-ops/quote-pdf-builder`，固定提交 `0b6e439f4203b3fc3159ca7ef613a3e51a1afc09`。复用了 A4 文档布局和费用展示规则；适配成严格金额合同、原生业务存储、网页、人员 CLI。逐文件来源散列见 `services/quote-documents/PROVENANCE.json`。
 
-这次交付是报价单模块，不是整个 Electron 桌面软件的完整迁移。账单、收款、Logo、旧 JSON/PDF 回导与原电脑历史记录仍未移植；没有导入默认公司、旧价格、客户资料或凭证。此模块也不代表关税正式数据、Freightcom 配置、业务单自动关联或原生完整报价审批系统的其他缺口已经完成。旧来源报价记录仍是独立入口。
+这次交付是报价单模块，不是整个 Electron 桌面软件的完整迁移。账单、收款、Logo、旧 JSON/PDF 回导与原电脑历史记录仍未移植；没有导入默认公司、旧价格、客户资料或凭证。此模块也不代表关税正式数据、Freightcom 配置、其他业务单的自动关联已经完成。原生运价绑定、审核退回与来源停用检查的后续进度见 [业务闭环](2026-09-08-native-business-completion.md)。旧来源报价记录仍是独立入口。
 
 ## 本地部署
 
@@ -28,7 +28,7 @@
 
 ## CLI 与接口
 
-八个命令：`documents config/config-save/preview/save/list/get/approve/export`；均在 `freightclaw workspace` 下，复用人员网页登录授权。保存/模板更新/人工确认要求幂等键。完整例子见 `apps/console/workspace-cli.md`，请求及响应 Schema 见 `schemas/admin-control/quote-documents/`，OpenAPI 由构建生成。MCP 工具目录与查询 Key 权限保持现有合同。
+十个命令：`documents config/config-save/preview/native-prepare/save/list/get/approve/reject/export`；均在 `freightclaw workspace` 下，复用人员网页登录授权。保存/模板更新/人工确认要求幂等键。完整例子见 `apps/console/workspace-cli.md`，请求及响应 Schema 见 `schemas/admin-control/quote-documents/`，OpenAPI 由构建生成。MCP 工具目录与查询 Key 权限保持现有合同。
 
 ## 验收截图
 

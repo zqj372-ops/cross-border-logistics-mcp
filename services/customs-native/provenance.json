@@ -107,6 +107,13 @@
       "target": "services/customs-native/upstream/worker/ai/adapter.ts",
       "target_sha256": "71cb4f4bf5a9b66c93461ebb01b6b4b4ad449e3c2dff270ea66fb8f1a5e1050d",
       "adaptation": "Keep the explicit assistant port only; omit fixture and network fallback.; Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/repositories/customs.ts",
+      "source_sha256": "8c98b311295715f1bb36c957f0afb7fe00a64875dcceff19ccb57f24759dacd5",
+      "target": "services/customs-native/upstream/worker/repositories/customs-sql.ts",
+      "target_sha256": "c03c1e3cc3d41750a004b89dcdb1cd07603367f8d6b964502e8df9d99239f970",
+      "adaptation": "Read-only SQLite statement port replaces D1 types; SQL query and dated lookup logic preserved."
     }
   ]
 }

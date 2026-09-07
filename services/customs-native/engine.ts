@@ -6,6 +6,7 @@ import { selectNextApprovedQuestion } from './upstream/worker/query/question-pol
 import type { NomenclatureRow, TariffRuleRow, TradeMeasureRow, RequirementRow, SourceRow, PublicationSnapshotRow } from './upstream/worker/repositories/customs';
 export interface NativeCustomsRelease {
  readonly release_id:string;
+ readonly repository?:CustomsRepositoryLike;
  readonly exchange_rates?:NonNullable<CustomsDataset['exchange_rates']>;
  readonly nomenclature:readonly NomenclatureRow[];
  readonly tariffs:readonly TariffRuleRow[];
@@ -42,7 +43,7 @@ export class NativeCustomsEngine{
   const fail=(status:'needs_input'|'unavailable'|'manual_review',code:string)=>({schema_version:'portal-customs-native@2026-09-07.v1',status,data:null,reason_codes:[code]});
   const parsed=QueryRequestSchema.safeParse(input);if(!parsed.success)return fail('needs_input','customs_request_invalid');
   const release=this.releases.current(parsed.data.ruleDate);if(!release)return fail('unavailable','native_customs_not_published');
-  const repository=releaseRepository(release);const before=await publicationStatus(release.snapshot,release.sources.map(s=>s.id),[...release.sources]);
+  const repository=release.repository??releaseRepository(release);const before=await publicationStatus(release.snapshot,release.sources.map(s=>s.id),[...release.sources]);
   if(!before.dataStatus.ready||before.testData)return fail('unavailable','native_customs_release_not_ready');
   try{const data=await new QueryService(repository,assistant).query(parsed.data);if(this.releases.current(parsed.data.ruleDate)?.release_id!==release.release_id)return fail('unavailable','native_customs_release_changed');if(!data.dataStatus.ready||data.testData)return fail('unavailable','native_customs_release_not_ready');return {schema_version:'portal-customs-native@2026-09-07.v1',status:data.nextQuestion?'needs_input':data.results.length===0||data.results.some(r=>r.status!=='confirmed')||data.candidates.some(r=>r.status==='manual_review')?'manual_review':'success',data,reason_codes:data.nextQuestion?['customs_clarification_required']:[]};}catch{return fail('manual_review','native_customs_query_requires_review');}
  }

@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "selected": {
+      "type": "boolean"
+    },
+    "active_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "items": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "blocked"
+            ]
+          },
+          "rule_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counts": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "sources": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "country": {
+                  "type": "string",
+                  "enum": [
+                    "CN",
+                    "US",
+                    "CA"
+                  ]
+                },
+                "authority": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "dataset": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "edition": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "revision": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "languages_json": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "official_url": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "published_at": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "effective_from": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "effective_to": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "manifest_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "parser_name": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "parser_version": {
+                  "type": "string",
+                  "maxLength": 50000
+                },
+                "supersedes_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 50000
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "staged",
+                    "reviewed",
+                    "published",
+                    "superseded"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "country",
+                "authority",
+                "dataset",
+                "edition",
+                "revision",
+                "languages_json",
+                "official_url",
+                "published_at",
+                "effective_from",
+                "effective_to",
+                "retrieved_at",
+                "manifest_sha256",
+                "parser_name",
+                "parser_version",
+                "supersedes_id",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "sha256",
+          "created_at",
+          "state",
+          "rule_date",
+          "counts",
+          "sources",
+          "blockers"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "selected",
+    "active_id",
+    "items"
+  ],
+  "additionalProperties": false
+}

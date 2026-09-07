@@ -1,3 +1,4 @@
+import type {CustomsPackages} from '../../customs-native/packages';
 import { createHash, randomUUID } from 'node:crypto';
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from './production-persistence';
 import { PortalError, type PortalContext } from './contracts';
@@ -11,10 +12,11 @@ interface Row{scope:string;kind:NativeKind;version:number;draft:string;active:st
 export interface NativePublication<T=CustomsDataset|ResidentialRates>{release_id:string;version:number;input:T;published_at:string;digest:string}
 export class NativeAdminStore{
  readonly db;
- constructor(readonly path:string){this.db=openPortalProductionDatabase(path,'freightclaw-native-business');const v=this.db.prepare('PRAGMA user_version').get() as {user_version:number};if(v.user_version>1){this.db.close();throw new Error('native_schema_incompatible');}this.db.exec(`CREATE TABLE IF NOT EXISTS native_configs(scope TEXT NOT NULL,kind TEXT NOT NULL,version INTEGER NOT NULL,draft TEXT NOT NULL,active TEXT,PRIMARY KEY(scope,kind));CREATE TABLE IF NOT EXISTS native_releases(id TEXT PRIMARY KEY,scope TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS native_audit(id TEXT PRIMARY KEY,scope TEXT NOT NULL,kind TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL);CREATE TABLE IF NOT EXISTS native_idempotency(scope TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scope,key));PRAGMA user_version=1;`);securePortalDatabaseFiles(path);}
- close(){this.db.close();securePortalDatabaseFiles(this.path);}
+ packages?:CustomsPackages;
+ constructor(readonly path:string){this.db=openPortalProductionDatabase(path,'freightclaw-native-business',2);const v=this.db.prepare('PRAGMA user_version').get() as {user_version:number};if(v.user_version>2){this.db.close();throw new Error('native_schema_incompatible');}this.db.exec(`CREATE TABLE IF NOT EXISTS native_configs(scope TEXT NOT NULL,kind TEXT NOT NULL,version INTEGER NOT NULL,draft TEXT NOT NULL,active TEXT,PRIMARY KEY(scope,kind));CREATE TABLE IF NOT EXISTS native_releases(id TEXT PRIMARY KEY,scope TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL);CREATE TABLE IF NOT EXISTS native_audit(id TEXT PRIMARY KEY,scope TEXT NOT NULL,kind TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL);CREATE TABLE IF NOT EXISTS native_idempotency(scope TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scope,key));PRAGMA user_version=2;`);securePortalDatabaseFiles(path);}
+ close(){this.packages?.close();this.db.close();securePortalDatabaseFiles(this.path);}
  current<T=CustomsDataset|ResidentialRates>(scope:string,kind:NativeKind):NativePublication<T>|null{const r=this.db.prepare('SELECT r.payload FROM native_releases r JOIN native_configs c ON c.active=r.id AND c.scope=r.scope AND c.kind=r.kind WHERE c.scope=? AND c.kind=?').get(scope,kind) as {payload:string}|undefined;return r?JSON.parse(r.payload) as NativePublication<T>:null;}
- customsReader(scope:string){return {current:(date:string)=>{const r=this.current<CustomsDataset>(scope,'customs');if(!r||r.input.rule_date>date)return null;return customsRelease(r.input,r.release_id,r.published_at);}};}
+ customsReader(scope:string){return {current:(date:string)=>{if(this.packages?.hasSelection(scope))return this.packages.current(scope,date);const r=this.current<CustomsDataset>(scope,'customs');if(!r||r.input.rule_date>date)return null;return customsRelease(r.input,r.release_id,r.published_at);}};}
 }
 export class NativeAdminService{
  constructor(private store:NativeAdminStore,private portal:Pick<PortalService,'getState'>){}

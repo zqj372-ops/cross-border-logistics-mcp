@@ -189,3 +189,5 @@ cpSync("services/quote-native", "dist/services/quote-native", { recursive: true,
 
 mkdirSync(resolve('dist/services/quote-documents'),{recursive:true});
 cpSync(resolve('apps/console/fonts'),resolve('dist/services/quote-documents/fonts'),{recursive:true});
+
+cpSync(resolve('services/quote-native/mixed_pallets.py'),resolve('dist/services/quote-native/mixed_pallets.py'));

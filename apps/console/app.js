@@ -109,7 +109,7 @@ async function request(path, { method = 'GET', body, key, acceptBusiness = false
   const writes = method !== 'GET'; const headers = { Accept: 'application/json' };
   if (writes) Object.assign(headers, { 'Content-Type': 'application/json', 'X-CSRF-Token': model.session?.csrf_token || '', 'Idempotency-Key': key || crypto.randomUUID() });
   const generation = model.sessionGeneration || 0;
-  let response; try { response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(writes ? { body: JSON.stringify(body || {}) } : {}), signal: AbortSignal.timeout(20000) }); } catch { throw Object.assign(new Error('network'), { code: 'network' }); }
+  let response; try { response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(writes ? { body: JSON.stringify(body || {}) } : {}), signal: AbortSignal.timeout(['/admin/customs-packages/import','/admin/customs-packages/publish'].includes(path)?120000:20000) }); } catch { throw Object.assign(new Error('network'), { code: 'network' }); }
   if (publicCustoms && response.headers.has('x-freightclaw-quota-remaining')) model.publicQuota = { limit: Number(response.headers.get('x-freightclaw-quota-limit')), remaining: Number(response.headers.get('x-freightclaw-quota-remaining')), resets_at: response.headers.get('x-freightclaw-quota-reset') };
   let result; try { result = await response.json(); } catch { throw Object.assign(new Error('invalid_response'), { code: 'portal_unavailable' }); }
   if (generation !== (model.sessionGeneration || 0)) throw Object.assign(new Error('account_changed'), { code: 'account_changed' });
@@ -449,7 +449,7 @@ const channels = createChannelsUi({api:request,mutate,esc,head,note,icon,formErr
 const cliAuthorization = createCliAuthorizationUi({api:request,esc,head,note,model:()=>model,rerender:render});
 const cases = createCasesUi({ api: request, mutate, head, panel, empty, note, esc, date, icon, formError, rerender: render, model: () => model });
 const calls = createCallLogUi({ api: request, head, panel, note, esc, date, capName, formError, rerender: render, model: () => model });
-const business = createBusinessWorkspace({quoteDocumentFromPreview: result=>quoteDocuments.fromQuote(result), api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
+const business = createBusinessWorkspace({quoteDocumentFromPreview: (result,input)=>quoteDocuments.fromQuote(result,input), api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
 const tax = createTaxWorkspace({ esc, head, panel, field, input, actions, formError, note, icon, api: request, rerender: render });
 const customsHistory = createCustomsHistoryUi({ api: request, esc, head, panel, note, date, formError, rerender: render, restore: (operation, input) => { if (operation === 'customs.query') business.restoreHistory(input); else tax.restoreHistory(input); go(operation === 'customs.query' ? 'customs' : 'tax'); } });
 const developerGuide = createDeveloperGuide({ esc, head, panel, field, input, actions, formError, note, link, mode: () => model.session?.mode, rerender: render });
@@ -482,6 +482,7 @@ document.addEventListener('submit', async (event) => {
   finally { form.dataset.busy = 'false'; button.disabled = form.dataset.form === 'password-login' && !form.dataset.captchaId; button.textContent = previous; }
 });
 document.addEventListener('change', async (event) => {
+  if (business.change(event)) return;
   if (await nativeAdmin.change(event)) return;
   if (serviceAccess.change(event)) return;
   if (developerGuide.change(event)) return;
@@ -489,7 +490,7 @@ document.addEventListener('change', async (event) => {
   if (event.target.id !== 'organization') return;
   try { model.sessionGeneration = (model.sessionGeneration || 0) + 1; model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go('home'); render(); } catch (error) { notify(errorMessage(error), true); render(); }
 });
-document.addEventListener('input', (event) => { if (quoteDocuments.input(event)) return; if (nativeAdmin.input(event)) return; if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });
+document.addEventListener('input', (event) => { if (quoteDocuments.input(event)) return; business.input(event); if (nativeAdmin.input(event)) return; if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });
 dialog.addEventListener('cancel', () => closeSecret());
 dialog.addEventListener('close', () => closeSecret());
 window.addEventListener('hashchange', () => { clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 }); });

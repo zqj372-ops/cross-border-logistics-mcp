@@ -1,3 +1,4 @@
+import {zoneInputSchema,zoneDataSchema,sourceRefSchema} from '../access-gateway/portal/business/quote-client';
 import { z } from 'zod';
 export const VERSION='quote-documents@2026-09-08.v1';
 const text=(n=200)=>z.string().trim().max(n);
@@ -9,11 +10,14 @@ export const templateSchema=z.object({company_name:text().min(1),company_address
 export const documentSchema=z.object({quote_no:text(80).min(1),customer_name:text().min(1),quote_date:date,valid_until:date,origin:text(),destination:text(),route_name:text(),job_no:text(80),so_no:text(80),container_no:text(80),remark:text(4000),exchange_rates:z.object({USD:decimal.nullable(),CAD:decimal.nullable()}).strict(),fee_items:z.array(feeSchema).min(1).max(60)}).strict().superRefine((d,c)=>{if(d.valid_until<d.quote_date)c.addIssue({code:'custom',message:'有效期早于报价日期'});if(new Set(d.fee_items.map(f=>f.id)).size!==d.fee_items.length)c.addIssue({code:'custom',message:'费用 ID 重复'});for(const rate of Object.values(d.exchange_rates))if(rate!==null&&/^0(?:\.0+)?$/u.test(rate))c.addIssue({code:'custom',message:'汇率必须大于零'});});
 export const configSaveSchema=z.object({expected_version:z.number().int().min(0),input:templateSchema,confirmed:z.literal(true)}).strict();
 export const previewSchema=z.object({input:documentSchema}).strict();
-export const saveSchema=z.object({input:documentSchema,template_version:z.number().int().positive(),preview_hash:z.string().regex(/^[a-f0-9]{64}$/u),preview_expires_at:z.number().int().positive(),confirmed:z.literal(true)}).strict();
+export const nativeQuoteBindingSchema=z.object({request:zoneInputSchema,preview:zoneDataSchema,source_refs:z.array(sourceRefSchema).min(1).max(50),release_id:z.string(),release_digest:z.string().regex(/^[a-f0-9]{64}$/u),request_hash:z.string().regex(/^[a-f0-9]{64}$/u)}).strict();
+export const nativePrepareSchema=z.object({request:zoneInputSchema,customer:z.object(documentSchema.shape).strict().pick({quote_no:true,customer_name:true,quote_date:true,valid_until:true,job_no:true,so_no:true,container_no:true,remark:true})}).strict();
+export const rejectSchema=z.object({id:z.string().uuid(),expected_version:z.number().int().positive(),reason:text(2000).min(1)}).strict();
+export const saveSchema=z.object({input:documentSchema,template_version:z.number().int().positive(),preview_hash:z.string().regex(/^[a-f0-9]{64}$/u),preview_expires_at:z.number().int().positive(),native_quote_v1:nativeQuoteBindingSchema.optional(),confirmed:z.literal(true)}).strict();
 export const approveSchema=z.object({id:z.string().uuid(),expected_version:z.number().int().positive(),evidence_ref:text(500).min(1),evidence_version:text(100).min(1),review_notes:text(2000).min(1),confirmation:z.literal('human_verified_price_and_source')}).strict();
 export const idSchema=z.object({id:z.string().uuid()}).strict();
 export const listSchema=z.object({limit:z.number().int().min(1).max(100).default(30),before:z.number().int().positive().optional()}).strict();
-export const quoteDocumentSchemas={'template':templateSchema,'input':documentSchema,'config-save':configSaveSchema,'preview':previewSchema,'save':saveSchema,'approve':approveSchema,'get':idSchema,'list':listSchema};
+export const quoteDocumentSchemas={'template':templateSchema,'input':documentSchema,'config-save':configSaveSchema,'preview':previewSchema,'save':saveSchema,'approve':approveSchema,'get':idSchema,'list':listSchema,'native-prepare':nativePrepareSchema,'reject':rejectSchema};
 export type QuoteDocument=z.infer<typeof documentSchema>;
 export type QuoteTemplate=z.infer<typeof templateSchema>;
 const sha=z.string().regex(/^[a-f0-9]{64}$/u);
@@ -23,8 +27,8 @@ export const totalsSchema=z.object({rows:z.array(feeSchema.and(z.object({amount:
 export const calculatedFeeSchema=z.object({...feeSchema.shape,amount:z.string().regex(/^[0-9]+\.[0-9]{2}$/u)}).strict();
 export const calculatedTotalsSchema=totalsSchema.extend({rows:z.array(calculatedFeeSchema).max(60)});
 export const previewViewSchema=saveSchema.omit({confirmed:true}).extend({totals:calculatedTotalsSchema});
-export const documentViewSchema=z.object({id:z.string().uuid(),version:z.number().int().positive(),state:z.enum(['draft','approved']),input:documentSchema,template:templateSchema,template_version:z.number().int().positive(),created_at:z.iso.datetime(),owner_id:z.string(),approval:z.object({evidence_ref:z.string(),evidence_version:z.string(),review_notes:z.string(),actor:z.string(),at:z.iso.datetime()}).strict().nullable()}).strict();
+export const documentViewSchema=z.object({id:z.string().uuid(),version:z.number().int().positive(),state:z.enum(['draft','approved','rejected']),input:documentSchema,template:templateSchema,template_version:z.number().int().positive(),created_at:z.iso.datetime(),owner_id:z.string(),native_quote_v1:nativeQuoteBindingSchema.optional(),rejection:z.object({reason:z.string(),actor:z.string(),at:z.iso.datetime()}).strict().optional(),approval:z.object({evidence_ref:z.string(),evidence_version:z.string(),review_notes:z.string(),actor:z.string(),at:z.iso.datetime()}).strict().nullable()}).strict();
 export const documentListViewSchema=z.object({items:z.array(documentViewSchema.pick({id:true,version:true,state:true,created_at:true}).extend({quote_no:z.string(),customer_name:z.string()})).max(100),next_cursor:z.number().int().positive().nullable()}).strict();
 export const exportViewSchema=z.object({id:z.string().uuid(),version:z.number().int().positive(),draft:z.boolean(),filename:z.string().regex(/^quotation-[a-f0-9-]+-v[0-9]+\.pdf$/u),sha256:sha,byte_length:z.number().int().min(100).max(8388608),content_base64:z.string().max(11184812).regex(/^[A-Za-z0-9+/]+={0,2}$/u),totals:calculatedTotalsSchema}).strict();
-export const outputSchemas:Record<string,z.ZodType>={config:configViewSchema,'config-save':configViewSchema,preview:previewViewSchema,save:documentViewSchema,get:documentViewSchema,approve:documentViewSchema,list:documentListViewSchema,export:exportViewSchema};
+export const outputSchemas:Record<string,z.ZodType>={config:configViewSchema,'config-save':configViewSchema,preview:previewViewSchema,save:documentViewSchema,get:documentViewSchema,approve:documentViewSchema,list:documentListViewSchema,export:exportViewSchema,'native-prepare':previewViewSchema,reject:documentViewSchema};
 export const responseSchema=(action:string)=>z.object({schema_version:z.literal(VERSION),status:z.literal('success'),data:outputSchemas[action]!,reason_codes:z.array(z.string()).length(0)}).strict();

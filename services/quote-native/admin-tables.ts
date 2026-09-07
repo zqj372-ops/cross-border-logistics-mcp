@@ -4,7 +4,7 @@
 import {z} from 'zod';
 import type {ResidentialRates} from './contracts';
 const money=/^(0|[1-9][0-9]{0,8})(\.[0-9]{1,2})?$/u,decimal=/^(0|[1-9][0-9]{0,8})(\.[0-9]{1,4})?$/u;
-export const rateTableInput=z.object({table:z.enum(['rates','zones']).default('rates'),selection:z.enum(['draft','published']).default('draft')}).strict();
+export const rateTableInput=z.object({table:z.enum(['rates','zones']).default('rates'),selection:z.enum(['draft','published']).default('draft'),origin:z.string().trim().min(1).max(100).optional()}).strict();
 export type TableKind='rates'|'zones';
 export type RateSheet={table:TableKind;rates:ResidentialRates['rates'];zones:ResidentialRates['zones'];controls:Array<{zone:number;enabled?:boolean;fuel_percent?:string|null}>;errors:string[];source_rows:number};
 const aliases:Record<string,string[]>={origin:['origin','origin_warehouse','warehouse','始发仓','始发仓库','仓库'],zone:['zone','分区','区域'],pallets:['billing_pallets','billing_pallet','pallets','pallet_count','托数','计费托数'],amount:['base_price_usd','base_price','price_usd','基础派送费_usd','基础派送费','基础价格','价格','amount'],fuel:['fuel_percent','fuel_surcharge_percent','燃油附加比例','燃油附加比例_%','燃油比例','燃油比例_%'],enabled:['enabled','启用','分区启用'],postal:['postal_prefix','postal_code','fsa','邮编','邮编前缀'],city:['city','城市','标准城市'],province:['province','省份','省份代码']};
@@ -54,7 +54,7 @@ export function mergeRateSheet<T extends Pick<ResidentialRates,'rates'|'zones'> 
  if(parsed.errors.length)throw new Error('rate_import_invalid');const next=structuredClone(draft);
  if(parsed.table==='rates'){
   const rows=new Map(next.rates.map(r=>[`${r.zone}:${r.pallets}`,r]));parsed.rates.forEach(r=>rows.set(`${r.zone}:${r.pallets}`,r));next.rates=[...rows.values()].sort((a,b)=>a.zone-b.zone||a.pallets-b.pallets);
-  const controls=new Map((next.extensions?.zone_controls_v1??[]).map(c=>[c.zone,c]));parsed.controls.forEach(c=>controls.set(c.zone,{enabled:true,fuel_percent:null,...controls.get(c.zone),...c}));if(controls.size)next.extensions={zone_controls_v1:[...controls.values()].sort((a,b)=>a.zone-b.zone)};
+  const controls=new Map((next.extensions?.zone_controls_v1??[]).map(c=>[c.zone,c]));parsed.controls.forEach(c=>controls.set(c.zone,{enabled:true,fuel_percent:null,...controls.get(c.zone),...c}));if(controls.size)next.extensions={...next.extensions,zone_controls_v1:[...controls.values()].sort((a,b)=>a.zone-b.zone)};
  }else{const rows=new Map(next.zones.map(r=>[r.postal_prefix,r]));parsed.zones.forEach(r=>rows.set(r.postal_prefix,r));next.zones=[...rows.values()];}
  return next;
 }
@@ -71,4 +71,12 @@ export function exportRateRows(draft:Pick<ResidentialRates,'rates'|'zones'|'orig
  const escape=(v:unknown)=>'"'+text(v).replace(/^([=+@-])/u,"'$1").replaceAll('"','""')+'"';
  const rows:unknown[][]=table==='zones'?[['始发仓','邮编','分区','城市','省份'],...draft.zones.map(z=>[draft.origin,z.postal_prefix,z.zone,z.city,z.province])]:[['始发仓','分区','托数','价格','燃油比例','启用'],...draft.rates.map(r=>{const c=draft.extensions?.zone_controls_v1.find(c=>c.zone===r.zone);return [draft.origin,r.zone,r.pallets,r.amount,c?.fuel_percent??'',c?String(c.enabled):''];})];
  return '\uFEFF'+rows.map(row=>row.map(escape).join(',')).join('\r\n')+'\r\n';
+}
+
+export function selectRateOrigin(draft:ResidentialRates,origin?:string):ResidentialRates{
+ if(!origin||origin===draft.origin)return draft;
+ const index=draft.extensions?.origins_v1?.findIndex(p=>p.origin===origin)??-1;if(index<0)throw new Error('rate_origin_not_found');
+ const next=structuredClone(draft),profiles=next.extensions!.origins_v1!,selected=profiles[index]!;
+ profiles[index]={origin:next.origin,zones:next.zones,rates:next.rates,zone_controls_v1:next.extensions!.zone_controls_v1};
+ return {...next,origin:selected.origin,zones:selected.zones,rates:selected.rates,extensions:{...next.extensions!,zone_controls_v1:selected.zone_controls_v1}};
 }

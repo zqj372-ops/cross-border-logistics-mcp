@@ -1,3 +1,6 @@
+import {customsBrowseResult} from '../../customs-native/catalog';
+import type {CustomsPackages} from '../../customs-native/packages';
+import {packageList} from '../../customs-native/package-contracts';
 import type { DocumentService } from '../../quote-documents/service';
 import { VERSION as DOCUMENT_VERSION, outputSchemas as documentOutputSchemas } from '../../quote-documents/contracts';
 import { calculate } from '../../quote-documents/engine';
@@ -55,6 +58,7 @@ export interface PortalHttpOptions {
   readonly caseService?: CaseService;
   readonly channelService?: ChannelService;
   readonly nativeAdmin?: NativeAdminService;
+ readonly customsPackages?:CustomsPackages;
   readonly documentService?: DocumentService;
   readonly nativeFreightcom?: NativeFreightcomService;
   readonly businessAccessService?: BusinessAccessService;
@@ -180,8 +184,9 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
-  if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|save|list|get|approve|export)$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|approve|reject|export)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/admin\/customs-packages(?:\/(import|publish|disable|browse))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/channels(?:\/[0-9a-f-]{36}(?:\/(?:save|preview|publish|disable|history|rollback))?)?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/cases(?:\/[0-9a-f-]{36}(?:\/(?:update|reply))?)?$/u.test(path)) return true;
@@ -279,15 +284,17 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
-      const nativeDocumentMatch=/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|save|list|get|approve|export)$/u.exec(path);
+      const nativeDocumentMatch=/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|approve|reject|export)$/u.exec(path);
       if(nativeDocumentMatch){
         const service=options.documentService;if(!service)throw new PortalError('document_service_unavailable');if(url.search)throw new PortalError('document_input_invalid');const action=nativeDocumentMatch[1];let data:unknown;
         if(action==='config'&&request.method==='GET')data=service.config(ctx);
-        else if(request.method==='POST'&&action!=='config'){const input=await body(request,131072);switch(action){case 'config-save':data=service.saveConfig(ctx,input,idempotency(request));break;case 'preview':{const p=service.preview(ctx,input);data={...p,totals:calculate(p.input)};break;}case 'save':data=service.save(ctx,input,idempotency(request));break;case 'list':data=service.list(ctx,input);break;case 'get':data=service.get(ctx,input);break;case 'approve':data=service.approve(ctx,input,idempotency(request));break;case 'export':data=await service.export(ctx,input);break;}}
+        else if(request.method==='POST'&&action!=='config'){const input=await body(request,131072);switch(action){case 'config-save':data=service.saveConfig(ctx,input,idempotency(request));break;case 'preview':{const p=service.preview(ctx,input);data={...p,totals:calculate(p.input)};break;}case 'native-prepare':{const p=await service.prepareNative(ctx,input);data={...p,totals:calculate(p.input)};break;}case 'reject':data=service.reject(ctx,input,idempotency(request));break;case 'save':data=service.save(ctx,input,idempotency(request));break;case 'list':data=service.list(ctx,input);break;case 'get':data=service.get(ctx,input);break;case 'approve':data=service.approve(ctx,input,idempotency(request));break;case 'export':data=await service.export(ctx,input);break;}}
         else throw new PortalError('method_not_allowed');data=documentOutputSchemas[action!]!.parse(data);json(response,200,{schema_version:DOCUMENT_VERSION,status:'success',data,reason_codes:[]},undefined,true);return true;
       }
       const nativeFreightcom=/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.exec(path);
       if(nativeFreightcom){if(!options.nativeFreightcom)throw new PortalError("native_admin_unavailable");if(url.search)throw new PortalError("native_input_invalid");const action=nativeFreightcom[1];let data:unknown;if(request.method==="GET"&&!action)data=options.nativeFreightcom.get(ctx);else if(request.method==="POST"&&action)data=options.nativeFreightcom.change(ctx,await body(request,8192),idempotency(request),action==="disable");else throw new PortalError("method_not_allowed");data=freightcomViewSchema.parse(data);json(response,200,{schema_version:NATIVE_ADMIN_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;}
+      const packagesMatch=/^\/console\/api\/v1\/admin\/customs-packages(?:\/(import|publish|disable|browse))?$/u.exec(path);
+      if(packagesMatch){const service=options.customsPackages;if(!service)throw new PortalError('native_admin_unavailable');if(url.search)throw new PortalError('native_input_invalid');const action=packagesMatch[1];let data:unknown;if(request.method==='GET'&&!action)data=service.list(ctx);else if(request.method==='POST'&&action){const input=await body(request,8192),key=action==='browse'?'':idempotency(request);if(action==='browse')data=service.browse(ctx,input);else if(action==='import')data=await service.import(ctx,input,key);else if(action==='publish')data=await service.publish(ctx,input,key);else data=service.disable(ctx,input,key);}else throw new PortalError('method_not_allowed');json(response,200,{schema_version:'native-customs-packages@2026-09-08.v1',status:'success',data:(action==='browse'?customsBrowseResult:packageList).parse(data),reason_codes:[]},undefined,true);return true;}
       const nativeMatch=/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.exec(path);
       if(nativeMatch){
         if(!options.nativeAdmin)throw new PortalError("native_admin_unavailable");const service=options.nativeAdmin,kind:NativeKind=nativeMatch[1]==="customs-data"?"customs":"residential",action=nativeMatch[2];let data:unknown;

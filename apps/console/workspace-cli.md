@@ -1,6 +1,6 @@
 # 后台管理 CLI（本地开发版）
 
-本页对应开发分支 `codex/native-business-admin-20260907`。官网 v0.1.0 下载包尚未包含 `workspace` 命令；当前人员登录只在本地隔离验收环境启用。已有查询 Key 与权限继续保留。
+本页对应开发分支 `codex/business-admin-pages-20260907`。官网 v0.1.0 下载包尚未包含 `workspace` 命令；当前人员登录只在本地隔离验收环境启用。已有查询 Key 与权限继续保留。
 
 ## 构建与登录
 
@@ -66,7 +66,7 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 
 ## 交付范围
 
-目前完成渠道配置和询价处理的网页、API、CLI 共用流程。运价、邮编分区、附加费、原生关务发布、OCR、报价导出、邮件订舱和 SO 识别仍按路线图推进；既有成员、授权、个人历史等页面的 CLI 覆盖也待补齐。后续功能以三端一起验收为完成条件，不能把页面存在或命令存在视为业务已经可用。邮件及订舱等外发操作仍需明确确认。
+当前候选包包含 60 项人员工作台命令，覆盖运价、邮编表格、原生关务与完整数据包、报价单、询价处理及人员历史等功能。OCR、邮件订舱、SO 识别仍未交付。正式来源就绪、承运商当前报价、目标环境部署需独立验收；命令存在不等于生产业务已可用。
 
 关务、私人地址运价、Freightcom 配置与人员身份查询：参见 [业务操作说明](native-business.md)。新增操作与网站共用当前企业配置和权限。
 
@@ -84,3 +84,15 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 - `workspace documents export --input record.json --file ./quotation.pdf`：导出并校验 PDF；不会覆盖已有文件。未确认记录带草稿标识；已确认但过期的报价禁止导出正式版。
 
 上述命令均带 `--session-file <私有会话文件>`。完整字段使用 `workspace schema documents preview` 等命令查看。金额、数量、汇率均为十进制字符串；USD/CAD 到 CNY 的汇率允许 `null`，此时不虚构折算总额。PDF 不嵌入可编辑输入或隐藏费用原文。程序不会发送邮件、下单或订舱。
+
+
+## 原生报价与完整关务数据包
+
+- `workspace documents native-prepare --input native.json`：输入 `{request:<自有运价询价>,customer:<客户与日期字段>}`；服务器重新计算费用和来源绑定。
+- `workspace documents save --input save.json --idempotency-key <唯一键>`：取上一步 `data` 中的 `input`、`template_version`、`preview_hash`、`preview_expires_at`、`native_quote_v1`，加 `confirmed:true` 保存；不要提交 `totals`。之后使用原有 get/approve/export。
+- `workspace documents reject --input rejection.json --idempotency-key <唯一键>`：`{id,expected_version,reason}`，由管理人员退回草稿。退回记录不得导出正式版。
+- `workspace quote shared-preview --input shared.json`：`{request,transport}`，验证逐组实体托盘并生成 Freightcom 输入；不会调用承运商。transport 含发货地、日期、时间窗、描述、货运等级和防冻条件。
+- `workspace customs-packages list/import/browse/publish/disable`：完整 SQLite 法规快照接收、目录检索及发布控制。import/publish/disable 要求幂等键；browse 为只读。
+- `workspace residential-rates export --input selection.json --file calgary.csv`：selection 可为 `{"table":"rates","selection":"published","origin":"calgary"}`。import-preview 同样支持 origin，生成完整待保存配置，保留其他起运地。
+
+通过 `freightclaw workspace schema <两段命令>` 获取闭合输入 Schema。所有命令复用 `--session-file` 指定的人员会话；公开查询 Key 没有配置、保存或审核权限。官网已发布下载包仍需正式部署后才包含本候选功能。

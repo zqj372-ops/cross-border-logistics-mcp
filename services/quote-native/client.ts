@@ -1,3 +1,4 @@
+import {cargoTotals,cargoTotalsMatch} from './cargo-lines';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { zoneInputSchema, zoneDataSchema, QUOTE_PORTAL_SCHEMA_VERSION, QUOTE_SOURCE_SCHEMA_VERSION } from '../access-gateway/portal/business/quote-client';
@@ -6,6 +7,8 @@ import type { ResidentialRates } from './contracts';
 import { extractNativeQuote } from './extraction';
 export interface QuoteRelease{version:number;release_id:string;input:ResidentialRates;published_at:string;digest:string}
 export function calculateQuote(config:ResidentialRates,input:unknown,script=resolve('services/quote-native/run.py')):Promise<{status:'success'|'needs_input'|'manual_review'|'unavailable';data:unknown;reason_codes:string[]}>{
+ const parsed=zoneInputSchema.safeParse(input);if(!parsed.success)return Promise.resolve({status:'needs_input',data:null,reason_codes:['quote_request_invalid']});input=parsed.data;
+ if(parsed.data.extensions?.cargo_lines_v1){const totals=cargoTotals(parsed.data.extensions.cargo_lines_v1);if(!cargoTotalsMatch(parsed.data,totals))return Promise.resolve({status:'needs_input',data:null,reason_codes:['cargo_totals_conflict']});}
  return new Promise(resolveResult=>{const child=spawn('python3',[script],{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH??'/usr/bin:/bin',PYTHONIOENCODING:'utf-8',PYTHONDONTWRITEBYTECODE:'1'}});let bytes=0,output='';const fail=()=>resolveResult({status:'unavailable',data:null,reason_codes:['native_quote_runtime_unavailable']});const timer=setTimeout(()=>{child.kill('SIGKILL');fail();},10000);child.stdout.on('data',(b:Buffer)=>{bytes+=b.length;if(bytes>1048576){child.kill('SIGKILL');return;}output+=b.toString('utf8');});child.stderr.resume();child.stdin.on('error',()=>undefined);child.on('error',()=>{clearTimeout(timer);fail();});child.on('close',code=>{clearTimeout(timer);if(code!==0||bytes>1048576)return fail();try{const result=JSON.parse(output) as {status:'success'|'needs_input'|'manual_review'|'unavailable';data:unknown;reason_codes:string[]};if(!['success','needs_input','manual_review','unavailable'].includes(result.status)||!Array.isArray(result.reason_codes))return fail();resolveResult(result);}catch{fail();}});child.stdin.end(JSON.stringify({config,request:input}));});
 }
 export function createNativeQuoteClient(current:()=>QuoteRelease|null,script?:string):QuoteBusinessClientPort{
