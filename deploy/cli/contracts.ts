@@ -16,7 +16,7 @@ export const commands: readonly Command[] = [
   { name: "customs tax", description: "单项税费估算", path: "/api/v2/business/customs/tax-estimate", kind: "business", responseVersion: "portal-tax@2026-09-05.v1" },
   { name: "customs tax-batch", description: "批量税费估算，最多20项", path: "/api/v2/business/customs/tax-estimates/batch", kind: "business", responseVersion: "portal-tax@2026-09-05.v1" },
   { name: "quote zone", description: "加拿大尾程报价预览", path: "/api/v2/business/quote/zone-preview", kind: "business", responseVersion: "portal-quote@2026-09-05.v1" },
-  { name: "quote extract", description: "从询价文字提取输入并预览", path: "/api/v2/business/quote/ai-extract-preview", kind: "business", responseVersion: "portal-quote@2026-09-05.v1" },
+  { name: "quote extract", description: "从询价文字整理字段和待确认项，不自动计价", path: "/api/v2/business/quote/ai-extract-preview", kind: "business", responseVersion: "portal-quote@2026-09-05.v1" },
   { name: "quote freightcom", description: "Freightcom LTL 询价预览", path: "/api/v2/business/quote/freightcom-ltl-preview", kind: "business", responseVersion: "portal-freightcom-rate@2026-09-05.v1" },
 ];
 

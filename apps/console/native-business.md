@@ -109,3 +109,20 @@ Freightcom 支持 get/save/disable。凭证仅从权限为 0600 的输入文件�
 自有引擎与管理库需要 Node.js 22.13+、Python 3。生产当前支持单实例本地 SQLite；PostgreSQL 多实例管理库尚未适配，启动时拒绝混用。业务库和随库加密密钥应一并备份并限制文件权限。CLI 授权待确认状态在当前进程内，重启需重新发起确认。
 
 报价核心来自冻结的 Python 版本，关务核心来自冻结的 RiskCustoms TypeScript 版本。迁入文件、提交和修改后的哈希见各自 provenance.json。代码可运行、数据已发布、承运商实际成功、生产已部署是不同状态，应分别核验。
+
+## 私人地址资料解析
+
+从服务市场的「询价资料提取」或私人地址询价页面进入。原生模式不需要模型密钥，也不调用旧报价网站；报价运价仍须另行配置、核验和发布。
+
+粘贴文字后点击「提取资料」，核对逐行件数、尺寸、单重／行总重、体积及原文依据。缺少单位不会默认厘米；多件货物只写一个重量时，需说明是单件还是总重。多个地址或合计冲突会保留待确认项，不选取看起来合理的值。尾板、地牛、预约未提及则保持待确认。确认下方表单后才能试算；重新解析会清除上次试算与确认状态。
+
+```sh
+freightclaw workspace schema quote extract --json
+freightclaw workspace quote extract --session-file ./session.json --input inquiry.json
+# 使用已开通 quote.ai_extract_preview 权限的统一 API Key：
+freightclaw quote extract --input inquiry.json
+```
+
+`inquiry.json` 内容为 `{"customer_message":"2纸箱 每件10kg 100x100x100cm\n住宅 M1B5W9"}`。退出码 3 表示仍需补充，4 表示存在待复核冲突；JSON 保留已识别的行和依据，不表示接口调用失败。不要将尚有 missing_fields 的结果直接用作已确认报价输入。
+
+当前支持文本和粘贴的制表符／竖线表格。表头须声明件数、尺寸及重量单位，重量需注明单重或总重。不接收图片／PDF，不做地址地图验证，也不自动保存正式报价、审核或发邮件。原生报价记录、审核和正式文档迁移仍是独立待交付环节。

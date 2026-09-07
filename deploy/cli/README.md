@@ -39,7 +39,7 @@ cat ./customs-query.json | freightclaw customs query --input - --json
 | `customs tax` | 单项税费估算 | `examples/customs-tax.json` |
 | `customs tax-batch` | 最多20项的批量税费估算 | `examples/customs-tax-batch.json` |
 | `quote zone` | 加拿大尾程报价预览 | `examples/quote-zone.json` |
-| `quote extract` | 询价文字提取及预览 | `examples/quote-extract.json` |
+| `quote extract` | 询价文字解析、货物明细与待确认项 | `examples/quote-extract.json` |
 | `quote freightcom` | Freightcom LTL 报价预览 | `examples/quote-freightcom.json` |
 
 所有示例都是合成输入，只展示字段格式。使用前应替换日期、货物、地址、归类和来源引用；装柜参数与分泡规则也必须使用业务实际证据。示例不代表当前有效报价、税率或实际运输可行性。用 `freightclaw schema <命令>` 查看该版本完整 Draft 2020-12 输入 Schema。

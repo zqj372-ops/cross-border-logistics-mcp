@@ -48,5 +48,26 @@
       "Keep fixed organization origin, unique postal mapping and explicit published data authority. Replace legacy per-cell immediate database writes with reviewed whole-draft save/publication.",
       "Optional extensions.zone_controls_v1 preserves per-zone enabled and fuel controls in deterministic Python quote calculation. No old account, rule values or credential import."
     ]
+  },
+  "extraction_migration": {
+    "verified_source_commit": "e7d26d9711ea2183dacea9ab6016008f5ad64ff1",
+    "verified_on": "2026-09-08",
+    "source_files": [
+      {
+        "source": "apps/web/src/utils/quoteParser.ts",
+        "sha256": "a62833cce2006296bbb1aef83f74c351a5d1999c08aa50fc77b051275f504b8e"
+      },
+      {
+        "source": "packages/ai_assistant/quote_extractor.py",
+        "sha256": "344d2937e87775e4e6d6b2a4c0243a7fb48770fd3659196aa83865c312095d64"
+      }
+    ],
+    "target": "services/quote-native/extraction.ts",
+    "adaptations": [
+      "Reuse source measurement token vocabulary, per-item dimension/weight conversion, labeled aggregate reconciliation and address extraction approach in one shared server-side TypeScript parser.",
+      "Replace frontend floating-point aggregation and guessed cm/quantity with decimal.js and explicit missing evidence. Preserve ambiguous per-piece versus line-total weight and reject conflicting shipment totals.",
+      "Support header-driven tab/pipe tables, strict request and response schemas, bounded input and user-input provenance. No legacy API, AI credentials, historical data, notifications, source confirmed-field injection or business defaults.",
+      "Keep existing quote.ai_extract_preview REST/CLI authority and output contract. Native mode works without published rates; pricing still requires an explicit native release."
+    ]
   }
 }

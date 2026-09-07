@@ -2,7 +2,7 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**本地开发进度：2026-09-08。** 关务数据、自有住宅运价与 Freightcom 连接后台已实现，网页和 CLI 共用发布版本；配置从空白开始。当前未部署生产，正式数据、运价与承运商凭证未录入。后台配置已按服务市场模块统一入口，见 [模块配置图解](docs/product/2026-09-08-market-module-configuration.md)；私人地址使用固定配置、不设渠道；工作台展示实际询价进度。见 [后台页面调整图解](docs/product/2026-09-07-business-admin-pages.md) / [图文交付与验证边界](docs/product/2026-09-07-native-customs-residential-delivery.md) / [配置和 CLI 操作说明](apps/console/native-business.md)。
+**本地开发进度：2026-09-08。** 私人地址资料解析已接入本地网页、人员 CLI 和现有业务 API，支持逐行货物、混合单位和冲突确认，见 [解析器迁移与使用说明](docs/product/2026-09-08-native-extraction.md)。关务数据、自有住宅运价与 Freightcom 连接后台已实现，网页和 CLI 共用发布版本；配置从空白开始。当前未部署生产，正式数据、运价与承运商凭证未录入。后台配置已按服务市场模块统一入口，见 [模块配置图解](docs/product/2026-09-08-market-module-configuration.md)；私人地址使用固定配置、不设渠道；工作台展示实际询价进度。见 [后台页面调整图解](docs/product/2026-09-07-business-admin-pages.md) / [图文交付与验证边界](docs/product/2026-09-07-native-customs-residential-delivery.md) / [配置和 CLI 操作说明](apps/console/native-business.md)。
 
 **既有生产记录：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 
@@ -67,7 +67,7 @@ freightclaw status
 | `container.plan_summary` | MCP + REST | 理论/运营容量、超方超重和装载顺序摘要 | 不提供三维坐标或实际装载承诺 |
 | `system.agent_context.get` | MCP + REST | 受限 profile、生成的标准包和固定资源 | 不能代替业务授权或来源就绪检查 |
 | `quote.zone_preview` | REST + 业务 MCP | 原报价系统的只读尾程试算；已有真实租户 service actor 调用回执 | 当前有效价格复核和真实人员业务验收 |
-| `quote.ai_extract_preview` | REST + 业务 MCP | 原系统只读资料提取；已有成功回执且业务记录计数未变 | 上游曾超时，稳定性仍需运行指标支持 |
+| `quote.ai_extract_preview` | REST + 业务 MCP | 新增原生确定性文本解析；保留逐行证据、缺项和冲突；网页／CLI 共用 | 未生产部署；图片、PDF 和不明确分组仍需人工整理 |
 | `customs.query` | REST + 业务 MCP | 中、美、加完整结果适配及真实 M2M 连接 | 正式数据发布、复合快照及动态措施依赖未闭合 |
 | `customs.tax.estimate` | MCP 单项 + REST 单项/批量 | 服务器估算接口、批量结果和来源校验 | 正式关务数据未就绪时保持 `unavailable` |
 | `quote.freightcom_ltl.preview` | REST + 业务 MCP | 正式接口适配、企业权限、原币种费用和有效期校验 | 企业正式凭证、账号映射和真实生产 rate 读回 |

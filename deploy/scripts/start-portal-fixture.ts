@@ -26,7 +26,7 @@ const channelStore = new ChannelStore(resolve(databaseDirectory, "business-chann
 const nativeStore=new NativeAdminStore(resolve(databaseDirectory,"native-business.sqlite"));
 const nativeFreightcom=new NativeFreightcomService(nativeStore,runtime.service);
 const nativeConfig=resolve(databaseDirectory,"native-business-config.json");
-if(!process.env.PORTAL_BUSINESS_CONFIG_FILE)writeFileSync(nativeConfig,JSON.stringify({connections:[{organizationId:"org_fixture",tenantId:"tenant_fixture",enabledOperations:["customs.query","customs.tax.estimate","quote.zone_preview","quote.freightcom_ltl.preview"],nativeCustoms:true,nativeQuote:true,nativeFreightcom:true}]}),{mode:0o600});
+if(!process.env.PORTAL_BUSINESS_CONFIG_FILE)writeFileSync(nativeConfig,JSON.stringify({connections:[{organizationId:"org_fixture",tenantId:"tenant_fixture",enabledOperations:["customs.query","customs.tax.estimate","quote.zone_preview","quote.ai_extract_preview","quote.freightcom_ltl.preview"],nativeCustoms:true,nativeQuote:true,nativeFreightcom:true}]}),{mode:0o600});
 const caseStore = new CaseStore(resolve(databaseDirectory, "business-cases.sqlite"));
 try {
   const businessService = await loadPortalBusinessService({ nativeStore,nativeFreightcom,nativeQuoteScript:resolve("dist/services/quote-native/run.py"),configPath:process.env.PORTAL_BUSINESS_CONFIG_FILE??nativeConfig, callRecorder: callRecorder(callStore), portalService: runtime.service, ...(process.env.PORTAL_BUSINESS_CONFIG_FILE ? { configPath: process.env.PORTAL_BUSINESS_CONFIG_FILE } : {}), allowLoopbackFixtures: true });

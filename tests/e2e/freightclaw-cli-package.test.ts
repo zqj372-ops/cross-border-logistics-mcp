@@ -59,7 +59,7 @@ describe("standalone CLI installation", () => {
     expect(metadata.dependencies).toBeUndefined();
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
-    expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(43);
+    expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(44);
     expect((await installed(["workspace","schema","cases","create"])).code).toBe(0);
     expect((await installed(["workspace","schema","channels","publish"])).code).toBe(0);
     expect(await readFile(join(packageRoot,"workspace.md"),"utf8")).toContain("workspace login start");

@@ -843,3 +843,14 @@ code, pre { font-family: var(--font-code); }
 .native-price-matrix tbody th{min-width:150px;white-space:normal}.native-billing-editor .field-grid{margin-top:16px}
 @media(max-width:540px){.native-admin-surface .native-admin-head p{display:none}.native-admin-surface .native-tabs{flex-wrap:nowrap;overflow-x:auto;gap:16px}.native-admin-surface .native-tabs a{flex-shrink:0}.native-price-matrix tbody th{min-width:130px}.native-price-matrix th,.native-price-matrix td{padding:10px}.native-price-matrix input:not([type=checkbox]){min-width:100px;width:100px}}
 .market-mode{margin-bottom:28px}.module-context{padding-bottom:8px}.module-config-card .protocol-label{white-space:normal;text-align:right;max-width:65%;line-height:1.6}.module-config-card .cap-card-head{align-items:flex-start}.module-config-card .cap-card-foot{color:var(--brand)}
+
+.extraction-review { margin-top: 20px; min-width: 0; }
+.extraction-totals { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 16px 0; }
+.extraction-totals > div { padding: 12px; border: 1px solid var(--line, #dfe5ef); border-radius: 12px; min-width: 0; }
+.extraction-totals small, .extraction-totals strong { display: block; overflow-wrap: anywhere; }
+.extraction-totals strong { margin-top: 6px; font-size: 18px; font-variant-numeric: tabular-nums; }
+.extraction-evidence { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 160px; max-width: 300px; }
+.extraction-review .table-wrap { max-height: 440px; overflow: auto; }
+
+.quote-extraction { margin: 20px 0; }
+@media (min-width: 1000px) { .business-layout.quote-business-layout { grid-template-columns: minmax(0,1.25fr) minmax(0,1fr); } }
