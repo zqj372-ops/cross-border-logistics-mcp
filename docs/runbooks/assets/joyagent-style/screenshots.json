@@ -1,0 +1,193 @@
+{
+  "method": "Actual live page capture; fresh headless Chromium, no fixture data or image content edits.",
+  "errors": [],
+  "captures": [
+    {
+      "file": "01-home-desktop.png",
+      "url": "https://www.freightclaw.net/",
+      "captured_at": "2026-09-07T06:01:39.817Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1000,
+      "sha256": "a5e7d8d9e0a06a940ffc747957412c108aa5de22efd70ad9d38f30886475cd60",
+      "heading": "询运费，查关税。",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "02-account-desktop.png",
+      "url": "https://www.freightclaw.net/",
+      "captured_at": "2026-09-07T06:01:40.033Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1000,
+      "sha256": "a93ad4a5059251e0a626506b8af8071bb861303ade9b646839b75433129e0f37",
+      "heading": "询运费，查关税。",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "03-customs-desktop.png",
+      "url": "https://www.freightclaw.net/console/#customs",
+      "captured_at": "2026-09-07T06:01:41.608Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1000,
+      "sha256": "8f5683541d56b370c14908184c88bb62f47b0c533ef112c89c59c9ed794e8a6b",
+      "heading": "关税与归类查询",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "04-cli-desktop.png",
+      "url": "https://www.freightclaw.net/console/#cli",
+      "captured_at": "2026-09-07T06:01:41.932Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1000,
+      "sha256": "7910d0056957decbac67a162ddad0926c8f34f4cabd97d30862b7dd21bea4be9",
+      "heading": "把物流能力，带进你的终端。",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "05-home-mobile.png",
+      "url": "https://www.freightclaw.net/console/#home",
+      "captured_at": "2026-09-07T06:01:42.295Z",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "width": 390,
+      "height": 2102,
+      "sha256": "51fe26b79621bdbfa20e6aebfc557d15b7cd572a0a7a0c6862f970e5bd11aee7",
+      "heading": "询运费，查关税。",
+      "documentWidth": 390,
+      "innerWidth": 390,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "06-customs-mobile.png",
+      "url": "https://www.freightclaw.net/console/#customs",
+      "captured_at": "2026-09-07T06:01:42.592Z",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "width": 390,
+      "height": 844,
+      "sha256": "5c2f6458814ac52c65c6aa1811a9dfea6d1425005bd6af3e5fe6f50de2a3e3c4",
+      "heading": "关税与归类查询",
+      "documentWidth": 390,
+      "innerWidth": 390,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "07-tail-login.png",
+      "url": "https://www.freightclaw.net/console/#quote",
+      "captured_at": "2026-09-07T06:01:42.903Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1000,
+      "sha256": "143fc24f90df424d1495475572b6e88da16b5662c3e79152fe528241fb49ef59",
+      "heading": "你的业务，在这里继续。",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "08-home-wide.png",
+      "url": "https://www.freightclaw.net/console/#home",
+      "captured_at": "2026-09-07T06:01:43.316Z",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "width": 1920,
+      "height": 1080,
+      "sha256": "c1671860c51c21bceeb31fbfe543d5d59e9abd7df72999756579d24fea849d1f",
+      "heading": "询运费，查关税。",
+      "documentWidth": 1920,
+      "innerWidth": 1920,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "09-market-desktop.png",
+      "url": "https://www.freightclaw.net/console/#market",
+      "captured_at": "2026-09-07T06:01:43.638Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1000,
+      "sha256": "99f80e3b23a694c4089b7c11863fea9d3d87fa3e8e92f3fc1fd22dd132dfedbb",
+      "heading": "能力市场",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "10-tax-mobile.png",
+      "url": "https://www.freightclaw.net/console/#tax",
+      "captured_at": "2026-09-07T06:01:43.940Z",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "width": 390,
+      "height": 844,
+      "sha256": "bf5d439f9d6204ddcac6e07821c33638f8cf87d45803ff59220b52877bc37580",
+      "heading": "税费估算",
+      "documentWidth": 390,
+      "innerWidth": 390,
+      "scrollY": 0,
+      "fixtureBanner": false
+    },
+    {
+      "file": "11-customs-result.png",
+      "url": "https://www.freightclaw.net/console/#customs",
+      "captured_at": "2026-09-07T06:01:44.953Z",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "width": 1440,
+      "height": 1220,
+      "sha256": "fd78754839f75bf760d2dc1b800e6bde4608197afbcbc871a409a65a17482b5c",
+      "heading": "关税与归类查询",
+      "documentWidth": 1440,
+      "innerWidth": 1440,
+      "scrollY": 0,
+      "fixtureBanner": false
+    }
+  ]
+}

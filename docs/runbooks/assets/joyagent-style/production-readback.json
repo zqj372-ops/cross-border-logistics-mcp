@@ -1,0 +1,275 @@
+{
+  "source_head": "c87d6f544d3ed85885c2f10413d7e11fcf9ab5db",
+  "build_id": "e0b3d1b86db16cd130a4869111a54610d004d06346f6faf03ad3e5fbbeedbbc4",
+  "archive_sha256": "850b6b491e0f64b3606a9bd7218d2a4cd36f2ff096c344963de679e162e5e368",
+  "committed_build_inputs": 411,
+  "promotion": {
+    "promoted": true,
+    "image": "freightclaw-portal:e0b3d1b86db1",
+    "previous_image": "freightclaw-portal:db4ac278e9dd",
+    "config_backup": "/data/logistics-mcp/portal/backups/portal-promotion-20260907T055156Z",
+    "readiness": {
+      "status": "success",
+      "data": {
+        "service": "freightclaw-portal",
+        "release_id": "portal-history-20260907",
+        "build_id": "e0b3d1b86db16cd130a4869111a54610d004d06346f6faf03ad3e5fbbeedbbc4",
+        "ready": true,
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true,
+          "call_log_database": true
+        }
+      },
+      "reason_codes": []
+    }
+  },
+  "root_publication": {
+    "root_published": true,
+    "image": "freightclaw-portal:e0b3d1b86db1",
+    "root_sha256": "6a30d523752d042a034967e20c5de01d8e2cf7eb0655c2c0f13c611a38c23068",
+    "previous_root_sha256": "b759e10c9c3043443caaab476029667181e8475285fed8473e329c0f0fd04e5a",
+    "backup": "/data/logistics-mcp/portal/backups/joyagent-e0b3d1b86db1/index.html"
+  },
+  "state_backup": {
+    "name": "joyagent-e0b3d1b86db1",
+    "previous_image": "freightclaw-portal:db4ac278e9dd",
+    "cross_store_quiesced": true,
+    "databases": [
+      {
+        "file": "portal.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "sessions.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "business-access.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "calls.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "public-quota.sqlite",
+        "restore_integrity": "ok"
+      }
+    ]
+  },
+  "http_readback": {
+    "captured_at": "2026-09-07T05:54:30.834914+00:00",
+    "origin": "https://www.freightclaw.net",
+    "build_id": "e0b3d1b86db16cd130a4869111a54610d004d06346f6faf03ad3e5fbbeedbbc4",
+    "readiness": {
+      "http": 200,
+      "body": {
+        "status": "success",
+        "data": {
+          "service": "freightclaw-portal",
+          "release_id": "portal-history-20260907",
+          "build_id": "e0b3d1b86db16cd130a4869111a54610d004d06346f6faf03ad3e5fbbeedbbc4",
+          "ready": true,
+          "checks": {
+            "portal_database": true,
+            "session_database": true,
+            "business_access_database": true,
+            "identity": true,
+            "business_configuration": true,
+            "call_log_database": true
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    "pages": {
+      "/": {
+        "http": 200,
+        "bytes": 3661,
+        "sha256": "69c0621b96ff8c723e98ba1050e0fa6af7d1cdeaa30adb9d5725455c8c7d0c68",
+        "cache_control": "no-cache",
+        "edge_analytics_tags": 1,
+        "origin_html_sha256": "6a30d523752d042a034967e20c5de01d8e2cf7eb0655c2c0f13c611a38c23068",
+        "origin_html_matches_build": true
+      },
+      "/console/": {
+        "http": 200,
+        "bytes": 3661,
+        "sha256": "69c0621b96ff8c723e98ba1050e0fa6af7d1cdeaa30adb9d5725455c8c7d0c68",
+        "cache_control": "no-store",
+        "edge_analytics_tags": 1,
+        "origin_html_sha256": "6a30d523752d042a034967e20c5de01d8e2cf7eb0655c2c0f13c611a38c23068",
+        "origin_html_matches_build": true
+      },
+      "/inquiry/": {
+        "http": 200,
+        "bytes": 2095,
+        "sha256": "7399bbe4ecb6e62fbd60fb63216dbb79668407222dddcd2a490fed6a0579dcb5",
+        "cache_control": "no-cache"
+      },
+      "/inquiry/details/": {
+        "http": 200,
+        "bytes": 2564,
+        "sha256": "3b22a4dc28efc2dda683396fc9cc19008df8c9b108ac371376c045796a328c03",
+        "cache_control": "no-cache"
+      },
+      "/console/skill.md": {
+        "http": 200,
+        "bytes": 7747,
+        "sha256": "251228ae04482ac6fefb7bda53298fa8f98eb26550c7a76380f91286112acb1a",
+        "cache_control": "public, max-age=300"
+      },
+      "/console/openapi.json": {
+        "http": 200,
+        "bytes": 498160,
+        "sha256": "72b99580d81eda4c1816d93466ca91485f050841d73c771d7f7d664d024d9bed",
+        "cache_control": "public, max-age=300"
+      },
+      "/downloads/freightclaw-cli-0.1.0.tgz": {
+        "http": 200,
+        "bytes": 105419,
+        "sha256": "c46037ea0fd65cc7fe953ce80445fcd19f030ec422d9a56af0a2a6a3a0c306e1",
+        "cache_control": null
+      }
+    },
+    "assets": {
+      "/console/styles.css?v=b007305b897c3041": {
+        "http": 200,
+        "sha256": "b007305b897c30419eb23ae799b56b045adc81ac8dc36a3d407df4438083ef4f"
+      },
+      "/console/app.js?v=9329fc124ccdc8db": {
+        "http": 200,
+        "sha256": "9329fc124ccdc8db45bb033d218ce2f82657ebd9555e76962dd1cccb1c04a3a6"
+      }
+    },
+    "anonymous_session": true,
+    "quota": {
+      "limit": 20,
+      "remaining": 20,
+      "resets_at": "2026-09-07T16:00:00.000Z"
+    },
+    "boundaries": {
+      "business/quote/preview": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "business/customs/history/list": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "business/customs/query": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "applications": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "state": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "public/quote/preview": {
+        "http": 404,
+        "reason_codes": [
+          "route_not_found"
+        ]
+      },
+      "public/customs/history/list": {
+        "http": 404,
+        "reason_codes": [
+          "route_not_found"
+        ]
+      }
+    }
+  },
+  "public_query": {
+    "captured_at": "2026-09-07T06:01:46.198Z",
+    "synthetic_input": "纯棉针织T恤",
+    "http": 200,
+    "status": "unavailable",
+    "reason_codes": [
+      "customs_upstream_unavailable"
+    ],
+    "quota_before": "今日剩余 19 / 20 次",
+    "quota_after": "今日剩余 18 / 20 次",
+    "input_retained": true,
+    "quota_persisted_after_reload": true
+  },
+  "preserved_files": {
+    "changed": [
+      "index.html"
+    ],
+    "unchanged_files": 32,
+    "inquiry_and_details_preserved": true,
+    "downloads_preserved": true
+  },
+  "mcp_runtime": {
+    "image": "freightclaw-portal:a42849576004",
+    "profile": "t0-v1",
+    "data_mode": "production",
+    "changed": false
+  },
+  "ci": {
+    "conclusion": "success",
+    "databaseId": 34088286165,
+    "headSha": "c87d6f544d3ed85885c2f10413d7e11fcf9ab5db",
+    "startedAt": "2026-09-07T05:49:36Z",
+    "updatedAt": "2026-09-07T05:53:37Z",
+    "url": "https://github.com/zqj372-ops/cross-border-logistics-mcp/actions/runs/34088286165",
+    "test_files_passed": 181,
+    "tests_passed": 1736,
+    "tests_skipped": 0
+  },
+  "local_validation": {
+    "test_files_passed": 179,
+    "tests_passed": 1729,
+    "tests_skipped": 7,
+    "skip_scope": "PostgreSQL tests without a local independent database",
+    "market_regression_tests_passed": 3,
+    "build": true,
+    "typecheck": true,
+    "lint": true,
+    "schemas": true,
+    "agent_standards": true,
+    "agent_pack": true,
+    "viewport_widths": [
+      320,
+      390,
+      768,
+      1440,
+      1920
+    ]
+  },
+  "visual_review": {
+    "role": "generic independent reviewer substituted for unavailable specialized role",
+    "initial_disposition": "fix",
+    "resolved": [
+      "Market shows deployed 3 MCP / 5 REST protocols",
+      "Home copy accurately states China-origin goods"
+    ],
+    "final_disposition": "ship",
+    "scope": "final two corrections after initial visual review",
+    "detector": "One degraded regex scan; not a computed contrast certification"
+  },
+  "screenshot_review": {
+    "count": 11,
+    "all_opened_and_visually_checked": true,
+    "no_horizontal_overflow": true,
+    "page_errors": []
+  }
+}
