@@ -17,5 +17,36 @@
       "target_sha256": "e9321c1d111afc6a10433848b0b522bd50e8106d482d636e808dde0286b10c1b",
       "adaptation": "Retain Python Decimal arithmetic and pallet logic; require explicit native configuration instead of all default business thresholds and fees; remove legacy imports."
     }
-  ]
+  ],
+  "admin_migration": {
+    "source_commit": "e7d26d9711ea2183dacea9ab6016008f5ad64ff1",
+    "source_files": [
+      {
+        "source": "apps/web/src/pages/PricingSettingsPage.tsx",
+        "sha256": "142c886581a967a6e0efbcb6bfe3348dc80a8adf5b8e39e5d61f09a2e35b0dd1"
+      },
+      {
+        "source": "apps/web/src/pages/CitySettingsPage.tsx",
+        "sha256": "d0662d053052496e6db432539f4da269d4d90d499a8360169bd53baf5357bf35"
+      },
+      {
+        "source": "apps/web/src/pages/QuoteSettingsPage.tsx",
+        "sha256": "a6e128303fc3c975bc44a3c4c20f4333340768d91d8202141cda0311f5ff9524"
+      },
+      {
+        "source": "packages/data_importer/zone_price_spreadsheet.py",
+        "sha256": "089a44c3207498dcc3962666fd67ec2d30ab560304d1cb8f76a69aa8ea560f28"
+      }
+    ],
+    "targets": [
+      "apps/console/native-rate-editor.js",
+      "services/quote-native/admin-tables.ts"
+    ],
+    "adaptations": [
+      "Port matrix grouping and spreadsheet header/long-wide row interpretation into shared TypeScript used by web and CLI.",
+      "Use SheetJS for CSV/XLSX/XLS decoding; reject formulas, duplicate headers/keys, cross-origin values and bounded-size violations.",
+      "Keep fixed organization origin, unique postal mapping and explicit published data authority. Replace legacy per-cell immediate database writes with reviewed whole-draft save/publication.",
+      "Optional extensions.zone_controls_v1 preserves per-zone enabled and fuel controls in deterministic Python quote calculation. No old account, rule values or credential import."
+    ]
+  }
 }

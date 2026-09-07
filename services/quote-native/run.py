@@ -17,6 +17,15 @@ def calculate(data):
     if len(matches) != 1:
         return {'status': 'manual_review', 'reason_codes': ['postal_zone_conflict'], 'data': None}
     zone = matches[0]
+    controls = [c for c in config.get('extensions', {}).get('zone_controls_v1', []) if c['zone'] == zone['zone']]
+    if len(controls) > 1:
+        return {'status': 'manual_review', 'reason_codes': ['zone_control_conflict'], 'data': None}
+    control = controls[0] if controls else None
+    if control and not control['enabled']:
+        return {'status': 'manual_review', 'reason_codes': ['zone_disabled'], 'data': None}
+    fees = dict(config['fees'])
+    if control and control['fuel_percent'] is not None:
+        fees['fuel_percent'] = control['fuel_percent']
     cbm, weight = Decimal(request['cbm']), Decimal(request['weight_kg'])
     length = Decimal(request['longest_side_cm']) if request.get('longest_side_cm') else None
     if cbm <= 0 or weight <= 0 or length is None or length <= 0:
@@ -32,13 +41,13 @@ def calculate(data):
     if len(rates) != 1:
         return {'status': 'manual_review', 'reason_codes': ['pallet_rate_not_configured'], 'data': None}
     base = Decimal(rates[0]['amount'])
-    price = calculate_zone_price(config=config['fees'], base_price_usd=base, address_type=request['address_type'], requires_liftgate=request['requires_liftgate'], requires_pallet_jack=request['requires_pallet_jack'], requires_appointment=request['requires_appointment'], detention_minutes=request['detention_minutes'])
+    price = calculate_zone_price(config=fees, base_price_usd=base, address_type=request['address_type'], requires_liftgate=request['requires_liftgate'], requires_pallet_jack=request['requires_pallet_jack'], requires_appointment=request['requires_appointment'], detention_minutes=request['detention_minutes'])
     return {'status': 'success', 'reason_codes': [], 'data': {
         'currency': 'USD', 'source_type': 'zone_matrix', 'confidence': 100,
         'postal_code': postal, 'postal_prefix': zone['postal_prefix'], 'preferred_city': zone['city'], 'city': zone['city'], 'province': zone['province'], 'origin': config['origin'], 'zone': zone['zone'], 'billing_pallets': pallets.billing_pallets, 'pallet_breakdown': pallets.components,
         'base_price': format(base, '.2f'), 'fuel': format(price.fuel_usd, '.2f'), 'accessorials': {k: format(v, '.2f') for k, v in price.accessorials.items()}, 'total_price': format(price.total_price_usd, '.2f'), 'risk_tags': [], 'manual_review_required': False,
         'matched_rule': config['label'], 'matched_by': 'published_postal_prefix', 'candidate_count': 1,
-        'match_trace': {'evidence_ref': config['evidence_ref'], 'evidence_version': config['evidence_version'], 'valid_from': config['valid_from'], 'valid_until': config['valid_until'], 'postal_match': zone['postal_prefix'], 'billing': config['billing'], 'fees': config['fees']}, 'sales_note': config['customer_terms']}}
+        'match_trace': {'evidence_ref': config['evidence_ref'], 'evidence_version': config['evidence_version'], 'valid_from': config['valid_from'], 'valid_until': config['valid_until'], 'postal_match': zone['postal_prefix'], 'billing': config['billing'], 'fees': fees, 'zone_control': control}, 'sales_note': config['customer_terms']}}
 
 
 if __name__ == '__main__':

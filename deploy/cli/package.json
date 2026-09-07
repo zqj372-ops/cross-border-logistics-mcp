@@ -6,5 +6,5 @@
   "type": "module",
   "engines": { "node": ">=22.13.0" },
   "bin": { "freightclaw": "bin/freightclaw.mjs" },
-  "files": ["bin", "README.md", "workspace.md", "examples", "THIRD-PARTY-NOTICES.txt"]
+  "files": ["bin", "README.md", "workspace.md", "native-business.md", "examples", "THIRD-PARTY-NOTICES.txt"]
 }

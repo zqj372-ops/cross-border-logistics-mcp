@@ -28,7 +28,7 @@ await mkdir(resolve(output, "examples"), { recursive: true });
 for (const name of ["cargo", "container", "agent", "customs-query", "customs-tax", "customs-tax-batch", "quote-zone", "quote-extract", "quote-freightcom"]) {
   await copyFile(resolve(source, `examples/${name}.json`), resolve(output, `examples/${name}.json`));
 }
-const dependencies = ["ajv", "ajv-formats", "fast-deep-equal", "fast-uri", "json-schema-traverse", "require-from-string", "zod"];
+const dependencies = ["ajv", "ajv-formats", "fast-deep-equal", "fast-uri", "json-schema-traverse", "require-from-string", "zod", "xlsx"];
 const notices = [];
 for (const dependency of dependencies) {
   const folder = resolve(root, "node_modules", dependency);

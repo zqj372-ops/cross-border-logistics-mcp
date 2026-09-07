@@ -129,6 +129,49 @@
                 "additionalProperties": false
               }
             },
+            "extensions": {
+              "type": "object",
+              "properties": {
+                "zone_controls_v1": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "zone": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 999
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "fuel_percent": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "zone",
+                      "enabled",
+                      "fuel_percent"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "zone_controls_v1"
+              ],
+              "additionalProperties": false
+            },
             "billing": {
               "type": "object",
               "properties": {

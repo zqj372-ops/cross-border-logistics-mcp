@@ -1,12 +1,20 @@
 # 关务与私人地址业务后台
 
-后台入口：账号 → 业务管理。当前企业的负责人、管理员可修改配置；普通成员只可查询。平台角色不代替企业身份修改此处配置。三个入口与 CLI 共用接口：关务数据、私人地址运价、Freightcom 连接。
+后台入口：账号 → 业务管理。当前企业的负责人、管理员可修改配置；普通成员只可查询。平台角色不代替企业身份修改此处配置。账号菜单、顶部导航和工作台的「业务管理」统一进入状态总览，再进入关务管理、私人地址运价或外部连接。三个业务与 CLI 共用接口。
+
+私人地址是每企业一套固定派送配置，不建立或选择渠道。旧渠道页面仅保留其他运输业务的历史资料入口，不参与私人地址计价。工作台展示本人实际提交的询价及处理状态；服务市场负责发现和进入服务，避免重复摆放能力卡片。
 
 ## 从空白开始
 
 新库不加载旧运价、关务数据、业务记录或承运商凭证。先保存草稿，再核验预览并确认发布。保存草稿不改变当前版本。支持停用与预览回退；回退只选择本企业的历史版本。查询只使用当前发布，失败不调用旧服务兜底。
 
 关务数据格式校验不是法规真实性证明。发布人必须核对官方来源、数据完整性、适用条件和日期。系统保留来源版本、文件/行哈希、发布摘要和确认操作，不将测试数据提升为正式来源。尚未发布时返回 unavailable。
+
+## 关务独立页面
+
+`#business-admin/customs-data/` 下分为 `nomenclature`（税号目录）、`tariffs`（税率）、`measures`（贸易措施）、`requirements`（单证要求）、`sources`（来源）、`import`（导入）、`publish`（核验与发布）。目录支持国家与关键词过滤，每页 25 条，可展开完整记录与来源引用。
+
+默认查看当前发布数据；选择「已保存草稿」并搜索可核对待发布内容。没有发布时保持空状态，不把草稿当成有效数据。
 
 ## 关务数据导入
 
@@ -26,7 +34,15 @@ freightclaw workspace schema customs-data save
 
 ## 私人地址运价
 
-先维护始发仓、来源协议与版本、有效期、客户派送条件，再填写邮编分区、价格档位、体积/重量折托、超长与复核阈值、住宅/尾板/地牛/预约/等待费用。
+`#business-admin/residential-rates/` 下按任务分为五页：
+
+1. `base`：基本资料、固定始发仓、来源协议与版本、有效期和客户条件。
+2. `coverage`：邮编覆盖，逐条维护邮编、分区、城市与省份。
+3. `pricing`：价格档位、体积/重量折托、超长与复核阈值。
+4. `fees`：住宅、尾板、地牛、预约、等待和燃油费用。
+5. `publish`：核验、确认发布、停用与历史回退。
+
+价格按分区 × 托数矩阵维护，支持直接改价、分区启停和独立燃油比例；新增或删除档位、计费阈值放在可展开区域。邮编支持分区、城市、邮编及省份搜索，行编辑器可添加、删除和翻页。页签切换保留本次输入；「保存全部草稿」校验整份配置，首次配置需填齐各页后保存。刷新或关闭浏览器时会提示仍有未保存修改；未保存输入不会自动写入服务器。预览确认时只显示一次配置摘要。
 
 - 自有运价当前使用 USD；不自动将其他币种换成美元。
 - 精确邮编优先于前三位；重复覆盖或重复价格档位阻止发布。
@@ -35,6 +51,16 @@ freightclaw workspace schema customs-data save
 - 私人地址入口要求明确住宅类型和卸货条件。查询只做试算，不发邮件、不订舱。
 
 Freightcom 是外部承运商 API。后台保存的正式凭证按企业隔离并加密，回读只显示是否存在。保存成功不等于实际询价已验证。住宅目的地按 B2C/C2C 提交，尾板和预约条件随请求明确传递；承运商价格保留原币种。
+
+## 表格批量维护
+
+价格与邮编页可下载空白 CSV 模板、导入 CSV/XLSX/XLS、导出当前编辑中的草稿。最大 5 MiB、5000 行、100 列；XLSX/XLS 读取首张工作表并显示表名。公式必须先粘贴为值，不能用公式缓存当正式价格。
+
+价格支持两种原后台格式：`分区、托数、价格` 明细表，或 `分区、1托、2托…` 矩阵表。可附 `始发仓、燃油比例、启用`；始发仓存在时必须匹配当前固定仓。邮编表使用 `邮编、分区、城市、省份`。来源及有效期仍需在基本资料中明确填写，不从旧系统自动带入。
+
+导入先显示错误行、识别条数及新增/覆盖数量。确认后按分区/托数或邮编合并到编辑中的草稿，未涉及条目保留；再保存全部草稿、核验、确认发布。空的矩阵价格表示不导入该格，0 表示明确免费；若要删除已有价格请在编辑器删除。导入燃油/启用列留空会保留对应已配置值，避免改燃油时重新启用停用分区。界面上清空独立燃油则明确使用本版本全局比例。
+
+分区禁用会保留数据，并让该区查询转人工复核。发布页直接展示价格、费用、计费阈值和分区例外；大表展示前 100 条，可先在维护页筛选核对全部或导出完整数据。
 
 ## CLI
 
@@ -46,9 +72,27 @@ freightclaw workspace login start --endpoint http://127.0.0.1:8907 --session-fil
 freightclaw workspace login finish --session-file /private/path/fc-session.json
 freightclaw workspace commands
 freightclaw workspace customs-data get --session-file /private/path/fc-session.json
+freightclaw workspace customs-data browse --input filters.json --session-file /private/path/fc-session.json
 freightclaw workspace residential-rates get --session-file /private/path/fc-session.json
 freightclaw workspace freightcom get --session-file /private/path/fc-session.json
 ```
+
+当前构建包含 43 条 workspace 命令。新增 `customs-data browse` 对已有受权限保护的 get 结果进行本地检索，网页使用相同规则，不新增服务端写入口。`filters.json` 示例：
+
+```json
+{"selection":"published","collection":"nomenclature","country":"CA","query":"732393","offset":0,"limit":25}
+```
+
+`selection` 可选 `published` / `draft`；`collection` 可选 `nomenclature` / `tariffs` / `measures` / `requirements` / `sources`。默认当前发布、全部国家、每页 25 条；CLI 单页最多 100 条，结果带版本、总数和来源字段。
+
+表格操作也可在 CLI 完成，原文件在本机解析：
+
+```sh
+freightclaw workspace residential-rates import-preview --file rates.xlsx --input table-options.json --session-file /private/path/fc-session.json
+freightclaw workspace residential-rates export --file published-rates.csv --input published-table.json --session-file /private/path/fc-session.json
+```
+
+`table-options.json` 为 `{"table":"rates","selection":"draft"}`，邮编使用 `zones`；`published-table.json` 改为 `selection: "published"`。导入要求已有完整草稿，返回 `data.save_input`，核对后将此对象保存为 JSON，再用既有 `residential-rates save` 提交。预览不写库；导出文件采用新建模式，已有文件不会覆盖。首次配置也可通过 `schema residential-rates save` 准备完整 JSON。
 
 两种数据都支持 get、save、preview、publish、disable、rollback。写命令需 `--idempotency-key`，同一次重试保持相同值；保存与发布是两个不同请求。发布输入为 `expected_version`、预览回读的 `preview_hash`、`confirmation: "reviewed_sources_and_conditions"`。回退预览：`preview --input target.json`，target.json 为 `{"release_id":"选定历史版本UUID"}`；确认回退额外携带 release_id。
 

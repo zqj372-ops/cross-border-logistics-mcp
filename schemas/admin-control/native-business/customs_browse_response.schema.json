@@ -1,0 +1,1119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "native-customs-catalog@2026-09-07.v1"
+    },
+    "status": {
+      "type": "string",
+      "const": "success"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "type": "string",
+          "enum": [
+            "published",
+            "draft"
+          ]
+        },
+        "collection": {
+          "type": "string",
+          "enum": [
+            "nomenclature",
+            "tariffs",
+            "measures",
+            "requirements",
+            "sources"
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "rows": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "release_status": {
+                    "type": "string",
+                    "enum": [
+                      "staged",
+                      "reviewed",
+                      "published",
+                      "superseded"
+                    ]
+                  },
+                  "release_authority": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_dataset": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_edition": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_revision": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_languages_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_official_url": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_published_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "release_effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "release_retrieved_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_manifest_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "release_parser_name": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_parser_version": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_supersedes_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "id": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "release_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "country": {
+                    "type": "string",
+                    "enum": [
+                      "CN",
+                      "US",
+                      "CA"
+                    ]
+                  },
+                  "code": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "display_code": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "code_digits": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "level": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "parent_code": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "is_declarable": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "description_original": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "language": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "statistical_unit_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source_locator": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "raw_row_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "concept_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "concept_code": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "hs_edition": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "mapping_status": {
+                    "type": "string",
+                    "enum": [
+                      "exact_prefix",
+                      "reviewed"
+                    ]
+                  }
+                },
+                "required": [
+                  "release_status",
+                  "release_authority",
+                  "release_dataset",
+                  "release_edition",
+                  "release_revision",
+                  "release_languages_json",
+                  "release_official_url",
+                  "release_published_at",
+                  "release_effective_from",
+                  "release_effective_to",
+                  "release_retrieved_at",
+                  "release_manifest_sha256",
+                  "release_parser_name",
+                  "release_parser_version",
+                  "release_supersedes_id",
+                  "id",
+                  "release_id",
+                  "artifact_id",
+                  "country",
+                  "code",
+                  "display_code",
+                  "code_digits",
+                  "level",
+                  "parent_code",
+                  "is_declarable",
+                  "description_original",
+                  "language",
+                  "statistical_unit_json",
+                  "effective_from",
+                  "effective_to",
+                  "source_locator",
+                  "raw_row_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "release_status": {
+                    "type": "string",
+                    "enum": [
+                      "staged",
+                      "reviewed",
+                      "published",
+                      "superseded"
+                    ]
+                  },
+                  "release_authority": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_dataset": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_edition": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_revision": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_languages_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_official_url": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_published_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "release_effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "release_retrieved_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_manifest_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "release_parser_name": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_parser_version": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_supersedes_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "country": {
+                    "type": "string",
+                    "enum": [
+                      "CN",
+                      "US",
+                      "CA"
+                    ]
+                  },
+                  "code": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "code_match_type": {
+                    "type": "string",
+                    "enum": [
+                      "exact",
+                      "prefix",
+                      "chapter99_link"
+                    ]
+                  },
+                  "measure_type": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "treatment": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "origin_country": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rate_expression_raw": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "rate_components_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "parse_status": {
+                    "type": "string",
+                    "enum": [
+                      "confirmed",
+                      "review"
+                    ]
+                  },
+                  "condition_text_raw": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "conditions_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "interaction_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "source_locator": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "raw_row_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "release_status",
+                  "release_authority",
+                  "release_dataset",
+                  "release_edition",
+                  "release_revision",
+                  "release_languages_json",
+                  "release_official_url",
+                  "release_published_at",
+                  "release_effective_from",
+                  "release_effective_to",
+                  "release_retrieved_at",
+                  "release_manifest_sha256",
+                  "release_parser_name",
+                  "release_parser_version",
+                  "release_supersedes_id",
+                  "id",
+                  "release_id",
+                  "artifact_id",
+                  "country",
+                  "code",
+                  "code_match_type",
+                  "measure_type",
+                  "treatment",
+                  "origin_country",
+                  "rate_expression_raw",
+                  "rate_components_json",
+                  "parse_status",
+                  "condition_text_raw",
+                  "conditions_json",
+                  "interaction_json",
+                  "effective_from",
+                  "effective_to",
+                  "priority",
+                  "source_locator",
+                  "raw_row_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "release_status": {
+                    "type": "string",
+                    "enum": [
+                      "staged",
+                      "reviewed",
+                      "published",
+                      "superseded"
+                    ]
+                  },
+                  "release_authority": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_dataset": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_edition": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_revision": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_languages_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_official_url": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_published_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "release_effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "release_retrieved_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_manifest_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "release_parser_name": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_parser_version": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_supersedes_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "country": {
+                    "type": "string",
+                    "enum": [
+                      "US",
+                      "CA"
+                    ]
+                  },
+                  "measure_type": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "origin_country": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "code_hint": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "legal_scope": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "case_number": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "exporter_or_producer": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rate_expression_raw": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "exceptions_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "match_status": {
+                    "type": "string",
+                    "enum": [
+                      "possible",
+                      "confirmed_by_rule",
+                      "manual_review"
+                    ]
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source_locator": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "raw_row_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "release_status",
+                  "release_authority",
+                  "release_dataset",
+                  "release_edition",
+                  "release_revision",
+                  "release_languages_json",
+                  "release_official_url",
+                  "release_published_at",
+                  "release_effective_from",
+                  "release_effective_to",
+                  "release_retrieved_at",
+                  "release_manifest_sha256",
+                  "release_parser_name",
+                  "release_parser_version",
+                  "release_supersedes_id",
+                  "id",
+                  "release_id",
+                  "artifact_id",
+                  "country",
+                  "measure_type",
+                  "origin_country",
+                  "code_hint",
+                  "legal_scope",
+                  "case_number",
+                  "exporter_or_producer",
+                  "rate_expression_raw",
+                  "exceptions_json",
+                  "match_status",
+                  "effective_from",
+                  "effective_to",
+                  "source_locator",
+                  "raw_row_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "release_status": {
+                    "type": "string",
+                    "enum": [
+                      "staged",
+                      "reviewed",
+                      "published",
+                      "superseded"
+                    ]
+                  },
+                  "release_authority": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_dataset": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_edition": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_revision": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_languages_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_official_url": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_published_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "release_effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "release_retrieved_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_manifest_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "release_parser_name": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_parser_version": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_supersedes_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "release_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "country": {
+                    "type": "string",
+                    "enum": [
+                      "CN",
+                      "US",
+                      "CA"
+                    ]
+                  },
+                  "side": {
+                    "type": "string",
+                    "enum": [
+                      "cn_export",
+                      "us_import",
+                      "ca_import"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "document_status": {
+                    "type": "string",
+                    "enum": [
+                      "prepare_retain",
+                      "required_now",
+                      "conditional",
+                      "on_request",
+                      "not_applicable",
+                      "manual_review"
+                    ]
+                  },
+                  "conditions_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source_locator": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "raw_row_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "release_status",
+                  "release_authority",
+                  "release_dataset",
+                  "release_edition",
+                  "release_revision",
+                  "release_languages_json",
+                  "release_official_url",
+                  "release_published_at",
+                  "release_effective_from",
+                  "release_effective_to",
+                  "release_retrieved_at",
+                  "release_manifest_sha256",
+                  "release_parser_name",
+                  "release_parser_version",
+                  "release_supersedes_id",
+                  "id",
+                  "release_id",
+                  "artifact_id",
+                  "country",
+                  "side",
+                  "label",
+                  "document_status",
+                  "conditions_json",
+                  "reason",
+                  "effective_from",
+                  "effective_to",
+                  "source_locator",
+                  "raw_row_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "country": {
+                    "type": "string",
+                    "enum": [
+                      "CN",
+                      "US",
+                      "CA"
+                    ]
+                  },
+                  "authority": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "dataset": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "edition": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "revision": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "languages_json": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "official_url": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "published_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "effective_to": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "retrieved_at": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "manifest_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "parser_name": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "parser_version": {
+                    "type": "string",
+                    "maxLength": 50000
+                  },
+                  "supersedes_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 50000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "staged",
+                      "reviewed",
+                      "published",
+                      "superseded"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "country",
+                  "authority",
+                  "dataset",
+                  "edition",
+                  "revision",
+                  "languages_json",
+                  "official_url",
+                  "published_at",
+                  "effective_from",
+                  "effective_to",
+                  "retrieved_at",
+                  "manifest_sha256",
+                  "parser_name",
+                  "parser_version",
+                  "supersedes_id",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "selection",
+        "collection",
+        "label",
+        "release_id",
+        "version",
+        "total",
+        "offset",
+        "limit",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "reason_codes": {
+      "minItems": 0,
+      "maxItems": 0,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "data",
+    "reason_codes"
+  ],
+  "additionalProperties": false
+}

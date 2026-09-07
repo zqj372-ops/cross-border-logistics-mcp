@@ -19,7 +19,7 @@ export function agentInstallPrompt(serviceId = '') {
 }
 
 export function createCapabilityMarket(ui) {
-  const { esc, icon, link, head, panel, note, empty } = ui;
+  const { esc, icon, link, head, note, empty } = ui;
   const filters = { query: '', protocol: 'all', category: 'all' };
   const categoryNames = { all: '全部分类', quote: '运费询价', customs: '关务与税费', cargo: '货物与装载', agent: 'Agent 工具' };
   const protocolName = (item) => item.protocol === 'mcp' ? 'MCP · REST' : 'REST API';
@@ -47,10 +47,6 @@ export function createCapabilityMarket(ui) {
   function guide() {
     return head('接入指南', '一把 API Key，连接应用已开通的物流能力。', link('管理 API Key', 'api-keys', true, 'key')) + `<div class="guide-layout"><div><section class="guide-section"><h2>让 Agent 帮你接入</h2><p>复制这句话给 Codex、Claude Code 或其他能读取网页的 Agent。它会按公开指南配置接口，并帮你完成一次只读调用。</p>${installBox()}<p class="guide-caption">Key 填入你自己的凭证管理工具或本机环境变量，避免放进聊天和代码仓库。</p></section><section class="guide-section"><h2>直接调用 API</h2><p>在控制台申请服务并创建 Key，按接口文档构造请求即可。鉴权、权限校验与服务转发由平台处理。</p><div class="endpoint-row"><span>HTTPS</span><code>https://www.freightclaw.net</code></div><pre class="code-sample">${esc("Authorization: ApiKey ${FREIGHTCLAW_API_KEY}\nContent-Type: application/json")}</pre><div class="guide-links"><a class="button" href="/console/openapi.json" download="freightclaw-openapi.json">下载 OpenAPI</a><a class="button" href="/console/skill.md" target="_blank" rel="noopener">查看 Agent 指南</a></div></section><section class="guide-section"><h2>MCP 客户端</h2><p>货物计算、装柜规划和 Agent 上下文支持 MCP。使用同一 API Key 兑换短期令牌后，配置到支持 HTTP 的 MCP 客户端。</p><div class="endpoint-row"><span>POST</span><code>/access/v2/application/token/exchange</code></div><p class="guide-caption">长期 Key 由接入网关验证。报价和关务目前使用 REST API，Agent 按对应接口调用。</p><details class="guide-advanced"><summary>排查接入问题</summary><p>遇到权限或输入问题时，可使用诊断页查看请求编号和接口返回。</p>${link('打开调用诊断', 'diagnostics')}</details></section></div><aside class="guide-aside"><h3>按返回状态继续处理</h3><dl><dt>已完成</dt><dd>核对本次结果与来源版本。</dd><dt>待补充</dt><dd>补齐接口列出的资料。</dd><dt>需人工复核</dt><dd>将具体事项交给业务负责人。</dd><dt>已阻止</dt><dd>检查 Key、有效期与服务权限。</dd><dt>暂不可用</dt><dd>检查服务连接和数据发布状态。</dd></dl></aside></div>`;
   }
-  function workbench() {
-    if (!ui.model().session?.organization_id) return head('业务工作台', '加入企业后，使用已开放的询价和关务服务。') + empty('先加入你的企业', '使用企业邀请对应的邮箱登录，并在成员页面接受邀请。', link('查看企业邀请', 'members', true), 'users');
-    return head('业务工作台', '选择要处理的业务。使用当前账号操作，无需创建或粘贴 API Key。', link('我的报价记录', 'quote-history', false, 'clock')) + `<div class="workbench-tasks">${[['quote', 'truck', '加拿大尾程询价', '整理客户需求，核对邮编与货物信息，查看试算并保存报价记录。', '开始询价'], ['customs', 'file', '关税与商品归类', '输入商品描述和属性，查询三国税则、适用措施及来源。', '查询关税'], ['tax', 'grid', '进口税费估算', '按归类、原产地和申报金额估算税费，支持批量资料。', '估算税费']].map(([target, glyph, title, description, action]) => `<section class="workbench-task"><span class="cap-icon blue">${icon(glyph)}</span><h2>${title}</h2><p>${description}</p>${link(action, target, true, 'arrow')}</section>`).join('')}</div>${panel('连接你的系统或 Agent', '', `<div class="workbench-api"><p>同一把 API Key 使用已开通的服务，凭证与权限在控制台集中管理。</p>${link('前往控制台', 'api-keys')}${link('查看接入指南', 'guide')}</div>`)}`;
-  }
   async function action(button) {
     const action = button.dataset.action;
     if (!action?.startsWith('market-')) return false;
@@ -66,5 +62,5 @@ export function createCapabilityMarket(ui) {
     const target = document.querySelector('#market-results'); if (target) target.innerHTML = results();
     return true;
   }
-  return { page, detail, guide, workbench, action, input };
+  return { page, detail, guide, action, input };
 }

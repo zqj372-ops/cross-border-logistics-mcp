@@ -802,3 +802,47 @@ code, pre { font-family: var(--font-code); }
 .quote-source-choice small { display:block; color:var(--muted); line-height:1.6; margin-top:5px; }
 
 .native-publication{display:flex;flex-wrap:wrap;gap:8px 24px;align-items:baseline;margin:0 0 24px;padding:16px 20px;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow-wrap:anywhere}.native-publication span{color:var(--muted)}
+
+/* Business maintenance extends the existing Console's operational surfaces. */
+.native-overview-list{border-top:1px solid var(--line)}
+.native-overview-row{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:24px;align-items:center;padding:28px 0;border-bottom:1px solid var(--line)}
+.native-overview-row h2{margin:0 0 8px;font-size:24px}.native-overview-row p{margin:0 0 10px;color:var(--muted)}
+.native-overview-icon{display:grid;place-items:center;width:48px;height:48px;background:var(--soft);border-radius:12px}.native-overview-icon svg{width:26px;height:26px}
+.native-status{font-size:14px;color:var(--muted)}.native-footnote{margin-top:24px;color:var(--muted);font-size:14px}
+.native-savebar{display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin-top:32px;padding-top:24px;border-top:1px solid var(--line)}.native-savebar span{font-size:14px;color:var(--muted)}
+.native-edit-table{margin:24px 0}.native-edit-row{display:grid;grid-template-columns:60px repeat(4,minmax(0,1fr)) auto;gap:16px;align-items:end;padding:20px 0;border-bottom:1px solid var(--line)}.native-edit-row .field{margin:0}.native-edit-row[data-native-row=rates]{grid-template-columns:60px repeat(3,minmax(0,1fr)) auto}.native-row-number{align-self:center;color:var(--muted);font-size:13px;font-weight:500}
+.native-search{display:flex;gap:16px;flex-wrap:wrap;align-items:end;margin:24px 0}.native-search .field{margin:0;min-width:140px}.native-search-query{flex:1}.native-search .form-error{flex-basis:100%}.native-catalog-context{font-size:14px;color:var(--muted)}
+.native-catalog-row{padding:24px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.native-catalog-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:16px}.native-catalog-title h2{font-size:20px;margin:0}.native-catalog-title span,.native-catalog-row small{color:var(--muted);font-size:14px}.native-catalog-row p{margin:10px 0}.native-catalog-row .business-details{margin-top:16px}.native-confirm-inline{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}
+.workspace-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:32px}.workspace-recent{border-top:1px solid var(--line)}.workspace-recent-row{display:flex;gap:20px;align-items:center;justify-content:space-between;padding:20px 0;border-bottom:1px solid var(--line);color:inherit;text-decoration:none}.workspace-recent-row:hover h3{color:var(--brand)}.workspace-recent-row h3{font-size:18px;margin:0 0 6px}.workspace-recent-row p{margin:0;color:var(--muted)}.workspace-recent-row time{font-size:13px;color:var(--muted)}
+@media(max-width:900px){.native-edit-row,.native-edit-row[data-native-row=rates]{grid-template-columns:repeat(2,minmax(0,1fr))}.native-row-number{grid-column:1/-1}.native-edit-row>button{justify-self:start}}
+@media(max-width:540px){.native-overview-row{grid-template-columns:36px minmax(0,1fr);gap:16px;padding:24px 0}.native-overview-icon{width:36px;height:36px}.native-overview-row h2{font-size:21px}.native-overview-row>.button{grid-column:2;justify-self:start}.native-search .field{flex:1 1 130px;min-width:0}.native-search .native-search-query{flex-basis:100%}.native-search>button{width:100%}.native-savebar{gap:12px}.workspace-recent-row{align-items:flex-start}.native-tabs{margin-bottom:20px}}
+
+/* Native fixed-delivery maintenance: incumbent table/form vocabulary. */
+.native-rate-filters{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:16px 0}
+.native-rate-filters .field{min-width:110px;flex:1}
+.native-matrix-scroll{overflow:auto;max-height:480px;max-width:100%;margin:16px 0;border:1px solid var(--line);border-radius:8px}
+.native-price-matrix{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.native-price-matrix th,.native-price-matrix td{padding:12px 16px;white-space:nowrap;border-bottom:1px solid var(--line);text-align:left}
+.native-price-matrix thead th{position:sticky;top:0;z-index:1;background:#f6f7f9}
+.native-price-matrix input:not([type=checkbox]){min-width:112px;width:120px;min-height:44px;border:1px solid var(--strong);border-radius:8px;padding:8px;font:inherit;color:var(--ink);background:white}
+.native-price-matrix small{display:block;color:var(--muted);font-weight:400}
+.native-zone-enabled{display:flex;align-items:center;gap:8px;min-height:44px;font-weight:400}
+.native-zone-enabled input{width:18px;height:18px}
+.native-row-editor{margin:24px 0}.native-row-editor summary,.native-rate-review summary{cursor:pointer;min-height:44px;display:list-item;align-content:center;font-weight:600}
+.native-rate-review{margin:24px 0}.native-rate-review h3{margin:20px 0 12px}.native-rule-list{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}.native-rule-list>div{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}.native-rule-list dt{color:var(--muted)}.native-rule-list dd{margin:0;font-weight:600}
+@media(max-width:540px){
+ .native-admin-surface .native-admin-head{margin-bottom:12px;gap:6px;position:relative;padding-top:38px}
+ .native-admin-surface .native-admin-head .head-actions{position:absolute;top:-10px;width:auto}
+ .native-admin-surface .native-admin-head .head-actions .button{min-height:44px;padding:8px 0;border:0;background:none;font-size:14px;flex:none}
+ .native-admin-surface .native-admin-head p{margin-top:4px;font-size:14px;line-height:1.6}
+ .native-admin-surface .native-tabs{gap:0 16px;margin-bottom:12px}
+ .native-admin-surface .native-tabs a{min-height:44px;padding:8px 0}
+ .native-admin-surface .native-publication{padding:12px;gap:4px;margin-bottom:12px}
+ .native-admin-surface .panel-body{padding:16px}
+ .native-admin-surface .native-edit-row{padding-top:12px;gap:12px}
+ .native-admin-surface .native-row-number{display:none}
+ .native-rate-filters{gap:8px;margin:12px 0}.native-rate-filters>.button{padding:8px 12px}.native-rate-filters .field{min-width:95px}
+ .native-rule-list{grid-template-columns:1fr}.native-matrix-scroll{max-height:420px}
+}
+.native-price-matrix tbody th{min-width:150px;white-space:normal}.native-billing-editor .field-grid{margin-top:16px}
+@media(max-width:540px){.native-admin-surface .native-admin-head p{display:none}.native-admin-surface .native-tabs{flex-wrap:nowrap;overflow-x:auto;gap:16px}.native-admin-surface .native-tabs a{flex-shrink:0}.native-price-matrix tbody th{min-width:130px}.native-price-matrix th,.native-price-matrix td{padding:10px}.native-price-matrix input:not([type=checkbox]){min-width:100px;width:100px}}

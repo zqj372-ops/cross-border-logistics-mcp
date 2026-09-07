@@ -1,0 +1,6 @@
+import { it, expect } from 'vitest';
+import { browseCustoms, customsBrowseInput, customsBrowseResult } from '../../services/customs-native/catalog';
+import { dataset } from './publication-fixture';
+const view={version:3,draft:{...dataset,label:'Draft only'},active_release:{release_id:'released',version:2,input:{...dataset,label:'Published only'}}};
+it('separates published and draft rows and returns bounded searchable data',()=>{const r=browseCustoms(view,{selection:'published',collection:'nomenclature',country:'CA',query:'732393',offset:0,limit:1});expect(r.label).toBe('Published only');expect(r.version).toBe(2);expect(r.rows).toHaveLength(1);expect(r.rows[0]).toMatchObject({country:'CA',code:'7323930090'});expect(customsBrowseResult.safeParse(r).success).toBe(true);expect(browseCustoms(view,{selection:'draft',collection:'sources'}).label).toBe('Draft only');});
+it('does not silently show draft data as published and rejects unbounded filters',()=>{expect(browseCustoms({...view,active_release:null},{collection:'nomenclature'})).toMatchObject({label:null,total:0,rows:[]});expect(customsBrowseInput.safeParse({limit:101}).success).toBe(false);expect(customsBrowseInput.safeParse({country:'XX'}).success).toBe(false);expect(browseCustoms(view,{query:'no_matching_row',collection:'tariffs'}).rows).toEqual([]);});

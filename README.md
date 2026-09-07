@@ -2,7 +2,7 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**本地开发进度：2026-09-07。** 关务数据、自有住宅运价与 Freightcom 连接后台已实现，网页和 CLI 共用发布版本；配置从空白开始。当前未部署生产，正式数据、运价与承运商凭证未录入。见 [图文交付与验证边界](docs/product/2026-09-07-native-customs-residential-delivery.md) / [配置和 CLI 操作说明](apps/console/native-business.md)。
+**本地开发进度：2026-09-07。** 关务数据、自有住宅运价与 Freightcom 连接后台已实现，网页和 CLI 共用发布版本；配置从空白开始。当前未部署生产，正式数据、运价与承运商凭证未录入。业务管理已拆分独立任务页面，私人地址使用固定配置、不设渠道；工作台展示实际询价进度。见 [后台页面调整图解](docs/product/2026-09-07-business-admin-pages.md) / [图文交付与验证边界](docs/product/2026-09-07-native-customs-residential-delivery.md) / [配置和 CLI 操作说明](apps/console/native-business.md)。
 
 **既有生产记录：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "table": {
+      "default": "rates",
+      "type": "string",
+      "enum": [
+        "rates",
+        "zones"
+      ]
+    },
+    "selection": {
+      "default": "draft",
+      "type": "string",
+      "enum": [
+        "draft",
+        "published"
+      ]
+    }
+  },
+  "required": [
+    "table",
+    "selection"
+  ],
+  "additionalProperties": false
+}
