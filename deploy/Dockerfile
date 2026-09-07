@@ -22,6 +22,7 @@ COPY docs/rfcs/2026-08-27-credential-exchange-v1.md ./docs/rfcs/2026-08-27-crede
 COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY deploy/scripts/build-inquiry.mjs ./deploy/scripts/build-inquiry.mjs
+COPY deploy/scripts/prepare-cbsa-release.py ./deploy/scripts/prepare-cbsa-release.py
 COPY deploy/portal/inquiry-navigation.css ./deploy/portal/inquiry-navigation.css
 COPY deploy/scripts/verify-pdf-renderer.ts ./deploy/scripts/verify-pdf-renderer.ts
 COPY deploy/scripts/start-portal-fixture.ts ./deploy/scripts/start-portal-fixture.ts
