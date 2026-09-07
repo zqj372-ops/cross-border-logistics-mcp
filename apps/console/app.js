@@ -1,3 +1,4 @@
+import { icon } from './icons.js';
 import { rememberLoginDestination, consumeLoginDestination } from './login-destination.js';
 import { createCliGuide } from './cli-guide.js';
 import { createServiceHome } from './home.js';
@@ -30,27 +31,6 @@ const capabilities = {
   'quote.ai_extract_preview': { name: '询价资料提取', icon: 'file' },
   'customs.tax.estimate': { name: '进口税费估算', icon: 'file' },
 };
-const paths = {
-  home: '<path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/>',
-  box: '<path d="m12 3 9 5v9l-9 5-9-5V8zM3 8l9 5 9-5M12 13v9M7 5.8l9 5"/>',
-  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
-  file: '<path d="M14 3H5v18h14V8zM14 3v5h5M8 12h8M8 16h6"/>',
-  account: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
-  users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M17 15a5 5 0 0 1 4 5"/>',
-  key: '<circle cx="8" cy="8" r="5"/><path d="m11.5 11.5 9 9M17 17l3-3M14 14l3-3"/>',
-  code: '<path d="m8 6-6 6 6 6M16 6l6 6-6 6M14 3l-4 18"/>',
-  arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
-  back: '<path d="M20 12H4m6-6-6 6 6 6"/>',
-  plus: '<path d="M12 4v16M4 12h16"/>',
-  check: '<path d="m4 12 5 5L20 6"/>',
-  shield: '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
-  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
-  truck: '<path d="M3 6h12v12H3zM15 10h4l3 4v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>',
-  container: '<rect x="2" y="5" width="20" height="14" rx="1"/><path d="M7 8v8M12 8v8M17 8v8"/>',
-};
-const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.grid}</svg>`;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const uri = (value) => encodeURIComponent(value);
 const date = (value) => value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '尚未设置';
