@@ -3,6 +3,7 @@
 - Status: Draft — product direction confirmed; implementation contracts not yet frozen.
 - User decision: 将业务代码迁入当前项目，新建管理后台；空白开始，旧配置仅供对照；保留现有账号与 API Key。
 - Product scope: [产品与迁移设计](../product/2026-09-07-native-business-admin.md)
+- Extension roadmap: [OCR、报价导出、邮件订舱、SO 与公共任务/文件边界](../product/2026-09-07-logistics-workflow-roadmap.md)。属于后续产品规划，不在本 RFC 自动注册工具或授予发送权限。
 - This document does not claim implementation, production migration or completed testing.
 
 ## 动机与范围
