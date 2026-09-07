@@ -2,7 +2,7 @@ import { configurationRoute } from './service-catalog.js';
 // Only a short-lived page name is retained across the external login redirect.
 // No identity, credential, business input or arbitrary redirect URL is stored.
 const storageKey = 'freightclaw.login-destination';
-const allowedPages = new Set(['channels', 'cases', 'operations', 'account', 'customs', 'tax', 'quote', 'quote-history', 'customs-history', 'workbench', 'api-keys', 'calls', 'members']);
+const allowedPages = new Set(['quote-documents', 'channels', 'cases', 'operations', 'account', 'customs', 'tax', 'quote', 'quote-history', 'customs-history', 'workbench', 'api-keys', 'calls', 'members']);
 const allowed = page => page === 'market/configure' || typeof page === 'string' && /^configure\/[^/]+(?:\/(?:base|coverage|pricing|fees|publish|nomenclature|tariffs|measures|requirements|sources|import))?$/u.test(page) && Boolean(configurationRoute('#'+page).service) || allowedPages.has(page) || /^cli-authorize\/[A-F0-9]{8}$/u.test(page) || /^channels\/(?:new|[0-9a-f-]{36})$/u.test(page) || /^case\/[0-9a-f-]{36}$/u.test(page);
 export function rememberLoginDestination(page, storage, now = Date.now()) {
   try {

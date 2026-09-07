@@ -1,3 +1,4 @@
+import {DocumentStore,DocumentService} from '../../services/quote-documents/service';
 import { NativeAdminStore, NativeAdminService } from '../../services/access-gateway/portal/native-admin';
 import { NativeFreightcomService } from '../../services/access-gateway/portal/native-freightcom';
 import { ChannelStore, ChannelService } from "../../services/access-gateway/portal/channels";
@@ -23,6 +24,7 @@ const runtime = await createPortalFixtureRuntime({ databaseDirectory });
 const boundaries = { allowedHosts: [`127.0.0.1:${port}`], allowedOrigins: [origin] };
 const callStore = new SqliteCallLogStore(resolve(databaseDirectory, "calls.sqlite"));
 const channelStore = new ChannelStore(resolve(databaseDirectory, "business-channels.sqlite"));
+const documentStore=new DocumentStore(resolve(databaseDirectory,"quote-documents.sqlite"));
 const nativeStore=new NativeAdminStore(resolve(databaseDirectory,"native-business.sqlite"));
 const nativeFreightcom=new NativeFreightcomService(nativeStore,runtime.service);
 const nativeConfig=resolve(databaseDirectory,"native-business-config.json");
@@ -41,11 +43,11 @@ try {
   const machine = createPortalMachineHttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries });
   const t0Machine = createProductionT0HttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries, trustedProxyAddresses: [] });
   const businessMachine = createBusinessMachineHttpHandler({ mode: "fixtures", service: businessAccess.service, executor: { execute: async (request) => businessService.executeMachine(request) }, ...boundaries, trustedProxyAddresses: [] });
-  const server = await startPortalServer({ nativeAdmin:new NativeAdminService(nativeStore,runtime.service),nativeFreightcom, channelService: new ChannelService(channelStore, runtime.service), caseService: new CaseService(caseStore, runtime.service), mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
+  const server = await startPortalServer({ documentService:new DocumentService(documentStore,runtime.service), nativeAdmin:new NativeAdminService(nativeStore,runtime.service),nativeFreightcom, channelService: new ChannelService(channelStore, runtime.service), caseService: new CaseService(caseStore, runtime.service), mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
   console.log(`FreightClaw local acceptance workspace: ${server.origin}/console/`);
   console.log("Isolated fixture identities and local storage. Business availability is verified per request.");
   let closing = false;
-  const close = async () => { if (closing) return; closing = true; await server.close(); await callStore.close(); caseStore.close(); channelStore.close(); nativeFreightcom.close(); nativeStore.close(); businessAccess.repository.close(); await runtime.close(); process.exitCode = 0; };
+  const close = async () => { if (closing) return; closing = true; await server.close(); await callStore.close(); documentStore.close(); caseStore.close(); channelStore.close(); nativeFreightcom.close(); nativeStore.close(); businessAccess.repository.close(); await runtime.close(); process.exitCode = 0; };
   process.once("SIGINT", () => { void close(); });
   process.once("SIGTERM", () => { void close(); });
-} catch (error) { await callStore.close(); caseStore.close(); channelStore.close(); nativeFreightcom.close(); nativeStore.close(); await runtime.close(); throw error; }
+} catch (error) { await callStore.close(); documentStore.close(); caseStore.close(); channelStore.close(); nativeFreightcom.close(); nativeStore.close(); await runtime.close(); throw error; }

@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/zqj372-ops/quote-pdf-builder",
+  "commit": "0b6e439f4203b3fc3159ca7ef613a3e51a1afc09",
+  "source_files": [
+    {
+      "path": "src/modules/quotePdf/pdf/QuotePdfDocument.ts",
+      "sha256": "8e397c1e652ec94441e9f3946ca39e4a6fbbe5f94ea1e10cff3df4aa066c66d1"
+    },
+    {
+      "path": "src/modules/quotePdf/utils/calculateQuoteTotals.ts",
+      "sha256": "0eb756c490eb3c738316578f405ae9dc7755f305d06a3f99a0b320640cb84a80"
+    },
+    {
+      "path": "src/modules/quotePdf/types/quotePdf.ts",
+      "sha256": "d079c6e498a5eb0b88b2b7919c95674a9b6a4947a5d3eff07f9d4f3d9ad046d3"
+    }
+  ],
+  "reuse": "Adapted A4 quotation layout, fee grouping and visibility semantics. Decimal arithmetic, personnel authorization, native persistence and browser/CLI integration implemented here. No Electron runtime, local customer archives, default prices, logo, credentials or editable PDF payload imported."
+}

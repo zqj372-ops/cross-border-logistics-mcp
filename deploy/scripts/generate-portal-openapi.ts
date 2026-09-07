@@ -1,3 +1,4 @@
+import {quoteDocumentSchemas,outputSchemas,responseSchema as documentResponseSchema} from '../../services/quote-documents/contracts';
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -77,6 +78,10 @@ export function generatePortalOpenApi(): ObjectValue {
     post(`/api/v2/tools/${tool}`,name,title,ref(name),ref(tool==="system.agent_context.get"?"AgentContextEnvelope":"DomainEnvelope"),["ApplicationKey","BearerToken"],"可直接使用统一应用 Key，也可使用兼容的 T0 REST 短令牌。请求体直接使用原工具 input，不能再包一层 input。数据及计算规则的来源必须明确。");
   }
   paths["/access/v2/business/jwks.json"]={get:{operationId:"businessJwks",summary:"业务令牌验证公钥",security:[],responses:{"200":response(ref("AccessJwksResponse"))}}};
+  for(const action of Object.keys(outputSchemas)){
+    const schema=action==='config'?null:quoteDocumentSchemas[(action==='export'?'get':action) as keyof typeof quoteDocumentSchemas];
+    paths['/console/api/v1/quote-documents/'+action]={[action==='config'?'get':'post']:{operationId:'quoteDocuments_'+action.replace('-','_'),summary:'人员报价单 '+action,security:[{PortalSession:[]}],parameters:action==='config'?[]:[{name:'X-CSRF-Token',in:'header',required:true,schema:{type:'string'}},...(['save','config-save','approve'].includes(action)?[{name:'Idempotency-Key',in:'header',required:true,schema:{type:'string',minLength:16,maxLength:128}}]:[])],...(schema?{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(schema,{target:'draft-2020-12'})}}}}:{}),responses:{'200':response(z.toJSONSchema(documentResponseSchema(action),{target:'draft-2020-12'})),'400':response(ref('PortalError')),'403':response(ref('PortalError')),'503':response(ref('PortalError'))}}};
+  }
   return {openapi:"3.1.0",jsonSchemaDialect:"https://json-schema.org/draft/2020-12/schema",info:{title:"FreightClaw 机器接入 API",version:"2026-09-06.v4",description:"由当前代码和JSON Schema生成。统一应用 Key 可直接调用固定 REST 路由，也可换取 MCP 短令牌；网页使用邮箱账号密码。正式报价保存、人工审核和PDF是人员授权业务操作，不在机器凭证中隐式开放。"},servers:[{url:"https://www.freightclaw.net"}],paths,components:{securitySchemes:{PortalSession:{type:"apiKey",in:"cookie",name:"fc_portal_session",description:"人员会话；POST还需X-CSRF-Token。"},ApplicationKey:{type:"apiKey",in:"header",name:"Authorization",description:"完整值为 ApiKey <KEY>"},BearerToken:{type:"http",scheme:"bearer",bearerFormat:"JWT"}},schemas}};
 }
 

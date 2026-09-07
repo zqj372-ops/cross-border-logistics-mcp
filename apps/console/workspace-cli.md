@@ -69,3 +69,18 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 目前完成渠道配置和询价处理的网页、API、CLI 共用流程。运价、邮编分区、附加费、原生关务发布、OCR、报价导出、邮件订舱和 SO 识别仍按路线图推进；既有成员、授权、个人历史等页面的 CLI 覆盖也待补齐。后续功能以三端一起验收为完成条件，不能把页面存在或命令存在视为业务已经可用。邮件及订舱等外发操作仍需明确确认。
 
 关务、私人地址运价、Freightcom 配置与人员身份查询：参见 [业务操作说明](native-business.md)。新增操作与网站共用当前企业配置和权限。
+
+## 报价单制作
+
+报价单通过人员会话管理，入口是服务市场 → 报价单制作。查询 API Key 不具备文档保存或确认权限。
+
+- `workspace documents config`：读取当前企业模板；空白返回 `input: null`。
+- `workspace documents config-save --input template-save.json --idempotency-key <唯一键>`：负责人/管理员保存公司信息、客户条款和常用费用；需要 `expected_version` 与 `confirmed: true`。
+- `workspace documents preview --input preview.json`：核对 `{ "input": <报价单> }`，返回费用合计、模板版本和十分钟预览。
+- `workspace documents save --input save.json --idempotency-key <唯一键>`：将预览返回的 `input`、`template_version`、`preview_hash`、`preview_expires_at` 与 `confirmed: true` 提交；不要将 `totals` 作为保存输入。
+- `workspace documents list --input list.json`：可选 `limit`（1—100）和 `before`（上一页的 `next_cursor`）。
+- `workspace documents get --input record.json`：输入 `{ "id": "记录 UUID" }`，读回保存时的模板和报价快照。修改时以其 `input` 重新预览和保存新单据。
+- `workspace documents approve --input approval.json --idempotency-key <唯一键>`：负责人/管理员人工核对。必须填写 `id`、`expected_version`、`evidence_ref`、`evidence_version`、`review_notes`、`confirmation: "human_verified_price_and_source"`。
+- `workspace documents export --input record.json --file ./quotation.pdf`：导出并校验 PDF；不会覆盖已有文件。未确认记录带草稿标识；已确认但过期的报价禁止导出正式版。
+
+上述命令均带 `--session-file <私有会话文件>`。完整字段使用 `workspace schema documents preview` 等命令查看。金额、数量、汇率均为十进制字符串；USD/CAD 到 CNY 的汇率允许 `null`，此时不虚构折算总额。PDF 不嵌入可编辑输入或隐藏费用原文。程序不会发送邮件、下单或订舱。

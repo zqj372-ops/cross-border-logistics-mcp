@@ -1442,6 +1442,3554 @@
           }
         }
       }
+    },
+    "/console/api/v1/quote-documents/config": {
+      "get": {
+        "operationId": "quoteDocuments_config",
+        "summary": "人员报价单 config",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "input": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "company_name": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "company_address": {
+                                  "type": "string",
+                                  "maxLength": 500
+                                },
+                                "company_phone": {
+                                  "type": "string",
+                                  "maxLength": 50
+                                },
+                                "company_email": {
+                                  "type": "string",
+                                  "maxLength": 254
+                                },
+                                "terms": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4000
+                                },
+                                "fee_items": {
+                                  "maxItems": 60,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "name": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "description": {
+                                        "default": "",
+                                        "type": "string",
+                                        "maxLength": 500
+                                      },
+                                      "group": {
+                                        "type": "string",
+                                        "enum": [
+                                          "A",
+                                          "B",
+                                          "C"
+                                        ]
+                                      },
+                                      "quantity": {
+                                        "type": "string",
+                                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                      },
+                                      "unit": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 20
+                                      },
+                                      "unit_price": {
+                                        "type": "string",
+                                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "CAD",
+                                          "CNY"
+                                        ]
+                                      },
+                                      "display": {
+                                        "type": "string",
+                                        "enum": [
+                                          "detail",
+                                          "hiddenIncluded",
+                                          "hiddenExcluded",
+                                          "merged"
+                                        ]
+                                      },
+                                      "merge_name": {
+                                        "default": "",
+                                        "type": "string",
+                                        "maxLength": 200
+                                      },
+                                      "note": {
+                                        "default": "",
+                                        "type": "string",
+                                        "maxLength": 500
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "name",
+                                      "description",
+                                      "group",
+                                      "quantity",
+                                      "unit",
+                                      "unit_price",
+                                      "currency",
+                                      "display",
+                                      "merge_name",
+                                      "note"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "company_name",
+                                "company_address",
+                                "company_phone",
+                                "company_email",
+                                "terms",
+                                "fee_items"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "input"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/config-save": {
+      "post": {
+        "operationId": "quoteDocuments_config_save",
+        "summary": "人员报价单 config-save",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "company_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "company_address": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "company_phone": {
+                        "type": "string",
+                        "maxLength": 50
+                      },
+                      "company_email": {
+                        "type": "string",
+                        "maxLength": 254
+                      },
+                      "terms": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000
+                      },
+                      "fee_items": {
+                        "maxItems": 60,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "group": {
+                              "type": "string",
+                              "enum": [
+                                "A",
+                                "B",
+                                "C"
+                              ]
+                            },
+                            "quantity": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20
+                            },
+                            "unit_price": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "enum": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ]
+                            },
+                            "display": {
+                              "type": "string",
+                              "enum": [
+                                "detail",
+                                "hiddenIncluded",
+                                "hiddenExcluded",
+                                "merged"
+                              ]
+                            },
+                            "merge_name": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "note": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 500
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "description",
+                            "group",
+                            "quantity",
+                            "unit",
+                            "unit_price",
+                            "currency",
+                            "display",
+                            "merge_name",
+                            "note"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "company_name",
+                      "company_address",
+                      "company_phone",
+                      "company_email",
+                      "terms",
+                      "fee_items"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "confirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "expected_version",
+                  "input",
+                  "confirmed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "input": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "company_name": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "company_address": {
+                                  "type": "string",
+                                  "maxLength": 500
+                                },
+                                "company_phone": {
+                                  "type": "string",
+                                  "maxLength": 50
+                                },
+                                "company_email": {
+                                  "type": "string",
+                                  "maxLength": 254
+                                },
+                                "terms": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4000
+                                },
+                                "fee_items": {
+                                  "maxItems": 60,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "name": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "description": {
+                                        "default": "",
+                                        "type": "string",
+                                        "maxLength": 500
+                                      },
+                                      "group": {
+                                        "type": "string",
+                                        "enum": [
+                                          "A",
+                                          "B",
+                                          "C"
+                                        ]
+                                      },
+                                      "quantity": {
+                                        "type": "string",
+                                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                      },
+                                      "unit": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 20
+                                      },
+                                      "unit_price": {
+                                        "type": "string",
+                                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "CAD",
+                                          "CNY"
+                                        ]
+                                      },
+                                      "display": {
+                                        "type": "string",
+                                        "enum": [
+                                          "detail",
+                                          "hiddenIncluded",
+                                          "hiddenExcluded",
+                                          "merged"
+                                        ]
+                                      },
+                                      "merge_name": {
+                                        "default": "",
+                                        "type": "string",
+                                        "maxLength": 200
+                                      },
+                                      "note": {
+                                        "default": "",
+                                        "type": "string",
+                                        "maxLength": 500
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "name",
+                                      "description",
+                                      "group",
+                                      "quantity",
+                                      "unit",
+                                      "unit_price",
+                                      "currency",
+                                      "display",
+                                      "merge_name",
+                                      "note"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "company_name",
+                                "company_address",
+                                "company_phone",
+                                "company_email",
+                                "terms",
+                                "fee_items"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "input"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/preview": {
+      "post": {
+        "operationId": "quoteDocuments_preview",
+        "summary": "人员报价单 preview",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "quote_no": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "customer_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "quote_date": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "valid_until": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "origin": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "destination": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "route_name": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "job_no": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "so_no": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "container_no": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "remark": {
+                        "type": "string",
+                        "maxLength": 4000
+                      },
+                      "exchange_rates": {
+                        "type": "object",
+                        "properties": {
+                          "USD": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "CAD": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "USD",
+                          "CAD"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "fee_items": {
+                        "minItems": 1,
+                        "maxItems": 60,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "group": {
+                              "type": "string",
+                              "enum": [
+                                "A",
+                                "B",
+                                "C"
+                              ]
+                            },
+                            "quantity": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20
+                            },
+                            "unit_price": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "enum": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ]
+                            },
+                            "display": {
+                              "type": "string",
+                              "enum": [
+                                "detail",
+                                "hiddenIncluded",
+                                "hiddenExcluded",
+                                "merged"
+                              ]
+                            },
+                            "merge_name": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "note": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 500
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "description",
+                            "group",
+                            "quantity",
+                            "unit",
+                            "unit_price",
+                            "currency",
+                            "display",
+                            "merge_name",
+                            "note"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "quote_no",
+                      "customer_name",
+                      "quote_date",
+                      "valid_until",
+                      "origin",
+                      "destination",
+                      "route_name",
+                      "job_no",
+                      "so_no",
+                      "container_no",
+                      "remark",
+                      "exchange_rates",
+                      "fee_items"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "input"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "type": "object",
+                          "properties": {
+                            "quote_no": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "customer_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "quote_date": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "valid_until": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "origin": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "destination": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "route_name": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "job_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "so_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "container_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "remark": {
+                              "type": "string",
+                              "maxLength": 4000
+                            },
+                            "exchange_rates": {
+                              "type": "object",
+                              "properties": {
+                                "USD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "CAD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "USD",
+                                "CAD"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "fee_items": {
+                              "minItems": 1,
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "quote_no",
+                            "customer_name",
+                            "quote_date",
+                            "valid_until",
+                            "origin",
+                            "destination",
+                            "route_name",
+                            "job_no",
+                            "so_no",
+                            "container_no",
+                            "remark",
+                            "exchange_rates",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template_version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "preview_hash": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "preview_expires_at": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "totals": {
+                          "type": "object",
+                          "properties": {
+                            "rows": {
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "amount": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]+\\.[0-9]{2}$"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note",
+                                  "amount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "by_currency": {
+                              "type": "object",
+                              "properties": {
+                                "USD": {
+                                  "type": "string"
+                                },
+                                "CAD": {
+                                  "type": "string"
+                                },
+                                "CNY": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "total_cny": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "total_usd": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "warnings": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "calculation_version": {
+                              "type": "string",
+                              "const": "quote-documents-decimal-v1"
+                            }
+                          },
+                          "required": [
+                            "rows",
+                            "by_currency",
+                            "total_cny",
+                            "total_usd",
+                            "warnings",
+                            "calculation_version"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "input",
+                        "template_version",
+                        "preview_hash",
+                        "preview_expires_at",
+                        "totals"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/save": {
+      "post": {
+        "operationId": "quoteDocuments_save",
+        "summary": "人员报价单 save",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "object",
+                    "properties": {
+                      "quote_no": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "customer_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "quote_date": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "valid_until": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "origin": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "destination": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "route_name": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "job_no": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "so_no": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "container_no": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "remark": {
+                        "type": "string",
+                        "maxLength": 4000
+                      },
+                      "exchange_rates": {
+                        "type": "object",
+                        "properties": {
+                          "USD": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "CAD": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "USD",
+                          "CAD"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "fee_items": {
+                        "minItems": 1,
+                        "maxItems": 60,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "group": {
+                              "type": "string",
+                              "enum": [
+                                "A",
+                                "B",
+                                "C"
+                              ]
+                            },
+                            "quantity": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20
+                            },
+                            "unit_price": {
+                              "type": "string",
+                              "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "enum": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ]
+                            },
+                            "display": {
+                              "type": "string",
+                              "enum": [
+                                "detail",
+                                "hiddenIncluded",
+                                "hiddenExcluded",
+                                "merged"
+                              ]
+                            },
+                            "merge_name": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "note": {
+                              "default": "",
+                              "type": "string",
+                              "maxLength": 500
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "description",
+                            "group",
+                            "quantity",
+                            "unit",
+                            "unit_price",
+                            "currency",
+                            "display",
+                            "merge_name",
+                            "note"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "quote_no",
+                      "customer_name",
+                      "quote_date",
+                      "valid_until",
+                      "origin",
+                      "destination",
+                      "route_name",
+                      "job_no",
+                      "so_no",
+                      "container_no",
+                      "remark",
+                      "exchange_rates",
+                      "fee_items"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "template_version": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "preview_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "preview_expires_at": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "confirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "input",
+                  "template_version",
+                  "preview_hash",
+                  "preview_expires_at",
+                  "confirmed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "draft",
+                            "approved"
+                          ]
+                        },
+                        "input": {
+                          "type": "object",
+                          "properties": {
+                            "quote_no": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "customer_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "quote_date": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "valid_until": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "origin": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "destination": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "route_name": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "job_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "so_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "container_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "remark": {
+                              "type": "string",
+                              "maxLength": 4000
+                            },
+                            "exchange_rates": {
+                              "type": "object",
+                              "properties": {
+                                "USD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "CAD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "USD",
+                                "CAD"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "fee_items": {
+                              "minItems": 1,
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "quote_no",
+                            "customer_name",
+                            "quote_date",
+                            "valid_until",
+                            "origin",
+                            "destination",
+                            "route_name",
+                            "job_no",
+                            "so_no",
+                            "container_no",
+                            "remark",
+                            "exchange_rates",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template": {
+                          "type": "object",
+                          "properties": {
+                            "company_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "company_address": {
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "company_phone": {
+                              "type": "string",
+                              "maxLength": 50
+                            },
+                            "company_email": {
+                              "type": "string",
+                              "maxLength": 254
+                            },
+                            "terms": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4000
+                            },
+                            "fee_items": {
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "company_name",
+                            "company_address",
+                            "company_phone",
+                            "company_email",
+                            "terms",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template_version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        },
+                        "owner_id": {
+                          "type": "string"
+                        },
+                        "approval": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "evidence_ref": {
+                                  "type": "string"
+                                },
+                                "evidence_version": {
+                                  "type": "string"
+                                },
+                                "review_notes": {
+                                  "type": "string"
+                                },
+                                "actor": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "evidence_ref",
+                                "evidence_version",
+                                "review_notes",
+                                "actor",
+                                "at"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "state",
+                        "input",
+                        "template",
+                        "template_version",
+                        "created_at",
+                        "owner_id",
+                        "approval"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/get": {
+      "post": {
+        "operationId": "quoteDocuments_get",
+        "summary": "人员报价单 get",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "draft",
+                            "approved"
+                          ]
+                        },
+                        "input": {
+                          "type": "object",
+                          "properties": {
+                            "quote_no": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "customer_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "quote_date": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "valid_until": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "origin": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "destination": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "route_name": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "job_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "so_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "container_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "remark": {
+                              "type": "string",
+                              "maxLength": 4000
+                            },
+                            "exchange_rates": {
+                              "type": "object",
+                              "properties": {
+                                "USD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "CAD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "USD",
+                                "CAD"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "fee_items": {
+                              "minItems": 1,
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "quote_no",
+                            "customer_name",
+                            "quote_date",
+                            "valid_until",
+                            "origin",
+                            "destination",
+                            "route_name",
+                            "job_no",
+                            "so_no",
+                            "container_no",
+                            "remark",
+                            "exchange_rates",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template": {
+                          "type": "object",
+                          "properties": {
+                            "company_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "company_address": {
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "company_phone": {
+                              "type": "string",
+                              "maxLength": 50
+                            },
+                            "company_email": {
+                              "type": "string",
+                              "maxLength": 254
+                            },
+                            "terms": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4000
+                            },
+                            "fee_items": {
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "company_name",
+                            "company_address",
+                            "company_phone",
+                            "company_email",
+                            "terms",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template_version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        },
+                        "owner_id": {
+                          "type": "string"
+                        },
+                        "approval": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "evidence_ref": {
+                                  "type": "string"
+                                },
+                                "evidence_version": {
+                                  "type": "string"
+                                },
+                                "review_notes": {
+                                  "type": "string"
+                                },
+                                "actor": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "evidence_ref",
+                                "evidence_version",
+                                "review_notes",
+                                "actor",
+                                "at"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "state",
+                        "input",
+                        "template",
+                        "template_version",
+                        "created_at",
+                        "owner_id",
+                        "approval"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/approve": {
+      "post": {
+        "operationId": "quoteDocuments_approve",
+        "summary": "人员报价单 approve",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "evidence_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "evidence_version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "review_notes": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "confirmation": {
+                    "type": "string",
+                    "const": "human_verified_price_and_source"
+                  }
+                },
+                "required": [
+                  "id",
+                  "expected_version",
+                  "evidence_ref",
+                  "evidence_version",
+                  "review_notes",
+                  "confirmation"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "draft",
+                            "approved"
+                          ]
+                        },
+                        "input": {
+                          "type": "object",
+                          "properties": {
+                            "quote_no": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "customer_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "quote_date": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "valid_until": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "origin": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "destination": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "route_name": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "job_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "so_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "container_no": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "remark": {
+                              "type": "string",
+                              "maxLength": 4000
+                            },
+                            "exchange_rates": {
+                              "type": "object",
+                              "properties": {
+                                "USD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "CAD": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "USD",
+                                "CAD"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "fee_items": {
+                              "minItems": 1,
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "quote_no",
+                            "customer_name",
+                            "quote_date",
+                            "valid_until",
+                            "origin",
+                            "destination",
+                            "route_name",
+                            "job_no",
+                            "so_no",
+                            "container_no",
+                            "remark",
+                            "exchange_rates",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template": {
+                          "type": "object",
+                          "properties": {
+                            "company_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "company_address": {
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "company_phone": {
+                              "type": "string",
+                              "maxLength": 50
+                            },
+                            "company_email": {
+                              "type": "string",
+                              "maxLength": 254
+                            },
+                            "terms": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4000
+                            },
+                            "fee_items": {
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "company_name",
+                            "company_address",
+                            "company_phone",
+                            "company_email",
+                            "terms",
+                            "fee_items"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "template_version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        },
+                        "owner_id": {
+                          "type": "string"
+                        },
+                        "approval": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "evidence_ref": {
+                                  "type": "string"
+                                },
+                                "evidence_version": {
+                                  "type": "string"
+                                },
+                                "review_notes": {
+                                  "type": "string"
+                                },
+                                "actor": {
+                                  "type": "string"
+                                },
+                                "at": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "evidence_ref",
+                                "evidence_version",
+                                "review_notes",
+                                "actor",
+                                "at"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "state",
+                        "input",
+                        "template",
+                        "template_version",
+                        "created_at",
+                        "owner_id",
+                        "approval"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/list": {
+      "post": {
+        "operationId": "quoteDocuments_list",
+        "summary": "人员报价单 list",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "default": 30,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "before": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "limit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "draft",
+                                  "approved"
+                                ]
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                              },
+                              "quote_no": {
+                                "type": "string"
+                              },
+                              "customer_name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version",
+                              "state",
+                              "created_at",
+                              "quote_no",
+                              "customer_name"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "next_cursor": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "items",
+                        "next_cursor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console/api/v1/quote-documents/export": {
+      "post": {
+        "operationId": "quoteDocuments_export",
+        "summary": "人员报价单 export",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "quote-documents@2026-09-08.v1"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "draft": {
+                          "type": "boolean"
+                        },
+                        "filename": {
+                          "type": "string",
+                          "pattern": "^quotation-[a-f0-9-]+-v[0-9]+\\.pdf$"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "byte_length": {
+                          "type": "integer",
+                          "minimum": 100,
+                          "maximum": 8388608
+                        },
+                        "content_base64": {
+                          "type": "string",
+                          "maxLength": 11184812,
+                          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                        },
+                        "totals": {
+                          "type": "object",
+                          "properties": {
+                            "rows": {
+                              "maxItems": 60,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "description": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "group": {
+                                    "type": "string",
+                                    "enum": [
+                                      "A",
+                                      "B",
+                                      "C"
+                                    ]
+                                  },
+                                  "quantity": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20
+                                  },
+                                  "unit_price": {
+                                    "type": "string",
+                                    "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                                  },
+                                  "currency": {
+                                    "type": "string",
+                                    "enum": [
+                                      "USD",
+                                      "CAD",
+                                      "CNY"
+                                    ]
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "enum": [
+                                      "detail",
+                                      "hiddenIncluded",
+                                      "hiddenExcluded",
+                                      "merged"
+                                    ]
+                                  },
+                                  "merge_name": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "note": {
+                                    "default": "",
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  "amount": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]+\\.[0-9]{2}$"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "description",
+                                  "group",
+                                  "quantity",
+                                  "unit",
+                                  "unit_price",
+                                  "currency",
+                                  "display",
+                                  "merge_name",
+                                  "note",
+                                  "amount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "by_currency": {
+                              "type": "object",
+                              "properties": {
+                                "USD": {
+                                  "type": "string"
+                                },
+                                "CAD": {
+                                  "type": "string"
+                                },
+                                "CNY": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "total_cny": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "total_usd": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "warnings": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "calculation_version": {
+                              "type": "string",
+                              "const": "quote-documents-decimal-v1"
+                            }
+                          },
+                          "required": [
+                            "rows",
+                            "by_currency",
+                            "total_cny",
+                            "total_usd",
+                            "warnings",
+                            "calculation_version"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "draft",
+                        "filename",
+                        "sha256",
+                        "byte_length",
+                        "content_base64",
+                        "totals"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason_codes": {
+                      "minItems": 0,
+                      "maxItems": 0,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "status",
+                    "data",
+                    "reason_codes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

@@ -1,3 +1,4 @@
+@import "./quote-documents.css";
 @import "./fonts/fonts.css";
 
 :root{color-scheme:light;--ink:#202939;--muted:#637083;--canvas:#f6f7fb;--surface:#fff;--soft:#f8f9fc;--sidebar:#f1f2f5;--line:#e1e5ec;--strong:#cbd2dc;--brand:#3659db;--brand-dark:#2947bd;--blue-soft:#eef2ff;--green:#227a50;--green-soft:#edf8f2;--amber:#88580e;--amber-soft:#fff7e7;--red:#b23a48;--red-soft:#fff0f2;--radius:12px;--font:"Manrope","Noto Sans SC",sans-serif;--font-code:"JetBrains Mono","Noto Sans SC",monospace}

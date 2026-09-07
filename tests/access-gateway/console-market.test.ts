@@ -14,7 +14,8 @@ describe('public capability market', () => {
   it('keeps the actual MCP boundary separate from the five business API capabilities', () => {
     expect(marketServices.filter((item: { protocol: string }) => item.protocol === 'mcp').map((item: { id: string }) => item.id)).toEqual(['cargo.calculate', 'container.plan_summary', 'system.agent_context.get']);
     expect(marketServices.filter((item: { protocol: string }) => item.protocol === 'api')).toHaveLength(5);
-    expect(new Set(marketServices.map((item: { id: string }) => item.id)).size).toBe(8);
+    expect(marketServices.filter(item=>item.protocol==='workspace').map(item=>item.id)).toEqual(['quote.documents']);
+    expect(new Set(marketServices.map((item: { id: string }) => item.id)).size).toBe(9);
   });
   it('combines Chinese search, protocol and business category filters', () => {
     expect(filterMarketServices({ query: '关税' }).map((item: { id: string }) => item.id)).toContain('customs.query');

@@ -186,3 +186,6 @@ await buildInquiry();
 
 // Ship the native Python calculation core with the Portal build.
 cpSync("services/quote-native", "dist/services/quote-native", { recursive: true, filter: (source) => !source.includes("__pycache__") });
+
+mkdirSync(resolve('dist/services/quote-documents'),{recursive:true});
+cpSync(resolve('apps/console/fonts'),resolve('dist/services/quote-documents/fonts'),{recursive:true});

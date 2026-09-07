@@ -1,4 +1,5 @@
 export const marketServices = Object.freeze([
+  { id:'quote.documents',configuration:{kind:'quote-documents',description:'公司资料、客户条款与常用费用模板；已有报价单保留原版本。'},name:'报价单制作',category:'quote',protocol:'workspace',icon:'file',tone:'blue',provider:'FreightClaw 报价单',description:'整理多币种费用，保存报价记录并导出客户 PDF。',detail:'移植自 Quote PDF Builder。支持企业模板、费用分组与展示、精确合计、草稿保存及人工核对后的 PDF 导出。通过人员会话使用网页和 CLI。',outputs:['多币种费用与客户报价单','企业模板和不可变单据快照','草稿标识、人工核对与 PDF 校验'],path:'/console/api/v1/quote-documents/preview',online:'quote-documents'},
   { id: 'cargo.calculate', configuration: { state:'fixed', description:'计算规则随服务版本发布，无需单独配置企业参数。' }, name: '货物计算', category: 'cargo', protocol: 'mcp', icon: 'box', tone: 'blue', provider: 'FreightClaw', description: '从件数、尺寸和重量，计算体积、体积重与计费重。', detail: '支持单件重量、逐件重量与整行总重三种证据模式。计算过程保留单位、规则版本和来源，缺少必要资料时明确提示补充。', outputs: ['货物总体积与总重量', '体积重、分泡与计费重', '逐项计算过程和规则依据'], path: '/api/v2/tools/cargo.calculate' },
   { id: 'container.plan_summary', configuration: { state:'fixed', description:'装柜限制由每次规划输入，当前没有独立企业配置项。' }, name: '装柜规划', category: 'cargo', protocol: 'mcp', icon: 'container', tone: 'cyan', provider: 'FreightClaw', description: '核对装载容量、超方超重与装柜限制，形成规划摘要。', detail: '结合货物清单和集装箱限制，区分理论容量与可操作容量。结果用于装载评估，实际作业仍需核对包装、设备与现场条件。', outputs: ['容量与装载汇总', '超方、超重与限制提示', '装载顺序摘要'], path: '/api/v2/tools/container.plan_summary' },
   { id: 'system.agent_context.get', configuration: { state:'fixed', description:'标准随平台版本发布，应用权限在个人中心管理。' }, name: 'Agent 接入上下文', category: 'agent', protocol: 'mcp', icon: 'code', tone: 'violet', provider: 'FreightClaw', description: '让 Agent 读取工具规范、权限范围和当前调用约束。', detail: '为 Agent 提供已生成的标准包与工具上下文，帮助它正确选择输入、处理结果和识别需要人工复核的情形。', outputs: ['当前工具调用规范', '输入与输出约束', '标准包版本引用'], path: '/api/v2/tools/system.agent_context.get' },
@@ -15,6 +16,7 @@ export function filterMarketServices({ query = '', protocol = 'all', category = 
 }
 export function agentInstallPrompt(serviceId = '') {
   const service = marketServices.find((item) => item.id === serviceId);
+  if(serviceId==='quote.documents')return '阅读 https://www.freightclaw.net/console/workspace-cli.md，通过 workspace documents 命令管理报价单；先完成网页授权的人员会话。';
   return `阅读 https://www.freightclaw.net/console/skill.md，帮我接入 FreightClaw 物流能力${service ? `，使用 ${service.id}` : ''}。`;
 }
 

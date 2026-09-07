@@ -193,3 +193,7 @@ npm run start:fixture
 - [新服务接入](docs/integrations/new-service-onboarding.md)、[完整产品规划与历史方案](docs/product/2026-09-05-mcp-product-redesign/README.md)
 
 本仓库 CI 执行编译、测试、Schema、演示门禁和镜像构建，不自动部署生产。提交或绿色 CI 不能替代目标环境的业务验收。
+
+### 原生报价单模块
+
+服务市场 → **报价单制作**：企业模板、分币种费用、草稿记录、人工核对和 PDF 导出；网页与八个 `freightclaw workspace documents` 命令共享人员权限及业务存储。代码移植自用户的 `quote-pdf-builder`，没有依赖旧站 API。详情、部署条件与截图见 [报价单模块说明](docs/product/2026-09-08-native-quote-documents.md)。当前为本地完成的功能，线上部署需单独验证；账单、收款和旧 PDF 回导尚未迁移。

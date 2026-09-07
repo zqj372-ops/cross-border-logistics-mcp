@@ -1,3 +1,6 @@
+import type { DocumentService } from '../../quote-documents/service';
+import { VERSION as DOCUMENT_VERSION, outputSchemas as documentOutputSchemas } from '../../quote-documents/contracts';
+import { calculate } from '../../quote-documents/engine';
 import type { NativeFreightcomService } from './native-freightcom';
 import type { NativeAdminService } from './native-admin';
 import { NATIVE_ADMIN_VERSION, nativeDataSchema, freightcomViewSchema, type NativeKind } from './native-admin-contracts';
@@ -52,6 +55,7 @@ export interface PortalHttpOptions {
   readonly caseService?: CaseService;
   readonly channelService?: ChannelService;
   readonly nativeAdmin?: NativeAdminService;
+  readonly documentService?: DocumentService;
   readonly nativeFreightcom?: NativeFreightcomService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
@@ -105,6 +109,7 @@ function json(response: ServerResponse, status: number, body: unknown, cookie?: 
   response.statusCode = status; commonHeaders(response); response.setHeader("content-type", "application/json; charset=utf-8"); if (cookie) response.setHeader("set-cookie", cookie); response.end(JSON.stringify(preserveSourceShape ? body : wire(body)));
 }
 function errorStatus(code: string): number {
+  if (code === "document_pdf_invalid") return 503;
   if (code === "case_daily_limit" || code === "cli_rate_limited") return 429;
   if (code === "case_transition_invalid") return 409;
   if (code === "login_rate_limited") return 429;
@@ -175,6 +180,7 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
+  if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|save|list|get|approve|export)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/channels(?:\/[0-9a-f-]{36}(?:\/(?:save|preview|publish|disable|history|rollback))?)?$/u.test(path)) return true;
@@ -273,6 +279,13 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      const nativeDocumentMatch=/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|save|list|get|approve|export)$/u.exec(path);
+      if(nativeDocumentMatch){
+        const service=options.documentService;if(!service)throw new PortalError('document_service_unavailable');if(url.search)throw new PortalError('document_input_invalid');const action=nativeDocumentMatch[1];let data:unknown;
+        if(action==='config'&&request.method==='GET')data=service.config(ctx);
+        else if(request.method==='POST'&&action!=='config'){const input=await body(request,131072);switch(action){case 'config-save':data=service.saveConfig(ctx,input,idempotency(request));break;case 'preview':{const p=service.preview(ctx,input);data={...p,totals:calculate(p.input)};break;}case 'save':data=service.save(ctx,input,idempotency(request));break;case 'list':data=service.list(ctx,input);break;case 'get':data=service.get(ctx,input);break;case 'approve':data=service.approve(ctx,input,idempotency(request));break;case 'export':data=await service.export(ctx,input);break;}}
+        else throw new PortalError('method_not_allowed');data=documentOutputSchemas[action!]!.parse(data);json(response,200,{schema_version:DOCUMENT_VERSION,status:'success',data,reason_codes:[]},undefined,true);return true;
+      }
       const nativeFreightcom=/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.exec(path);
       if(nativeFreightcom){if(!options.nativeFreightcom)throw new PortalError("native_admin_unavailable");if(url.search)throw new PortalError("native_input_invalid");const action=nativeFreightcom[1];let data:unknown;if(request.method==="GET"&&!action)data=options.nativeFreightcom.get(ctx);else if(request.method==="POST"&&action)data=options.nativeFreightcom.change(ctx,await body(request,8192),idempotency(request),action==="disable");else throw new PortalError("method_not_allowed");data=freightcomViewSchema.parse(data);json(response,200,{schema_version:NATIVE_ADMIN_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;}
       const nativeMatch=/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.exec(path);
