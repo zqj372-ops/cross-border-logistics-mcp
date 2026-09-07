@@ -1,0 +1,417 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-07T04:29:17Z",
+  "title": "Design System: FreightClaw Console",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "primary",
+        "canonical": "#3659db",
+        "tonalRamp": [
+          "oklch(15% 0.20249 267.25)",
+          "oklch(26% 0.20249 267.25)",
+          "oklch(38% 0.20249 267.25)",
+          "oklch(49% 0.20249 267.25)",
+          "oklch(61% 0.20249 267.25)",
+          "oklch(72% 0.20249 267.25)",
+          "oklch(84% 0.20249 267.25)",
+          "oklch(95% 0.20249 267.25)"
+        ]
+      },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "primary-hover",
+        "canonical": "#2947bd",
+        "tonalRamp": [
+          "oklch(15% 0.18815 267.17)",
+          "oklch(26% 0.18815 267.17)",
+          "oklch(38% 0.18815 267.17)",
+          "oklch(49% 0.18815 267.17)",
+          "oklch(61% 0.18815 267.17)",
+          "oklch(72% 0.18815 267.17)",
+          "oklch(84% 0.18815 267.17)",
+          "oklch(95% 0.18815 267.17)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "canvas",
+        "canonical": "#f7f8fb",
+        "tonalRamp": [
+          "oklch(15% 0.00412 271.37)",
+          "oklch(26% 0.00412 271.37)",
+          "oklch(38% 0.00412 271.37)",
+          "oklch(49% 0.00412 271.37)",
+          "oklch(61% 0.00412 271.37)",
+          "oklch(72% 0.00412 271.37)",
+          "oklch(84% 0.00412 271.37)",
+          "oklch(95% 0.00412 271.37)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "surface",
+        "canonical": "#fff",
+        "tonalRamp": [
+          "oklch(15% 0.00000 0.00)",
+          "oklch(26% 0.00000 0.00)",
+          "oklch(38% 0.00000 0.00)",
+          "oklch(49% 0.00000 0.00)",
+          "oklch(61% 0.00000 0.00)",
+          "oklch(72% 0.00000 0.00)",
+          "oklch(84% 0.00000 0.00)",
+          "oklch(95% 0.00000 0.00)"
+        ]
+      },
+      "soft": {
+        "role": "neutral",
+        "displayName": "soft",
+        "canonical": "#f8f9fc",
+        "tonalRamp": [
+          "oklch(15% 0.00412 271.37)",
+          "oklch(26% 0.00412 271.37)",
+          "oklch(38% 0.00412 271.37)",
+          "oklch(49% 0.00412 271.37)",
+          "oklch(61% 0.00412 271.37)",
+          "oklch(72% 0.00412 271.37)",
+          "oklch(84% 0.00412 271.37)",
+          "oklch(95% 0.00412 271.37)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "ink",
+        "canonical": "#202939",
+        "tonalRamp": [
+          "oklch(15% 0.03233 261.69)",
+          "oklch(26% 0.03233 261.69)",
+          "oklch(38% 0.03233 261.69)",
+          "oklch(49% 0.03233 261.69)",
+          "oklch(61% 0.03233 261.69)",
+          "oklch(72% 0.03233 261.69)",
+          "oklch(84% 0.03233 261.69)",
+          "oklch(95% 0.03233 261.69)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "muted",
+        "canonical": "#637083",
+        "tonalRamp": [
+          "oklch(15% 0.03370 257.79)",
+          "oklch(26% 0.03370 257.79)",
+          "oklch(38% 0.03370 257.79)",
+          "oklch(49% 0.03370 257.79)",
+          "oklch(61% 0.03370 257.79)",
+          "oklch(72% 0.03370 257.79)",
+          "oklch(84% 0.03370 257.79)",
+          "oklch(95% 0.03370 257.79)"
+        ]
+      },
+      "support": {
+        "role": "neutral",
+        "displayName": "support",
+        "canonical": "#566780",
+        "tonalRamp": [
+          "oklch(15% 0.04499 257.92)",
+          "oklch(26% 0.04499 257.92)",
+          "oklch(38% 0.04499 257.92)",
+          "oklch(49% 0.04499 257.92)",
+          "oklch(61% 0.04499 257.92)",
+          "oklch(72% 0.04499 257.92)",
+          "oklch(84% 0.04499 257.92)",
+          "oklch(95% 0.04499 257.92)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "line",
+        "canonical": "#e1e5ec",
+        "tonalRamp": [
+          "oklch(15% 0.01042 261.79)",
+          "oklch(26% 0.01042 261.79)",
+          "oklch(38% 0.01042 261.79)",
+          "oklch(49% 0.01042 261.79)",
+          "oklch(61% 0.01042 261.79)",
+          "oklch(72% 0.01042 261.79)",
+          "oklch(84% 0.01042 261.79)",
+          "oklch(95% 0.01042 261.79)"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "border-strong",
+        "canonical": "#cbd2dc",
+        "tonalRamp": [
+          "oklch(15% 0.01581 257.20)",
+          "oklch(26% 0.01581 257.20)",
+          "oklch(38% 0.01581 257.20)",
+          "oklch(49% 0.01581 257.20)",
+          "oklch(61% 0.01581 257.20)",
+          "oklch(72% 0.01581 257.20)",
+          "oklch(84% 0.01581 257.20)",
+          "oklch(95% 0.01581 257.20)"
+        ]
+      },
+      "blue-soft": {
+        "role": "primary",
+        "displayName": "blue-soft",
+        "canonical": "#eef2ff",
+        "tonalRamp": [
+          "oklch(15% 0.01793 272.31)",
+          "oklch(26% 0.01793 272.31)",
+          "oklch(38% 0.01793 272.31)",
+          "oklch(49% 0.01793 272.31)",
+          "oklch(61% 0.01793 272.31)",
+          "oklch(72% 0.01793 272.31)",
+          "oklch(84% 0.01793 272.31)",
+          "oklch(95% 0.01793 272.31)"
+        ]
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "success",
+        "canonical": "#227a50",
+        "tonalRamp": [
+          "oklch(15% 0.10612 158.03)",
+          "oklch(26% 0.10612 158.03)",
+          "oklch(38% 0.10612 158.03)",
+          "oklch(49% 0.10612 158.03)",
+          "oklch(61% 0.10612 158.03)",
+          "oklch(72% 0.10612 158.03)",
+          "oklch(84% 0.10612 158.03)",
+          "oklch(95% 0.10612 158.03)"
+        ]
+      },
+      "success-soft": {
+        "role": "secondary",
+        "displayName": "success-soft",
+        "canonical": "#edf8f2",
+        "tonalRamp": [
+          "oklch(15% 0.01404 162.48)",
+          "oklch(26% 0.01404 162.48)",
+          "oklch(38% 0.01404 162.48)",
+          "oklch(49% 0.01404 162.48)",
+          "oklch(61% 0.01404 162.48)",
+          "oklch(72% 0.01404 162.48)",
+          "oklch(84% 0.01404 162.48)",
+          "oklch(95% 0.01404 162.48)"
+        ]
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "warning",
+        "canonical": "#88580e",
+        "tonalRamp": [
+          "oklch(15% 0.10284 70.84)",
+          "oklch(26% 0.10284 70.84)",
+          "oklch(38% 0.10284 70.84)",
+          "oklch(49% 0.10284 70.84)",
+          "oklch(61% 0.10284 70.84)",
+          "oklch(72% 0.10284 70.84)",
+          "oklch(84% 0.10284 70.84)",
+          "oklch(95% 0.10284 70.84)"
+        ]
+      },
+      "warning-soft": {
+        "role": "secondary",
+        "displayName": "warning-soft",
+        "canonical": "#fff7e7",
+        "tonalRamp": [
+          "oklch(15% 0.02272 84.59)",
+          "oklch(26% 0.02272 84.59)",
+          "oklch(38% 0.02272 84.59)",
+          "oklch(49% 0.02272 84.59)",
+          "oklch(61% 0.02272 84.59)",
+          "oklch(72% 0.02272 84.59)",
+          "oklch(84% 0.02272 84.59)",
+          "oklch(95% 0.02272 84.59)"
+        ]
+      },
+      "error": {
+        "role": "secondary",
+        "displayName": "error",
+        "canonical": "#b23a48",
+        "tonalRamp": [
+          "oklch(15% 0.15499 17.61)",
+          "oklch(26% 0.15499 17.61)",
+          "oklch(38% 0.15499 17.61)",
+          "oklch(49% 0.15499 17.61)",
+          "oklch(61% 0.15499 17.61)",
+          "oklch(72% 0.15499 17.61)",
+          "oklch(84% 0.15499 17.61)",
+          "oklch(95% 0.15499 17.61)"
+        ]
+      },
+      "error-soft": {
+        "role": "secondary",
+        "displayName": "error-soft",
+        "canonical": "#fff0f2",
+        "tonalRamp": [
+          "oklch(15% 0.01640 8.16)",
+          "oklch(26% 0.01640 8.16)",
+          "oklch(38% 0.01640 8.16)",
+          "oklch(49% 0.01640 8.16)",
+          "oklch(61% 0.01640 8.16)",
+          "oklch(72% 0.01640 8.16)",
+          "oklch(84% 0.01640 8.16)",
+          "oklch(95% 0.01640 8.16)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "正文",
+        "purpose": "中文业务正文与表单，使用已有本地字体栈。"
+      },
+      "headline": {
+        "displayName": "业务页面标题",
+        "purpose": "记录既有页面标题尺度；不确认系统展示字体为未来选型。"
+      },
+      "code": {
+        "displayName": "代码",
+        "purpose": "CLI、API 与手册的命令及标识。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "account-dropdown",
+        "value": "0 12px 36px #172a4821",
+        "purpose": "账号浮层。"
+      },
+      {
+        "name": "notification",
+        "value": "0 8px 25px #20293925",
+        "purpose": "短时通知浮层。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "entry-control",
+        "value": "background-color .16s ease, color .16s ease",
+        "purpose": "首页按钮与账号开关，仅在未请求减少动效时使用。"
+      },
+      {
+        "name": "capability-card",
+        "value": "border-color 180ms ease, background-color 180ms ease",
+        "purpose": "能力卡片的状态反馈；减少动效时关闭。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "market-two-column",
+        "value": "1120px"
+      },
+      {
+        "name": "entry-compact",
+        "value": "1000px"
+      },
+      {
+        "name": "detail-stack",
+        "value": "900px"
+      },
+      {
+        "name": "mobile-navigation",
+        "value": "760px"
+      },
+      {
+        "name": "entry-stack",
+        "value": "720px"
+      },
+      {
+        "name": "compact-shell",
+        "value": "540px"
+      },
+      {
+        "name": "narrow-controls",
+        "value": "360px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "主按钮",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "业务默认主操作，使用业务蓝与明确键盘焦点。",
+      "html": "<button class=\"ds-primary\">查询关税</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:9px 16px;border:1px solid var(--strong,#cbd2dc);border-radius:8px;cursor:pointer;text-decoration:none;font:600 13px/1.55 var(--font,Inter,\"SF Pro Text\",\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);background:var(--brand,#3659db);border-color:var(--brand,#3659db);color:#fff}.ds-primary:hover{background:var(--brand-dark,#2947bd)}.ds-primary:focus-visible{outline:3px solid #8197ee;outline-offset:3px;}.ds-primary:disabled{opacity:.6;cursor:not-allowed}"
+    },
+    {
+      "name": "次按钮",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "次级操作使用白底与明确边界。",
+      "html": "<button class=\"ds-secondary\">查看说明</button>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:9px 16px;border:1px solid var(--strong,#cbd2dc);border-radius:8px;cursor:pointer;text-decoration:none;font:600 13px/1.55 var(--font,Inter,\"SF Pro Text\",\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);background:#fff;color:var(--ink,#202939)}.ds-secondary:hover{background:#f1f4f9}.ds-secondary:focus-visible{outline:3px solid #8197ee;outline-offset:3px;}.ds-secondary:disabled{opacity:.6;cursor:not-allowed}"
+    },
+    {
+      "name": "文本输入",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "可见标签和可读占位文字，不依靠占位文字承担标签。",
+      "html": "<label class=\"ds-field\">商品名称<input placeholder=\"例如：棉制针织 T 恤\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:7px;color:var(--ink,#202939);font:14px/1.55 var(--font,Inter,\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif)}.ds-field input{width:100%;border:1px solid var(--strong,#cbd2dc);border-radius:7px;background:#fff;min-height:42px;padding:10px 12px;color:var(--ink,#202939);font:inherit;line-height:1.45;caret-color:var(--brand,#3659db)}.ds-field input::placeholder{color:#637083;font-size:13px}.ds-field input:focus-visible{outline:3px solid #8197ee;outline-offset:3px;}"
+    },
+    {
+      "name": "协议筛选",
+      "kind": "chip",
+      "refersTo": "protocol-filter",
+      "description": "市场协议筛选使用浅蓝选中态和次级数量。",
+      "html": "<button class=\"ds-filter\" aria-pressed=\"true\">全部服务 <span>8</span></button>",
+      "css": ".ds-filter{display:inline-flex;align-items:center;gap:8px;min-height:42px;padding:9px 16px;border:0;border-radius:8px;background:#e9eeff;color:#3659db;font:600 15px/1.55 var(--font,Inter,\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);cursor:pointer}.ds-filter span{font-size:11px;border-radius:5px;padding:1px 6px;background:#dbe3ff;color:#304bc0}.ds-filter:hover{color:var(--brand,#3659db);background:#edf1fb}.ds-filter:focus-visible{outline:3px solid #8197ee;outline-offset:3px;}"
+    },
+    {
+      "name": "能力卡片",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "白色业务卡片按标题、说明与动作排列，悬停突出边界。",
+      "html": "<button class=\"ds-card\"><h3>关税查询</h3><p>查询商品归类、税则与适用措施。</p><span>查看服务说明</span></button>",
+      "css": ".ds-card{display:flex;flex-direction:column;padding:23px;min-height:236px;text-align:left;background:#fff;border:1px solid #e3e7ef;border-radius:12px;color:var(--ink,#202939);font-family:var(--font,Inter,\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);transition:border-color 180ms ease,background-color 180ms ease;cursor:pointer}.ds-card:hover{background:#fcfdff;border-color:#aebfe7}.ds-card:focus-visible{outline:3px solid #bdcdf7;outline-offset:3px}.ds-card h3{margin:0;font-size:17px;font-weight:650;line-height:1.5}.ds-card p{color:#637087;font-size:13px;line-height:1.8;margin:9px 0 0;flex:1}.ds-card span{color:#6c7990;font-size:11px;margin-top:23px}@media(prefers-reduced-motion:reduce){.ds-card{transition:none}}"
+    },
+    {
+      "name": "账号菜单",
+      "kind": "nav",
+      "description": "账号入口在公共导航右侧保持可见，个人操作位于柔和浮层。预览展示已展开状态。",
+      "html": "<div class=\"ds-account\"><button class=\"ds-account-toggle\" aria-label=\"账号菜单\" aria-expanded=\"true\"><span><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M5 21v-2a7 7 0 0 1 14 0v2\"/></svg></span><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><path d=\"m6 9 6 6 6-6\"/></svg></button><div class=\"ds-account-dropdown\"><div class=\"ds-account-summary\"><strong>账号</strong><span>登录后管理个人服务</span></div><button>登录个人中心</button></div></div>",
+      "css": ".ds-account{position:relative;min-height:210px;width:260px;font:14px/1.55 var(--font,Inter,\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif)}.ds-account-toggle{display:flex;align-items:center;gap:7px;min-height:44px;margin-left:auto;border:0;padding:4px 3px 4px 7px;background:#eef2fa;color:#596780;border-radius:24px;cursor:pointer}.ds-account-toggle span{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#eef2fb;color:#3659db}.ds-account-toggle span svg{width:19px;height:19px}.ds-account-toggle>svg{width:14px;height:14px}.ds-account-toggle:hover{background:#eef2fa}.ds-account-dropdown{position:absolute;right:0;top:54px;width:252px;padding:8px;border:1px solid #e2e7f0;border-radius:14px;background:#fff;box-shadow:0 12px 36px #172a4821}.ds-account-summary{display:grid;gap:6px;padding:14px 12px 18px;border-bottom:1px solid #edf0f4;margin-bottom:6px}.ds-account-summary strong{color:#202e52;font-size:14px}.ds-account-summary span{color:#667185;font-size:12px}.ds-account-dropdown button{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;border:0;border-radius:7px;padding:10px 12px;background:transparent;text-align:left;color:#263653;font:inherit;font-size:13px;cursor:pointer}.ds-account-dropdown button:hover{background:#f1f4fa}.ds-account button:focus-visible{outline:3px solid #8197ee;outline-offset:3px;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "FreightClaw 浅色业务工作台",
+    "overview": "延续已确认的 FreightClaw 浅色、蓝色体系，让货主与商家能够先找到业务入口，再阅读必要的说明与结果。白色阅读区域、清晰字重和轻边界组织信息；普通页面与开发者接入页面共享导航与基础控件。\n\n用户此前指定 [Wind Alice Market](https://aifinmarket.wind.com.cn/#/home) 为组织方式参考。保留轻顶栏、可检索市场、详情配置区和左侧目录手册；不复制第三方品牌、文案、用户数据或未实现产品。没有外部图片或字体服务依赖。图标以当前内联 SVG 资产为准。\n\n本次是对既有文档的合并更新，范围为 `apps/console`。首页双入口与工具行属于当前首页的编排，不能据此要求所有页面采用相同结构。官网根路径与 `/console/` 使用同一首页组件和构建资产；原海运询价服务的界面规范仍归其自身目录。",
+    "keyCharacteristics": [
+      "浅色画布承托白色内容区，蓝色标识主操作与选中项。",
+      "业务说明短而直接，专业参数、原始结果与接入细节按任务展开。",
+      "页面平面为主，以边界、底色和留白分层；浮层使用柔和阴影。",
+      "桌面与手机保持相同任务顺序，账号入口在手机顶栏保持可见。"
+    ],
+    "rules": [
+      {
+        "name": "The Readable Support Rule",
+        "body": "辅助文字依靠层级与位置降低强调，不通过降低到难以阅读的对比度来弱化。",
+        "section": "colors"
+      },
+      {
+        "name": "The Local Overflow Rule",
+        "body": "宽表格、代码和目录可以在自己的容器中滚动，页面本身不能横向溢出；窄屏检查比较文档 `scrollWidth` 与 `clientWidth`。",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "**Do** 延续浅色画布、蓝色主操作与真实业务状态的颜色分工。",
+      "**Do** 用间距、字重和清晰边界组织信息，辅助文字保持可阅读。",
+      "**Do** 保留可见标签、键盘焦点、菜单关闭与焦点恢复行为。",
+      "**Do** 将表格、目录和代码的横向滚动限制在局部容器。",
+      "**Do** 在桌面与手机保留任务顺序，并让账号入口始终可达。"
+    ],
+    "donts": [
+      "**Don't** 将首页双入口的当前编排升级为所有页面必须遵守的布局。",
+      "**Don't** 复制第三方品牌、未实现产品，或用样例结果代替真实来源状态。",
+      "**Don't** 把权限实现术语变成普通用户必须完成的操作步骤。",
+      "**Don't** 将完整凭证放入截图，或用颜色单独表达成功、警告与失败。",
+      "**Don't** 将遗留的小号大写眉题、装饰字形图标或系统展示字体继承确认为未来界面的设计规则。"
+    ]
+  }
+}

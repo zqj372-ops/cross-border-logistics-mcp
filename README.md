@@ -10,7 +10,8 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
 - [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；官网提供可直接安装的 npm 包。
-- [官网与 CLI 入口图文说明](docs/runbooks/unified-service-entry.md)：六张线上截图说明统一首页、保留的整柜询价及桌面/手机 CLI 入口，并记录发布和回滚步骤。
+- [公开首页与访客关税说明](docs/runbooks/public-portal.md)：账号菜单、每天 20 次访客查询、尾程登录边界、页面截图及发布和回滚记录。
+- [官网与 CLI 统一入口的首次发布](docs/runbooks/unified-service-entry.md)：保留的整柜询价、CLI 入口和历史发布步骤。
 - [简明海运询价图文说明](docs/runbooks/shipper-inquiry.md)：三步整理运输需求；完整费用目录保留，企业与合规咨询单独进入，邮件由客户自行确认发送。
 - [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)：四张实测截图说明安装后的命令选择、连接检查、输入校验与结果处理。
 
@@ -24,6 +25,8 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | [整柜 / 海运询价](https://www.freightclaw.net/inquiry/) | 选择服务、填写运输信息、确认需求并生成询价邮件 |
 | [全部服务与费用](https://www.freightclaw.net/inquiry/details/) | 保留原 84 项费用目录、分币种汇总和完整询价表单 |
 | [能力市场](https://www.freightclaw.net/console/#market) | 浏览能力、查询实际协议和接口、打开在线工作台 |
+| [关税查询](https://www.freightclaw.net/console/#customs) / [税费估算](https://www.freightclaw.net/console/#tax) | 访客共用每天 20 次查询；企业用户沿用已开通服务 |
+| [个人中心](https://www.freightclaw.net/console/#account) | 从右上角账号图标进入；登录后按角色查看工作区、历史和账号相关功能 |
 | [业务工作台](https://www.freightclaw.net/console/#workbench) | 企业成员通过登录会话处理询价、关务和税费，无需粘贴 API Key |
 | [API Key](https://www.freightclaw.net/console/#api-keys) | 应用负责人管理统一 Key、服务范围、交付、轮换和撤销 |
 | [操作手册](https://www.freightclaw.net/console/#guide) | 账号、授权、REST、MCP 和结果处理 |
@@ -32,9 +35,11 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 
 当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。
 
-下图为 2026-09-07 的官网实际页面。整柜询价和关税查询从同一首页进入，完整操作见 [图文说明](docs/runbooks/unified-service-entry.md)。
+首页、海运需求整理、市场、CLI 和操作手册可公开访问。关税和税费提供每天 20 次访客查询，同一网络共享、批量按商品数计次、北京时间零点恢复。加拿大尾程查询和个人数据仍需登录及相应权限；具体计次规则见 [访客查询说明](docs/runbooks/public-portal.md)。
 
-![FreightClaw 官网统一服务入口](docs/runbooks/assets/unified-service-entry/01-home-desktop.jpg)
+下图为 2026-09-07 更新后的官网实际页面。首页精简为“询运费，查关税。”，个人中心收进账号菜单。完整操作和访客额度说明见 [图文说明](docs/runbooks/public-portal.md)。
+
+![FreightClaw 公开首页，海运询价与每天 20 次访客关税查询](docs/runbooks/assets/public-portal/01-home-desktop.jpg)
 
 ### CLI 快速开始
 
