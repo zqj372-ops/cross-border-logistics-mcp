@@ -34,11 +34,27 @@ freightclaw workspace customs-packages browse --input browse.json --session-file
 
 1. 备份现有业务 SQLite、密钥文件、业务连接配置和数据包目录；保留当前镜像及配置。不得导入本地 fixture 身份或合成企业模板。
 2. 新版本将 native-business 与 quote-documents 数据库格式升至 **2**，保留原记录。共享身份/调用库仍保持自身版本；新业务库不支持共享 Postgres。
-3. 配置原生引擎、正式企业连接及 `PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH`；`PORTAL_PDF_BROWSER_EXECUTABLE` 为绝对路径。候选 Dockerfile 加装 Chromium，但目标容器运行尚待验证。保持浏览器沙箱，不默认传 `--no-sandbox`。
+3. 配置原生引擎、正式企业连接及 `PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH`；`PORTAL_PDF_BROWSER_EXECUTABLE` 为绝对路径。候选 Dockerfile 加装 Chromium，已在 Oracle 候选容器验证。部署时将 `deploy/portal/chromium-seccomp.json` 与 compose.yml 放在同目录，保持 256 MiB /tmp 和 init。保持浏览器沙箱，不默认传 `--no-sandbox`。
 4. 以真实企业身份核对两地运价、未知/冲突地址、混装、卸货条件、报价保存/审核/退回与 PDF；CLI 读回同一版本及文件 SHA-256。Freightcom 单独执行实际只读询价，不发邮件或订舱。
 5. 关务完成真实来源发布后再启用其数据包，检查税号、适用条件、税率与来源证据；未就绪时保持不可用。
-6. 通过后再合并发布候选和切换生产，记录 commit、镜像、迁移、数据包哈希及验收回执。
+6. 代码验收通过后可合并 main；只有上述正式业务验收完成后才切换生产。分别记录 commit、镜像、迁移、数据包哈希及验收回执，不把代码合并当成业务上线。
 
 ## 回滚
 
 停用/回退数据配置使用版本检查及人员确认，保留历史引用。程序回滚不能直接让旧二进制读取版本 2 业务库；旧版本将拒绝启动。先停止写入并备份当前库，再恢复匹配旧镜像的备份及配置；新记录另存并对账，不修改 `user_version` 强行降级。不得删除现有业务记录或密钥以“修复”启动。
+
+## 邮编城市规则迁移
+
+运行以下只读转换，不连接数据库或直接发布。输入目录包含 `online-quote-config-source.json`、`online-quote-effective.json`、`online-city-aliases.json`。转换会核对来源托盘算法版本，并拒绝尚未适配的邮编覆盖或城市别名。输出为待核验草稿和迁移摘要；修改正式库前仍需预览、人员确认与写后读回。
+
+```sh
+python3 deploy/scripts/prepare-residential-source.py --directory /absolute/private-source --valid-from 2026-09-07 --valid-until 2027-01-01
+```
+
+启用 `extensions.postal_city_v1` 后，CSV 按邮编、城市、省份更新，允许保留多个待复核分区；相同邮编、城市、省份、分区的完全重复行仍拒绝。主起运地和其他起运地共用此匹配模式。
+
+## 目标容器 PDF 验证
+
+镜像内运行 `node dist/deploy/verify-pdf-renderer.mjs /tmp/pdf-check.pdf`，输出仅含合成样张的字节数及 SHA-256，文件必须是新路径。它使用与正式导出相同的渲染器和中文字体，不访问企业资料。生产 Compose 保留 non-root、cap_drop ALL、只读根文件系统及 no-new-privileges；专用 seccomp 来源为 Playwright v1.58.2 的 `utils/docker/seccomp_profile.json`，增加 chroot 系统调用以供 Chromium 在自身用户命名空间内隔离根目录。内核仍校验能力，未授予容器主机 SYS_CHROOT 或 SYS_ADMIN。每次导出使用独立临时配置与缓存目录，结束后清理。
+
+来源：[Playwright Docker 沙箱说明](https://playwright.dev/docs/docker)、[固定版本 seccomp](https://github.com/microsoft/playwright/blob/v1.58.2/utils/docker/seccomp_profile.json)。不得使用 --no-sandbox 或 privileged 绕过。

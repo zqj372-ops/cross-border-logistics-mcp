@@ -8,7 +8,10 @@ services:
     user: '10001:10001'
     read_only: true
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./chromium-seccomp.json
+    init: true
     env_file: ${PORTAL_ENV_FILE:-/data/logistics-mcp/portal/secrets/portal.env}
     volumes:
       - /data/logistics-mcp/portal/state:/var/lib/freightclaw-portal
@@ -16,7 +19,7 @@ services:
       - logistics-mcp-gateway-state:/var/lib/access-gateway:ro
       - /data/logistics-mcp/config/secrets/4d39dcc8cbd0-access-gateway-postgres-password:/run/secrets/access_gateway_postgres_password:ro
     tmpfs:
-      - /tmp:size=32m,mode=1777
+      - /tmp:size=256m,mode=1777
     networks: [freightclaw]
     healthcheck:
       test: [CMD, node, --input-type=module, -e, "import http from 'node:http';const q=http.get('http://127.0.0.1:8082/console/readyz',{headers:{host:'www.freightclaw.net'}},r=>{r.resume();r.on('end',()=>process.exit(r.statusCode===200?0:1))});q.setTimeout(15000,()=>q.destroy());q.on('error',()=>process.exit(1))"]

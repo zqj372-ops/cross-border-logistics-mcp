@@ -13,11 +13,12 @@ directories = ['src', 'services', 'apps/admin', 'apps/access-console', 'apps/con
                'docs/contracts', 'docs/agent', 'docs/standards', 'docs/rfcs',
                'docs/superpowers/plans', 'deploy/scripts', 'schemas']
 files = {'package.json', 'package-lock.json', 'tsconfig.json', 'vitest.config.ts',
-         'deploy/Dockerfile', 'deploy/portal/inquiry-navigation.css', '.dockerignore'}
+         'deploy/Dockerfile', 'deploy/portal/inquiry-navigation.css', 'deploy/portal/compose.yml',
+         'deploy/portal/chromium-seccomp.json', 'deploy/portal/chromium-seccomp.LICENSE', '.dockerignore'}
 for directory in directories:
     for path in (root / directory).rglob('*'):
         if path.is_file() and not path.is_symlink() and path.suffix in {
-                '.ts', '.js', '.mjs', '.json', '.md', '.css', '.html', '.svg', '.woff2'}:
+                '.ts', '.js', '.mjs', '.json', '.md', '.css', '.html', '.svg', '.woff2', '.py', '.sql'}:
             if 'node_modules' not in path.parts and '__pycache__' not in path.parts:
                 files.add(str(path.relative_to(root)))
 contents = {name: (root / name).read_bytes() for name in sorted(files)}

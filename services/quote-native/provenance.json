@@ -69,5 +69,12 @@
       "Support header-driven tab/pipe tables, strict request and response schemas, bounded input and user-input provenance. No legacy API, AI credentials, historical data, notifications, source confirmed-field injection or business defaults.",
       "Keep existing quote.ai_extract_preview REST/CLI authority and output contract. Native mode works without published rates; pricing still requires an explicit native release."
     ]
+  },
+  "postal_city_migration": {
+    "source_commit": "e7d26d9711ea2183dacea9ab6016008f5ad64ff1",
+    "source_file": "packages/quote_engine/zone_lookup.py",
+    "source_sha256": "f62ccdd9d1b6651fd4fe36b218598dd1e22c21ec922180c00f56912fb445f696",
+    "target": "services/quote-native/run.py",
+    "adaptation": "Explicit postal_city_v1 restores source city disambiguation; whitespace and case normalization only; multiple zones for the same city remain manual_review. No implicit origin override or alias guesses."
   }
 }

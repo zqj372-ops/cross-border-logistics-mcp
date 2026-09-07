@@ -1,6 +1,7 @@
 """Bounded stdin/stdout bridge. No files, database, credentials, or network access."""
 import json
 import sys
+import re
 from decimal import Decimal
 from upstream.pallet_calculator import calculate_billing_pallets
 from mixed_pallets import calculate_mixed_pallets
@@ -10,6 +11,7 @@ from upstream.zone_pricing import calculate_zone_price
 def calculate(data):
     config, request = data['config'], data['request']
     quote_valid_days = config.get('extensions', {}).get('quote_valid_days_v1')
+    city_routing = config.get('extensions', {}).get('postal_city_v1', False)
     postal = request['postal_code'].replace(' ', '').replace('-', '').upper()
     profiles = [dict(origin=config['origin'], zones=config['zones'], rates=config['rates'], zone_controls_v1=config.get('extensions', {}).get('zone_controls_v1', []))] + config.get('extensions', {}).get('origins_v1', [])
     requested_origin = request.get('extensions', {}).get('origin_v1')
@@ -28,7 +30,20 @@ def calculate(data):
         return {'status': 'manual_review', 'reason_codes': ['postal_not_covered'], 'data': None}
     longest = max(len(z['postal_prefix']) for z in matches)
     matches = [z for z in matches if len(z['postal_prefix']) == longest]
-    if len(matches) != 1:
+    matched_by = 'published_postal_prefix'
+    if city_routing:
+        groups = {(z['zone'], z['province']) for z in matches}
+        if len(groups) > 1:
+            city = re.sub(r'\s+', ' ', (request.get('city') or '').strip()).upper()
+            if not city:
+                return {'status': 'needs_input', 'reason_codes': ['postal_city_required'], 'data': None}
+            matches = [z for z in matches if re.sub(r'\s+', ' ', z['city'].strip()).upper() == city]
+            if not matches:
+                return {'status': 'manual_review', 'reason_codes': ['postal_city_not_covered'], 'data': None}
+            if len({(z['zone'], z['province']) for z in matches}) != 1:
+                return {'status': 'manual_review', 'reason_codes': ['postal_zone_conflict'], 'data': None}
+            matched_by = 'published_postal_city'
+    elif len(matches) != 1:
         return {'status': 'manual_review', 'reason_codes': ['postal_zone_conflict'], 'data': None}
     zone = matches[0]
     controls = [c for c in config.get('extensions', {}).get('zone_controls_v1', []) if c['zone'] == zone['zone']]
@@ -63,8 +78,8 @@ def calculate(data):
         'currency': 'USD', 'source_type': 'zone_matrix', 'confidence': 100,
         'postal_code': postal, 'postal_prefix': zone['postal_prefix'], 'preferred_city': zone['city'], 'city': zone['city'], 'province': zone['province'], 'origin': config['origin'], 'zone': zone['zone'], 'billing_pallets': pallets.billing_pallets, 'pallet_breakdown': pallets.components,
         'base_price': format(base, '.2f'), 'fuel': format(price.fuel_usd, '.2f'), 'accessorials': {k: format(v, '.2f') for k, v in price.accessorials.items()}, 'total_price': format(price.total_price_usd, '.2f'), 'risk_tags': [], 'manual_review_required': False,
-        'matched_rule': config['label'], 'matched_by': 'published_postal_prefix', 'candidate_count': 1,
-        'match_trace': {'evidence_ref': config['evidence_ref'], 'evidence_version': config['evidence_version'], 'valid_from': config['valid_from'], 'valid_until': config['valid_until'], 'quote_valid_days': quote_valid_days, 'postal_match': zone['postal_prefix'], 'billing': config['billing'], 'cargo_lines': rows, 'calculation_version': 'native-mixed-cargo-v1', 'fees': fees, 'zone_control': control}, 'sales_note': config['customer_terms']}}
+        'matched_rule': config['label'], 'matched_by': matched_by, 'candidate_count': 1,
+        'match_trace': {'evidence_ref': config['evidence_ref'], 'evidence_version': config['evidence_version'], 'valid_from': config['valid_from'], 'valid_until': config['valid_until'], 'quote_valid_days': quote_valid_days, 'postal_match': zone['postal_prefix'], 'city_match': zone['city'] if matched_by == 'published_postal_city' else None, 'billing': config['billing'], 'cargo_lines': rows, 'calculation_version': 'native-mixed-cargo-v1', 'fees': fees, 'zone_control': control}, 'sales_note': config['customer_terms']}}
 
 
 if __name__ == '__main__':

@@ -15,7 +15,7 @@ export function buildPriceMatrix(records:ResidentialRates['rates']){
  records.forEach(record=>{const row=rows.get(record.zone)??{zone:record.zone,records:new Map()};row.records.set(record.pallets,record);rows.set(record.zone,row);});
  return [...rows.values()].sort((a,b)=>a.zone-b.zone);
 }
-export function parseRateSheet(rows:unknown[][],table:TableKind,origin:string):RateSheet{
+export function parseRateSheet(rows:unknown[][],table:TableKind,origin:string,cityRouting=false):RateSheet{
  const result:RateSheet={table,rates:[],zones:[],controls:[],errors:[],source_rows:0};
  const error=(message:string)=>{if(result.errors.length<50)result.errors.push(message);};
  if(rows.length<2){error('表格需要标题行和至少一行数据。');return result;}if(rows.length>5001||rows.some(row=>row.length>100)){error('表格最多 5000 行、100 列。');return result;}
@@ -33,7 +33,7 @@ export function parseRateSheet(rows:unknown[][],table:TableKind,origin:string):R
   if(table==='zones'){
    const postal=get('postal').replaceAll(' ','').toUpperCase(),city=get('city'),province=get('province').toUpperCase();
    if(!/^[ABCEGHJKLMNPRSTVXY][0-9][ABCEGHJKLMNPRSTVWXYZ](?:[0-9][ABCEGHJKLMNPRSTVWXYZ][0-9])?$/u.test(postal)||!city||city.length>100||!/^[A-Z]{2}$/u.test(province))error(`${at}请核对邮编、城市和两位省份代码。`);
-   if(seen.has(postal))error(`${at}邮编重复。`);seen.add(postal);result.zones.push({postal_prefix:postal,zone,city,province});continue;
+   const identity=cityRouting?`${postal}:${city.trim().replace(/\s+/gu,' ').toUpperCase()}:${province}:${zone}`:postal;if(seen.has(identity))error(`${at}邮编与城市重复。`);seen.add(identity);result.zones.push({postal_prefix:postal,zone,city,province});continue;
   }
   if(get('fuel')!==''||get('enabled')!==''){
    const fuel=get('fuel'),rawEnabled=get('enabled').toLowerCase(),enabled=rawEnabled===''?true:['true','1','是','启用'].includes(rawEnabled);
@@ -55,7 +55,7 @@ export function mergeRateSheet<T extends Pick<ResidentialRates,'rates'|'zones'> 
  if(parsed.table==='rates'){
   const rows=new Map(next.rates.map(r=>[`${r.zone}:${r.pallets}`,r]));parsed.rates.forEach(r=>rows.set(`${r.zone}:${r.pallets}`,r));next.rates=[...rows.values()].sort((a,b)=>a.zone-b.zone||a.pallets-b.pallets);
   const controls=new Map((next.extensions?.zone_controls_v1??[]).map(c=>[c.zone,c]));parsed.controls.forEach(c=>controls.set(c.zone,{enabled:true,fuel_percent:null,...controls.get(c.zone),...c}));if(controls.size)next.extensions={...next.extensions,zone_controls_v1:[...controls.values()].sort((a,b)=>a.zone-b.zone)};
- }else{const rows=new Map(next.zones.map(r=>[r.postal_prefix,r]));parsed.zones.forEach(r=>rows.set(r.postal_prefix,r));next.zones=[...rows.values()];}
+ }else if(next.extensions?.postal_city_v1){const key=(r:ResidentialRates['zones'][number])=>`${r.postal_prefix}:${r.city.trim().replace(/\s+/gu,' ').toUpperCase()}:${r.province}`;const replaced=new Set(parsed.zones.map(key));next.zones=[...next.zones.filter(r=>!replaced.has(key(r))),...parsed.zones];}else{const rows=new Map(next.zones.map(r=>[r.postal_prefix,r]));parsed.zones.forEach(r=>rows.set(r.postal_prefix,r));next.zones=[...rows.values()];}
  return next;
 }
 export async function readRateWorkbook(bytes:Uint8Array,name:string){

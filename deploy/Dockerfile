@@ -23,6 +23,7 @@ COPY docs/superpowers/plans/2026-08-21-module-runtime-agent-access-plan.md ./doc
 COPY deploy/scripts/build.mjs ./deploy/scripts/build.mjs
 COPY deploy/scripts/build-inquiry.mjs ./deploy/scripts/build-inquiry.mjs
 COPY deploy/portal/inquiry-navigation.css ./deploy/portal/inquiry-navigation.css
+COPY deploy/scripts/verify-pdf-renderer.ts ./deploy/scripts/verify-pdf-renderer.ts
 COPY deploy/scripts/start-portal-fixture.ts ./deploy/scripts/start-portal-fixture.ts
 COPY deploy/scripts/generate-portal-openapi.ts ./deploy/scripts/generate-portal-openapi.ts
 COPY deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
@@ -39,12 +40,12 @@ ENV MCP_PORT=8080
 ENV PORTAL_PDF_BROWSER_EXECUTABLE=/usr/bin/chromium
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends python3 chromium && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/docs/contracts ./docs/contracts
 COPY --from=build /app/deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
 COPY --from=build /app/deploy/scripts/migrate-access-gateway-postgres.mjs ./deploy/scripts/migrate-access-gateway-postgres.mjs
-
-RUN apt-get update && apt-get install -y --no-install-recommends python3 chromium && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
   && mkdir -p /var/lib/logistics-mcp /var/lib/access-gateway \

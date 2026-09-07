@@ -191,3 +191,5 @@ mkdirSync(resolve('dist/services/quote-documents'),{recursive:true});
 cpSync(resolve('apps/console/fonts'),resolve('dist/services/quote-documents/fonts'),{recursive:true});
 
 cpSync(resolve('services/quote-native/mixed_pallets.py'),resolve('dist/services/quote-native/mixed_pallets.py'));
+
+await build({entryPoints:["deploy/scripts/verify-pdf-renderer.ts"],outfile:"dist/deploy/verify-pdf-renderer.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
