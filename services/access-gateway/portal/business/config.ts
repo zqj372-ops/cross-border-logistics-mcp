@@ -1,3 +1,8 @@
+import type { NativeFreightcomService } from '../native-freightcom';
+import { nativeCustomsWithHistory } from '../native-customs-history';
+import { createNativeQuoteClient } from '../../../quote-native/client';
+import type { ResidentialRates } from '../../../quote-native/contracts';
+import type { NativeAdminStore } from '../native-admin';
 import { createCustomsHistoryClient } from "./customs-history-client";
 import type { CallRecorder } from "../call-log";
 import { lstatSync, readFileSync } from "node:fs";
@@ -32,7 +37,7 @@ const configSchema = z.object({
   publicAccess: publicAccessSchema.optional(),
   connections: z.array(z.object({
     organizationId: z.string().min(1), tenantId: z.string().min(1),
-    enabledOperations: z.array(operationSchema).min(1), customsHistoryEnabled:z.boolean().optional(), recordOperations: z.array(z.enum(["quote.record_save", "quote.record_read", "quote.review_read", "quote.review_manage", "quote.document_generate", "quote.document_read"])).optional(), customs: connectorSchema.optional(), quote: connectorSchema.optional(), freightcom: freightcomConnectorSchema.optional(),
+    enabledOperations: z.array(operationSchema).min(1), nativeFreightcom:z.boolean().optional(),nativeCustoms:z.boolean().optional(), nativeQuote:z.boolean().optional(), customsHistoryEnabled:z.boolean().optional(), recordOperations: z.array(z.enum(["quote.record_save", "quote.record_read", "quote.review_read", "quote.review_manage", "quote.document_generate", "quote.document_read"])).optional(), customs: connectorSchema.optional(), quote: connectorSchema.optional(), freightcom: freightcomConnectorSchema.optional(),
   }).strict()).max(1_000),
 }).strict();
 type ConnectorConfiguration = z.infer<typeof connectorSchema>;
@@ -41,6 +46,9 @@ export interface LoadPortalBusinessServiceOptions {
   readonly publicAuthority?: (binding: PortalPublicAccess) => Promise<void>;
   readonly callRecorder?: CallRecorder; readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>;
   readonly configPath?: string;
+  readonly nativeStore?: NativeAdminStore;
+  readonly nativeFreightcom?: NativeFreightcomService;
+  readonly nativeQuoteScript?: string;
   readonly allowLoopbackFixtures?: boolean;
   readonly fetchImpl?: typeof fetch;
 }
@@ -93,7 +101,7 @@ function readConfiguration(path: string): z.infer<typeof configSchema> {
     const customsEnabled = item.enabledOperations.some((operation) => operation.startsWith("customs."));
     const quoteEnabled = item.enabledOperations.some((operation) => operation === "quote.zone_preview" || operation === "quote.ai_extract_preview") || (item.recordOperations?.length ?? 0) > 0;
     const freightcomEnabled = item.enabledOperations.includes("quote.freightcom_ltl.preview");
-    if (customsEnabled !== (item.customs !== undefined) || quoteEnabled !== (item.quote !== undefined) || freightcomEnabled !== (item.freightcom !== undefined)) throw new Error("portal_business_config_invalid");
+    if (customsEnabled !== (item.customs !== undefined || item.nativeCustoms === true) || item.customs !== undefined && item.nativeCustoms === true || quoteEnabled !== (item.quote !== undefined || item.nativeQuote === true) || item.quote !== undefined && item.nativeQuote === true || freightcomEnabled !== (item.freightcom !== undefined || item.nativeFreightcom === true) || item.freightcom !== undefined && item.nativeFreightcom === true) throw new Error("portal_business_config_invalid");
   }
   const publisher = parsed.data.publicAccess;
   if (publisher) {
@@ -130,6 +138,8 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
     const connection: { organizationId: string; tenantId: string; enabledOperations: readonly PortalBusinessOperation[]; serviceActors: {customs?: string; quote?: string}; recordOperations: readonly ("quote.record_save"|"quote.record_read"|"quote.review_read"|"quote.review_manage"|"quote.document_generate"|"quote.document_read")[]; quoteRecordClient?: ReturnType<typeof createQuoteRecordPortalClient>; customsHistoryClient?:ReturnType<typeof createCustomsHistoryClient>; customsClient?: PortalBusinessConnection["customsClient"]; taxClient?: PortalBusinessConnection["taxClient"]; quoteClient?: PortalBusinessConnection["quoteClient"]; freightcomClient?: PortalBusinessConnection["freightcomClient"] } = {
       organizationId: item.organizationId, tenantId: item.tenantId, serviceActors: { ...(item.customs ? {customs: item.customs.serviceCallerId} : {}), ...(item.quote ? {quote: item.quote.serviceCallerId} : {}) }, recordOperations: Object.freeze(item.recordOperations ?? []), enabledOperations: Object.freeze([...item.enabledOperations]),
     };
+    if(item.nativeFreightcom){const credentials=options.nativeFreightcom;if(!credentials)throw new Error("native_freightcom_required");connection.freightcomClient={preview:request=>createFreightcomPortalClient({connectionId:`native-${item.organizationId}`,credentialProvider:()=>credentials.credential(item.organizationId)}).preview({...request,input:request.input as FreightcomPortalRateInput})};}
+    if(item.nativeCustoms||item.nativeQuote){if(!options.nativeStore)throw new Error("native_store_required");if(item.nativeCustoms){Object.assign(connection,nativeCustomsWithHistory(options.nativeStore,item.organizationId,item.tenantId));connection.serviceActors.customs="freightclaw-native-customs";}if(item.nativeQuote){const store=options.nativeStore;connection.quoteClient=createNativeQuoteClient(()=>store.current<ResidentialRates>(item.organizationId,"residential"),options.nativeQuoteScript);connection.serviceActors.quote="freightclaw-native-quote";}}
     if (item.customs) {
       const clientOptions = { baseUrl: item.customs.baseUrl, tenantId: item.tenantId,
       serviceCallerId: item.customs.serviceCallerId, applicationId: item.customs.applicationId,

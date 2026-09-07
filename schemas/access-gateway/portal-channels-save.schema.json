@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "expected_version": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z0-9][A-Z0-9_-]{1,39}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$"
+        },
+        "warehouse": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$"
+        },
+        "origin_country": {
+          "type": "string",
+          "enum": [
+            "CN",
+            "CA",
+            "US"
+          ]
+        },
+        "destination_country": {
+          "type": "string",
+          "enum": [
+            "CN",
+            "CA",
+            "US"
+          ]
+        },
+        "service": {
+          "type": "string",
+          "enum": [
+            "ocean_fcl",
+            "ocean_lcl",
+            "final_mile"
+          ]
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "CNY",
+            "CAD",
+            "USD"
+          ]
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        }
+      },
+      "required": [
+        "code",
+        "name",
+        "warehouse",
+        "origin_country",
+        "destination_country",
+        "service",
+        "currency",
+        "valid_from",
+        "valid_until"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "expected_version",
+    "input"
+  ],
+  "additionalProperties": false,
+  "$id": "https://freightclaw.local/schemas/portal-channels-save.schema.json"
+}

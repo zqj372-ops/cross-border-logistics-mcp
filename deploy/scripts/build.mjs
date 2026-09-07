@@ -53,7 +53,7 @@ const accessConsoleAssetSpecs = [
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
 execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "apps/console/openapi.json"], { stdio: "inherit" });
-const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg", "asset-licenses.md"].map((name) => ({ name, source: resolve("apps/console", name) }));
+const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "workspace-cli.md", "native-business.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg", "asset-licenses.md"].map((name) => ({ name, source: resolve("apps/console", name) }));
 const nodeEsmBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
 };
@@ -183,3 +183,6 @@ await build({entryPoints:["services/access-gateway/portal/postgres-migration.ts"
 await build({entryPoints:["src/logistics_mcp/module-runtime/provider-release-cli.ts"],outfile:"dist/src/logistics_mcp/module-runtime/provider-release-cli.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
 
 await buildInquiry();
+
+// Ship the native Python calculation core with the Portal build.
+cpSync("services/quote-native", "dist/services/quote-native", { recursive: true, filter: (source) => !source.includes("__pycache__") });

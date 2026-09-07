@@ -1,3 +1,7 @@
+import type { NativeFreightcomService } from './native-freightcom';
+import type { NativeAdminService } from './native-admin';
+import type { ChannelService } from "./channels";
+import type { CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -30,6 +34,10 @@ export interface StartPortalServerOptions {
   readonly businessService?: PortalBusinessService;
   readonly publicCustoms?: PortalPublicCustomsService;
   readonly callLogService?: PortalCallLogService;
+  readonly caseService?: CaseService;
+  readonly channelService?: ChannelService;
+  readonly nativeAdmin?: NativeAdminService;
+  readonly nativeFreightcom?: NativeFreightcomService;
   readonly businessAccessService?: BusinessAccessService;
   readonly businessMachineHandler?:PortalMachineHandler;
   readonly machineHandler?:PortalMachineHandler;
@@ -60,18 +68,18 @@ function securityHeaders(response: ServerResponse, cache: string): void {
   response.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()"); response.setHeader("content-security-policy", CSP);
 }
 function sendJson(response:ServerResponse,status:number,value:unknown,head:boolean):void{response.statusCode=status;securityHeaders(response,"no-store");response.setHeader("content-type","application/json; charset=utf-8");response.end(head?undefined:JSON.stringify(value));}
-function exactStaticPath(root: string, pathname: string): string | null {
+function exactStaticPath(root: string, pathname: string, prefix = "/console/"): string | null {
   if (pathname.includes("%2f") || pathname.includes("%5c")) return null;
   let decoded: string; try { decoded = decodeURIComponent(pathname); } catch { return null; }
   if (decoded.includes("\\") || decoded.split("/").includes("..")) return null;
-  const relative = decoded === "/console/" ? "index.html" : decoded.startsWith("/console/") ? decoded.slice("/console/".length) : "";
+  const relative = decoded === prefix ? "index.html" : decoded.startsWith(prefix) ? decoded.slice(prefix.length) : "";
   if (!relative) return null; const candidate = resolve(root, relative); return candidate.startsWith(`${root}${sep}`) ? candidate : null;
 }
-function serveStatic(request: IncomingMessage, response: ServerResponse, root: string, allowedHost: string): void {
+function serveStatic(request: IncomingMessage, response: ServerResponse, root: string, allowedHost: string, prefix = "/console/"): void {
   if (request.headers.host !== allowedHost || !["GET", "HEAD"].includes(request.method ?? "")) { response.statusCode = request.headers.host === allowedHost ? 405 : 403; securityHeaders(response,"no-store"); response.end(); return; }
   const pathname = new URL(request.url ?? "/", "http://portal.invalid").pathname;
-  if (pathname === "/console") { response.statusCode=308; securityHeaders(response,"no-store"); response.setHeader("location","/console/"); response.end(); return; }
-  const file = exactStaticPath(root, pathname);
+  if (pathname === prefix.slice(0,-1)) { response.statusCode=308; securityHeaders(response,"no-store"); response.setHeader("location",prefix); response.end(); return; }
+  const file = exactStaticPath(root, pathname === "/inquiry/details/" ? "/inquiry/details/index.html" : pathname, prefix);
   if (!file || !existsSync(file) || !statSync(file).isFile()) { response.statusCode=404; securityHeaders(response,"no-store"); response.end(); return; }
   response.statusCode=200; securityHeaders(response, file.endsWith("index.html") ? "no-store" : "public, max-age=300"); response.setHeader("content-type",CONTENT_TYPE[extname(file)]??"application/octet-stream");
   if (request.method === "HEAD") { response.end(); return; } createReadStream(file).pipe(response);
@@ -107,12 +115,12 @@ export async function startPortalServer(options: StartPortalServerOptions): Prom
       if(!options.runtimeStatus){sendJson(response,503,{status:"unavailable",data:{...identity,ready:false,checks:null},reason_codes:["portal_readiness_unconfigured"]},request.method==="HEAD");return;}
       const readiness=await options.runtimeStatus.readiness();sendJson(response,readiness.ready?200:503,{status:readiness.ready?"success":"unavailable",data:{...identity,...readiness},reason_codes:readiness.ready?[]:["portal_dependencies_unready"]},request.method==="HEAD");return;
     }
-    if(options.businessMachineHandler&&await options.businessMachineHandler.handle(request,response))return; if(options.machineHandler&&await options.machineHandler.handle(request,response))return; if (portalHandler && await portalHandler.handle(request,response)) return; serveStatic(request,response,staticRoot,allowedHost); })().catch(()=>{ if(!response.headersSent){response.statusCode=500;securityHeaders(response,"no-store");}response.end();}); });
+    if(options.businessMachineHandler&&await options.businessMachineHandler.handle(request,response))return; if(options.machineHandler&&await options.machineHandler.handle(request,response))return; if (portalHandler && await portalHandler.handle(request,response)) return; serveStatic(request,response,pathname.startsWith("/inquiry/")||pathname==="/inquiry"?resolve(staticRoot,"../inquiry"):staticRoot,allowedHost,pathname.startsWith("/inquiry/")||pathname==="/inquiry"?"/inquiry/":"/console/"); })().catch(()=>{ if(!response.headersSent){response.statusCode=500;securityHeaders(response,"no-store");}response.end();}); });
   await new Promise<void>((resolveListen,reject)=>{server.once("error",reject);server.listen(port,host,()=>{server.off("error",reject);resolveListen();});});
   const address=server.address(); if(!address||typeof address==="string"){server.close();throw new Error("portal_address_unavailable");}
   const boundHost=`${host.includes(":")?`[${host}]`:host}:${address.port}`; const origin=configuredOrigin?.origin??`http://${boundHost}`;
   const publicUrl=configuredOrigin??new URL(origin);
   allowedHost=publicUrl.host;
-  portalHandler=createPortalHttpHandler({...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
+  portalHandler=createPortalHttpHandler({ ...(options.nativeFreightcom?{nativeFreightcom:options.nativeFreightcom}:{}), ...(options.nativeAdmin?{nativeAdmin:options.nativeAdmin}:{}), ...(options.channelService ? {channelService: options.channelService} : {}),...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
   return {server,host,port:address.port,origin,close:()=>new Promise<void>((resolveClose,reject)=>server.close(error=>error?reject(error):resolveClose()))};
 }

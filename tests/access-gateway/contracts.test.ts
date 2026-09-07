@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 
 import { canonicalJsonHash } from "../../services/access-gateway/canonical-json";
@@ -10,7 +11,9 @@ import { canonicalJsonHash } from "../../services/access-gateway/canonical-json"
 const schemaDirectory = fileURLToPath(new URL("../../schemas/access-gateway/", import.meta.url));
 
 function createAjv(): Ajv2020 {
-  return new Ajv2020({ allErrors: true, strict: true });
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(ajv);
+  return ajv;
 }
 
 function assertClosedObjects(value: unknown, path = "schema"): void {
@@ -56,6 +59,20 @@ describe("Unified Access Gateway Draft 2020-12 contracts", () => {
       "portal-call-event.schema.json",
       "portal-call-page.schema.json",
       "portal-call-query.schema.json",
+      "portal-cases-input.schema.json",
+      "portal-cases-list.schema.json",
+      "portal-cases-reply.schema.json",
+      "portal-cases-response.schema.json",
+      "portal-cases-update.schema.json",
+      "portal-channels-disable.schema.json",
+      "portal-channels-history.schema.json",
+      "portal-channels-input.schema.json",
+      "portal-channels-list.schema.json",
+      "portal-channels-preview.schema.json",
+      "portal-channels-publish.schema.json",
+      "portal-channels-rollback.schema.json",
+      "portal-channels-save.schema.json",
+      "portal-channels-view.schema.json",
       "portal-error.schema.json",
       "portal-state.schema.json",
       "provider-release.schema.json",

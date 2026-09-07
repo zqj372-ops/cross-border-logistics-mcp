@@ -1,0 +1,112 @@
+{
+  "source_repository": "https://github.com/zqj372-ops/riskcustoms-hs",
+  "commit": "50aa174b6316c6b24d2df7f49aa51fbdf70d9d51",
+  "scope": "Explicit user-authorized internal code migration; upstream declares no standalone license file. No data, credentials, UI or login copied.",
+  "files": [
+    {
+      "source": "src/shared/domain/rates.ts",
+      "source_sha256": "8edd055c42159f5292c3680823236d65ea896dcfffc5c9ac1621e30d6ac0bb32",
+      "target": "services/customs-native/upstream/shared/domain/rates.ts",
+      "target_sha256": "8edd055c42159f5292c3680823236d65ea896dcfffc5c9ac1621e30d6ac0bb32",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/shared/domain/search-terms.ts",
+      "source_sha256": "4af4a79694845bd88afa13add0fe93ca3d8bdbbb13e7064db9e2a3b44a02c890",
+      "target": "services/customs-native/upstream/shared/domain/search-terms.ts",
+      "target_sha256": "4af4a79694845bd88afa13add0fe93ca3d8bdbbb13e7064db9e2a3b44a02c890",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/shared/domain/tariff-estimate.ts",
+      "source_sha256": "61f9a2f20e7f9fccfef9743fc86e0563326488f180799cc2ecf6dd373bc7061d",
+      "target": "services/customs-native/upstream/shared/domain/tariff-estimate.ts",
+      "target_sha256": "61f9a2f20e7f9fccfef9743fc86e0563326488f180799cc2ecf6dd373bc7061d",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/shared/domain/code.ts",
+      "source_sha256": "6ea64ce5826d1bc06af7ce12d7d0d2aa3ddc286ad78d87685cf510a507f9f59e",
+      "target": "services/customs-native/upstream/shared/domain/code.ts",
+      "target_sha256": "6ea64ce5826d1bc06af7ce12d7d0d2aa3ddc286ad78d87685cf510a507f9f59e",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/shared/contracts/query.ts",
+      "source_sha256": "ff86473fa3a3344ad624b74a443b227b8425b0fe5994ceb4f4e1f113c9c9e135",
+      "target": "services/customs-native/upstream/shared/contracts/query.ts",
+      "target_sha256": "ff86473fa3a3344ad624b74a443b227b8425b0fe5994ceb4f4e1f113c9c9e135",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/shared/contracts/tariff-estimate.ts",
+      "source_sha256": "7f8dc89846f91792553ca3dab6b7cb0bcf5c2169432c1e669b2f70ce0d6b00e6",
+      "target": "services/customs-native/upstream/shared/contracts/tariff-estimate.ts",
+      "target_sha256": "7f8dc89846f91792553ca3dab6b7cb0bcf5c2169432c1e669b2f70ce0d6b00e6",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/shared/contracts/exchange-rates.ts",
+      "source_sha256": "ff7f6a2a301aba3a878ee6eda004a2b45b703da0bb91ea97f9e9c7debfd60e7a",
+      "target": "services/customs-native/upstream/shared/contracts/exchange-rates.ts",
+      "target_sha256": "1d0570325379580500878c2a748f2922c4cc089ee6b2cfdace6849f18857a1a9",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/rules/evaluate-rates.ts",
+      "source_sha256": "e4d878fff362297fc7bd4d1bfaa53ce2283d66df6bbe76930a54d8bd98bb9829",
+      "target": "services/customs-native/upstream/worker/rules/evaluate-rates.ts",
+      "target_sha256": "cedbf0f1a288acc1528ef06c11b156f45ae0c573a90fae0a6600113ecadc1ace",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/rules/evaluate-documents.ts",
+      "source_sha256": "04011517f6839425e438a3469de622c55c4d42bc9634e986442a6a17198833cd",
+      "target": "services/customs-native/upstream/worker/rules/evaluate-documents.ts",
+      "target_sha256": "312f915f6e7daa51882ac3ad34e83b6c2ca075f2c11f2dea38ebac367981bb9a",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/rules/evaluate-measures.ts",
+      "source_sha256": "d164c653abfd4ee5329851e3fa8037cf2af9aeea29673b565c64542c368931dc",
+      "target": "services/customs-native/upstream/worker/rules/evaluate-measures.ts",
+      "target_sha256": "1a780f9b066a34064eb0e0ad2e8fc3568fdcc8d4c4efae20b6dd134ce7cd16ac",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/query/query-service.ts",
+      "source_sha256": "6ec5658efbe211a107b0c4b7d6628f16101edbf83237b7b254563eda0930574a",
+      "target": "services/customs-native/upstream/worker/query/query-service.ts",
+      "target_sha256": "7d05cfe2e0553ea77589cfe5a18a60e968979a808ca70582df281bedbedc8ec8",
+      "adaptation": "Require explicit assistant injection; no default fixture assistant.; Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/query/question-policy.ts",
+      "source_sha256": "e778940a054df5f8fde2cedd2b72ca4400d89a0a00012950c26e438c0fedd519",
+      "target": "services/customs-native/upstream/worker/query/question-policy.ts",
+      "target_sha256": "e778940a054df5f8fde2cedd2b72ca4400d89a0a00012950c26e438c0fedd519",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/query/publication-identity.ts",
+      "source_sha256": "b9fd862151254d9c2b3b125676ff79603d7ad84cd74b26261ce05daa177d08ef",
+      "target": "services/customs-native/upstream/worker/query/publication-identity.ts",
+      "target_sha256": "fb27dd011b2247914c0004a695634f6c95fe81738da5e35e0a9e7f70f2948a56",
+      "adaptation": "Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/repositories/customs.ts",
+      "source_sha256": "8c98b311295715f1bb36c957f0afb7fe00a64875dcceff19ccb57f24759dacd5",
+      "target": "services/customs-native/upstream/worker/repositories/customs.ts",
+      "target_sha256": "fd967825eef71ceef5752b76fc9ee40a01bd84c48a0b39690bf37debc137a135",
+      "adaptation": "Keep repository row interfaces only; omit D1 implementation.; Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    },
+    {
+      "source": "src/worker/ai/adapter.ts",
+      "source_sha256": "9d10e3dff1221c7cb63304e6b747b13160ae48cdce476d02cf2b433bfa4860ba",
+      "target": "services/customs-native/upstream/worker/ai/adapter.ts",
+      "target_sha256": "71cb4f4bf5a9b66c93461ebb01b6b4b4ad449e3c2dff270ea66fb8f1a5e1050d",
+      "adaptation": "Keep the explicit assistant port only; omit fixture and network fallback.; Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+    }
+  ]
+}

@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "expected_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "currency": {
+          "type": "string",
+          "const": "USD"
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "evidence_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "customer_terms": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "zones": {
+          "minItems": 1,
+          "maxItems": 100000,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "postal_prefix": {
+                "type": "string",
+                "pattern": "^[ABCEGHJKLMNPRSTVXY][0-9][ABCEGHJKLMNPRSTVWXYZ](?:[0-9][ABCEGHJKLMNPRSTVWXYZ][0-9])?$"
+              },
+              "zone": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 999
+              },
+              "city": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "province": {
+                "type": "string",
+                "pattern": "^[A-Z]{2}$"
+              }
+            },
+            "required": [
+              "postal_prefix",
+              "zone",
+              "city",
+              "province"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "rates": {
+          "minItems": 1,
+          "maxItems": 10000,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "zone": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 999
+              },
+              "pallets": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?$"
+              }
+            },
+            "required": [
+              "zone",
+              "pallets",
+              "amount"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "billing": {
+          "type": "object",
+          "properties": {
+            "cbm_per_pallet": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            },
+            "kg_per_pallet": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            },
+            "long_piece_threshold_cm": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            },
+            "long_piece_multiplier": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "flexible_packaging_threshold": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "suspicious_min_pallets": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "suspicious_multiplier": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_weight_kg": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            },
+            "max_cbm": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            },
+            "max_length_cm": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            }
+          },
+          "required": [
+            "cbm_per_pallet",
+            "kg_per_pallet",
+            "long_piece_threshold_cm",
+            "long_piece_multiplier",
+            "flexible_packaging_threshold",
+            "suspicious_min_pallets",
+            "suspicious_multiplier",
+            "max_weight_kg",
+            "max_cbm",
+            "max_length_cm"
+          ],
+          "additionalProperties": false
+        },
+        "fees": {
+          "type": "object",
+          "properties": {
+            "fuel_percent": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,4})?$"
+            },
+            "residential": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?$"
+            },
+            "liftgate": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?$"
+            },
+            "pallet_jack": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?$"
+            },
+            "appointment": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?$"
+            },
+            "detention_free_minutes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "detention_half_hour": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?$"
+            }
+          },
+          "required": [
+            "fuel_percent",
+            "residential",
+            "liftgate",
+            "pallet_jack",
+            "appointment",
+            "detention_free_minutes",
+            "detention_half_hour"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "label",
+        "currency",
+        "origin",
+        "valid_from",
+        "valid_until",
+        "evidence_ref",
+        "evidence_version",
+        "customer_terms",
+        "zones",
+        "rates",
+        "billing",
+        "fees"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "expected_version",
+    "input"
+  ],
+  "additionalProperties": false
+}

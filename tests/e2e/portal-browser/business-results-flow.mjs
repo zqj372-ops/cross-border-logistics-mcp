@@ -1,3 +1,4 @@
+import { loginFixture } from './fixture-login.mjs';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -91,19 +92,7 @@ await page.route('**/console/api/v1/business/**', async (route) => {
   await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'cache-control': 'no-store' }, body: JSON.stringify(response) });
 });
 
-async function login() {
-  await page.goto(`${base}/console/#login`);
-  await page.locator('[data-action=logout], .identity-list button').first().waitFor();
-  const logout = page.getByRole('button', { name: '退出', exact: true });
-  if (await logout.isVisible()) {
-    const response = page.waitForResponse((value) => value.request().method() === 'POST' && value.url().endsWith('/console/api/v1/logout'));
-    await logout.click(); await response; await page.goto(`${base}/console/#login`); await page.reload(); await page.locator('.identity-list button').first().waitFor();
-  }
-  const identity = page.getByRole('button', { name: '企业开发者 developer@example.test' });
-  await identity.waitFor();
-  const response = page.waitForResponse((value) => value.request().method() === 'POST' && value.url().endsWith('/console/api/v1/fixture-login'));
-  await identity.click(); await response; await page.locator('[data-action=logout]').first().waitFor();
-}
+async function login() { await loginFixture(page,base,'企业开发者 developer@example.test'); }
 async function go(hash) { await page.goto(`${base}/console/#${hash}`); await page.locator('main h1').waitFor(); }
 async function banner() {
   await page.evaluate(() => {

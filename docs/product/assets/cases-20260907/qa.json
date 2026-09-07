@@ -1,0 +1,19 @@
+{
+  "checks": [
+    "management-empty",
+    "anonymous draft retained without creating record",
+    "submitted",
+    "management-desktop",
+    "user-1920",
+    "detail-desktop",
+    "customer-desktop",
+    "customer-mobile",
+    "management-mobile",
+    "customer reply read back by operator",
+    "list-mobile",
+    "account menu"
+  ],
+  "errors": [],
+  "caseUrl": "http://127.0.0.1:8907/console/#case/e71e906f-afbb-4268-b8a3-2e986f3ded1b",
+  "environment": "isolated synthetic fixture; no production writes"
+}

@@ -1,3 +1,4 @@
+import { loginFixture } from './fixture-login.mjs';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -11,13 +12,7 @@ const issues=[]; page.on('pageerror', e=>issues.push(e.message));
 const base=process.env.PORTAL_BASE_URL || 'http://127.0.0.1:8882';
 if(!['127.0.0.1','localhost','[::1]'].includes(new URL(base).hostname))throw new Error('Loopback fixture URL required');
 const checks=[];
-async function login(label){
- await page.goto(`${base}/console/#login`);await page.locator('[data-action=logout], .identity-list button').first().waitFor();
- const logout=page.getByRole('button',{name:'退出',exact:true});
- if(await logout.isVisible()){const response=page.waitForResponse(value=>value.request().method()==='POST'&&value.url().endsWith('/console/api/v1/logout'));await logout.click();await response;await page.goto(`${base}/console/#login`);await page.reload();await page.locator('.identity-list button').first().waitFor();}
- const identity=page.getByRole('button',{name:label});await identity.waitFor();const response=page.waitForResponse(value=>value.request().method()==='POST'&&value.url().endsWith('/console/api/v1/fixture-login'));await identity.click();await response;await page.locator('[data-action=logout]').first().waitFor();
- const selector=page.locator('#organization');if(await selector.count() && await selector.locator('option[value=org_fixture]').count() && await selector.inputValue()!=='org_fixture'){await selector.selectOption('org_fixture');await page.waitForURL('**/#home');await page.locator('[data-go=quote]').first().waitFor();}
-}
+async function login(label){ await loginFixture(page,base,label); }
 async function go(hash){await page.goto(`${base}/console/#${hash}`);await page.locator('[data-action=logout]').first().waitFor();}
 await login('企业开发者 developer@example.test');
 await go('app-new');await page.getByLabel('应用名称').fill('集成验收 · 物流助手');await page.getByLabel('应用用途').fill('本地验收：核对受邀企业的货物计算与应用权限。');await page.getByRole('button',{name:'创建应用',exact:true}).click();

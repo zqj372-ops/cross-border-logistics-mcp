@@ -1,0 +1,12 @@
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
+import caseInput from '../../schemas/access-gateway/portal-cases-input.schema.json';
+import caseList from '../../schemas/access-gateway/portal-cases-list.schema.json';
+import caseUpdate from '../../schemas/access-gateway/portal-cases-update.schema.json';
+import caseReply from '../../schemas/access-gateway/portal-cases-reply.schema.json';
+import caseResponse from '../../schemas/access-gateway/portal-cases-response.schema.json';
+const ajv=new Ajv2020({strict:true,allErrors:true,useDefaults:true});addFormats(ajv);
+export const caseSchemas:Record<string,object>={'cases create':caseInput,'cases list':caseList,'cases update':caseUpdate,'cases reply':caseReply};
+const validators=Object.fromEntries(Object.entries(caseSchemas).map(([name,schema])=>[name,ajv.compile(schema)]));
+export const validateCaseResponse=ajv.compile(caseResponse);
+export const validCaseInput=(name:string,input:unknown)=>validators[name]?.(input)??true;

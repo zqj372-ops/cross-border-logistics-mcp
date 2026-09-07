@@ -20,12 +20,15 @@ await build({
 });
 await chmod(resolve(output, "bin/freightclaw.mjs"), 0o755);
 for (const file of ["package.json", "README.md"]) await copyFile(resolve(source, file), resolve(output, file));
+await copyFile(resolve(root, "apps/console/workspace-cli.md"), resolve(output, "workspace.md"));
+await copyFile(resolve(root, "apps/console/native-business.md"), resolve(output, "native-business.md"));
+await writeFile(resolve(output, "README.md"), (await readFile(resolve(source, "README.md"), "utf8")).replace("../../apps/console/workspace-cli.md", "./workspace.md"));
 await mkdir(resolve(output, "examples"), { recursive: true });
 // Explicit package contents keep local credentials and untracked files out of releases.
 for (const name of ["cargo", "container", "agent", "customs-query", "customs-tax", "customs-tax-batch", "quote-zone", "quote-extract", "quote-freightcom"]) {
   await copyFile(resolve(source, `examples/${name}.json`), resolve(output, `examples/${name}.json`));
 }
-const dependencies = ["ajv", "ajv-formats", "fast-deep-equal", "fast-uri", "json-schema-traverse", "require-from-string"];
+const dependencies = ["ajv", "ajv-formats", "fast-deep-equal", "fast-uri", "json-schema-traverse", "require-from-string", "zod"];
 const notices = [];
 for (const dependency of dependencies) {
   const folder = resolve(root, "node_modules", dependency);

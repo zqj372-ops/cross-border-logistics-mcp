@@ -1,3 +1,4 @@
+import { runWorkspace } from "./workspace";
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import type { Readable } from "node:stream";
@@ -23,6 +24,7 @@ const help = `FreightClaw CLI ${metadata.version}
 
 用法：freightclaw <命令> [选项]
 
+  workspace --help         人员登录、询价管理与渠道配置
   status                   检查 Portal 就绪状态（不证明业务数据已就绪）
   commands                 查看本版本支持的命令（不代表账号已经获权）
   schema <命令>            输出该命令的输入 JSON Schema
@@ -39,7 +41,7 @@ ${commands.map(command => `  ${command.name.padEnd(24)} ${command.description}`)
 
 不接受命令行明文 Key，不保存 Key 或业务响应，不跟随重定向，不自动重试。
 业务输入不需要包装成 {schema_version,input}；CLI 按现有 API 合同包装。
-个人关务历史和保存、审核、PDF 等人员操作使用网页登录，API Key 不代替人员身份。
+人员后台功能逐步通过 workspace 命令接入，同网页权限；API Key 不代替人员身份。
 退出码：0成功，1网络/响应错误，2参数/输入/凭证配置错误，3需补输入，4人工复核，5被阻止，6不可用。
 `;
 
@@ -113,20 +115,20 @@ async function credential(env: NodeJS.ProcessEnv, filename: string | undefined):
   return value;
 }
 
-async function readResponse(response: Response): Promise<string> {
+async function readResponse(response: Response, maximum=MAX_RESPONSE): Promise<string> {
   if (!/^application\/json(?:\s*;|$)/iu.test(response.headers.get("content-type") ?? "") || !response.body) {
     await response.body?.cancel(); throw new CliError("response_not_json", 1, "服务未返回预期的 JSON 响应；原始页面或错误正文已隐藏。");
   }
   const length = response.headers.get("content-length");
-  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > MAX_RESPONSE)) {
-    await response.body.cancel(); throw new CliError("response_too_large", 1, "响应超过2 MiB上限。");
+  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
+    await response.body.cancel(); throw new CliError("response_too_large", 1, "响应超过当前命令的读取上限。");
   }
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
   try {
     for (;;) {
       const item = await reader.read(); if (item.done) break;
       size += item.value.length;
-      if (size > MAX_RESPONSE) { await reader.cancel(); throw new CliError("response_too_large", 1, "响应超过2 MiB上限。"); }
+      if (size > maximum) { await reader.cancel(); throw new CliError("response_too_large", 1, "响应超过当前命令的读取上限。"); }
       chunks.push(item.value);
     }
     return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
@@ -151,6 +153,7 @@ function responseCode(command: Command | undefined, httpStatus: number, payload:
 export async function runCli(args: string[], io: CliIO = {}): Promise<number> {
   const stdout = io.stdout ?? (value => { process.stdout.write(value); });
   const stderr = io.stderr ?? (value => { process.stderr.write(value); });
+  if(args[0] === "workspace") return runWorkspace(args.slice(1),io,{endpoint,readFileBounded,readStdin,parseJson,readResponse});
   let compact = false;
   try {
     let parsed;

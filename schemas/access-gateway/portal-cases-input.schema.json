@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "services": {
+      "minItems": 1,
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      }
+    },
+    "transportMode": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "origin": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "destination": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "product": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "readyDate": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "containerType": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "containerCount": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "containerCountUnknown": {
+      "type": "boolean"
+    },
+    "volume": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "volumeUnknown": {
+      "type": "boolean"
+    },
+    "weight": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "weightUnknown": {
+      "type": "boolean"
+    },
+    "cargoType": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "palletCount": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "skuCount": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "deliverySite": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "unloading": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "businessRegion": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "contactName": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "email": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "company": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "phone": {
+      "type": "string",
+      "maxLength": 254
+    },
+    "consent": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "mode",
+    "services",
+    "transportMode",
+    "origin",
+    "destination",
+    "product",
+    "readyDate",
+    "containerType",
+    "containerCount",
+    "containerCountUnknown",
+    "volume",
+    "volumeUnknown",
+    "weight",
+    "weightUnknown",
+    "cargoType",
+    "palletCount",
+    "skuCount",
+    "deliverySite",
+    "unloading",
+    "businessRegion",
+    "notes",
+    "contactName",
+    "email",
+    "company",
+    "phone",
+    "consent"
+  ],
+  "additionalProperties": false,
+  "$id": "https://freightclaw.local/schemas/portal-cases-input.schema.json"
+}

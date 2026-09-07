@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/zqj372-ops/canada-final-mile-auto-quote",
+  "commit": "e7d26d9711ea2183dacea9ab6016008f5ad64ff1",
+  "license": "No standalone license declared in source; internal migration authorized by repository owner.",
+  "files": [
+    {
+      "source": "packages/quote_engine/pallet_calculator.py",
+      "source_sha256": "52c916474eb466994f0cdbe8c7a009365a74fae6f6bf55b8c2f1d3fb3d1bafb3",
+      "target": "services/quote-native/upstream/pallet_calculator.py",
+      "target_sha256": "29d81dd86306a4d11245d5d557b0e8abbde4d5fea76bbae2f1d533d4b8ec3e98",
+      "adaptation": "Retain Python Decimal arithmetic and pallet logic; require explicit native configuration instead of all default business thresholds and fees; remove legacy imports."
+    },
+    {
+      "source": "packages/quote_engine/zone_pricing.py",
+      "source_sha256": "60261404c74cc8462c7736ec36a86f5ecdccf7c4f6a33f2b4a294fafc7b83031",
+      "target": "services/quote-native/upstream/zone_pricing.py",
+      "target_sha256": "e9321c1d111afc6a10433848b0b522bd50e8106d482d636e808dde0286b10c1b",
+      "adaptation": "Retain Python Decimal arithmetic and pallet logic; require explicit native configuration instead of all default business thresholds and fees; remove legacy imports."
+    }
+  ]
+}

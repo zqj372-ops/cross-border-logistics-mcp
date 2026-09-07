@@ -33,7 +33,7 @@ beforeAll(async () => {
   const packed = await exec("npm", ["pack", built, "--json", "--offline", "--ignore-scripts"], { cwd: folder, env });
   const files = JSON.parse(packed.stdout) as { filename: string; files: { path: string }[] }[];
   expect(files[0]!.files.map(file => file.path).sort()).toEqual([
-    "README.md", "THIRD-PARTY-NOTICES.txt", "bin/freightclaw.mjs", "package.json", ...examples.map(([, name]) => `examples/${name}.json`),
+    "README.md", "THIRD-PARTY-NOTICES.txt", "bin/freightclaw.mjs", "package.json", "workspace.md", ...examples.map(([, name]) => `examples/${name}.json`),
   ].sort());
   const prefix = join(folder, "installed");
   await exec("npm", ["install", "--global", "--prefix", prefix, join(folder, files[0]!.filename), "--offline", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: folder, env });
@@ -59,6 +59,10 @@ describe("standalone CLI installation", () => {
     expect(metadata.dependencies).toBeUndefined();
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
+    expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(40);
+    expect((await installed(["workspace","schema","cases","create"])).code).toBe(0);
+    expect((await installed(["workspace","schema","channels","publish"])).code).toBe(0);
+    expect(await readFile(join(packageRoot,"workspace.md"),"utf8")).toContain("workspace login start");
     for (const [command] of examples) {
       const schema = await installed(["schema", ...command.split(" "), "--json"]);
       expect(schema.code).toBe(0);

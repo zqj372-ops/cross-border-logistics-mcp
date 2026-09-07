@@ -11,7 +11,7 @@ export default tseslint.config(
     files: ["apps/console/**/*.js", "apps/inquiry/**/*.js"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
-      globals: Object.fromEntries(["document", "window", "location", "navigator", "fetch", "Headers", "URL", "URLSearchParams", "FormData", "Blob", "crypto", "CSS", "HTMLElement", "AbortController", "AbortSignal", "matchMedia", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "confirm", "alert", "console", "localStorage", "sessionStorage", "structuredClone"].map((name) => [name, "readonly"])),
+      globals: Object.fromEntries(["document", "window", "location", "navigator", "fetch", "Headers", "URL", "URLSearchParams", "FormData", "Blob", "crypto", "CSS", "HTMLElement", "AbortController", "AbortSignal", "matchMedia", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "confirm", "alert", "console", "localStorage", "sessionStorage", "structuredClone", "queueMicrotask"].map((name) => [name, "readonly"])),
     },
   },
   {
@@ -34,7 +34,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/inquiry/**/*.ts", "deploy/cli/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
+    files: ["src/**/*.ts", "services/**/*.ts", "tests/**/*.ts", "apps/inquiry/**/*.ts", "deploy/cli/**/*.ts", "deploy/scripts/start-portal-fixture.ts", "deploy/scripts/generate-case-schemas.ts", "deploy/scripts/generate-channel-schemas.ts", "deploy/scripts/generate-native-schemas.ts", "deploy/scripts/generate-business-schemas.ts", "deploy/scripts/generate-portal-openapi.ts", "vitest.config.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

@@ -1,8 +1,10 @@
 # FreightClaw · 跨境物流 API 与 MCP 工作台
 
-FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。报价、关务、税费和业务记录由既有权威系统负责；平台负责身份、企业与应用授权、凭证、窄接口适配、审计和失败闭合。
+FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**状态更新：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
+**本地开发进度：2026-09-07。** 关务数据、自有住宅运价与 Freightcom 连接后台已实现，网页和 CLI 共用发布版本；配置从空白开始。当前未部署生产，正式数据、运价与承运商凭证未录入。见 [图文交付与验证边界](docs/product/2026-09-07-native-customs-residential-delivery.md) / [配置和 CLI 操作说明](apps/console/native-business.md)。
+
+**既有生产记录：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 
 - [功能补齐与发布操作](docs/runbooks/capability-completion-v1.md)
 - [当前进度、功能缺口与验收顺序](docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)
@@ -99,6 +101,12 @@ flowchart LR
 
 具体请求、Schema 和状态以 [统一 Key RFC](docs/rfcs/2026-09-06-unified-application-key-v1.md)、[Business API v2](docs/runbooks/business-api-v2.md) 和 OpenAPI 为准。
 
+## 前后台业务协作
+
+[渠道配置与 CLI 本地交付](docs/product/2026-09-07-channels-cli-delivery.md)：已新增空白渠道、草稿、预览发布、停用、历史回退，以及询价管理 CLI。网页和 CLI 使用相同记录与权限。仅本地验收环境启用，渠道尚不含运价规则。**所有后续功能必须同时交付网页、API 和 CLI；已有成员、授权、个人历史的 CLI 覆盖仍待补齐。**
+
+[询价受理第一阶段](docs/product/2026-09-07-business-cases-delivery.md) 已实现本地闭环：前台提交需求、后台处理、客户补充、双方读回同一记录。后台复用前台设计与现有账号。生产默认关闭，单实例通过 `PORTAL_CASES_ENABLED=true` 显式启用；原生引擎与配置后台仍在后续阶段，不能将此交付当作全部迁移完成。
+
 ## 界面职责
 
 | 目录 | 职责 | 边界 |
@@ -165,7 +173,7 @@ Portal 隔离演示：
 npm run start:console:fixture
 ```
 
-默认访问 `http://127.0.0.1:8882/console/`；实际端口以启动输出为准。演示身份、授权和来源响应只用于本地验证，不是生产业务证据。
+默认访问 `http://127.0.0.1:8882/console/`；实际端口以启动输出为准。本地登录已改为账号、密码和图形验证码：`user` 为业务用户、`admin` 为管理员，体验密码均为 `FreightClaw2026!`。演示身份、授权和来源响应只用于本地验证，不是生产业务证据；正式站仍使用现有身份服务。见[登录与用户类型调整](docs/product/2026-09-07-login-simplification.md)。
 
 既有 MCP/Admin 隔离演示：
 

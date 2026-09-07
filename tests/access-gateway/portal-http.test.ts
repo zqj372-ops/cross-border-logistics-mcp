@@ -15,7 +15,7 @@ import { startPortalServer } from "../../services/access-gateway/portal/server";
 const servers: Server[] = [];
 afterEach(async () => Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve())))));
 
-async function setup(bridge?: PortalCredentialBridge) {
+async function setup(bridge?: PortalCredentialBridge, mode: "fixtures" | "production" = "fixtures") {
   const service = {
     getState: (context: PortalContext) => success({ data_mode: "fixtures", identity: context.identity, current_organization: null, organizations: [], users: [], memberships: [{ organizationId: "org-a", userId: "fixture-owner", role: "owner", status: "active", createdAt: "2026-09-05T00:00:00.000Z" }], invitations: [], applications: [], requests: [], grants: [], catalog: [], operations: [] }),
   } as unknown as PortalService;
@@ -25,7 +25,7 @@ async function setup(bridge?: PortalCredentialBridge) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); if (!address || typeof address === "string") throw new Error("address unavailable");
   const origin = `http://127.0.0.1:${address.port}`;
-  handlerRef.current = createPortalHttpHandler({ mode: "fixtures", service, ...(bridge ? { bridge } : {}), identityProvider: new FixturePortalIdentityProvider({ mode: "fixtures", loopback: true }), sessions: new PortalSessionManager({ store: new InMemoryPortalSessionStore(), secureCookie: false }), allowedHosts: [new URL(origin).host], allowedOrigins: [origin], allowLoopbackHttp: true });
+  handlerRef.current = createPortalHttpHandler({ mode, service, ...(bridge ? { bridge } : {}), identityProvider: mode === "fixtures" ? new FixturePortalIdentityProvider({ mode: "fixtures", loopback: true }) : { kind: "oidc" }, sessions: new PortalSessionManager({ store: new InMemoryPortalSessionStore(), secureCookie: false }), allowedHosts: [new URL(origin).host], allowedOrigins: [origin], allowLoopbackHttp: true });
   return origin;
 }
 
@@ -99,4 +99,30 @@ describe("portal HTTP boundary", () => {
     const invalid = await fetch(`${origin}/console/api/v1/applications`, { method: "POST", headers: { ...headers, "idempotency-key": "idem_create_app_000003" }, body: JSON.stringify({ ...payload, environment: "staging" }) });
     expect(invalid.status).toBe(400);
   });
+});
+
+describe('local password login boundary',()=>{
+ it('serves captcha without answers, requires CSRF, rejects role injection and consumes bad login attempts',async()=>{
+  const origin=await setup();const response=await fetch(`${origin}/console/api/v1/session`),session=await response.json() as {csrf_token:string};
+  const headers={cookie:cookieFrom(response),origin,'x-csrf-token':session.csrf_token,'idempotency-key':'form-login-http-key','content-type':'application/json'};
+  const challenge=await fetch(`${origin}/console/api/v1/login/captcha`,{headers});expect(challenge.headers.get('cache-control')).toBe('no-store');
+  const data=await challenge.json() as {data:{captcha_id:string;image:string}};
+  expect(Object.keys(data.data).sort()).toEqual(['captcha_id','expires_in','image']);expect(data.data.image).toMatch(/^data:image\/svg\+xml;base64,/u);
+  const input={account:'admin',password:'wrong',captcha_id:data.data.captcha_id,captcha:'00000'};
+  const post=(body:unknown,h=headers)=>fetch(`${origin}/console/api/v1/login/password`,{method:'POST',headers:h,body:JSON.stringify(body)});
+  expect((await post(input,{...headers,'x-csrf-token':'wrong'})).status).toBe(403);
+  expect((await post({...input,role:'operator'})).status).toBe(400);
+  const invalid=await post(input);expect(invalid.status).toBe(401);expect((await invalid.json()) as unknown).toMatchObject({reason_codes:['login_invalid']});
+  expect((await fetch(`${origin}/console/api/v1/login/captcha?answer=true`,{headers})).status).toBe(400);
+ });
+});
+
+
+it("never exposes local password or captcha authentication in production mode", async () => {
+  const origin = await setup(undefined, "production");
+  for (const [path, method] of [["captcha", "GET"], ["password", "POST"]] as const) {
+    const response = await fetch(`${origin}/console/api/v1/login/${path}`, { method, headers: { origin } });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ reason_codes: ["fixture_identity_forbidden"] });
+  }
 });

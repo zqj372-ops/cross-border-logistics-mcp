@@ -1,3 +1,7 @@
+import { NativeAdminStore, NativeAdminService } from '../../services/access-gateway/portal/native-admin';
+import { NativeFreightcomService } from '../../services/access-gateway/portal/native-freightcom';
+import { ChannelStore, ChannelService } from "../../services/access-gateway/portal/channels";
+import { CaseStore, CaseService } from "../../services/access-gateway/portal/cases";
 import { SqliteCallLogStore, PortalCallLogService, callRecorder } from "../../services/access-gateway/portal/call-log";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -18,8 +22,14 @@ const databaseDirectory = resolve(process.env.PORTAL_FIXTURE_DIRECTORY ?? ".runt
 const runtime = await createPortalFixtureRuntime({ databaseDirectory });
 const boundaries = { allowedHosts: [`127.0.0.1:${port}`], allowedOrigins: [origin] };
 const callStore = new SqliteCallLogStore(resolve(databaseDirectory, "calls.sqlite"));
+const channelStore = new ChannelStore(resolve(databaseDirectory, "business-channels.sqlite"));
+const nativeStore=new NativeAdminStore(resolve(databaseDirectory,"native-business.sqlite"));
+const nativeFreightcom=new NativeFreightcomService(nativeStore,runtime.service);
+const nativeConfig=resolve(databaseDirectory,"native-business-config.json");
+if(!process.env.PORTAL_BUSINESS_CONFIG_FILE)writeFileSync(nativeConfig,JSON.stringify({connections:[{organizationId:"org_fixture",tenantId:"tenant_fixture",enabledOperations:["customs.query","customs.tax.estimate","quote.zone_preview","quote.freightcom_ltl.preview"],nativeCustoms:true,nativeQuote:true,nativeFreightcom:true}]}),{mode:0o600});
+const caseStore = new CaseStore(resolve(databaseDirectory, "business-cases.sqlite"));
 try {
-  const businessService = await loadPortalBusinessService({ callRecorder: callRecorder(callStore), portalService: runtime.service, ...(process.env.PORTAL_BUSINESS_CONFIG_FILE ? { configPath: process.env.PORTAL_BUSINESS_CONFIG_FILE } : {}), allowLoopbackFixtures: true });
+  const businessService = await loadPortalBusinessService({ nativeStore,nativeFreightcom,nativeQuoteScript:resolve("dist/services/quote-native/run.py"),configPath:process.env.PORTAL_BUSINESS_CONFIG_FILE??nativeConfig, callRecorder: callRecorder(callStore), portalService: runtime.service, ...(process.env.PORTAL_BUSINESS_CONFIG_FILE ? { configPath: process.env.PORTAL_BUSINESS_CONFIG_FILE } : {}), allowLoopbackFixtures: true });
   const pepperPath = resolve(databaseDirectory, "business-fixture.pepper");
   if (!existsSync(pepperPath)) writeFileSync(pepperPath, randomBytes(32), { mode: 0o600, flag: "wx" });
   const pepperStat = lstatSync(pepperPath);
@@ -31,11 +41,11 @@ try {
   const machine = createPortalMachineHttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries });
   const t0Machine = createProductionT0HttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries, trustedProxyAddresses: [] });
   const businessMachine = createBusinessMachineHttpHandler({ mode: "fixtures", service: businessAccess.service, executor: { execute: async (request) => businessService.executeMachine(request) }, ...boundaries, trustedProxyAddresses: [] });
-  const server = await startPortalServer({ mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
+  const server = await startPortalServer({ nativeAdmin:new NativeAdminService(nativeStore,runtime.service),nativeFreightcom, channelService: new ChannelService(channelStore, runtime.service), caseService: new CaseService(caseStore, runtime.service), mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
   console.log(`FreightClaw local acceptance workspace: ${server.origin}/console/`);
   console.log("Isolated fixture identities and local storage. Business availability is verified per request.");
   let closing = false;
-  const close = async () => { if (closing) return; closing = true; await server.close(); await callStore.close(); businessAccess.repository.close(); await runtime.close(); process.exitCode = 0; };
+  const close = async () => { if (closing) return; closing = true; await server.close(); await callStore.close(); caseStore.close(); channelStore.close(); nativeFreightcom.close(); nativeStore.close(); businessAccess.repository.close(); await runtime.close(); process.exitCode = 0; };
   process.once("SIGINT", () => { void close(); });
   process.once("SIGTERM", () => { void close(); });
-} catch (error) { await callStore.close(); await runtime.close(); throw error; }
+} catch (error) { await callStore.close(); caseStore.close(); channelStore.close(); nativeFreightcom.close(); nativeStore.close(); await runtime.close(); throw error; }

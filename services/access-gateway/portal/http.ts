@@ -1,3 +1,11 @@
+import type { NativeFreightcomService } from './native-freightcom';
+import type { NativeAdminService } from './native-admin';
+import { NATIVE_ADMIN_VERSION, nativeDataSchema, freightcomViewSchema, type NativeKind } from './native-admin-contracts';
+import { CliAuthorization } from "./cli-auth";
+import type { ChannelService } from "./channels";
+import { CHANNEL_VERSION, channelHistorySchema, channelViewSchema, channelListSchema, channelPreviewSchema } from "./channel-contracts";
+import { FixtureFormLogin } from "./form-login";
+import { CASE_VERSION, caseResponseSchema, type CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
 import { createHash, randomUUID } from "node:crypto";
@@ -41,6 +49,10 @@ export interface PortalHttpOptions {
   readonly businessService?: Pick<PortalBusinessService, "describe" | "execute" | "executeBatch"> & Partial<Pick<PortalBusinessService, "records" | "customsHistory">>;
   readonly publicCustoms?: PortalPublicCustomsService;
   readonly callLogService?: PortalCallLogService;
+  readonly caseService?: CaseService;
+  readonly channelService?: ChannelService;
+  readonly nativeAdmin?: NativeAdminService;
+  readonly nativeFreightcom?: NativeFreightcomService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
   readonly sessions: PortalSessionManager;
@@ -93,7 +105,10 @@ function json(response: ServerResponse, status: number, body: unknown, cookie?: 
   response.statusCode = status; commonHeaders(response); response.setHeader("content-type", "application/json; charset=utf-8"); if (cookie) response.setHeader("set-cookie", cookie); response.end(JSON.stringify(preserveSourceShape ? body : wire(body)));
 }
 function errorStatus(code: string): number {
-  if (code === "authentication_required") return 401;
+  if (code === "case_daily_limit" || code === "cli_rate_limited") return 429;
+  if (code === "case_transition_invalid") return 409;
+  if (code === "login_rate_limited") return 429;
+  if (code === "login_invalid" || code === "authentication_required") return 401;
   if (code === "csrf_invalid" || code === "origin_denied" || code === "invalid_host" || code === "transport_required") return 403;
   if (code.includes("not_found") || code === "invitation_unavailable") return 404;
   if (code.includes("conflict") || code.includes("exists") || code === "last_owner_protected" || code === "application_owner_protected") return 409;
@@ -160,6 +175,10 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
+  if (/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/admin\/channels(?:\/[0-9a-f-]{36}(?:\/(?:save|preview|publish|disable|history|rollback))?)?$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/cases(?:\/[0-9a-f-]{36}(?:\/(?:update|reply))?)?$/u.test(path)) return true;
   if (path.startsWith(`${API_PREFIX}/business-access/`)) return true;
   if (/^\/console\/api\/v1\/business\/quote\/records\/(prepare|save|get|list|review)$/u.test(path)) return true;
   if (path === `${API_PREFIX}/business/quote/review-queue` || /^\/console\/api\/v1\/business\/quote\/review-tasks\/[^/]+\/(?:resolution-preview|resolve)$/u.test(path)) return true;
@@ -173,6 +192,8 @@ function authenticatedResourcePath(path: string): boolean {
 }
 
 export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpHandler {
+  const cliAuth=new CliAuthorization(options.sessions);
+  const formLogin=options.mode==="fixtures"&&options.identityProvider.kind==="fixture"?new FixtureFormLogin():null;
   return { async handle(request, response): Promise<boolean> {
     const url = new URL(request.url ?? "/", "http://portal.invalid"); const path = url.pathname; const id = requestId(request);
     if (!path.startsWith(API_PREFIX) && path !== "/console/auth/login" && path !== "/console/auth/callback") return false;
@@ -182,6 +203,33 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       boundary(request, options, write);
       boundaryPassed = true;
       if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, sessionBody(options, ensured.session), ensured.setCookie); return true; }
+      if(path.startsWith(`${API_PREFIX}/cli-auth/`)){
+        if(!cliAuth)throw new PortalError("cli_auth_unavailable");
+        if(url.search)throw new PortalError("body_invalid");
+        if(request.method!=="POST"){json(response,405,{status:"blocked",reason_codes:["method_not_allowed"]});return true;}
+        const input=await body(request,1024);let data:unknown;
+        if(path===`${API_PREFIX}/cli-auth/start`){closed(input,[]);data=cliAuth.start(request.socket.remoteAddress??"unknown");}
+        else if(path===`${API_PREFIX}/cli-auth/poll`){closed(input,["device_secret"]);data=cliAuth.poll(text(input,"device_secret"));}
+        else {const browser=sessionFor(request,options);csrf(request,options,browser);closed(input,["user_code"]);options.service.getState(context(browser));
+          if(path===`${API_PREFIX}/cli-auth/inspect`)data=cliAuth.inspect(text(input,"user_code"));
+          else if(path===`${API_PREFIX}/cli-auth/approve`)data=cliAuth.approve(text(input,"user_code"),browser);
+          else throw new PortalError("route_not_found");}
+        json(response,200,{schema_version:"portal-cli-auth@2026-09-07.v1",status:"success",data,reason_codes:[]});return true;
+      }
+      if(path===`${API_PREFIX}/login/captcha`||path===`${API_PREFIX}/login/password`){
+        if(!formLogin||!options.identityProvider.authenticateFixture)throw new PortalError("fixture_identity_forbidden");
+        const current=sessionFor(request,options,false),address=request.socket.remoteAddress??"unknown";
+        if(url.search)throw new PortalError("body_invalid");
+        if(path.endsWith("/captcha")&&request.method==="GET"){json(response,200,{status:"success",data:formLogin.challenge(current.sessionId,address)});return true;}
+        if(path.endsWith("/password")&&request.method==="POST"){
+          csrf(request,options,current);idempotency(request);
+          const input=await body(request,4096);closed(input,["account","password","captcha_id","captcha"]);
+          const identityId=formLogin.verify(current.sessionId,address,{account:text(input,"account"),password:text(input,"password"),captcha_id:text(input,"captcha_id"),captcha:text(input,"captcha")});
+          const identity=await options.identityProvider.authenticateFixture(identityId),authenticated=options.sessions.authenticate(current.sessionId,identity);
+          json(response,200,sessionBody(options,authenticated.session),authenticated.setCookie);return true;
+        }
+        json(response,405,{status:"blocked",data:null,reason_codes:["method_not_allowed"]});return true;
+      }
       if (path === `${API_PREFIX}/fixture-login` && request.method === "POST") {
         if (options.mode !== "fixtures" || options.identityProvider.kind !== "fixture" || !options.identityProvider.authenticateFixture) throw new PortalError("fixture_identity_forbidden");
         const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["identity_id"]);
@@ -225,6 +273,46 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      const nativeFreightcom=/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.exec(path);
+      if(nativeFreightcom){if(!options.nativeFreightcom)throw new PortalError("native_admin_unavailable");if(url.search)throw new PortalError("native_input_invalid");const action=nativeFreightcom[1];let data:unknown;if(request.method==="GET"&&!action)data=options.nativeFreightcom.get(ctx);else if(request.method==="POST"&&action)data=options.nativeFreightcom.change(ctx,await body(request,8192),idempotency(request),action==="disable");else throw new PortalError("method_not_allowed");data=freightcomViewSchema.parse(data);json(response,200,{schema_version:NATIVE_ADMIN_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;}
+      const nativeMatch=/^\/console\/api\/v1\/admin\/(customs-data|residential-rates)(?:\/(save|preview|publish|disable|rollback))?$/u.exec(path);
+      if(nativeMatch){
+        if(!options.nativeAdmin)throw new PortalError("native_admin_unavailable");const service=options.nativeAdmin,kind:NativeKind=nativeMatch[1]==="customs-data"?"customs":"residential",action=nativeMatch[2];let data:unknown;
+        if(request.method==="GET"){const release=url.searchParams.get("release_id");if(url.search&&!(action==="preview"&&release&&/^[0-9a-f-]{36}$/u.test(release)&&[...url.searchParams.keys()].length===1))throw new PortalError("native_input_invalid");if(!action)data=service.get(ctx,kind);else if(action==="preview")data=service.preview(ctx,kind,release??undefined);else throw new PortalError("method_not_allowed");}
+        else if(request.method==="POST"&&!url.search){const input=await body(request,16*1024*1024),key=idempotency(request);if(action==="save")data=service.save(ctx,kind,input,key);else if(action==="publish")data=service.publish(ctx,kind,input,key);else if(action==="disable")data=service.disable(ctx,kind,input,key);else if(action==="rollback")data=service.rollback(ctx,kind,input,key);else throw new PortalError("method_not_allowed");}else throw new PortalError("method_not_allowed");
+        data=nativeDataSchema(kind,action==="preview").parse(data);
+        json(response,200,{schema_version:NATIVE_ADMIN_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;
+      }
+      const channelMatch=/^\/console\/api\/v1\/admin\/channels(?:\/([0-9a-f-]{36})(?:\/(save|preview|publish|disable|history|rollback))?)?$/u.exec(path);
+      if(channelMatch){
+        if(!options.channelService)throw new PortalError("channels_unavailable");const service=options.channelService,cid=channelMatch[1],action=channelMatch[2];let data:unknown;
+        if(request.method==="GET"){
+          const release=url.searchParams.get("release_id");if(url.search && !(action==="preview"&&release&&[...url.searchParams.keys()].length===1))throw new PortalError("channel_input_invalid");
+          if(!cid)data=channelListSchema.parse(service.list(ctx));else if(!action)data=channelViewSchema.parse(service.get(ctx,cid));else if(action==="preview")data=channelPreviewSchema.parse(service.preview(ctx,cid,release??undefined));else if(action==="history")data=channelHistorySchema.parse(service.history(ctx,cid));else throw new PortalError("method_not_allowed");
+        }else if(request.method==="POST"&&!url.search){const input=await body(request,8192),key=idempotency(request);
+          if(!cid)data=service.create(ctx,input,key);else if(action==="save")data=service.save(ctx,cid,input,key);else if(action==="publish")data=service.publish(ctx,cid,input,key);else if(action==="disable")data=service.disable(ctx,cid,input,key);else if(action==="rollback")data=service.rollback(ctx,cid,input,key);else throw new PortalError("method_not_allowed");data=channelViewSchema.parse(data);
+        }else throw new PortalError("method_not_allowed");
+        json(response,200,{schema_version:CHANNEL_VERSION,status:"success",data,reason_codes:[]},undefined,true);return true;
+      }
+      const caseMatch = /^\/console\/api\/v1\/cases(?:\/([0-9a-f-]{36})(?:\/(update|reply))?)?$/u.exec(path);
+      if (caseMatch) {
+        if (!options.caseService) throw new PortalError("cases_unavailable");
+        const service = options.caseService; let data: unknown;
+        if (request.method === "GET" && !caseMatch[2]) {
+          const entries=[...url.searchParams.entries()];
+          if(new Set(entries.map(([key])=>key)).size!==entries.length)throw new PortalError("case_input_invalid");
+          const query:Record<string,unknown>=Object.fromEntries(entries);
+          if(query.management!==undefined){if(query.management!=="true"&&query.management!=="false")throw new PortalError("case_input_invalid");query.management=query.management==="true";}
+          if(query.limit!==undefined)query.limit=Number(query.limit);
+          if(caseMatch[1]&&entries.length)throw new PortalError("case_input_invalid");
+          data=caseMatch[1]?service.get(ctx,caseMatch[1]):service.list(ctx,query);
+        } else if(request.method==="POST" && (!caseMatch[1]||caseMatch[2])) {
+          if(url.search)throw new PortalError("case_input_invalid");
+          const input=await body(request,options.maxBodyBytes??DEFAULT_MAX_BODY_BYTES),key=idempotency(request);
+          data=!caseMatch[1]?service.create(ctx,input,key):caseMatch[2]==="update"?service.update(ctx,caseMatch[1],input,key):service.reply(ctx,caseMatch[1],input,key);
+        } else {json(response,405,{schema_version:CASE_VERSION,status:"blocked",data:null,reason_codes:["method_not_allowed"]});return true;}
+        json(response,200,caseResponseSchema.parse({schema_version:CASE_VERSION,status:"success",data,reason_codes:[]}),undefined,true);return true;
+      }
       if (path === `${API_PREFIX}/calls` && request.method === "GET") {
         if (!options.callLogService) throw new PortalError("call_log_unavailable");
         const entries=[...url.searchParams.entries()];

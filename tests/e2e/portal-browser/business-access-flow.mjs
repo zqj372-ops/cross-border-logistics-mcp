@@ -1,3 +1,4 @@
+import { loginFixture } from './fixture-login.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -63,36 +64,9 @@ const requestedOrigins = new Set();
 page.on('pageerror', (error) => pageErrors.push(error.message));
 page.on('request', (request) => requestedOrigins.add(new URL(request.url()).origin));
 const checks = [];
-const fixtureIdentityIds = new Map([
-  ['企业开发者 developer@example.test', 'fixture-developer'],
-  ['企业所有者 owner@example.test', 'fixture-owner'],
-  ['平台审核员 reviewer@example.test', 'fixture-reviewer'],
-  ['平台运维管理员 operator@example.test', 'fixture-operator'],
-]);
 const customsInput = { query: '不锈钢水杯', ruleDate: '2026-09-05', attributes: { originCountry: 'CN' } };
 
-async function login(label) {
-  await page.goto(`${baseUrl}/console/#login`);
-  await page.locator('[data-action=logout], .identity-list button').first().waitFor();
-  const logout = page.getByRole('button', { name: '退出', exact: true });
-  if (await logout.isVisible()) {
-    const response = page.waitForResponse((value) => value.request().method() === 'POST' && value.url().endsWith('/console/api/v1/logout'));
-    await logout.click();
-    await response;
-    await page.goto(`${baseUrl}/console/?e2e=${Date.now()}#login`);
-    await page.locator('.identity-list button').first().waitFor();
-  }
-  const identityId = fixtureIdentityIds.get(label);
-  assert.ok(identityId);
-  const loginResponse = await page.evaluate(async (id) => {
-    const session = await fetch('/console/api/v1/session', { credentials: 'same-origin', cache: 'no-store' }).then((response) => response.json());
-    const response = await fetch('/console/api/v1/fixture-login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf_token, 'Idempotency-Key': `browser-login-${crypto.randomUUID()}` }, body: JSON.stringify({ identity_id: id }) });
-    return response.status;
-  }, identityId);
-  assert.equal(loginResponse, 200);
-  await page.goto(`${baseUrl}/console/?e2e=${Date.now()}#home`);
-  await page.locator('[data-action=logout]').first().waitFor();
-}
+async function login(label) { await loginFixture(page,baseUrl,label); }
 
 async function go(hash) {
   await page.goto(`${baseUrl}/console/#${hash}`);

@@ -1,3 +1,4 @@
+import { loginFixture } from './fixture-login.mjs';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
@@ -10,15 +11,10 @@ const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 const checks=[];
-async function login(label){
- await page.goto(`${base}/console/#login`);await page.locator('[data-action=logout], .identity-list button').first().waitFor();
- const logout=page.getByRole('button',{name:'退出',exact:true});
- if(await logout.isVisible()){const response=page.waitForResponse(value=>value.request().method()==='POST'&&value.url().endsWith('/console/api/v1/logout'));await logout.click();await response;await page.goto(`${base}/console/#login`);await page.reload();await page.locator('.identity-list button').first().waitFor();}
- const identity=page.getByRole('button',{name:label});await identity.waitFor();const response=page.waitForResponse(value=>value.request().method()==='POST'&&value.url().endsWith('/console/api/v1/fixture-login'));await identity.click();await response;await page.locator('[data-action=logout]').first().waitFor();
-}
+async function login(label){ await loginFixture(page,base,label); }
 async function go(route){await page.goto(`${base}/console/#${route}`);await page.locator('main h1').waitFor();}
 try {
- await page.goto(`${base}/console/#login`);await page.locator('[data-action=logout], .identity-list button').first().waitFor();await page.getByRole('button',{name:'企业所有者 owner@example.test'}).waitFor();await page.screenshot({path:resolve(artifacts,'portal-final-login.png'),fullPage:true});
+ await page.goto(`${base}/console/#login`);await page.locator('[data-form=password-login]').waitFor();await page.getByLabel('账号',{exact:true}).waitFor();await page.screenshot({path:resolve(artifacts,'portal-final-login.png'),fullPage:true});
  await login('平台运维管理员 operator@example.test');
  assert.equal(await page.locator('#sidebar').getByRole('button',{name:'我的应用',exact:true}).count(),0);
  await go('organization-new');const orgName=`验收企业 ${Date.now()}`;await page.getByLabel('企业名称').fill(orgName);await page.getByLabel('首位所有者邮箱').fill('owner@example.test');await page.getByRole('button',{name:'创建企业与邀请',exact:true}).click();await page.getByText(orgName,{exact:true}).first().waitFor();
