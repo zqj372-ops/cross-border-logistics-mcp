@@ -49,3 +49,9 @@ describe('return to the requested business after login', () => {
     expect(consumeLoginDestination(unavailable, 2000)).toBeNull();
   });
 });
+
+it('restores allowlisted module configuration only',()=>{
+ const saved=storage();
+ for(const page of ['market/configure','configure/quote.zone_preview/pricing','configure/customs.tax.estimate/tariffs']){rememberLoginDestination(page,saved,1000);expect(consumeLoginDestination(saved,2000)).toBe(page);}
+ for(const page of ['configure/unknown','configure/customs.query/../../account','configure/customs.query/credential','configure/customs.query?token=secret']){rememberLoginDestination(page,saved,1000);expect(consumeLoginDestination(saved,2000)).toBeNull();}
+});

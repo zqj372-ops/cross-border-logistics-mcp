@@ -1,3 +1,4 @@
+import { configurationRoute } from './service-catalog.js';
 import { createRateEditor } from './native-rate-editor.js';
 import { browseCustoms } from '../../services/customs-native/catalog.ts';
 import { customsDatasetSchema } from '../../services/customs-native/contracts.ts';
@@ -12,24 +13,24 @@ const feeLabels = { fuel_percent: '燃油比例 · %', residential: '住宅费 �
 const integerKeys = new Set(['long_piece_multiplier', 'flexible_packaging_threshold', 'suspicious_min_pallets', 'suspicious_multiplier', 'detention_free_minutes', 'zone', 'pallets']);
 const freshRates = () => ({ label: '', currency: 'USD', origin: '', valid_from: '', valid_until: '', evidence_ref: '', evidence_version: '', customer_terms: '', zones: [], rates: [], billing: {}, fees: {} });
 
-export function createNativeAdminUi({ api, mutate, esc, head, note, icon, formError, model, rerender }) {
+export function createNativeAdminUi({ api, mutate, esc, head, note, icon, formError, model, rerender, canConfigure }) {
   let scope = '', epoch = 0, cache = new Map(), approval = null, editor = null, dirty = false, issues = [], notice = '', noticeKind = '', rowPage = 0, catalogSection = '';
   const rateEditor = createRateEditor({esc,field:(...args)=>field(...args),button:(...args)=>button(...args),icon,getEditor:()=>editor,setEditor:value=>{editor=value;},changed:()=>{dirty=true;approval=null;notice='';issues=[];document.querySelectorAll('[data-native-dirty]').forEach(node=>{node.textContent='有未保存修改';});},rerender});
   let filters = { selection: 'published', country: 'all', query: '', offset: 0, limit: 25 };
   const context = () => JSON.stringify([model().sessionGeneration, model().session?.identity?.user_id, model().session?.organization_id]);
-  const route = () => { const [, kind = '', section = ''] = location.hash.split('/'); return { kind, section }; };
+  const route = () => configurationRoute(location.hash);
   function reset() { epoch++; rateEditor.reset(); cache = new Map(); approval = null; editor = null; dirty = false; issues = []; notice = ''; rowPage = 0; filters = { selection: 'published', country: 'all', query: '', offset: 0, limit: 25 }; }
   function sync() { const next = context(); if (next !== scope) { reset(); scope = next; } }
   function load(kind) {
     sync();
     if (!cache.has(kind)) {
       const record = { pending: true }; cache.set(kind, record); const generation = epoch;
-      api('/admin/' + kind).then(r => { if (generation === epoch) record.data = r.data; }).catch(e => { if (generation === epoch) record.error = e.code; }).finally(() => { if (generation === epoch) { record.pending = false; if (location.hash.startsWith('#business-admin')) rerender(); } });
+      api('/admin/' + kind).then(r => { if (generation === epoch) record.data = r.data; }).catch(e => { if (generation === epoch) record.error = e.code; }).finally(() => { if (generation === epoch) { record.pending = false; if (location.hash.startsWith('#configure/') || location.hash === '#market/configure') rerender(); } });
     }
     return cache.get(kind);
   }
   const button = (label, action, id = '', primary = false) => `<button class="button ${primary ? 'primary' : ''}" type="button" data-action="native-${action}" data-id="${esc(id)}">${label}</button>`;
-  const link = (label, kind = '', section = '') => `<a class="button" href="#business-admin${kind ? '/' + kind : ''}${section ? '/' + section : ''}">${label}</a>`;
+  const link = label => `<a class="button" href="#market/configure">${label}</a>`;
   const field = (label, name, value = '', type = 'text', hint = '') => `<div class="field"><label for="native-${name}">${label}</label><input id="native-${name}" name="${name}" type="${type}" value="${esc(value ?? '')}" ${type === 'password' ? 'autocomplete="new-password"' : ''} maxlength="${type === 'password' ? 4096 : 2000}">${hint ? `<small>${hint}</small>` : ''}</div>`;
   const issueNote = () => issues.length ? `<div class="inline-note error" role="alert"><strong>请检查以下内容</strong><ul>${issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
   function schemaIssues(result) {
@@ -43,9 +44,10 @@ export function createNativeAdminUi({ api, mutate, esc, head, note, icon, formEr
     if (kind === 'residential-rates') { const today = new Date().toISOString().slice(0, 10); if (data.valid_until < today) return '运价已过期 · 需要更新'; if (data.valid_from > today) return '已发布 · 尚未到生效日期'; }
     return `已发布 · 版本 ${value.active_release.version}`;
   }
-  function overview() {
-    const records = Object.entries(names).map(([kind, title]) => ({ kind, title, record: load(kind) }));
-    return head('业务管理', '查看配置状态，进入对应业务维护。', '<a class="button" href="#operations">处理询价</a>') + `<section class="native-overview-list" aria-label="业务配置状态">${records.map(({ kind, title, record }) => `<article class="native-overview-row"><span class="native-overview-icon">${icon(kind === 'customs-data' ? 'file' : kind === 'residential-rates' ? 'truck' : 'key')}</span><div><h2>${title}</h2><p>${kind === 'customs-data' ? '核对税号、税率与来源，导入并发布关务数据。' : kind === 'residential-rates' ? '固定私人地址派送，维护邮编、价格和附加费。' : '管理企业 Freightcom 凭证，进入实际询价验证。'}</p><span class="native-status">${record.pending ? '正在读取…' : record.error ? '当前环境暂不可读取' : esc(stateLine(kind, record.data))}</span></div>${link('进入' + title, kind)}</article>`).join('')}</section><p class="native-footnote">配置保存、数据发布和真实业务可用是不同状态。私人地址派送使用固定配置，无需建立运输渠道。</p>${records.some(r => r.record.error) ? button('重新读取状态', 'reload') : ''}`;
+  function configurationStatus(kind) {
+    if (!canConfigure()) return '需要企业管理权限';
+    const record=load(kind);
+    return record.pending ? '正在读取…' : record.error ? '状态读取失败' : stateLine(kind,record.data);
   }
   function facts(kind, input) {
     const items = kind === 'residential-rates' ? [['运价', input.label], ['始发仓', input.origin], ['币种', input.currency], ['有效期', input.valid_from + ' 至 ' + input.valid_until], ['来源', input.evidence_ref + ' / ' + input.evidence_version], ['覆盖', input.zones.length + ' 项邮编 · ' + input.rates.length + ' 档价格'], ['适用条件', input.customer_terms]] : [['数据批次', input.label], ['核验日期', input.rule_date], ['数据量', input.nomenclature.length + ' 项税号 · ' + input.tariffs.length + ' 项税率 · ' + input.measures.length + ' 项措施 · ' + input.requirements.length + ' 项单证'], ['来源数量', input.sources.length]];
@@ -80,18 +82,19 @@ export function createNativeAdminUi({ api, mutate, esc, head, note, icon, formEr
     return `<div class="channel-layout"><form class="panel" data-form="native-freightcom"><div class="panel-body">${formError}<h2>Freightcom 企业连接</h2><dl class="detail-list"><dt>凭证状态</dt><dd>${value.credential_present ? '已保存，内容不回显' : '尚未配置'}</dd><dt>实时报价</dt><dd>待通过实际询价验证</dd><dt>最近配置更新</dt><dd>${value.updated_at ? esc(new Date(value.updated_at).toLocaleString('zh-CN')) : '暂无'}</dd></dl><div class="field-grid">${field('连接名称', 'label', value.label)}${field(value.credential_present ? '替换正式凭证' : 'Freightcom 正式凭证', 'credential', '', 'password')}</div><label class="choice-row"><input type="checkbox" name="confirmed" required><span>确认用于当前企业的承运商询价</span></label><div class="channel-actions"><button class="button primary" type="submit">保存连接</button>${value.credential_present ? button('停用连接', 'fc-disable') : ''}</div>${approval?.kind === 'freightcom' ? `<div class="native-confirm-inline"><p>停用后当前企业无法读取 Freightcom 报价。确认继续？</p>${button('确认停用', 'fc-confirm', '', true)} ${button('取消', 'cancel')}</div>` : ''}</div></form><aside class="channel-guide"><h2>验证连接</h2><p>保存凭证只确认配置已入库。承运商是否接受账号、地址及货物，需用实际询价确认。</p><a class="button" href="#quote/private">填写询价并验证 ${icon('arrow')}</a><p>选择 Freightcom 后提交询价，可查看承运商结果或错误原因。不会发送邮件或订舱。</p></aside></div>`;
   }
   function page() {
-    sync(); const { kind, section: requested } = route();
-    if (!kind) return overview();
-    if (!names[kind]) return head('未找到业务页面', '') + link('返回业务管理');
+    sync(); const { service, kind, section: requested } = route();
+    if (!canConfigure()) return head('需要企业管理权限', '请使用当前企业的负责人或管理员账号配置模块。') + '<a class="button" href="#market">返回服务市场</a>';
+    if (!service) return head('未找到服务模块', '') + link('返回模块配置');
+    if (!kind) return head(service.name, service.configuration.description, link('返回模块配置')) + '<p>' + (service.configuration.state === 'fixed' ? '当前模块无需企业配置。' : '此模块的配置功能尚未接入。') + '</p><a class="button" href="#service/' + service.id + '">查看模块说明</a>';
     const record = load(kind), sections = kind === 'residential-rates' ? rateSections : customsSections;
     const section = Object.hasOwn(sections, requested) ? requested : kind === 'residential-rates' ? 'base' : 'nomenclature';
-    const heading = head(names[kind], kind === 'residential-rates' ? '固定私人地址派送 · 维护一套明确的运价与交付条件。' : kind === 'customs-data' ? '查看税号与适用规则，核对来源，再发布给查询使用。' : '按当前企业管理外部服务。', link('返回业务管理')).replace('class="page-head"', 'class="page-head native-admin-head"');
+    const heading = head(service.name, kind === 'residential-rates' ? '固定私人地址派送 · 维护一套明确的运价与交付条件。' : kind === 'customs-data' ? '关税与商品归类、进口税费估算共用此数据；修改后统一发布。' : '按当前企业管理外部服务。', link('返回模块配置')).replace('class="page-head"', 'class="page-head native-admin-head"');
     if (record.pending) return heading + '<p role="status">正在读取配置…</p>';
     if (record.error) return heading + note(record.error === 'native_management_denied' ? '当前账号无权管理此配置。' : '当前环境暂时无法读取业务配置，请重新加载。', 'error') + button('重新加载', 'reload');
     const value = record.data;
     if (kind === 'freightcom') return heading + (notice && noticeKind === kind ? note(notice, 'success') : '') + freightcomPage(value);
     if (kind === 'residential-rates' && !editor) editor = structuredClone(value.draft || freshRates());
-    const nav = `<nav class="native-tabs" aria-label="${names[kind]}页面">${Object.entries(sections).map(([id, label]) => `<a href="#business-admin/${kind}/${id}" ${id === section ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
+    const nav = `<nav class="native-tabs" aria-label="${names[kind]}页面">${Object.entries(sections).map(([id, label]) => `<a href="#configure/${service.id}/${id}" ${id === section ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
     const status = `<section class="native-publication" aria-label="当前发布状态"><strong>${esc(stateLine(kind, value))}</strong><span>${value.active_release ? esc(value.active_release.input.label) : '查询尚不可用，保存草稿不会立即生效。'}</span></section>`;
     return '<div class="native-admin-surface">' + heading + nav + status + (notice && noticeKind === kind ? note(notice, 'success') : '') + (section === 'publish' ? publishPage(kind, value) : kind === 'residential-rates' ? (rateEditor.importPanel() || ratesEditor(section)) : section === 'import' ? customsImport(value) : catalogPage(section, value)) + '</div>';
   }
@@ -152,5 +155,5 @@ export function createNativeAdminUi({ api, mutate, esc, head, note, icon, formEr
     if (a === 'native-confirm') { const p = approval; await mutate('/admin/' + kind + '/' + (p.disable ? 'disable' : p.release_id ? 'rollback' : 'publish'), 'POST', { expected_version: p.version, ...(p.disable ? {} : { preview_hash: p.preview_hash, confirmation: 'reviewed_sources_and_conditions' }), ...(p.release_id ? { release_id: p.release_id } : {}) }); if (generation === epoch) { approval = null; cache.delete(kind); noticeKind = kind; notice = p.disable ? '当前版本已停用。' : p.release_id ? '已回退到选定版本。' : '已发布，网页与 CLI 将使用此版本。'; rerender(); } return true; }
     return false;
   }
-  return { page, submit, action, input, reset, change:rateEditor.file, isDirty:()=>dirty };
+  return { page, configurationStatus, submit, action, input, reset, change:rateEditor.file, isDirty:()=>dirty };
 }
