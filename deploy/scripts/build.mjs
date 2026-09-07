@@ -53,7 +53,7 @@ const accessConsoleAssetSpecs = [
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
 execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "apps/console/openapi.json"], { stdio: "inherit" });
-const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg"].map((name) => ({ name, source: resolve("apps/console", name) }));
+const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg", "asset-licenses.md"].map((name) => ({ name, source: resolve("apps/console", name) }));
 const nodeEsmBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
 };
@@ -159,6 +159,10 @@ for (const asset of accessConsoleAssetSpecs) {
 
 mkdirSync(resolve("dist/console"), { recursive: true });
 for (const asset of portalAssetSpecs) cpSync(asset.source, resolve("dist/console", asset.name));
+await build({
+  entryPoints: ["apps/console/styles.css"], outfile: "dist/console/styles.css", bundle: true,
+  loader: { ".woff2": "file" }, assetNames: "fonts/[name]-[hash]", publicPath: "/console",
+});
 await build({
   entryPoints: ["apps/console/app.js"], outfile: "dist/console/app.js", bundle: true,
   format: "esm", platform: "browser", target: "es2022", sourcemap: false, legalComments: "none",

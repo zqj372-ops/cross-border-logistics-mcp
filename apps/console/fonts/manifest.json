@@ -1,0 +1,325 @@
+{
+  "sources": {
+    "google/fonts": "5e35378e6bda803962ee6fd257e444a7d459660d",
+    "JetBrains/JetBrainsMono": "19371302b95d218af43299bce79ddbddd0bc364d",
+    "lucide-icons/lucide": "2bfb9bb1bae5d74f6a9f81640ddd8bccc2c71860"
+  },
+  "tool": "fontTools 4.64.0 / Brotli 1.2.0",
+  "files": [
+    {
+      "file": "manrope-latin.woff2",
+      "family": "Manrope",
+      "bytes": 50532,
+      "sha256": "279f9263d477dad78403309a840a4b32a4f913521e1f09508179d6e28a552d84",
+      "codepoints": 678
+    },
+    {
+      "file": "jetbrains-mono-latin.woff2",
+      "family": "JetBrains Mono",
+      "bytes": 66380,
+      "sha256": "6b4fbfd349f0647afa3d3d2429e741c6f30a51d621110ac160901e532b995f63",
+      "codepoints": 976
+    },
+    {
+      "file": "noto-sans-sc-ui.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 208024,
+      "sha256": "9de3f5cb97bed61396683bde0b0b683661dc6d5cfadaa600e2412c2c110e7ae6",
+      "codepoints": 898
+    },
+    {
+      "file": "noto-sans-sc-00.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 62968,
+      "sha256": "2dfdbe8a393dfc466b596dd3a05ad4d206ca3f7be0ba0344487177580b29aa28",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-01.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 168564,
+      "sha256": "6010ab199537bffe1fa7071d9ba6e45c8a25e79907df659268494531f59edf8c",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-02.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 150364,
+      "sha256": "6943cc84a88aff276a17f99b43282c1fda9f0b15c5a518b9758f6eee74a3d9e5",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-03.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 235176,
+      "sha256": "f17bd3678c8b1fe8bfab3dd285b27e414c5ea175f511328a06e97e6e15dd01ec",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-04.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 242292,
+      "sha256": "e85f36299d474bc2e279e4ef265c4762262bd5cf4840ff8667195a902ee64384",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-05.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 262712,
+      "sha256": "53c8e65ba454daded8fac52010b10c3ef155145bb614d2f59d9bf0c833e48e77",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-06.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 267660,
+      "sha256": "9262166e16056832293937a00b33f32e7f5a329eea88db9ba6fe7f0c62e8d13d",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-07.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 272496,
+      "sha256": "0a1e0721492f1842e9628b4fdf15812754dae96386866971211efe3a686e3df0",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-08.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 260920,
+      "sha256": "341b3dcf44aacbbbd9d6dfa80a991708c85d7c7c6dd70d1f669a1f9f0d02360e",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-09.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 256368,
+      "sha256": "f3f3457746535d9c8fc4ce9b409ca8d42df42499fc47409767fb69c1c9e296ef",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-10.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 281704,
+      "sha256": "aa0dba62c7389f8755774a3de66e5a51d7757f0bd440dfa9d06540f36aebec90",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-11.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 245432,
+      "sha256": "896878efc13e53999c877d997cc6d1893fa863221023d8e7e7fd9bb444907055",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-12.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 228564,
+      "sha256": "f4acc5b56fb1a093a0b75c57c438ffd3d454a00dd6f8776622add3f67b38f894",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-13.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 192552,
+      "sha256": "a7fe009380359627bfd0ac3fb02767e7e3e0e3d233c67d901c00a5af5417f44b",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-14.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 220260,
+      "sha256": "febe4a718186888378f4114d9e1c56c9909d97b4e12001d1f08f5725cea2be23",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-15.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 241540,
+      "sha256": "00cf76b8c21292672b0cf9f253ea2fff259a6e3097236e47a9b8e635a5e82bc4",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-16.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 224512,
+      "sha256": "db971fdf0de5b0da9b46b7589e12e6f652d1cba40abd45516765f59db50b9f74",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-17.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 237520,
+      "sha256": "f5140c7ca866d3be65de7d83ac1d2f7c9b3541638cd22e5f3ac017f4a45bcf35",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-18.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 249652,
+      "sha256": "84f529ec2f8e64de7e9ba12f9ac40bd36f183425a3d0f80195c988165ffb68d7",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-19.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 207160,
+      "sha256": "17a87b99775e3ee8596436b567bf430da44c9fa778c7a41657e98cd26bc5d49d",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-20.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 277644,
+      "sha256": "72b863291cd143d99d432d53003bd3bc96775a54e3762f2112186e59cc21bbed",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-21.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 222072,
+      "sha256": "31f05021e33ed07f2f8df2b51ac53028b5a86a189190f9cf7c9ebe546cf51dc4",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-22.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 282208,
+      "sha256": "c3046827729fcdfb1c85ca49394ec8e141f2024229b13733c82d03ba43eaf202",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-23.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 245680,
+      "sha256": "0e2f8bd6a61d7bb183d77ee9ef5b60ba229dd87e446b79680245621ce2d695b4",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-24.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 224768,
+      "sha256": "4044302d0f0be325e008c8ce4becaba76878013f8271c29492223d7695f1b7e5",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-25.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 239304,
+      "sha256": "f9ab908fc89de9c1fdfab04155a7cc7dba8a25c70788513fc698e3d69a6f16ab",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-26.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 293824,
+      "sha256": "65c6ab246cd947efc1639358e78c260fb145523176b932c8f2209e2e4cfe3793",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-27.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 258224,
+      "sha256": "c81ffd73da648412dca2864365bf61d191b4951ff1f845db250021a44f74a796",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-28.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 217360,
+      "sha256": "9841bc5d03c947493edf8cefe0f85b7b5e22d816b00089a7c4d34c364230328a",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-29.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 262200,
+      "sha256": "e3843f29c04747dd4df82351c3c113673b6af21284d4ea27b5d2e2760c8f4b4d",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-30.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 262044,
+      "sha256": "3935fc8bd291e3e102406b4e24b6016ce20707ef564490640871de7c7d6a8e6c",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-31.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 244604,
+      "sha256": "cea4b46a6b44565a3fefe2ebfa0b5deb3b272409771f644fa487fa13f2d85590",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-32.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 233836,
+      "sha256": "94886264e650f78a73d530f15c4b2d2c5569044e28f52629ece7735f539e4be1",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-33.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 246780,
+      "sha256": "9a7be29893c75aad263c1c37b2814a6b0b378dbdc2e71a998d0843fa096a5d71",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-34.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 252608,
+      "sha256": "140f9361c3bd448fb89b4cac367399707623c12edf9e38fe7f3973208c5218c2",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-35.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 258912,
+      "sha256": "40a6905bd381ecf53d813156bd9d2aa5c8e1f04f9fffa3ffaad6b18fd31724d7",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-36.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 277564,
+      "sha256": "01d068c0987bda479660916c3c1835b88a343f90edf9b0460e8761ff4b1dfb50",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-37.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 303544,
+      "sha256": "95964de3931c7f1d14165c731bee6d3f86f6fee1bd98c1b2b5f0a721e69f2c46",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-38.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 148308,
+      "sha256": "e6310d5e977011c41eb0170203a078120483254a57d0e2f2900bda61638562fb",
+      "codepoints": 768
+    },
+    {
+      "file": "noto-sans-sc-39.woff2",
+      "family": "Noto Sans SC",
+      "bytes": 20916,
+      "sha256": "696652966eff229cebbfc2aa5559c5257e7ee05df89a91cfee96cffc997a8338",
+      "codepoints": 40
+    }
+  ],
+  "upstreamFiles": {
+    "noto.ttf": {
+      "bytes": 17772300,
+      "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da"
+    },
+    "manrope.ttf": {
+      "bytes": 165420,
+      "sha256": "d0639be45d0af36e798172419d7bd173c4bd4f29e2b76cbb69db1d11bf8b0a40"
+    },
+    "mono.ttf": {
+      "bytes": 187208,
+      "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+    }
+  }
+}

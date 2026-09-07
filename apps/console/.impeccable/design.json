@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-07T05:47:42Z",
+  "generatedAt": "2026-09-07T06:49:14Z",
   "title": "Design System: FreightClaw Console",
   "extensions": {
     "colorMeta": {
@@ -231,16 +231,16 @@
     },
     "typographyMeta": {
       "display": {
-        "displayName": "首页展示尺度",
-        "purpose": "居中语句的轻重对比；不规范化当前系统展示字体。"
+        "displayName": "首页展示标题",
+        "purpose": "Noto Sans SC 与 Manrope 的统一字形系统；首页语句以 450 / 700 字重建立主次，宽屏上限 72px。"
       },
       "headline": {
         "displayName": "任务页标题",
-        "purpose": "业务任务页的主要标题。"
+        "purpose": "客户任务页主标题；按空间调整为 36px、30px 和 28px。"
       },
       "title": {
-        "displayName": "服务与章节标题",
-        "purpose": "服务卡片与章节的可扫描标题。"
+        "displayName": "首页服务标题",
+        "purpose": "四项服务的可扫描标题；宽屏24px，随后按1180px、540px、360px断点调整。"
       },
       "panel-title": {
         "displayName": "面板标题",
@@ -248,15 +248,23 @@
       },
       "body": {
         "displayName": "正文",
-        "purpose": "正文与操作说明；中文使用本地字体。"
+        "purpose": "Manrope 处理拉丁字形、Noto Sans SC 处理中文；自托管 WOFF2、font-display:swap 与 unicode-range 按字符请求，通用 sans-serif 回退。"
       },
       "label": {
-        "displayName": "控件标签",
-        "purpose": "按钮和字段标签。"
+        "displayName": "字段标签",
+        "purpose": "客户页可见字段标签。"
+      },
+      "control": {
+        "displayName": "可操作文字",
+        "purpose": "客户页按钮与输入控件的16px阅读尺度。"
+      },
+      "metadata": {
+        "displayName": "服务辅助信息",
+        "purpose": "首页服务范围、额度和辅助说明；桌面14px、手机13px，与装饰标签分别处理。"
       },
       "code": {
         "displayName": "命令与标识",
-        "purpose": "终端示例、代码和长标识。"
+        "purpose": "自托管 JetBrains Mono 与 Noto Sans SC 配合显示命令、中文注释和长标识。"
       }
     },
     "shadows": [
@@ -289,33 +297,29 @@
       },
       {
         "name": "ribbon-arrival",
-        "value": "1.1s cubic-bezier(.16,1,.3,1)",
-        "purpose": "首页弧线一次入场，从 translateY(8px) / blur(2px) 到零；减少动效时关闭。"
+        "value": "0.8s cubic-bezier(.16,1,.3,1)",
+        "purpose": "首页弧线一次入场，从 translateY(6px) / blur(1px) 到零；减少动效时关闭。"
       }
     ],
     "breakpoints": [
       {
-        "name": "content-gutter",
-        "value": "1344px"
+        "name": "service-two-column-horizontal",
+        "value": "1180px"
       },
       {
         "name": "market-two-column",
         "value": "1120px"
       },
       {
-        "name": "compact-desktop",
-        "value": "1100px"
-      },
-      {
-        "name": "service-two-column",
+        "name": "service-vertical-preview",
         "value": "900px"
       },
       {
-        "name": "mobile-navigation",
+        "name": "mobile-navigation-and-connect-stack",
         "value": "760px"
       },
       {
-        "name": "service-row",
+        "name": "service-icon-row",
         "value": "540px"
       },
       {
@@ -331,7 +335,7 @@
       "refersTo": "button-primary",
       "description": "客户界面的主要按钮，使用已实现的颜色层级和键盘焦点。",
       "html": "<button class=\"ds-button-primary\" type=\"button\">开始查询</button>",
-      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:9px 16px;border-radius:8px;cursor:pointer;text-decoration:none;font:600 13px/1.55 var(--font,Inter,\"SF Pro Text\",\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);background:var(--ink,#252830);color:#fff;border:1px solid var(--ink,#252830);} .ds-button-primary:hover{background:#414651;color:#fff;border-color:#414651;} .ds-button-primary:focus-visible{outline:3px solid #8197ee;outline-offset:3px;} .ds-button-primary:disabled{opacity:.6;cursor:not-allowed;} @media(prefers-reduced-motion:no-preference){.ds-button-primary{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
+      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:9px 16px;border-radius:8px;cursor:pointer;text-decoration:none;font:600 16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);background:var(--ink,#252830);color:#fff;border:1px solid var(--ink,#252830);} .ds-button-primary:hover{background:#414651;color:#fff;border-color:#414651;} .ds-button-primary:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-button-primary:disabled{opacity:.6;cursor:not-allowed;} @media(prefers-reduced-motion:no-preference){.ds-button-primary{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
     },
     {
       "name": "次要按钮",
@@ -339,7 +343,7 @@
       "refersTo": "button-secondary",
       "description": "客户界面的次要按钮，使用已实现的颜色层级和键盘焦点。",
       "html": "<button class=\"ds-button-secondary\" type=\"button\">查看详情</button>",
-      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:9px 16px;border-radius:8px;cursor:pointer;text-decoration:none;font:600 13px/1.55 var(--font,Inter,\"SF Pro Text\",\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);background:#fff;color:var(--ink,#252830);border:1px solid var(--strong,#cfd3db);} .ds-button-secondary:hover{background:#f1f4f9;color:var(--ink,#252830);} .ds-button-secondary:focus-visible{outline:3px solid #8197ee;outline-offset:3px;} .ds-button-secondary:disabled{opacity:.6;cursor:not-allowed;} @media(prefers-reduced-motion:no-preference){.ds-button-secondary{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
+      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:9px 16px;border-radius:8px;cursor:pointer;text-decoration:none;font:600 16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);background:#fff;color:var(--ink,#252830);border:1px solid var(--strong,#cfd3db);} .ds-button-secondary:hover{background:#f1f4f9;color:var(--ink,#252830);} .ds-button-secondary:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-button-secondary:disabled{opacity:.6;cursor:not-allowed;} @media(prefers-reduced-motion:no-preference){.ds-button-secondary{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
     },
     {
       "name": "轻按钮",
@@ -347,7 +351,7 @@
       "refersTo": "button-quiet",
       "description": "客户界面的轻按钮，使用已实现的颜色层级和键盘焦点。",
       "html": "<button class=\"ds-button-quiet\" type=\"button\">取消</button>",
-      "css": ".ds-button-quiet{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:9px 16px;border-radius:8px;cursor:pointer;text-decoration:none;font:600 13px/1.55 var(--font,Inter,\"SF Pro Text\",\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif);background:transparent;color:var(--muted,#626975);border:1px solid transparent;} .ds-button-quiet:hover{background:#eef0f4;color:var(--ink,#252830);} .ds-button-quiet:focus-visible{outline:3px solid #8197ee;outline-offset:3px;} .ds-button-quiet:disabled{opacity:.6;cursor:not-allowed;} @media(prefers-reduced-motion:no-preference){.ds-button-quiet{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
+      "css": ".ds-button-quiet{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:9px 16px;border-radius:8px;cursor:pointer;text-decoration:none;font:600 16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);background:transparent;color:var(--muted,#626975);border:1px solid transparent;} .ds-button-quiet:hover{background:#eef0f4;color:var(--ink,#252830);} .ds-button-quiet:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-button-quiet:disabled{opacity:.6;cursor:not-allowed;} @media(prefers-reduced-motion:no-preference){.ds-button-quiet{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
     },
     {
       "name": "带标签输入框",
@@ -355,15 +359,15 @@
       "refersTo": "field",
       "description": "白底字段；标签、焦点与错误文字属于同一输入体验。",
       "html": "<label class=\"ds-field\"><span>商品名称</span><input class=\"ds-input\" placeholder=\"请输入商品名称\"><small class=\"ds-field-error\" hidden>请填写商品名称</small></label>",
-      "css": ".ds-field{display:flex;flex-direction:column;gap:7px;color:var(--ink,#252830);font:600 13px/1.55 var(--font,system-ui,sans-serif);} .ds-input{width:100%;min-height:42px;padding:10px 12px;border:1px solid var(--strong,#cfd3db);border-radius:7px;background:#fff;color:var(--ink,#252830);font:400 14px/1.45 var(--font,system-ui,sans-serif);caret-color:var(--brand,#335cff);} .ds-input::placeholder{color:#637083;font-size:13px;} .ds-input:focus-visible{outline:3px solid #8197ee;outline-offset:3px;} .ds-input[aria-invalid=true]{border-color:var(--red,#b23a48);} .ds-field-error{font-size:12px;color:var(--red,#b23a48);}"
+      "css": ".ds-field{display:flex;flex-direction:column;gap:7px;color:var(--ink,#252830);font:600 15px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);} .ds-input{width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--strong,#cfd3db);border-radius:7px;background:#fff;color:var(--ink,#252830);font:400 16px/1.45 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);caret-color:var(--brand,#335cff);} .ds-input::placeholder{color:#637083;font-size:13px;} .ds-input:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-input[aria-invalid=true]{border-color:var(--red,#b23a48);} .ds-field-error{font-size:12px;color:var(--red,#b23a48);}"
     },
     {
       "name": "公共主导航",
       "kind": "nav",
       "refersTo": "navigation",
-      "description": "通过深色字重标示当前位置，蓝色提供悬停反馈。",
+      "description": "公共导航以深色字重标示当前位置；760px及以下实际页面进入移动抽屉，此片段展示其纵向条目。",
       "html": "<nav class=\"ds-nav\" aria-label=\"主要导航\"><a href=\"#home\" aria-current=\"page\">首页</a><a href=\"#market\">服务市场</a><a href=\"#cli\">CLI</a><a href=\"#guide\">操作手册</a></nav>",
-      "css": ".ds-nav{display:flex;gap:32px;background:#fff;} .ds-nav a{display:flex;align-items:center;min-height:44px;color:#555c68;font:450 14px/1.55 var(--font,system-ui,sans-serif);text-decoration:none;white-space:nowrap;} .ds-nav a[aria-current=page]{color:#202329;font-weight:650;} .ds-nav a:hover{color:var(--brand,#335cff);} .ds-nav a:focus-visible{outline:3px solid #8197ee;outline-offset:3px;} @media(max-width:400px){.ds-nav{gap:16px;flex-wrap:wrap;}}"
+      "css": ".ds-nav{display:flex;gap:36px;background:#fff;} .ds-nav a{display:flex;align-items:center;min-height:44px;color:#555c68;font:500 16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);text-decoration:none;white-space:nowrap;} .ds-nav a[aria-current=page]{color:#202329;font-weight:650;} .ds-nav a:hover{color:var(--brand,#335cff);} .ds-nav a:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} @media(max-width:1180px){.ds-nav{gap:26px;}} @media(max-width:760px){.ds-nav{flex-direction:column;gap:4px;}}"
     },
     {
       "name": "协议筛选",
@@ -371,31 +375,32 @@
       "refersTo": "protocol-filter",
       "description": "浅灰选中底与深字；数量为次级信息。",
       "html": "<button class=\"ds-filter\" type=\"button\" aria-pressed=\"true\">MCP <span>3</span></button>",
-      "css": ".ds-filter{display:inline-flex;align-items:center;gap:8px;min-height:42px;padding:9px 16px;border:0;border-radius:24px;background:#eff0f3;color:var(--ink,#252830);font:600 14px/1.55 var(--font,system-ui,sans-serif);cursor:pointer;} .ds-filter span{font-size:11px;padding:1px 6px;border-radius:5px;} .ds-filter:hover{background:#f6f7f9;color:var(--brand,#335cff);} .ds-filter:focus-visible{outline:3px solid #8197ee;outline-offset:3px;}"
+      "css": ".ds-filter{display:inline-flex;align-items:center;gap:8px;min-height:42px;padding:9px 16px;border:0;border-radius:24px;background:#eff0f3;color:var(--ink,#252830);font:600 16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);cursor:pointer;} .ds-filter span{font-size:12px;padding:1px 6px;border-radius:5px;} .ds-filter:hover{background:#f6f7f9;color:var(--brand,#335cff);} .ds-filter:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} @media(max-width:540px){.ds-filter{padding-inline:10px;font-size:15px;}}"
     },
     {
       "name": "市场能力卡",
       "kind": "card",
       "refersTo": "capability-card",
       "description": "图标、实际协议、服务说明和详情行动形成稳定顺序。",
-      "html": "<a class=\"ds-card\" href=\"#service/cargo.calculate\"><div class=\"ds-card-head\"><span class=\"ds-card-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"m12 3 9 5-9 5-9-5 9-5Z M3 8v9l9 5 9-5V8 M12 13v9 M7.5 5.5l9 5\"/></svg></span><span class=\"ds-card-protocol\">MCP</span></div><h3>货物计算</h3><p>从件数、尺寸和重量，计算体积、体积重与计费重。</p><div class=\"ds-card-foot\"><span>查看详情</span><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"M4 12h15m-6-6 6 6-6 6\"/></svg></div></a>",
-      "css": ".ds-card{display:flex;flex-direction:column;min-height:236px;padding:23px;border:1px solid var(--line,#e8eaee);border-radius:12px;background:#fff;color:var(--ink,#252830);font:14px/1.55 var(--font,system-ui,sans-serif);text-decoration:none;transition:border-color .18s ease,background-color .18s ease;} .ds-card:hover{background:#fafbff;border-color:#a6b7f0;} .ds-card:focus-visible{outline:3px solid #bdcdf7;outline-offset:3px;} .ds-card-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;} .ds-card-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:#eaf0ff;color:#365cdb;} .ds-card-icon svg{width:25px;height:25px;} .ds-card-protocol{font-size:10px;font-weight:600;color:#5d6c86;background:#f3f5f9;padding:4px 7px;border-radius:4px;} .ds-card h3{margin:0;font-size:17px;font-weight:650;line-height:1.5;} .ds-card p{margin:9px 0 0;color:#637087;font-size:13px;line-height:1.8;flex:1;} .ds-card-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:23px;color:#6c7990;font-size:11px;} .ds-card-foot svg{width:17px;height:17px;color:#7585a2;} @media(prefers-reduced-motion:reduce){.ds-card{transition:none;}}"
+      "html": "<a class=\"ds-card\" href=\"#service/cargo.calculate\"><div class=\"ds-card-head\"><span class=\"ds-card-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" />\n  <path d=\"M12 22V12\" />\n  <polyline points=\"3.29 7 12 12 20.71 7\" />\n  <path d=\"m7.5 4.27 9 5.15\" /></svg></span><span class=\"ds-card-protocol\">MCP</span></div><h3>货物计算</h3><p>从件数、尺寸和重量，计算体积、体积重与计费重。</p><div class=\"ds-card-foot\"><span>查看详情</span><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7 7h10v10\" />\n  <path d=\"M7 17 17 7\" /></svg></div></a>",
+      "css": ".ds-card{display:flex;flex-direction:column;min-height:236px;padding:23px;border:1px solid var(--line,#e8eaee);border-radius:12px;background:#fff;color:var(--ink,#252830);font:16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);text-decoration:none;transition:border-color .18s ease,background-color .18s ease;} .ds-card:hover{background:#fafbff;border-color:#a6b7f0;} .ds-card:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-card-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;} .ds-card-icon{display:grid;place-items:center;width:50px;height:50px;border-radius:12px;background:#eaf0ff;color:#365cdb;} .ds-card-icon svg{width:28px;height:28px;} .ds-card-protocol{font-size:12px;font-weight:600;color:#5d6c86;background:#f3f5f9;padding:4px 7px;border-radius:4px;} .ds-card h3{margin:0;font-size:21px;font-weight:650;line-height:1.5;} .ds-card p{margin:9px 0 0;color:#637087;font-size:16px;line-height:1.8;flex:1;} .ds-card-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:23px;color:#6c7990;font-size:14px;} .ds-card-foot svg{width:17px;height:17px;color:#7585a2;} @media(prefers-reduced-motion:reduce){.ds-card{transition:none;}}"
     },
     {
       "name": "首页服务预览",
       "kind": "card",
       "refersTo": "service-preview",
-      "description": "浅色几何预览配合正文说明，窄屏保留左图右文。",
-      "html": "<a class=\"ds-service\" href=\"/inquiry/\"><div class=\"ds-service-visual\" aria-hidden=\"true\"><span class=\"ds-service-symbol\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"m12 3 9 5-9 5-9-5 9-5Z M3 8v9l9 5 9-5V8 M12 13v9 M7.5 5.5l9 5\"/></svg></span></div><div class=\"ds-service-copy\"><h2>海运询价 <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"M4 12h15m-6-6 6 6-6 6\"/></svg></h2><p>按需选择运输环节，<br>整理货物与服务需求。</p><span>中国到加拿大 · 整柜 / 拼箱</span></div></a>",
-      "css": ".ds-service{display:flex;flex-direction:column;min-width:0;padding:8px;border:1px solid #e7e9ef;border-radius:14px;background:#fff;color:var(--ink,#252830);text-decoration:none;font:14px/1.55 var(--font,system-ui,sans-serif);} .ds-service:hover{border-color:#aabbea;background:#fdfdff;} .ds-service:focus-visible{outline:3px solid #8197ee;outline-offset:3px;} .ds-service-visual{height:144px;display:flex;align-items:center;justify-content:center;padding:14px;border-radius:9px;background:var(--soft,#f7f8fa);} .ds-service-symbol{display:grid;place-items:center;width:48px;height:48px;border-radius:10px;background:#fff;color:#627bea;box-shadow:0 6px 18px #323f6310;} .ds-service-symbol svg{width:30px;height:30px;} .ds-service-copy{padding:20px 16px 16px;} .ds-service-copy h2{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0;font-size:20px;line-height:1.4;letter-spacing:-.02em;font-weight:650;} .ds-service-copy h2 svg{width:17px;height:17px;color:#737d90;flex:none;} .ds-service-copy p{margin:10px 0 0;color:#666e7b;font-size:13px;line-height:1.8;} .ds-service-copy>span{display:block;margin-top:17px;color:var(--muted,#626975);font-size:11px;line-height:1.7;} @media(max-width:540px){.ds-service{display:grid;grid-template-columns:104px minmax(0,1fr);}.ds-service-visual{height:auto;min-height:158px;padding:10px;}.ds-service-copy{padding:14px 10px 12px 16px;}.ds-service-copy h2{font-size:18px;}.ds-service-copy p{font-size:12px;}.ds-service-copy>span{font-size:10px;margin-top:12px;}} @media(prefers-reduced-motion:no-preference){.ds-service{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
+      "description": "同一开源线性图标与16px服务说明；宽屏上下图文，中等宽度横向预览，手机简化为图标与完整正文。",
+      "html": "<a class=\"ds-service\" href=\"/inquiry/\"><div class=\"ds-service-visual\" aria-hidden=\"true\"><span class=\"ds-service-label\">中国 → 加拿大</span><span class=\"ds-service-symbol\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z\" />\n  <path d=\"M10 21.9V14L2.1 9.1\" />\n  <path d=\"m10 14 11.9-6.9\" />\n  <path d=\"M14 19.8v-8.1\" />\n  <path d=\"M18 17.5V9.4\" /></svg></span></div><div class=\"ds-service-copy\"><h2>海运询价 <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7 7h10v10\" />\n  <path d=\"M7 17 17 7\" /></svg></h2><p>按需选择运输环节，整理货物与服务需求。</p><span>中国到加拿大 · 整柜 / 拼箱</span></div></a>",
+      "css": ".ds-service{display:flex;flex-direction:column;min-width:0;padding:10px;border:1px solid #e7e9ef;border-radius:16px;background:#fff;color:var(--ink,#252830);text-decoration:none;font:16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);} .ds-service:hover{border-color:#aabbea;background:#fdfdff;} .ds-service:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-service-visual{height:174px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:17px;padding:14px;border-radius:10px;background:var(--soft,#f7f8fa);} .ds-service-label{color:#71798a;font-size:13px;font-weight:500;} .ds-service-symbol{display:grid;place-items:center;width:66px;height:66px;border-radius:14px;background:#fff;color:#627bea;box-shadow:0 6px 18px #323f6310;} .ds-service-symbol svg{width:36px;height:36px;} .ds-service-copy{padding:22px 18px 20px;} .ds-service-copy h2{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0;font-size:24px;line-height:1.4;letter-spacing:-.02em;font-weight:650;} .ds-service-copy h2 svg{width:21px;height:21px;color:#737d90;flex:none;} .ds-service-copy p{margin:12px 0 0;color:#666e7b;font-size:16px;line-height:1.8;} .ds-service-copy>span{display:block;margin-top:20px;color:var(--muted,#626975);font-size:14px;line-height:1.7;} @media(max-width:1180px){.ds-service{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(0,1.2fr);align-items:stretch;}.ds-service-visual{height:auto;min-height:220px;}.ds-service-copy{padding:18px 14px;}.ds-service-copy h2{font-size:22px;}} @media(max-width:900px){.ds-service{display:flex;}.ds-service-visual{height:150px;min-height:0;}.ds-service-copy{padding:20px 16px;}} @media(max-width:540px){.ds-service{display:grid;grid-template-columns:76px minmax(0,1fr);padding:14px;gap:16px;}.ds-service-visual{height:84px;align-self:center;padding:12px;border-radius:12px;}.ds-service-label{display:none;}.ds-service-symbol{width:52px;height:52px;background:transparent;box-shadow:none;}.ds-service-symbol svg{width:38px;height:38px;}.ds-service-copy{padding:2px 0;}.ds-service-copy h2{font-size:21px;gap:8px;}.ds-service-copy h2 svg{width:19px;height:19px;}.ds-service-copy p{margin-top:10px;line-height:1.75;}.ds-service-copy>span{font-size:13px;margin-top:12px;}} @media(max-width:360px){.ds-service{grid-template-columns:58px minmax(0,1fr);gap:12px;padding:12px;}.ds-service-visual{padding:8px;}.ds-service-copy h2{font-size:20px;}} @media(prefers-reduced-motion:no-preference){.ds-service{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
     }
   ],
   "narrative": {
     "northStar": "留白中的物流入口",
-    "overview": "以用户确认的 JoyAgent 参考方向为基础，FreightClaw 用白色留白、近黑文字与主操作建立安静、直接的服务入口。蓝色保留在品牌标记、链接、焦点和轻提示中；淡蓝点阵、弧线与物流图标提供轻量空间感。浅色服务预览与深色页脚构成明暗节奏，内容仍使用 FreightClaw 自有品牌、图标与实际业务。\n\n此系统覆盖 `apps/console` 的官网、服务市场、业务表单、CLI 与操作手册。公共入口保持舒展，操作页以可扫描的信息、明确字段和真实状态为主。首页的居中双字重标题、四服务预览与弧线图标属于该页面的表达，不要求其他任务页复用整套构图。\n\n本文更新并合并既有规范：保留已实现的可见焦点、局部滚动、移动账号入口与状态文字；视觉依据为当前 `styles.css`、`home.js`、`app.js`、`market.js` 和本轮桌面、移动端截图。生产部署与业务就绪状态归交付记录和 [PRODUCT.md](PRODUCT.md)，不由设计文档推定。",
+    "overview": "以用户确认的 JoyAgent 参考方向为基础，FreightClaw 用白色留白、近黑文字与主操作建立安静、直接的服务入口。蓝色保留在品牌标记、链接、焦点和轻提示中；淡蓝点阵、弧线与物流图标提供轻量空间感。浅色服务预览与深色页脚构成明暗节奏，内容使用 FreightClaw 自有品牌、真实业务说明与统一的开源线性图标。\n\n此系统覆盖 `apps/console` 的官网、服务市场、业务表单、CLI 与操作手册。公共入口保持舒展，操作页以可扫描的信息、明确字段和真实状态为主。首页的居中双字重标题、四服务预览与弧线图标属于该页面的表达，不要求其他任务页复用整套构图。\n\n本文按当前实现合并更新字体、阅读尺度、布局与图标规范，保留可见焦点、局部滚动、移动账号入口与状态文字。视觉依据为当前 `styles.css`、`home.js`、`icons.js`、字体清单和 `.impeccable/review/refinement` 中的本地桌面、移动端截图。生产部署与业务就绪状态归交付记录和 [PRODUCT.md](PRODUCT.md)，不由设计文档推定。",
     "keyCharacteristics": [
       "白色画布与近黑主操作形成稳定主次，蓝色承担链接、焦点与轻提示。",
-      "大标题以轻重字重建立节奏，任务页用紧凑字号和充分行距保证扫描。",
+      "大标题以轻重字重建立节奏，正文、辅助文字与控件保持较大的阅读尺度。",
+      "中文、拉丁文字与代码使用自托管开源字体；统一线性 SVG 保持图标笔画和圆角一致。",
       "柔和灰底、细边界和圆角组织内容，微弱阴影只用于浮层和预览中的小物件。",
       "桌面、平板与手机保持任务顺序，服务预览随宽度从四列转为两列和横向单列。"
     ],
@@ -408,6 +413,11 @@
       {
         "name": "The Weight Contrast Rule",
         "body": "展示标题通过轻重字重而非多种装饰字体建立主次；表单、目录与说明继续优先保证阅读和扫描。",
+        "section": "typography"
+      },
+      {
+        "name": "The Readable Metadata Rule",
+        "body": "首页服务正文在手机仍保持正文尺度；辅助信息与装饰图示分别处理，隐藏装饰标签时保留完整的业务说明。",
         "section": "typography"
       },
       {
@@ -424,6 +434,8 @@
     "dos": [
       "**Do** 使用白色画布、近黑主操作与蓝色链接的角色分工。",
       "**Do** 用留白、字重、浅底与细边界组织内容，并保留清晰的辅助文字。",
+      "**Do** 使用自托管开源字体和统一 Lucide SVG，保留来源版本、Unicode 分片与许可文件。",
+      "**Do** 在手机服务卡保留（16 px）正文与（13 px）辅助文字，先简化装饰再安排内容。",
       "**Do** 保留字段标签、可见键盘焦点、菜单关闭及焦点恢复行为。",
       "**Do** 将宽表格、代码和目录的滚动限定在局部容器。",
       "**Do** 让移动账号入口始终可达，并保持服务和表单的阅读顺序。"

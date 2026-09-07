@@ -11,6 +11,27 @@ const execFileAsync = promisify(execFile);
 afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 
 describe("production Portal bundle entrypoint", () => {
+  it("bundles all three local font families into loadable WOFF2 assets", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "portal-fonts-"));
+    directories.push(directory);
+    const outfile = join(directory, "styles.css");
+    await build({ entryPoints: [resolve("apps/console/styles.css")], outfile, bundle: true,
+      loader: { ".woff2": "file" }, assetNames: "fonts/[name]-[hash]", publicPath: "/console" });
+    const css = await readFile(outfile, "utf8");
+    for (const family of ["Noto Sans SC", "Manrope", "JetBrains Mono"]) {
+      expect(css).toMatch(new RegExp(`@font-face\\s*\\{[^}]*font-family:\\s*["']?${family}`, "u"));
+    }
+    expect(css).not.toMatch(/https?:\/\//u);
+    const fontUrls = [...css.matchAll(/url\(["']?(\/console\/fonts\/[^)"']+\.woff2)["']?\)/gu)].map((match) => match[1]!);
+    expect(fontUrls.length).toBeGreaterThanOrEqual(3);
+    for (const url of new Set(fontUrls)) {
+      const font = await readFile(join(directory, url.slice("/console/".length)));
+      expect(font.subarray(0, 4).toString()).toBe("wOF2");
+    }
+    expect(css).toContain("font-display: swap");
+    expect(css).toContain("unicode-range:");
+  });
+
   it("versions each cached console asset from its final content without changing source HTML", async () => {
     const directory = await mkdtemp(join(tmpdir(), "portal-assets-"));
     directories.push(directory);
