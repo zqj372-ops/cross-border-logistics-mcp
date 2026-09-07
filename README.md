@@ -10,7 +10,8 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 - [2026-09-07 关务来源与历史生产部署](docs/runbooks/riskcustoms-history-deployment-2026-09-07.md)
 - [新服务接入指南](docs/integrations/new-service-onboarding.md)
 - [FreightClaw CLI 使用说明](deploy/cli/README.md) / [客户端构建与交付](docs/runbooks/freightclaw-cli.md)：统一 Key 调用九条现有 REST 接口，支持 JSON、输入 Schema 和业务状态退出码；官网提供可直接安装的 npm 包。
-- [公开首页与访客关税说明](docs/runbooks/public-portal.md)：账号菜单、每天 20 次访客查询、尾程登录边界、页面截图及发布和回滚记录。
+- [官网视觉更新与图文说明](docs/runbooks/joyagent-style.md)：新版首页、账号入口、桌面和手机截图、发布验证与回滚记录。
+- [公开首页与访客关税说明](docs/runbooks/public-portal.md)：每天 20 次访客查询、尾程登录边界及首次发布记录。
 - [官网与 CLI 统一入口的首次发布](docs/runbooks/unified-service-entry.md)：保留的整柜询价、CLI 入口和历史发布步骤。
 - [简明海运询价图文说明](docs/runbooks/shipper-inquiry.md)：三步整理运输需求；完整费用目录保留，企业与合规咨询单独进入，邮件由客户自行确认发送。
 - [CLI 图文使用指南](docs/runbooks/freightclaw-cli-illustrated.md)：四张实测截图说明安装后的命令选择、连接检查、输入校验与结果处理。
@@ -37,9 +38,9 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 
 首页、海运需求整理、市场、CLI 和操作手册可公开访问。关税和税费提供每天 20 次访客查询，同一网络共享、批量按商品数计次、北京时间零点恢复。加拿大尾程查询和个人数据仍需登录及相应权限；具体计次规则见 [访客查询说明](docs/runbooks/public-portal.md)。
 
-下图为 2026-09-07 更新后的官网实际页面。首页精简为“询运费，查关税。”，个人中心收进账号菜单。完整操作和访客额度说明见 [图文说明](docs/runbooks/public-portal.md)。
+下图为 2026-09-07 按指定参考风格更新后的官网实际页面。首页以“询运费，查关税。”呈现海运、关税、税费与 CLI 四个入口，个人中心位于账号图标中。桌面和手机截图、发布验证见 [图文说明](docs/runbooks/joyagent-style.md)。
 
-![FreightClaw 公开首页，海运询价与每天 20 次访客关税查询](docs/runbooks/assets/public-portal/01-home-desktop.jpg)
+![FreightClaw 公开首页，海运询价与每天 20 次访客关税查询](docs/runbooks/assets/joyagent-style/01-home-desktop.png)
 
 ### CLI 快速开始
 

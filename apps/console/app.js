@@ -187,9 +187,10 @@ function ensureShell() {
 }
 function customerNav() {
   const { page } = route();
+  app.dataset.page = page;
   const center = reviewer() ? 'platform' : model.session?.authenticated && !developer() ? (model.session.organization_id ? 'workbench' : 'members') : 'api-keys';
   const active = page === 'cli' ? 'cli' : page === 'home' ? 'home' : ['market', 'catalog', 'service'].includes(page) ? 'market' : ['guide', 'diagnostics'].includes(page) ? 'guide' : center;
-  const targets = [['首页', 'home'], ['市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide']];
+  const targets = [['首页', 'home'], ['服务市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide']];
   const navItems = targets.map(([title, target]) => `<button type="button" class="nav-item" data-go="${target}" ${active === target ? 'aria-current="page"' : ''}>${title}</button>`).join('');
   const signedIn = model.session?.authenticated;
   const account = `<div class="account-disclosure"><button class="account-toggle" type="button" data-action="account-menu" aria-label="账号菜单" aria-expanded="false" aria-controls="account-menu"><span class="customer-avatar">${signedIn ? esc(model.session.identity.display_name.slice(0, 1)) : icon('account')}</span><svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="account-menu" class="account-dropdown" hidden><div class="account-summary"><strong>${signedIn ? esc(model.session.identity.display_name) : '欢迎来到 FreightClaw'}</strong><span>${signedIn ? '管理你的账号与业务' : '登录后管理个人记录与服务'}</span></div><button type="button" data-go="account">${icon('account')}${signedIn ? '个人中心' : '登录个人中心'}</button>${signedIn && !reviewer() ? `<button type="button" data-go="customs-history">${icon('clock')}关务历史</button><button type="button" data-go="quote-history">${icon('file')}我的报价记录</button>${developer() ? `<button type="button" data-go="api-keys">${icon('key')}API Key</button>` : ''}` : ''}${signedIn ? '<button class="account-logout" type="button" data-action="logout">退出登录</button>' : ''}</div></div>`;
