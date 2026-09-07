@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "management": {
+      "default": false,
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "submitted",
+        "in_review",
+        "needs_input",
+        "closed",
+        "cancelled"
+      ]
+    },
+    "cursor": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "limit": {
+      "default": 25,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    }
+  },
+  "required": [
+    "management",
+    "limit"
+  ],
+  "additionalProperties": false,
+  "$id": "https://freightclaw.local/schemas/portal-cases-list.schema.json"
+}

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-07T06:49:14Z",
+  "generatedAt": "2026-09-07T09:08:51Z",
   "title": "Design System: FreightClaw Console",
   "extensions": {
     "colorMeta": {
@@ -325,6 +325,14 @@
       {
         "name": "compact-phone",
         "value": "360px"
+      },
+      {
+        "name": "case-actions-first",
+        "value": "800px"
+      },
+      {
+        "name": "case-details-single-column",
+        "value": "480px"
       }
     ]
   },
@@ -392,11 +400,19 @@
       "description": "同一开源线性图标与16px服务说明；宽屏上下图文，中等宽度横向预览，手机简化为图标与完整正文。",
       "html": "<a class=\"ds-service\" href=\"/inquiry/\"><div class=\"ds-service-visual\" aria-hidden=\"true\"><span class=\"ds-service-label\">中国 → 加拿大</span><span class=\"ds-service-symbol\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z\" />\n  <path d=\"M10 21.9V14L2.1 9.1\" />\n  <path d=\"m10 14 11.9-6.9\" />\n  <path d=\"M14 19.8v-8.1\" />\n  <path d=\"M18 17.5V9.4\" /></svg></span></div><div class=\"ds-service-copy\"><h2>海运询价 <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7 7h10v10\" />\n  <path d=\"M7 17 17 7\" /></svg></h2><p>按需选择运输环节，整理货物与服务需求。</p><span>中国到加拿大 · 整柜 / 拼箱</span></div></a>",
       "css": ".ds-service{display:flex;flex-direction:column;min-width:0;padding:10px;border:1px solid #e7e9ef;border-radius:16px;background:#fff;color:var(--ink,#252830);text-decoration:none;font:16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);} .ds-service:hover{border-color:#aabbea;background:#fdfdff;} .ds-service:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-service-visual{height:174px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:17px;padding:14px;border-radius:10px;background:var(--soft,#f7f8fa);} .ds-service-label{color:#71798a;font-size:13px;font-weight:500;} .ds-service-symbol{display:grid;place-items:center;width:66px;height:66px;border-radius:14px;background:#fff;color:#627bea;box-shadow:0 6px 18px #323f6310;} .ds-service-symbol svg{width:36px;height:36px;} .ds-service-copy{padding:22px 18px 20px;} .ds-service-copy h2{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0;font-size:24px;line-height:1.4;letter-spacing:-.02em;font-weight:650;} .ds-service-copy h2 svg{width:21px;height:21px;color:#737d90;flex:none;} .ds-service-copy p{margin:12px 0 0;color:#666e7b;font-size:16px;line-height:1.8;} .ds-service-copy>span{display:block;margin-top:20px;color:var(--muted,#626975);font-size:14px;line-height:1.7;} @media(max-width:1180px){.ds-service{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(0,1.2fr);align-items:stretch;}.ds-service-visual{height:auto;min-height:220px;}.ds-service-copy{padding:18px 14px;}.ds-service-copy h2{font-size:22px;}} @media(max-width:900px){.ds-service{display:flex;}.ds-service-visual{height:150px;min-height:0;}.ds-service-copy{padding:20px 16px;}} @media(max-width:540px){.ds-service{display:grid;grid-template-columns:76px minmax(0,1fr);padding:14px;gap:16px;}.ds-service-visual{height:84px;align-self:center;padding:12px;border-radius:12px;}.ds-service-label{display:none;}.ds-service-symbol{width:52px;height:52px;background:transparent;box-shadow:none;}.ds-service-symbol svg{width:38px;height:38px;}.ds-service-copy{padding:2px 0;}.ds-service-copy h2{font-size:21px;gap:8px;}.ds-service-copy h2 svg{width:19px;height:19px;}.ds-service-copy p{margin-top:10px;line-height:1.75;}.ds-service-copy>span{font-size:13px;margin-top:12px;}} @media(max-width:360px){.ds-service{grid-template-columns:58px minmax(0,1fr);gap:12px;padding:12px;}.ds-service-visual{padding:8px;}.ds-service-copy h2{font-size:20px;}} @media(prefers-reduced-motion:no-preference){.ds-service{transition:background-color .18s ease,border-color .18s ease,color .18s ease;}}"
+    },
+    {
+      "name": "询价列表卡",
+      "kind": "card",
+      "refersTo": "case-card",
+      "description": "客户列表和授权处理队列共用；服务、状态、更新时间与完整编号保持可扫描。此片段为合成示例。",
+      "html": "<a class=\"ds-case-card\" href=\"#cases\"><div class=\"ds-case-top\"><h2>整柜海运询价</h2><span>待处理</span></div><p>中国 → 加拿大</p><div class=\"ds-case-meta\"><span>海运服务</span><span>示例时间</span></div><span class=\"ds-case-reference\">需求编号：示例</span></a>",
+      "css": ".ds-case-card{display:block;padding:24px;border:1px solid var(--line,#e8eaee);border-radius:12px;background:var(--surface,#fff);color:var(--ink,#252830);font:16px/1.65 var(--font,\"Manrope\",\"Noto Sans SC\",sans-serif);text-decoration:none;transition:border-color .15s;} .ds-case-card:hover{border-color:var(--brand,#335cff);} .ds-case-card:focus-visible{outline:3px solid var(--brand,#335cff);outline-offset:3px;} .ds-case-top,.ds-case-meta{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;} .ds-case-top h2{margin:0;font-size:18px;} .ds-case-card p{margin:8px 0;} .ds-case-meta,.ds-case-reference{color:var(--muted,#626975);font-size:14px;} .ds-case-reference{display:block;margin-top:12px;overflow-wrap:anywhere;} @media(max-width:800px){.ds-case-card{padding:20px;}.ds-case-top{align-items:flex-start;}} @media(prefers-reduced-motion:reduce){.ds-case-card{transition:none;}}"
     }
   ],
   "narrative": {
     "northStar": "留白中的物流入口",
-    "overview": "以用户确认的 JoyAgent 参考方向为基础，FreightClaw 用白色留白、近黑文字与主操作建立安静、直接的服务入口。蓝色保留在品牌标记、链接、焦点和轻提示中；淡蓝点阵、弧线与物流图标提供轻量空间感。浅色服务预览与深色页脚构成明暗节奏，内容使用 FreightClaw 自有品牌、真实业务说明与统一的开源线性图标。\n\n此系统覆盖 `apps/console` 的官网、服务市场、业务表单、CLI 与操作手册。公共入口保持舒展，操作页以可扫描的信息、明确字段和真实状态为主。首页的居中双字重标题、四服务预览与弧线图标属于该页面的表达，不要求其他任务页复用整套构图。\n\n本文按当前实现合并更新字体、阅读尺度、布局与图标规范，保留可见焦点、局部滚动、移动账号入口与状态文字。视觉依据为当前 `styles.css`、`home.js`、`icons.js`、字体清单和 `.impeccable/review/refinement` 中的本地桌面、移动端截图。生产部署与业务就绪状态归交付记录和 [PRODUCT.md](PRODUCT.md)，不由设计文档推定。",
+    "overview": "以用户确认的 JoyAgent 参考方向为基础，FreightClaw 用白色留白、近黑文字与主操作建立安静、直接的服务入口。蓝色保留在品牌标记、链接、焦点和轻提示中；淡蓝点阵、弧线与物流图标提供轻量空间感。浅色服务预览与深色页脚构成明暗节奏，内容使用 FreightClaw 自有品牌、真实业务说明与统一的开源线性图标。\n\n此系统覆盖 `apps/console` 的官网、服务市场、业务表单、询价协作、CLI 与操作手册。公共入口保持舒展，操作页以可扫描的信息、明确字段和真实状态为主。首页的居中双字重标题、四服务预览与弧线图标属于该页面的表达，不要求其他任务页复用整套构图。\n\n本文按当前实现合并更新字体、阅读尺度、布局与图标规范，保留可见焦点、局部滚动、移动账号入口与状态文字。视觉依据为当前 `styles.css`、`home.js`、`icons.js`、字体清单和 `.impeccable/review/refinement` 中的本地桌面、移动端截图。询价协作补充依据 `cases.js` 与 [本地合成验收截图](../../docs/product/assets/cases-20260907/)；后台延续现有字体、图标、按钮与面板，不建立新的视觉身份。生产部署与业务就绪状态归交付记录和 [PRODUCT.md](PRODUCT.md)，不由设计文档推定。",
     "keyCharacteristics": [
       "白色画布与近黑主操作形成稳定主次，蓝色承担链接、焦点与轻提示。",
       "大标题以轻重字重建立节奏，正文、辅助文字与控件保持较大的阅读尺度。",

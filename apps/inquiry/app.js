@@ -9,6 +9,34 @@ let mode = location.hash === '#business' ? 'business' : 'shipping';
 let step = 1;
 let errors = {};
 let generated = null;
+let submitted = null;
+let submitting = false;
+let submitMessage = '';
+let loginRequired = false;
+const submissionKeys = new Map();
+async function submitInquiry() {
+  if (submitting) return;
+  submitting = true; submitMessage = ''; loginRequired = false;
+  const snapshot = structuredClone(draft()), fingerprint = JSON.stringify(snapshot);
+  if (!submissionKeys.has(fingerprint)) submissionKeys.set(fingerprint, crypto.randomUUID());
+  render();
+  try {
+    const sessionResponse = await fetch('/console/api/v1/session', { credentials: 'same-origin' });
+    if (!sessionResponse.ok) throw new Error('unavailable');
+    const session = await sessionResponse.json();
+    if (!session.authenticated) { loginRequired = true; throw new Error('login'); }
+    const response = await fetch('/console/api/v1/cases', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-csrf-token': session.csrf_token, 'idempotency-key': submissionKeys.get(fingerprint) }, body: fingerprint });
+    const result = await response.json();
+    if (!response.ok || result.status !== 'success') {
+      const code = result.reason_codes?.[0];
+      if (response.status === 401) loginRequired = true;
+      throw new Error(code || 'unavailable');
+    }
+    submitted = result.data;
+  } catch (error) {
+    submitMessage = loginRequired ? '请先登录以保存需求和查看进度。已填写资料保留在当前页面，登录后返回此页再次提交。' : error.message === 'case_daily_limit' ? '今日提交次数已达上限，请稍后再试。' : '暂未确认提交成功。请重试；同一份需求不会重复创建。也可选择生成邮件联系。';
+  } finally { submitting = false; render({ focus: true }); }
+}
 const draft = () => drafts[mode];
 const isBusiness = () => mode === 'business';
 const icons = {
@@ -58,7 +86,7 @@ function reviewContent() {
     <div class="review-block"><div class="review-heading"><h3>${isBusiness() ? '办理信息' : '运输信息'}</h3><button type="button" class="text-button" data-step="2">修改信息</button></div><dl class="review-grid">${shipmentLines(d).map(line => { const [label, ...value] = line.split('：'); return `<div><dt>${esc(label)}</dt><dd>${esc(value.join('：'))}</dd></div>`; }).join('')}</dl>${d.notes.trim() ? `<p class="review-notes">${esc(d.notes)}</p>` : ''}</div>`;
 }
 function contactStep() {
-  return `<h2 id="step-title" tabindex="-1">确认需求，留下联系方式</h2><p class="section-intro">核对后生成询价邮件，由您确认发送。</p>${reviewContent()}
+  return `<h2 id="step-title" tabindex="-1">确认需求，留下联系方式</h2><p class="section-intro">提交后可在“我的询价”查看进度；具体费用由工作人员确认。</p>${reviewContent()}
     <div class="contact-fields"><div class="field-grid">${input('contactName', '联系人', { autocomplete: 'name', maxlength: 80 })}${input('email', '电子邮箱', { type: 'email', autocomplete: 'email', maxlength: 254 })}</div><div class="field-grid">${input('company', '公司名称', { optional: true, autocomplete: 'organization', maxlength: 160 })}${input('phone', '联系电话', { optional: true, type: 'tel', autocomplete: 'tel', maxlength: 80 })}</div></div>
     <label class="consent"><input id="consent" name="consent" type="checkbox"${draft().consent ? ' checked' : ''}${invalid('consent')}><span>我已核对以上需求；具体服务范围和费用待报价确认。</span></label>${error('consent')}`;
 }
@@ -78,13 +106,18 @@ function heading() {
   return `<div class="page-heading"><div><h1>${isBusiness() ? '企业与合规服务' : '加拿大海运询价'}</h1><p>${isBusiness() ? '说明办理需求，获取服务方案与报价。' : '选好服务，整理需求，获取报价。'}</p></div>${isBusiness() ? '<a class="back-link" href="#">返回海运询价 →</a>' : '<span class="route-label">中国 → 加拿大</span>'}</div>`;
 }
 function render({ focus = false, restore } = {}) {
+  if (submitted) {
+    root.innerHTML = `${heading()}<section class="generated submission-success"><div class="generated-heading"><span class="document-icon">${icon('document')}</span><div><h2 id="submitted-title" tabindex="-1">需求已提交</h2><p>工作人员收到后会跟进，您可随时查看进度。</p></div></div><dl class="mail-meta submission-meta"><div><dt>需求编号</dt><dd>${esc(submitted.case_id)}</dd></div><div><dt>当前状态</dt><dd>${({submitted:'待处理',in_review:'处理中',needs_input:'待补充',closed:'已结束',cancelled:'已取消'})[submitted.status]}</dd></div></dl><div class="mail-actions"><a class="button primary" href="/console/#case/${encodeURIComponent(submitted.case_id)}">查看询价进度</a><a class="button secondary" href="/console/#cases">我的询价</a></div><p class="mail-note">本次提交为询价需求，服务范围和费用仍待确认。</p></section>`;
+    root.querySelector('#submitted-title')?.focus(); return;
+  }
   if (generated) { renderGenerated(); return; }
   document.title = `${isBusiness() ? '企业与合规服务' : '加拿大海运询价'} · FreightClaw`;
   const steps = ['选择服务', isBusiness() ? '办理信息' : '运输信息', '确认询价'];
   root.innerHTML = `${heading()}<nav class="steps" aria-label="询价步骤"><ol>${steps.map((label, i) => `<li${step === i + 1 ? ' class="current"' : ''}><button type="button" data-step="${i + 1}"${step === i + 1 ? ' aria-current="step"' : ''}><span class="step-number">${i + 1 < step ? '✓' : i + 1}</span>${label}</button></li>`).join('')}</ol></nav>
-    <form novalidate class="inquiry-layout"><section class="form-content" aria-labelledby="step-title">${Object.keys(errors).length ? '<p class="error-summary" role="alert">请检查下方标注的信息，再继续。</p>' : ''}${step === 1 ? serviceStep() : step === 2 ? cargoStep() : contactStep()}</section>
+    <form novalidate class="inquiry-layout" aria-busy="${submitting}"><section class="form-content" aria-labelledby="step-title">${Object.keys(errors).length ? '<p class="error-summary" role="alert">请检查下方标注的信息，再继续。</p>' : ''}${submitMessage ? `<div class="error-summary" role="alert">${esc(submitMessage)}${loginRequired ? ' <a href="/console/#cases" target="_blank" rel="noopener">登录账号 ↗</a>' : ''}</div>` : ''}${step === 1 ? serviceStep() : step === 2 ? cargoStep() : contactStep()}</section>
     <aside class="summary-panel"><details${matchMedia('(min-width: 960px)').matches ? ' open' : ''}><summary>询价摘要 <span id="service-count">${selectedServices(draft()).length} 项服务</span></summary><div id="summary-content">${summaryContent()}</div></details></aside>
-    <div class="actions">${step > 1 ? '<button type="button" class="button secondary" data-back>上一步</button>' : '<span class="action-note">服务可单独询价</span>'}<button type="submit" class="button primary">${step === 3 ? '生成询价邮件' : `下一步：${steps[step]}`}<span aria-hidden="true">→</span></button></div></form>`;
+    <div class="actions">${step > 1 ? '<button type="button" class="button secondary" data-back>上一步</button>' : '<span class="action-note">服务可单独询价</span>'}<button type="submit" class="button primary"${submitting ? ' disabled' : ''}>${step === 3 ? (submitting ? '正在提交…' : '提交询价') : `下一步：${steps[step]}`}<span aria-hidden="true">→</span></button></div>${step === 3 ? '<button type="button" class="text-button" data-email>通过邮件询价</button>' : ''}</form>`;
+  if (submitting) root.querySelectorAll('input, select, textarea, button').forEach(control => { control.disabled = true; });
   if (restore) root.querySelector(restore)?.focus({ preventScroll: true });
   else if (focus) {
     const firstError = root.querySelector('[aria-invalid="true"]');
@@ -96,13 +129,13 @@ function render({ focus = false, restore } = {}) {
 function renderGenerated() {
   const g = generated;
   root.innerHTML = `${heading()}<section class="generated" aria-labelledby="generated-title"><div class="generated-heading"><span class="document-icon">${icon('document')}</span><div><h2 id="generated-title" tabindex="-1">询价邮件已生成，尚未发送</h2><p>打开邮件应用或复制内容，确认后发送给我们。</p></div></div><dl class="mail-meta"><div><dt>收件人</dt><dd>${esc(g.recipient)}</dd></div><div><dt>主题</dt><dd>${esc(g.subject)}</dd></div></dl><details class="mail-preview" open><summary>查看邮件内容</summary><pre>${esc(g.body)}</pre></details>
-    <div class="mail-actions">${g.mailto ? `<a class="button primary" href="${esc(g.mailto)}">用邮件应用打开 <span aria-hidden="true">↗</span></a>` : '<p class="long-mail-note">内容较长，请复制完整邮件内容后发送。</p>'}<button type="button" class="button secondary" data-copy>复制完整询价</button><button type="button" class="text-button" data-edit>返回修改</button></div><p id="copy-status" class="copy-status" role="status"></p><div id="manual-copy"></div><p class="mail-note">打开邮件应用不会自动发送。此页面不接收询价，请在邮件中完成发送。</p></section>`;
+    <div class="mail-actions">${g.mailto ? `<a class="button primary" href="${esc(g.mailto)}">用邮件应用打开 <span aria-hidden="true">↗</span></a>` : '<p class="long-mail-note">内容较长，请复制完整邮件内容后发送。</p>'}<button type="button" class="button secondary" data-copy>复制完整询价</button><button type="button" class="text-button" data-edit>返回修改</button></div><p id="copy-status" class="copy-status" role="status"></p><div id="manual-copy"></div><p class="mail-note">打开邮件应用不会自动发送。此邮件方式尚未保存线上需求，请在邮件中完成发送。</p></section>`;
   root.querySelector('#generated-title').focus();
   root.scrollIntoView({ block: 'start' });
 }
 function capture(event) {
   const el = event.target;
-  if (!el.name || !(el.name in draft())) return;
+  if (submitting || !el.name || !(el.name in draft())) return;
   if (el.name === 'services') {
     draft().services = [...root.querySelectorAll('input[name="services"]:checked')].map(input => input.value);
   } else draft()[el.name] = el.type === 'checkbox' ? el.checked : el.value;
@@ -120,7 +153,7 @@ function capture(event) {
 }
 root.addEventListener('input', capture);
 root.addEventListener('change', capture);
-root.addEventListener('submit', event => {
+root.addEventListener('submit', async event => {
   event.preventDefault();
   errors = validateStep(draft(), step);
   if (Object.keys(errors).length) { render({ focus: true }); return; }
@@ -130,13 +163,14 @@ root.addEventListener('submit', event => {
       errors = validateStep(draft(), previous);
       if (Object.keys(errors).length) { step = previous; render({ focus: true }); return; }
     }
-    generated = buildInquiry(draft());
+    await submitInquiry(); return;
   }
   render({ focus: true });
 });
 root.addEventListener('click', async event => {
   const el = event.target.closest('button');
-  if (!el) return;
+  if (!el || submitting) return;
+  if (el.hasAttribute('data-email')) { errors = validateStep(draft(), 3); if (Object.keys(errors).length) { render({ focus: true }); return; } generated = buildInquiry(draft()); render(); return; }
   if (el.hasAttribute('data-step') || el.hasAttribute('data-back')) {
     const target = el.hasAttribute('data-back') ? step - 1 : Number(el.dataset.step);
     for (let previous = 1; previous < target; previous++) {
@@ -166,6 +200,6 @@ document.querySelector('.skip-link').addEventListener('click', event => {
 });
 window.addEventListener('hashchange', () => {
   mode = location.hash === '#business' ? 'business' : 'shipping';
-  step = 1; errors = {}; generated = null; render({ focus: true });
+  step = 1; errors = {}; generated = null; submitted = null; submitMessage = ''; render({ focus: true });
 });
 render();

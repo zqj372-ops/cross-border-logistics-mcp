@@ -1,3 +1,4 @@
+import { CASE_VERSION, caseResponseSchema, type CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
 import { createHash, randomUUID } from "node:crypto";
@@ -41,6 +42,7 @@ export interface PortalHttpOptions {
   readonly businessService?: Pick<PortalBusinessService, "describe" | "execute" | "executeBatch"> & Partial<Pick<PortalBusinessService, "records" | "customsHistory">>;
   readonly publicCustoms?: PortalPublicCustomsService;
   readonly callLogService?: PortalCallLogService;
+  readonly caseService?: CaseService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
   readonly sessions: PortalSessionManager;
@@ -93,6 +95,8 @@ function json(response: ServerResponse, status: number, body: unknown, cookie?: 
   response.statusCode = status; commonHeaders(response); response.setHeader("content-type", "application/json; charset=utf-8"); if (cookie) response.setHeader("set-cookie", cookie); response.end(JSON.stringify(preserveSourceShape ? body : wire(body)));
 }
 function errorStatus(code: string): number {
+  if (code === "case_daily_limit") return 429;
+  if (code === "case_transition_invalid") return 409;
   if (code === "authentication_required") return 401;
   if (code === "csrf_invalid" || code === "origin_denied" || code === "invalid_host" || code === "transport_required") return 403;
   if (code.includes("not_found") || code === "invitation_unavailable") return 404;
@@ -160,6 +164,7 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
+  if (/^\/console\/api\/v1\/cases(?:\/[0-9a-f-]{36}(?:\/(?:update|reply))?)?$/u.test(path)) return true;
   if (path.startsWith(`${API_PREFIX}/business-access/`)) return true;
   if (/^\/console\/api\/v1\/business\/quote\/records\/(prepare|save|get|list|review)$/u.test(path)) return true;
   if (path === `${API_PREFIX}/business/quote/review-queue` || /^\/console\/api\/v1\/business\/quote\/review-tasks\/[^/]+\/(?:resolution-preview|resolve)$/u.test(path)) return true;
@@ -225,6 +230,25 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      const caseMatch = /^\/console\/api\/v1\/cases(?:\/([0-9a-f-]{36})(?:\/(update|reply))?)?$/u.exec(path);
+      if (caseMatch) {
+        if (!options.caseService) throw new PortalError("cases_unavailable");
+        const service = options.caseService; let data: unknown;
+        if (request.method === "GET" && !caseMatch[2]) {
+          const entries=[...url.searchParams.entries()];
+          if(new Set(entries.map(([key])=>key)).size!==entries.length)throw new PortalError("case_input_invalid");
+          const query:Record<string,unknown>=Object.fromEntries(entries);
+          if(query.management!==undefined){if(query.management!=="true"&&query.management!=="false")throw new PortalError("case_input_invalid");query.management=query.management==="true";}
+          if(query.limit!==undefined)query.limit=Number(query.limit);
+          if(caseMatch[1]&&entries.length)throw new PortalError("case_input_invalid");
+          data=caseMatch[1]?service.get(ctx,caseMatch[1]):service.list(ctx,query);
+        } else if(request.method==="POST" && (!caseMatch[1]||caseMatch[2])) {
+          if(url.search)throw new PortalError("case_input_invalid");
+          const input=await body(request,options.maxBodyBytes??DEFAULT_MAX_BODY_BYTES),key=idempotency(request);
+          data=!caseMatch[1]?service.create(ctx,input,key):caseMatch[2]==="update"?service.update(ctx,caseMatch[1],input,key):service.reply(ctx,caseMatch[1],input,key);
+        } else {json(response,405,{schema_version:CASE_VERSION,status:"blocked",data:null,reason_codes:["method_not_allowed"]});return true;}
+        json(response,200,caseResponseSchema.parse({schema_version:CASE_VERSION,status:"success",data,reason_codes:[]}),undefined,true);return true;
+      }
       if (path === `${API_PREFIX}/calls` && request.method === "GET") {
         if (!options.callLogService) throw new PortalError("call_log_unavailable");
         const entries=[...url.searchParams.entries()];

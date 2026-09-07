@@ -1,3 +1,4 @@
+@import "../console/fonts/fonts.css";
 :root {
   font-family:
     Inter,
@@ -1098,3 +1099,14 @@ select[aria-invalid=true] {
     transition: background-color 150ms, border-color 150ms;
   }
 }
+
+.submission-meta > div { display:grid; grid-template-columns:96px minmax(0,1fr); }
+.submission-meta dt { width:auto; white-space:nowrap; }
+.submission-meta dd { overflow-wrap:anywhere; }
+
+.submission-success { font-family:"Manrope","Noto Sans SC",sans-serif; color:#252830; font-size:16px; line-height:1.65; }
+.submission-success h2 { font-size:24px; }
+.submission-success .submission-meta { font-size:16px; }
+.submission-success .button { font-size:16px; border-radius:8px; }
+.submission-success .button.primary { background:#252830; border-color:#252830; color:#fff; }
+.submission-success .mail-note { font-size:14px; }

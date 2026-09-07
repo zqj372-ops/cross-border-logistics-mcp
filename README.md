@@ -99,6 +99,10 @@ flowchart LR
 
 具体请求、Schema 和状态以 [统一 Key RFC](docs/rfcs/2026-09-06-unified-application-key-v1.md)、[Business API v2](docs/runbooks/business-api-v2.md) 和 OpenAPI 为准。
 
+## 前后台业务协作
+
+[询价受理第一阶段](docs/product/2026-09-07-business-cases-delivery.md) 已实现本地闭环：前台提交需求、后台处理、客户补充、双方读回同一记录。后台复用前台设计与现有账号。生产默认关闭，单实例通过 `PORTAL_CASES_ENABLED=true` 显式启用；原生引擎与配置后台仍在后续阶段，不能将此交付当作全部迁移完成。
+
 ## 界面职责
 
 | 目录 | 职责 | 边界 |

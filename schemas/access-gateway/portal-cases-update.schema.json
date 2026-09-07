@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "expected_version": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "submitted",
+        "in_review",
+        "needs_input",
+        "closed",
+        "cancelled"
+      ]
+    },
+    "public_note": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "internal_note": {
+      "default": "",
+      "type": "string",
+      "maxLength": 2000
+    }
+  },
+  "required": [
+    "expected_version",
+    "status",
+    "public_note",
+    "internal_note"
+  ],
+  "additionalProperties": false,
+  "$id": "https://freightclaw.local/schemas/portal-cases-update.schema.json"
+}
