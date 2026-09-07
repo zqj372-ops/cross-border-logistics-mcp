@@ -1,0 +1,301 @@
+{
+  "build_id": "056300a14ec73e4cc39691b435ef8084cc56b58c29f9d3700fde0ad89343ce47",
+  "source_head": "10e269dba4007839de132a53ca83adc650b5f495",
+  "runtime_change_commit": "4098f06ae7e943618147324459749a5985fc9147",
+  "pull_request": "https://github.com/zqj372-ops/cross-border-logistics-mcp/pull/23",
+  "source_verification": {
+    "source_head": "10e269dba4007839de132a53ca83adc650b5f495",
+    "build_id": "056300a14ec73e4cc39691b435ef8084cc56b58c29f9d3700fde0ad89343ce47",
+    "files": 458,
+    "all_build_inputs_match_commit": true
+  },
+  "promotion": {
+    "promoted": true,
+    "image": "freightclaw-portal:056300a14ec7",
+    "previous_image": "freightclaw-portal:e0b3d1b86db1",
+    "config_backup": "/data/logistics-mcp/portal/backups/portal-promotion-20260907T065611Z",
+    "readiness": {
+      "status": "success",
+      "data": {
+        "service": "freightclaw-portal",
+        "release_id": "portal-history-20260907",
+        "build_id": "056300a14ec73e4cc39691b435ef8084cc56b58c29f9d3700fde0ad89343ce47",
+        "ready": true,
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true,
+          "call_log_database": true
+        }
+      },
+      "reason_codes": []
+    }
+  },
+  "root_publication": {
+    "root_published": true,
+    "image": "freightclaw-portal:056300a14ec7",
+    "root_sha256": "bfae55664fd0431946ca0a95b455092282a1c7a104df55713a2ac3b847717f55",
+    "previous_root_sha256": "6a30d523752d042a034967e20c5de01d8e2cf7eb0655c2c0f13c611a38c23068",
+    "backup": "/data/logistics-mcp/portal/backups/ui-refinement-056300a14ec7/index.html"
+  },
+  "state_backup": {
+    "backup": "ui-refinement-056300a14ec7",
+    "previous_image": "freightclaw-portal:e0b3d1b86db1",
+    "cross_store_quiesced": true,
+    "private_configuration_backed_up": true,
+    "databases": [
+      {
+        "file": "portal.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "sessions.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "business-access.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "calls.sqlite",
+        "restore_integrity": "ok"
+      },
+      {
+        "file": "public-quota.sqlite",
+        "restore_integrity": "ok"
+      }
+    ]
+  },
+  "live": {
+    "captured_at": "2026-09-07T06:56:25.929993+00:00",
+    "origin": "https://www.freightclaw.net",
+    "build_id": "056300a14ec73e4cc39691b435ef8084cc56b58c29f9d3700fde0ad89343ce47",
+    "readiness": {
+      "http": 200,
+      "body": {
+        "status": "success",
+        "data": {
+          "service": "freightclaw-portal",
+          "release_id": "portal-history-20260907",
+          "build_id": "056300a14ec73e4cc39691b435ef8084cc56b58c29f9d3700fde0ad89343ce47",
+          "ready": true,
+          "checks": {
+            "portal_database": true,
+            "session_database": true,
+            "business_access_database": true,
+            "identity": true,
+            "business_configuration": true,
+            "call_log_database": true
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    "pages": {
+      "/": {
+        "http": 200,
+        "bytes": 3661,
+        "sha256": "09f84198cf10696fbccd6665661725f1e03cfad678001ed0b41c3073edca4883",
+        "cache_control": "no-cache",
+        "edge_analytics_tags": 1,
+        "origin_html_sha256": "bfae55664fd0431946ca0a95b455092282a1c7a104df55713a2ac3b847717f55",
+        "origin_html_matches_build": true
+      },
+      "/console/": {
+        "http": 200,
+        "bytes": 3661,
+        "sha256": "09f84198cf10696fbccd6665661725f1e03cfad678001ed0b41c3073edca4883",
+        "cache_control": "no-store",
+        "edge_analytics_tags": 1,
+        "origin_html_sha256": "bfae55664fd0431946ca0a95b455092282a1c7a104df55713a2ac3b847717f55",
+        "origin_html_matches_build": true
+      },
+      "/inquiry/": {
+        "http": 200,
+        "bytes": 2095,
+        "sha256": "7399bbe4ecb6e62fbd60fb63216dbb79668407222dddcd2a490fed6a0579dcb5",
+        "cache_control": "no-cache"
+      },
+      "/inquiry/details/": {
+        "http": 200,
+        "bytes": 2564,
+        "sha256": "3b22a4dc28efc2dda683396fc9cc19008df8c9b108ac371376c045796a328c03",
+        "cache_control": "no-cache"
+      },
+      "/console/skill.md": {
+        "http": 200,
+        "bytes": 7747,
+        "sha256": "251228ae04482ac6fefb7bda53298fa8f98eb26550c7a76380f91286112acb1a",
+        "cache_control": "public, max-age=300"
+      },
+      "/console/openapi.json": {
+        "http": 200,
+        "bytes": 498160,
+        "sha256": "72b99580d81eda4c1816d93466ca91485f050841d73c771d7f7d664d024d9bed",
+        "cache_control": "public, max-age=300"
+      },
+      "/downloads/freightclaw-cli-0.1.0.tgz": {
+        "http": 200,
+        "bytes": 105419,
+        "sha256": "c46037ea0fd65cc7fe953ce80445fcd19f030ec422d9a56af0a2a6a3a0c306e1",
+        "cache_control": null
+      }
+    },
+    "assets": {
+      "/console/styles.css?v=9c5abfb58fd5688b": {
+        "http": 200,
+        "sha256": "9c5abfb58fd5688b7ed3f555e49aa0993e431920094ca8c4808d5418562278bd"
+      },
+      "/console/app.js?v=4dd89ea2784c27cc": {
+        "http": 200,
+        "sha256": "4dd89ea2784c27cc2bb5a6337368a72cd33a2c5d3340eb8dcb383d2547fcd009"
+      }
+    },
+    "font_assets": {
+      "/console/fonts/manrope-latin-MM4GOOFF.woff2": {
+        "http": 200,
+        "content_type": "font/woff2",
+        "sha256": "279f9263d477dad78403309a840a4b32a4f913521e1f09508179d6e28a552d84",
+        "bytes": 50532
+      },
+      "/console/fonts/jetbrains-mono-latin-XYGVMTA5.woff2": {
+        "http": 200,
+        "content_type": "font/woff2",
+        "sha256": "6b4fbfd349f0647afa3d3d2429e741c6f30a51d621110ac160901e532b995f63",
+        "bytes": 66380
+      },
+      "/console/fonts/noto-sans-sc-ui-D5J36RCP.woff2": {
+        "http": 200,
+        "content_type": "font/woff2",
+        "sha256": "9de3f5cb97bed61396683bde0b0b683661dc6d5cfadaa600e2412c2c110e7ae6",
+        "bytes": 208024
+      }
+    },
+    "licenses": {
+      "http": 200,
+      "sha256": "dbce5aa374eadea20466fd9098f06545cd4647f966116a8e69379ca6ae4c4381"
+    },
+    "anonymous_session": true,
+    "quota": {
+      "limit": 20,
+      "remaining": 18,
+      "resets_at": "2026-09-07T16:00:00.000Z"
+    },
+    "boundaries": {
+      "business/quote/preview": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "business/customs/history/list": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "business/customs/query": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "applications": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "state": {
+        "http": 401,
+        "reason_codes": [
+          "authentication_required"
+        ]
+      },
+      "public/quote/preview": {
+        "http": 404,
+        "reason_codes": [
+          "route_not_found"
+        ]
+      },
+      "public/customs/history/list": {
+        "http": 404,
+        "reason_codes": [
+          "route_not_found"
+        ]
+      }
+    }
+  },
+  "preserved_files": {
+    "changed": [
+      "index.html"
+    ],
+    "unchanged": 32,
+    "mcp_runtime_image": "freightclaw-portal:a42849576004"
+  },
+  "ui_verification": {
+    "local_layout_font_checks": 24,
+    "local_interaction_checks": 10,
+    "independent_finish_review": "SHIP",
+    "independent_routes": 9,
+    "independent_viewports": [
+      320,
+      1024
+    ],
+    "open_p0_p1_p2_findings": 0,
+    "production_screenshots": 11,
+    "rendered_fonts": [
+      {
+        "selector": "h1",
+        "fonts": [
+          {
+            "familyName": "Noto Sans SC Thin",
+            "postScriptName": "NotoSansSC-Thin_wght28A0000",
+            "isCustomFont": true,
+            "glyphCount": 13
+          }
+        ]
+      },
+      {
+        "selector": ".wordmark",
+        "fonts": [
+          {
+            "familyName": "Manrope ExtraLight",
+            "postScriptName": "Manrope-ExtraLight_wght2EE0000",
+            "isCustomFont": true,
+            "glyphCount": 11
+          }
+        ]
+      },
+      {
+        "selector": ".cli-terminal pre",
+        "fonts": [
+          {
+            "familyName": "JetBrains Mono",
+            "postScriptName": "JetBrainsMono-Regular",
+            "isCustomFont": true,
+            "glyphCount": 138
+          },
+          {
+            "familyName": "Noto Sans SC Thin",
+            "postScriptName": "NotoSansSC-Thin_Regular",
+            "isCustomFont": true,
+            "glyphCount": 27
+          }
+        ]
+      }
+    ]
+  },
+  "tests": {
+    "local_passed": 1730,
+    "local_skipped_postgresql": 7,
+    "ci_feature_passed": 1737,
+    "ci_feature_files": 181,
+    "ci_feature_url": "https://github.com/zqj372-ops/cross-border-logistics-mcp/actions/runs/34092392866"
+  },
+  "limitations": [
+    "This visual release did not invoke a new live customs query or establish customs source data readiness."
+  ]
+}
