@@ -1,3 +1,4 @@
+import { FixtureFormLogin } from "./form-login";
 import { CASE_VERSION, caseResponseSchema, type CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
@@ -97,7 +98,8 @@ function json(response: ServerResponse, status: number, body: unknown, cookie?: 
 function errorStatus(code: string): number {
   if (code === "case_daily_limit") return 429;
   if (code === "case_transition_invalid") return 409;
-  if (code === "authentication_required") return 401;
+  if (code === "login_rate_limited") return 429;
+  if (code === "login_invalid" || code === "authentication_required") return 401;
   if (code === "csrf_invalid" || code === "origin_denied" || code === "invalid_host" || code === "transport_required") return 403;
   if (code.includes("not_found") || code === "invitation_unavailable") return 404;
   if (code.includes("conflict") || code.includes("exists") || code === "last_owner_protected" || code === "application_owner_protected") return 409;
@@ -178,6 +180,7 @@ function authenticatedResourcePath(path: string): boolean {
 }
 
 export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpHandler {
+  const formLogin=options.mode==="fixtures"&&options.identityProvider.kind==="fixture"?new FixtureFormLogin():null;
   return { async handle(request, response): Promise<boolean> {
     const url = new URL(request.url ?? "/", "http://portal.invalid"); const path = url.pathname; const id = requestId(request);
     if (!path.startsWith(API_PREFIX) && path !== "/console/auth/login" && path !== "/console/auth/callback") return false;
@@ -187,6 +190,20 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       boundary(request, options, write);
       boundaryPassed = true;
       if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, sessionBody(options, ensured.session), ensured.setCookie); return true; }
+      if(path===`${API_PREFIX}/login/captcha`||path===`${API_PREFIX}/login/password`){
+        if(!formLogin||!options.identityProvider.authenticateFixture)throw new PortalError("fixture_identity_forbidden");
+        const current=sessionFor(request,options,false),address=request.socket.remoteAddress??"unknown";
+        if(url.search)throw new PortalError("body_invalid");
+        if(path.endsWith("/captcha")&&request.method==="GET"){json(response,200,{status:"success",data:formLogin.challenge(current.sessionId,address)});return true;}
+        if(path.endsWith("/password")&&request.method==="POST"){
+          csrf(request,options,current);idempotency(request);
+          const input=await body(request,4096);closed(input,["account","password","captcha_id","captcha"]);
+          const identityId=formLogin.verify(current.sessionId,address,{account:text(input,"account"),password:text(input,"password"),captcha_id:text(input,"captcha_id"),captcha:text(input,"captcha")});
+          const identity=await options.identityProvider.authenticateFixture(identityId),authenticated=options.sessions.authenticate(current.sessionId,identity);
+          json(response,200,sessionBody(options,authenticated.session),authenticated.setCookie);return true;
+        }
+        json(response,405,{status:"blocked",data:null,reason_codes:["method_not_allowed"]});return true;
+      }
       if (path === `${API_PREFIX}/fixture-login` && request.method === "POST") {
         if (options.mode !== "fixtures" || options.identityProvider.kind !== "fixture" || !options.identityProvider.authenticateFixture) throw new PortalError("fixture_identity_forbidden");
         const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["identity_id"]);

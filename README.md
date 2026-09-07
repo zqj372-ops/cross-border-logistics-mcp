@@ -169,7 +169,7 @@ Portal 隔离演示：
 npm run start:console:fixture
 ```
 
-默认访问 `http://127.0.0.1:8882/console/`；实际端口以启动输出为准。演示身份、授权和来源响应只用于本地验证，不是生产业务证据。
+默认访问 `http://127.0.0.1:8882/console/`；实际端口以启动输出为准。本地登录已改为账号、密码和图形验证码：`user` 为业务用户、`admin` 为管理员，体验密码均为 `FreightClaw2026!`。演示身份、授权和来源响应只用于本地验证，不是生产业务证据；正式站仍使用现有身份服务。见[登录与用户类型调整](docs/product/2026-09-07-login-simplification.md)。
 
 既有 MCP/Admin 隔离演示：
 

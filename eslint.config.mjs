@@ -11,7 +11,7 @@ export default tseslint.config(
     files: ["apps/console/**/*.js", "apps/inquiry/**/*.js"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
-      globals: Object.fromEntries(["document", "window", "location", "navigator", "fetch", "Headers", "URL", "URLSearchParams", "FormData", "Blob", "crypto", "CSS", "HTMLElement", "AbortController", "AbortSignal", "matchMedia", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "confirm", "alert", "console", "localStorage", "sessionStorage", "structuredClone"].map((name) => [name, "readonly"])),
+      globals: Object.fromEntries(["document", "window", "location", "navigator", "fetch", "Headers", "URL", "URLSearchParams", "FormData", "Blob", "crypto", "CSS", "HTMLElement", "AbortController", "AbortSignal", "matchMedia", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "confirm", "alert", "console", "localStorage", "sessionStorage", "structuredClone", "queueMicrotask"].map((name) => [name, "readonly"])),
     },
   },
   {

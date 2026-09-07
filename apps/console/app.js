@@ -1,3 +1,4 @@
+import { createLoginForm } from "./login.js";
 import { createCasesUi } from "./cases.js";
 import { icon } from './icons.js';
 import { rememberLoginDestination, consumeLoginDestination } from './login-destination.js';
@@ -19,7 +20,7 @@ const API = '/console/api/v1';
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#secret-dialog');
 const model = { session: null, state: null, credentials: new Map(), secret: null, busy: false, requestKeys: new Map(), call: null, admissions: null, admissionsLoading: false };
-const labels = { owner: '企业所有者', admin: '企业管理员', developer: '开发者', viewer: '业务成员', reviewer: '平台审核员', operator: '平台运维管理员', draft: '草稿', submitted: '待审核', in_review: '审核中', needs_input: '待补充', approved: '已通过', rejected: '未通过', withdrawn: '已撤回', provisioning: '待开通', active: '已生效', suspended: '已停用', revoked: '已撤销', expired: '已过期', pending: '待接受', claimed: '已加入', test: '测试', production: '正式', pending_delivery: '待确认交付', delivered: '已交付' };
+const labels = { owner: '管理员（负责人）', admin: '管理员', developer: '业务用户（接口权限）', viewer: '业务用户', reviewer: '管理员（审核权限）', operator: '管理员', draft: '草稿', submitted: '待审核', in_review: '审核中', needs_input: '待补充', approved: '已通过', rejected: '未通过', withdrawn: '已撤回', provisioning: '待开通', active: '已生效', suspended: '已停用', revoked: '已撤销', expired: '已过期', pending: '待接受', claimed: '已加入', test: '测试', production: '正式', pending_delivery: '待确认交付', delivered: '已交付' };
 const capabilities = {
   'cargo.calculate': { name: '货物计算', description: '体积、体积重与计费重，使用已有确定性计算引擎。', icon: 'box' },
   'container.plan_summary': { name: '装柜规划', description: '装载汇总、容量与限制提示。', icon: 'container' },
@@ -69,6 +70,7 @@ function canCredential(application) { return !reviewer() && developer() && appli
 function effectiveGrants(applicationId) { return model.state.grants.filter((grant) => (!applicationId || grant.application_id === applicationId) && grant.state === 'active' && (!grant.expires_at || Date.parse(grant.expires_at) > Date.now())); }
 function notify(message, error = false) { const element = document.querySelector('#notification'); element.textContent = message; element.classList.toggle('error', error); element.hidden = false; clearTimeout(notify.timer); notify.timer = setTimeout(() => { element.hidden = true; }, 5000); }
 const errors = {
+  login_invalid: "账号、密码或验证码不正确，请重新输入。", login_rate_limited: "尝试次数较多，请 10 分钟后再试。",
   cases_unavailable: "当前环境尚未启用询价受理。", case_input_invalid: "请检查需求资料，补充内容不能为空。", case_not_found: "询价不存在或当前账号无权查看。", case_management_denied: "当前账号没有处理询价的权限。", case_transition_invalid: "需求状态已变化，请刷新后核对。", case_daily_limit: "今日提交次数已达上限，请稍后再试。",
   credential_bridge_unavailable: '接入服务未配置，暂时无法签发凭证。请联系平台运维。', active_organization_membership_required: '当前企业或成员资格已停用。请退出并重新登录，选择有效企业。', organization_membership_required: '请先接受邀请，取得有效成员资格后再进入企业。', application_access_denied: '当前账号不是应用负责人，无法操作凭证。请联系企业管理员转交负责人。', state_conflict: '记录状态已经变化。请刷新后按照最新状态继续操作。', grant_expiry_invalid: '请选择未来的有效日期；修改授权时只能缩短现有有效期。', grant_scope_expansion_forbidden: '本次只能减少已有授权。新增服务需要重新申请。', membership_required: '当前账号没有有效企业成员资格。请先接受邀请或重新登录。', organization_role_required: '当前企业角色不允许执行此操作。请联系企业管理员。', 'credential_secret.withheld': '完整 Key 不会重复显示。请撤销这枚凭证后创建新的 Key。',
   authentication_required: '登录已过期，请重新登录后继续。', csrf_invalid: '会话已更新，请刷新后重试。', version_conflict: '这条记录已被其他人更新。请刷新页面，核对最新状态。', idempotency_conflict: '该操作的内容已经改变。请刷新后重新提交。',
@@ -159,7 +161,7 @@ function renderLogin() {
   rememberLoginDestination(route().page === 'case' ? `case/${route().id}` : route().page, loginStorage());
   document.title = '登录 · FreightClaw';
   app.className = 'login-shell';
-  app.innerHTML = `<section class="login-story">${brand()}<h1>你的业务，<br>在这里继续。</h1><p>登录后管理个人记录、团队与 API Key。海运询价和关税查询可以直接使用。</p><div class="login-features"><div class="login-feature">${icon('users')}团队成员与权限统一管理</div><div class="login-feature">${icon('grid')}业务服务在工作台内完成</div><div class="login-feature">${icon('key')}一把 Key 接入系统与 Agent</div></div></section><section class="login-panel"><h2>${model.session?.mode === 'fixtures' ? '进入本地验收工作台' : '登录个人中心'}</h2><p>${model.session?.mode === 'fixtures' ? '选择身份，体验真实的申请、审核与凭证流程。' : '使用已验证的邮箱和密码登录，继续你的工作。'}</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? `<div class="identity-list">${model.session.fixture_identities.map((identity) => `<button class="identity-option" type="button" data-action="login" data-id="${esc(identity.user_id)}"><span class="avatar">${esc(identity.display_name.slice(0, 1))}</span><span class="identity-copy"><strong>${esc(identity.display_name)}</strong><small>${esc(identity.email)}</small></span>${icon('arrow')}</button>`).join('')}</div><p class="login-fineprint">这里使用隔离的本地测试企业与身份，提交内容会保存在本地。测试结果不代表生产账号、正式报价或关税数据已接通。</p>` : '<a class="button primary" href="/console/auth/login">邮箱账号登录</a><a class="login-return" href="#home">返回首页，继续浏览</a>'}</section>`;
+  app.innerHTML = `<section class="login-story">${brand()}<h1>从一票需求，<br>到每一步进展。</h1><p>询价、查询和业务协作，都在一个工作台。</p><div class="login-features"><div class="login-feature">${icon('file')}需求与进度随时可查</div><div class="login-feature">${icon('users')}账号登录，权限自动匹配</div><div class="login-feature">${icon('key')}网页与接口共享服务</div></div></section><section class="login-panel"><h2>欢迎回来</h2><p>登录账号，继续你的工作。</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? loginForm.markup() : '<a class="button primary" href="/console/auth/login">账号密码登录</a><a class="login-return" href="#home">返回首页</a>'}</section>`;
 }
 function ensureShell() {
   const className = 'customer-shell';
@@ -273,11 +275,11 @@ function grantForm(id) {
 function membersPage() {
   const members = model.state.memberships.filter((value) => value.organization_id === model.session.organization_id);
   const invites = [...new Map([...model.state.invitations, ...(model.directory?.invitations || [])].map((item) => [item.invitation_id, item])).values()];
-  return head('成员与邀请', '成员权限决定能做哪些事；应用权限决定系统能调用哪些服务。', manager() ? link('邀请成员', 'member-new', true, 'plus') : '') + panel('企业成员', '所有者、管理员、开发者与业务成员各司其职', members.length ? table(['成员', '企业角色', '状态', '操作'], members.map((v) => `<tr><td><span class="cell-title">${esc(name(v.user_id))}</span>${v.user_id === model.session.identity.user_id ? '<span class="cell-detail">当前登录账号</span>' : ''}</td><td>${esc(labels[v.role])}</td><td>${badge(v.status)}</td><td>${manager() && v.user_id !== model.session.identity.user_id ? `<button class="text-button" data-go="member-edit/${esc(v.user_id)}">管理成员</button>` : '—'}</td></tr>`)) : empty('尚未加入企业', '接受下面与你已验证邮箱匹配的邀请后，即可进入企业工作区。')) + panel('企业邀请', '邀请只可由对应的已验证邮箱接受', invites.length ? table(['邀请邮箱', '角色', '状态', '有效期', '操作'], invites.map((v) => `<tr><td>${esc(v.email)}<span class="cell-detail">${esc(model.directory?.organizations.find((item) => item.organization_id === v.organization_id)?.display_name || '')}</span></td><td>${esc(labels[v.role])}</td><td>${badge(v.status)}</td><td>${esc(date(v.expires_at))}</td><td>${v.status === 'pending' ? (v.email.toLowerCase() === model.session.identity.email.toLowerCase() ? `<button class="text-button" data-action="accept-invite" data-id="${esc(v.invitation_id)}">接受邀请</button>` : manager() ? `<button class="text-button" data-action="revoke-invite" data-id="${esc(v.invitation_id)}">撤回邀请</button>` : '—') : '—'}</td></tr>`)) : empty('没有待处理的邀请', manager() ? '通过邮箱邀请同事，选择与其工作职责相符的角色。' : '收到邀请后可在这里接受。'));
+  return head('成员与邀请', '成员权限决定能做哪些事；应用权限决定系统能调用哪些服务。', manager() ? link('邀请成员', 'member-new', true, 'plus') : '') + panel('企业成员', '日常分为业务用户与管理员，已有专项权限单独保留', members.length ? table(['成员', '企业角色', '状态', '操作'], members.map((v) => `<tr><td><span class="cell-title">${esc(name(v.user_id))}</span>${v.user_id === model.session.identity.user_id ? '<span class="cell-detail">当前登录账号</span>' : ''}</td><td>${esc(labels[v.role])}</td><td>${badge(v.status)}</td><td>${manager() && v.user_id !== model.session.identity.user_id ? `<button class="text-button" data-go="member-edit/${esc(v.user_id)}">管理成员</button>` : '—'}</td></tr>`)) : empty('尚未加入企业', '接受下面与你已验证邮箱匹配的邀请后，即可进入企业工作区。')) + panel('企业邀请', '邀请只可由对应的已验证邮箱接受', invites.length ? table(['邀请邮箱', '角色', '状态', '有效期', '操作'], invites.map((v) => `<tr><td>${esc(v.email)}<span class="cell-detail">${esc(model.directory?.organizations.find((item) => item.organization_id === v.organization_id)?.display_name || '')}</span></td><td>${esc(labels[v.role])}</td><td>${badge(v.status)}</td><td>${esc(date(v.expires_at))}</td><td>${v.status === 'pending' ? (v.email.toLowerCase() === model.session.identity.email.toLowerCase() ? `<button class="text-button" data-action="accept-invite" data-id="${esc(v.invitation_id)}">接受邀请</button>` : manager() ? `<button class="text-button" data-action="revoke-invite" data-id="${esc(v.invitation_id)}">撤回邀请</button>` : '—') : '—'}</td></tr>`)) : empty('没有待处理的邀请', manager() ? '通过邮箱邀请同事，选择与其工作职责相符的角色。' : '收到邀请后可在这里接受。'));
 }
 function memberForm(id) {
   const member = id ? model.state.memberships.find((v) => v.user_id === id && v.organization_id === model.session.organization_id) : null;
-  return head(member ? '管理企业成员' : '邀请成员', member ? name(member.user_id) : '邀请将绑定指定邮箱，由本人登录并确认加入。') + `<div class="form-layout"><form class="panel" data-form="${member ? 'member' : 'invitation'}" ${member ? `data-id="${esc(id)}"` : ''}><div class="panel-body">${formError}<div class="field-grid">${!member ? field('成员邮箱', 'email', input('email', 'type="email" required maxlength="254" placeholder="colleague@company.com"'), '', true) : ''}${field('企业角色', 'role', `<select id="role" name="role">${['viewer', 'developer', 'admin', ...(orgRole() === 'owner' ? ['owner'] : [])].map((role) => `<option value="${role}" ${member?.role === role ? 'selected' : ''}>${labels[role]}</option>`).join('')}</select>`)}${member ? field('成员状态', 'status', `<select id="status" name="status"><option value="active" ${member.status === 'active' ? 'selected' : ''}>启用</option><option value="suspended" ${member.status === 'suspended' ? 'selected' : ''}>停用</option></select>`) : field('邀请有效期', 'days', '<select id="days" name="days"><option value="7">7 天</option><option value="3">3 天</option><option value="1">1 天</option></select>')}</div>${actions(member ? '保存成员权限' : '创建邀请', 'members')}</div></form><aside class="side-help"><h3>如何选择角色？</h3><p>业务成员使用已开放的业务功能；开发者负责应用与接入；管理员负责成员与组织；所有者保留最高管理权。</p><p>系统会保护最后一名有效所有者。停用应用负责人前，需要先转交应用。</p><p>${model.session?.mode === 'fixtures' ? '本地验收不发送邮件，受邀账号登录后可直接看到对应邀请。' : '同事完成邮箱验证后，用受邀邮箱登录，即可在这里确认加入企业。'}</p></aside></div>`;
+  return head(member ? '管理企业成员' : '邀请成员', member ? name(member.user_id) : '邀请将绑定指定邮箱，由本人登录并确认加入。') + `<div class="form-layout"><form class="panel" data-form="${member ? 'member' : 'invitation'}" ${member ? `data-id="${esc(id)}"` : ''}><div class="panel-body">${formError}<div class="field-grid">${!member ? field('成员邮箱', 'email', input('email', 'type="email" required maxlength="254" placeholder="colleague@company.com"'), '', true) : ''}${field('企业角色', 'role', `<select id="role" name="role">${['viewer', 'admin', ...(member?.role === 'developer' ? ['developer'] : []), ...(member?.role === 'owner' ? ['owner'] : [])].map((role) => `<option value="${role}" ${member?.role === role ? 'selected' : ''}>${labels[role]}</option>`).join('')}</select>`)}${member ? field('成员状态', 'status', `<select id="status" name="status"><option value="active" ${member.status === 'active' ? 'selected' : ''}>启用</option><option value="suspended" ${member.status === 'suspended' ? 'selected' : ''}>停用</option></select>`) : field('邀请有效期', 'days', '<select id="days" name="days"><option value="7">7 天</option><option value="3">3 天</option><option value="1">1 天</option></select>')}</div>${actions(member ? '保存成员权限' : '创建邀请', 'members')}</div></form><aside class="side-help"><h3>如何选择角色？</h3><p>业务用户使用已开通的服务；管理员负责本企业的成员和业务管理。已有接口权限与企业负责人身份单独保留。</p><p>系统会保护最后一名有效所有者。停用应用负责人前，需要先转交应用。</p><p>${model.session?.mode === 'fixtures' ? '本地验收不发送邮件，受邀账号登录后可直接看到对应邀请。' : '同事完成邮箱验证后，用受邀邮箱登录，即可在这里确认加入企业。'}</p></aside></div>`;
 }
 function credentialForm(id) {
   const grants = effectiveGrants(id); const tools = [...new Set(grants.flatMap((v) => v.capabilities))];
@@ -363,6 +365,7 @@ function showSecret(result, applicationId, kind = 't0') {
   model.secret = { key, credentialId, applicationId, kind, version: data?.credential?.version }; document.querySelector('#secret-value').textContent = key; dialog.showModal();
 }
 async function runAction(button) {
+  if (await loginForm.action(button)) return;
   if (await cases.action(button)) return;
   if (await cli.action(button)) return;
   if (await market.action(button)) return;
@@ -398,6 +401,7 @@ async function runAction(button) {
   await refresh(); render(); notify('操作已完成，已读取最新状态。');
 }
 async function submitForm(form) {
+  if (await loginForm.submit(form)) return;
   if (await cases.submit(form)) return;
   if (await apiKeys.submit(form)) return;
   if (await serviceAccess.submit(form)) return;
@@ -421,6 +425,7 @@ async function submitForm(form) {
   else return;
   await refresh(); go(next); render(); notify('已保存，页面已读取最新记录。');
 }
+const loginForm = createLoginForm({ api: request, esc, formError, authenticated: async session => { model.session = session; await refresh(); go(consumeLoginDestination(loginStorage()) || (reviewer() ? 'operations' : 'cases')); render(); } });
 const cases = createCasesUi({ api: request, mutate, head, panel, empty, note, esc, date, icon, formError, rerender: render, model: () => model });
 const calls = createCallLogUi({ api: request, head, panel, note, esc, date, capName, formError, rerender: render, model: () => model });
 const business = createBusinessWorkspace({ api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
@@ -444,7 +449,7 @@ document.addEventListener('click', async (event) => {
   try { await runAction(button); } catch (error) {
     if (dialog.open) document.querySelector('#secret-error').innerHTML = note(errorMessage(error), 'error');
     else notify(errorMessage(error), true);
-  } finally { button.disabled = false; button.innerHTML = previous; }
+  } finally { button.disabled = false; if (button.dataset.action !== 'captcha-refresh') button.innerHTML = previous; }
 });
 document.addEventListener('submit', async (event) => {
   const form = event.target.closest('form[data-form]'); if (!form) return; event.preventDefault();
@@ -452,7 +457,7 @@ document.addEventListener('submit', async (event) => {
   clearNotice(); form.dataset.busy = 'true'; const button = form.querySelector('button[type=submit]'); button.disabled = true; const previous = button.textContent; button.textContent = '处理中…';
   const alert = form.querySelector('.form-error'); alert.hidden = true;
   try { await submitForm(form); } catch (error) { alert.innerHTML = note(errorMessage(error), 'error'); alert.hidden = false; alert.setAttribute('tabindex', '-1'); alert.focus(); }
-  finally { form.dataset.busy = 'false'; button.disabled = false; button.textContent = previous; }
+  finally { form.dataset.busy = 'false'; button.disabled = form.dataset.form === 'password-login' && !form.dataset.captchaId; button.textContent = previous; }
 });
 document.addEventListener('change', async (event) => {
   if (serviceAccess.change(event)) return;

@@ -1,0 +1,14 @@
+export function createLoginForm({api,esc,formError,authenticated}) {
+ let generation=0;
+ async function challenge(){
+  const epoch=++generation,form=document.querySelector('[data-form="password-login"]');if(!form)return;
+  const image=form.querySelector('.captcha-image'),button=form.querySelector('[type="submit"]'),status=form.querySelector('.captcha-status');
+  button.disabled=true;form.dataset.captchaId='';form.querySelector('[name=captcha]').value='';image.removeAttribute('src');status.textContent='正在加载验证码…';
+  try{const result=await api('/login/captcha');if(epoch!==generation||!form.isConnected)return;image.src=result.data.image;form.dataset.captchaId=result.data.captcha_id;button.disabled=false;status.textContent='看不清？换一张';}
+  catch{if(epoch===generation&&form.isConnected){status.textContent='加载失败，点击重试';form.dataset.captchaId='';}}
+ }
+ function markup(){queueMicrotask(()=>void challenge());return `<form class="password-login" data-form="password-login">${formError}<div class="field"><label for="login-account">账号</label><input id="login-account" name="account" autocomplete="username" required maxlength="254" placeholder="输入账号或邮箱"></div><div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="256" placeholder="输入密码"></div><div class="field"><label for="login-captcha">验证码</label><div class="captcha-row"><input id="login-captcha" name="captcha" inputmode="numeric" autocomplete="off" required maxlength="5" placeholder="输入图片中的数字"><button class="captcha-refresh" type="button" data-action="captcha-refresh" aria-label="更换图形验证码"><img class="captcha-image" alt="图形验证码" width="190" height="56"><span class="captcha-status" role="status">正在加载验证码…</span></button></div></div><button class="button primary login-submit" type="submit" disabled>登录</button><a class="login-return" href="#home">返回首页</a></form><details class="local-login-help"><summary>本地体验账号</summary><p>业务用户：<code>user</code><br>管理员：<code>admin</code><br>体验密码：<code>${esc('FreightClaw2026!')}</code></p><p>仅用于本地验收，请勿输入正式账号密码。</p></details>`;}
+ async function submit(form){if(form.dataset.form!=='password-login')return false;const data=new FormData(form);try{const session=await api('/login/password',{method:'POST',body:{account:String(data.get('account')||''),password:String(data.get('password')||''),captcha_id:form.dataset.captchaId||'',captcha:String(data.get('captcha')||'')},key:crypto.randomUUID()});form.reset();await authenticated(session);}catch(error){form.querySelector('[name=password]').value='';form.querySelector('[name=captcha]').value='';await challenge();throw error;}return true;}
+ async function action(button){if(button.dataset.action!=='captcha-refresh')return false;await challenge();return true;}
+ return {markup,submit,action};
+}
