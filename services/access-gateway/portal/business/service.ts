@@ -30,7 +30,11 @@ export interface PortalBusinessConnection {
   readonly customsHistoryClient?: ReturnType<typeof createCustomsHistoryClient>; readonly customsClient?: CustomsBusinessClientPort; readonly taxClient?: TaxBusinessClientPort; readonly quoteClient?: QuoteBusinessClientPort;
   readonly freightcomClient?: FreightcomBusinessClientPort;
 }
-export interface PortalBusinessServiceOptions { readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>; readonly connections: readonly PortalBusinessConnection[]; readonly callRecorder?: CallRecorder }
+export interface PortalPublicAccess {
+  readonly organizationId: string; readonly tenantId: string; readonly applicationId: string; readonly clientId: string;
+  readonly enabledOperations: readonly ("customs.query" | "customs.tax.estimate")[];
+}
+export interface PortalBusinessServiceOptions { readonly publicAccess?: PortalPublicAccess; readonly publicAuthority?: (binding: PortalPublicAccess) => Promise<void>; readonly portalService: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>; readonly connections: readonly PortalBusinessConnection[]; readonly callRecorder?: CallRecorder }
 export interface PortalBusinessDescription { readonly organization_id: string; readonly operations: ReadonlyArray<{ readonly operation: PortalBusinessOperation; readonly configured: boolean; readonly reason_code: string | null }> }
 export type PortalBusinessEnvelope<T> = Readonly<{ schema_version: typeof PORTAL_BUSINESS_SCHEMA_VERSION; status: PortalBusinessStatus; data: T | null; reason_codes: readonly string[] }>;
 interface BusinessAccess { readonly organizationId: string; readonly tenantId: string; readonly role: "owner" | "admin" | "developer" | "viewer"; readonly connection: PortalBusinessConnection | null }
@@ -42,8 +46,10 @@ const failure = (status: "blocked" | "unavailable", code: string): PortalBusines
 export class PortalBusinessService {
   readonly #portal: Pick<PortalService, "getState"> & Partial<Pick<PortalService, "requireBusinessApplication">>;
   readonly #recorder: CallRecorder | undefined;
+  readonly #publicAccess: PortalPublicAccess | undefined;
+  readonly #publicAuthority: ((binding: PortalPublicAccess) => Promise<void>) | undefined;
   readonly #connections: readonly PortalBusinessConnection[];
-  constructor(options: PortalBusinessServiceOptions) { this.#recorder = options.callRecorder; this.#portal = options.portalService; this.#connections = Object.freeze([...options.connections]); }
+  constructor(options: PortalBusinessServiceOptions) { this.#publicAccess = options.publicAccess; this.#publicAuthority = options.publicAuthority; this.#recorder = options.callRecorder; this.#portal = options.portalService; this.#connections = Object.freeze([...options.connections]); }
 
   #access(ctx: PortalContext): BusinessAccess {
     if (ctx.identity.platformRole !== null) throw new PortalError("business_personnel_session_required");
@@ -133,6 +139,33 @@ export class PortalBusinessService {
     if (!application || application.tenantId !== machine.tenantId || application.applicationId !== machine.applicationId) return failure("blocked", "business_application_denied");
     const connection = this.#connections.find(item => item.organizationId === application.organizationId && item.tenantId === application.tenantId);
     if (!connection || !this.isAvailable(machine.tenantId, operation)) return failure("unavailable", "business_operation_unavailable");
+    return this.#serviceQuery(connection, operation, input, requestId, batch);
+  }
+
+  get publicConfigured(): boolean { return this.#publicAccess !== undefined; }
+  #publicConnection(operation: PortalBusinessOperation): PortalBusinessConnection | null {
+    const binding = this.#publicAccess;
+    if (!binding || !this.#publicAuthority || !["customs.query", "customs.tax.estimate"].includes(operation) || !binding.enabledOperations.includes(operation as "customs.query" | "customs.tax.estimate")) return null;
+    const app = this.#portal.requireBusinessApplication?.(binding.clientId);
+    if (!app || app.applicationId !== binding.applicationId || app.organizationId !== binding.organizationId || app.tenantId !== binding.tenantId) return null;
+    const connection = this.#connections.find(c => c.organizationId === binding.organizationId && c.tenantId === binding.tenantId);
+    return connection && this.isAvailable(binding.tenantId, operation) && connection.serviceActors?.customs ? connection : null;
+  }
+  publicAvailable(operation: PortalBusinessOperation): boolean {
+    try { return this.#publicConnection(operation) !== null; } catch { return false; }
+  }
+  async executePublic(operation: PortalBusinessOperation, input: unknown, requestId: string, batch: boolean) {
+    let connection: PortalBusinessConnection | null;
+    try { connection = this.#publicConnection(operation); } catch { connection = null; }
+    if (!connection || !ID.test(requestId) || batch && operation !== "customs.tax.estimate") return failure("unavailable", "public_customs_unavailable");
+    return this.#logged({ tenantId: connection.tenantId, clientId: this.#publicAccess!.clientId, actorRef: "public-web" }, operation, requestId, async () => {
+      try { await this.#publicAuthority!(this.#publicAccess!); } catch { return failure("unavailable", "public_customs_unavailable"); }
+      if (!this.publicAvailable(operation)) return failure("unavailable", "public_customs_unavailable");
+      const result = await this.#serviceQuery(connection, operation, input, requestId, batch);
+      return this.publicAvailable(operation) ? result : failure("unavailable", "public_customs_unavailable");
+    });
+  }
+  async #serviceQuery(connection: PortalBusinessConnection, operation: PortalBusinessOperation, input: unknown, requestId: string, batch: boolean): Promise<PortalBusinessClientResult | PortalBusinessEnvelope<never>> {
     if (operation === "quote.freightcom_ltl.preview") return connection.freightcomClient!.preview({ input, requestId });
     const actorId = operation.startsWith("customs.") ? connection.serviceActors?.customs : connection.serviceActors?.quote;
     if (!actorId || !ID.test(actorId)) return failure("unavailable", "business_machine_identity_unconfigured");

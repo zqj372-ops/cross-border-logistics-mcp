@@ -1,6 +1,23 @@
 export function createServiceHome({ icon, link }) {
-  return () => `<section class="service-home"><div class="service-home-intro"><div><p class="entry-eyebrow">FREIGHTCLAW · 服务入口</p><h1>从一票货，<br>到每一步有据可查。</h1><p>海运询价、关税归类与税费估算，在这里开始。<br>日常业务在线办理，重复工作交给 CLI、API 和 Agent。</p></div><div class="home-route" aria-label="物流服务环节"><span>中国起运</span><i aria-hidden="true"></i><span>加拿大到港</span><i aria-hidden="true"></i><span>清关与派送</span><p>按需选择服务 · 核对费用与依据</p></div></div>
-  <div class="service-entry-grid"><article class="service-entry ocean"><span class="entry-icon">${icon('container')}</span><p class="entry-eyebrow">海运 · 整柜 / 拼箱</p><h2>海运询价</h2><p>按需选择订舱、到港、清关、仓储与派送，整理整柜或拼箱运输需求。参考费用按币种分别汇总。</p><a class="button primary" href="/inquiry/">进入整柜 / 海运询价 ${icon('arrow')}</a></article><article class="service-entry customs"><span class="entry-icon">${icon('file')}</span><p class="entry-eyebrow">中国 · 美国 · 加拿大</p><h2>关税查询</h2><p>输入商品和原产地，查询归类、税则与适用措施，核对规则日期和来源依据。</p>${link('查询关税', 'customs', true, 'arrow')}<span class="entry-caption">使用现有账号登录，按企业权限查询</span></article></div>
-  <div class="home-quick-links">${link('加拿大尾程询价', 'quote', false, 'truck')}${link('进口税费估算', 'tax', false, 'file')}${link('关务历史', 'customs-history', false, 'clock')}${link('查看全部能力', 'market', false, 'grid')}</div>
-  <section class="home-developer"><div><p class="entry-eyebrow">连接你的工作方式</p><h2>网页之外，也能直接调用。</h2><p>同一把 API Key，使用应用已开通的服务。</p></div><div class="home-developer-options"><a class="home-dev-option" href="/console/#cli"><span class="home-dev-symbol">&gt;_</span><span><strong>CLI 命令行</strong><small>下载安装、JSON 示例、脚本调用</small></span>${icon('arrow')}</a><a class="home-dev-option" href="/console/#guide"><span class="home-dev-symbol">${icon('code')}</span><span><strong>API 与 MCP</strong><small>接口文档、Agent 接入、使用手册</small></span>${icon('arrow')}</a></div></section></section>`;
+  return () => `<section class="portal-home">
+    <header class="portal-intro"><h1>询运费，<span>查关税。</span></h1><p>从运输需求到进口税费，让每一步更清楚。</p></header>
+    <div class="portal-services">
+      <article class="ocean-feature">
+        <div class="feature-heading"><h2>海运询价</h2><span>整柜 / 拼箱</span></div>
+        <p>中国到加拿大，按需安排运输。<br>整理货物与服务需求，获取询价清单。</p>
+        <a class="button primary" href="/inquiry/">开始海运询价 ${icon('arrow')}</a>
+        <ol class="ocean-journey" aria-label="海运服务环节"><li><span>中国起运</span><small>订舱 · 装柜</small></li><li><span>加拿大到港</span><small>提柜 · 清关</small></li><li><span>送达目的地</span><small>仓储 · 派送</small></li></ol>
+      </article>
+      <article class="customs-feature">
+        <div class="feature-heading"><h2>关税查询</h2><span class="customs-symbol">${icon('file')}</span></div>
+        <p>输入商品，查归类、税则和适用措施。<br>中国出口，美国与加拿大进口。</p>
+        ${link('查询关税', 'customs', true, 'arrow')}
+        <div class="customs-access"><span class="access-dot" aria-hidden="true"></span><span>免登录，每天可查 <strong>20</strong> 次</span></div>
+        <div class="customs-secondary"><span>已有 HS 编码？</span><button type="button" data-go="tax">估算进口税费 ${icon('arrow')}</button></div>
+      </article>
+    </div>
+    <section class="portal-tools" aria-label="更多物流工具"><div><h2>更多工具</h2><p>按业务需要，继续下一步。</p></div><button type="button" class="portal-tool" data-go="quote">${icon('truck')}<span><strong>加拿大尾程询价</strong><small>登录后使用</small></span>${icon('arrow')}</button><button type="button" class="portal-tool" data-go="market">${icon('grid')}<span><strong>浏览全部服务</strong><small>货物计算、装柜规划与更多能力</small></span>${icon('arrow')}</button></section>
+    <section class="portal-connect"><div><h2>把重复工作交给工具。</h2><p>CLI、API 与 Agent，连接你已有的工作流程。</p></div><div class="connect-terminal"><code><span aria-hidden="true">$ </span>freightclaw --help</code><span>从第一条命令开始</span></div><div class="connect-links"><a href="/console/#cli">CLI 命令行 ${icon('arrow')}</a><a href="/console/#guide">API 与接入手册 ${icon('arrow')}</a></div></section>
+    <footer class="portal-footer"><span>FreightClaw</span><span>海运询价 · 关税查询 · 系统接入</span></footer>
+  </section>`;
 }

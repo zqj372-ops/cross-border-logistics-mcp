@@ -12,9 +12,9 @@ import { createApiKeysUi } from './api-keys.js';
 import { createServiceAccessUi } from './service-access.js';
 import { createOperationManual } from './manual.js';
 import { verifyCredentialAfterDelivery } from './credential-verification.js';
+const PUBLIC_PAGES = ['home', 'market', 'catalog', 'service', 'guide', 'cli', 'customs', 'tax'];
 const API = '/console/api/v1';
 const app = document.querySelector('#app');
-const content = document.querySelector('#content');
 const dialog = document.querySelector('#secret-dialog');
 const model = { session: null, state: null, credentials: new Map(), secret: null, busy: false, requestKeys: new Map(), call: null, admissions: null, admissionsLoading: false };
 const labels = { owner: '企业所有者', admin: '企业管理员', developer: '开发者', viewer: '业务成员', reviewer: '平台审核员', operator: '平台运维管理员', draft: '草稿', submitted: '待审核', in_review: '审核中', needs_input: '待补充', approved: '已通过', rejected: '未通过', withdrawn: '已撤回', provisioning: '待开通', active: '已生效', suspended: '已停用', revoked: '已撤销', expired: '已过期', pending: '待接受', claimed: '已加入', test: '测试', production: '正式', pending_delivery: '待确认交付', delivered: '已交付' };
@@ -35,6 +35,7 @@ const paths = {
   box: '<path d="m12 3 9 5v9l-9 5-9-5V8zM3 8l9 5 9-5M12 13v9M7 5.8l9 5"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   file: '<path d="M14 3H5v18h14V8zM14 3v5h5M8 12h8M8 16h6"/>',
+  account: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
   users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M17 15a5 5 0 0 1 4 5"/>',
   key: '<circle cx="8" cy="8" r="5"/><path d="m11.5 11.5 9 9M17 17l3-3M14 14l3-3"/>',
   code: '<path d="m8 6-6 6 6 6M16 6l6 6-6 6M14 3l-4 18"/>',
@@ -61,7 +62,7 @@ const badge = (value) => `<span class="badge ${['active', 'approved', 'claimed',
 const route = () => { const [page = 'home', id = ''] = location.hash.slice(1).split('/'); return { page: page || 'home', id: decodeURIComponent(id) }; };
 function clearNotice() { clearTimeout(notify.timer); document.querySelector('#notification').hidden = true; }
 function closeMenu(restoreFocus = false) { document.querySelector('#sidebar')?.classList.remove('open'); const button = document.querySelector('[data-action=menu]'); button?.setAttribute('aria-expanded', 'false'); const main = document.querySelector('#content'); if (main) main.inert = false; if (restoreFocus) button?.focus(); }
-function go(page) { clearNotice(); closeMenu(); if (location.hash === `#${page}`) render(); else location.hash = page; document.querySelector('#sidebar')?.classList.remove('open'); }
+function go(page) { clearNotice(); closeMenu(); closeAccount(); if (location.hash === `#${page}`) render(); else location.hash = page; document.querySelector('#sidebar')?.classList.remove('open'); }
 const link = (title, page, primary = false, glyph = '') => `<button type="button" class="button${primary ? ' primary' : ''}" data-go="${esc(page)}">${glyph ? icon(glyph) : ''}${esc(title)}</button>`;
 const textLink = (title, page) => `<button type="button" class="text-button" data-go="${esc(page)}">${esc(title)}</button>`;
 const head = (title, description, action = '') => `<div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(description)}</p></div>${action ? `<div class="head-actions">${action}</div>` : ''}</div>`;
@@ -95,11 +96,39 @@ const errors = {
   capability_unavailable: '该服务尚未开放申请。', request_state_invalid: '当前申请状态不支持此操作，请刷新查看最新状态。', request_transition_invalid: '当前申请状态不支持此操作，请刷新查看最新状态。', machine_authentication_failed: '凭证验证未通过，请核对 Key 与有效期。', business_grant_not_provisionable: '业务服务连接尚未就绪，或应用状态已变化。请先完成源服务接入，再开通授权。', business_operation_unavailable: '业务服务尚未接通，暂时无法签发或使用凭证。', business_operations_invalid: '请至少选择一项有效的业务服务。', business_credential_conflict: '业务凭证状态已经变化，请刷新后重试。', business_authorization_denied: '当前业务权限已到期、暂停或不包含该操作。', business_application_denied: '企业、应用或负责人已停用，请核对当前接入状态。', business_review_denied: '无法审核当前版本，或申请人与审核人相同。请刷新状态。', business_body_invalid: '请完整填写内容，并使用当前页面提供的选项。', tool_entitlement_denied: '该应用当前没有这项服务的有效权限。',
 };
 function errorMessage(error) { return errors[error.code] || (error.code === 'network' ? '未收到服务的确认结果。请保持页面，重试会沿用同一操作编号。' : `操作未完成（${error.code || 'unavailable'}）。请检查权限和记录状态后重试。`); }
-async function request(path, { method = 'GET', body, key, acceptBusiness = false } = {}) {
+const organizationSession = () => !!(model.session?.authenticated && model.session.organization_id && !reviewer());
+let sessionLoading;
+async function ensureSession() {
+  if (model.session) return model.session;
+  if (!sessionLoading) sessionLoading = request('/session').then(value => { model.session = value; return value; }).finally(() => { sessionLoading = null; });
+  return sessionLoading;
+}
+function quotaBanner() {
+  if (organizationSession()) return '';
+  const quota = model.publicQuota;
+  return `<aside class="visitor-quota" aria-label="访客查询额度"><div><strong>访客查询</strong><span data-quota-summary>${quota ? `今日剩余 ${quota.remaining} / ${quota.limit} 次` : '每天 20 次'}</span></div><p>关税与税费共用额度，批量按商品计次。北京时间零点重置，同一网络共享。</p><button type="button" class="text-button" data-go="account">登录个人中心 ${icon('arrow')}</button></aside>`;
+}
+function closeAccount(restoreFocus = false) {
+  const menu = document.querySelector('#account-menu'); if (menu) menu.hidden = true;
+  const button = document.querySelector('[data-action=account-menu]'); button?.setAttribute('aria-expanded', 'false'); if (restoreFocus) button?.focus();
+}
+async function request(path, { method = 'GET', body, key, acceptBusiness = false, guestRetry = false } = {}) {
+  const originalPath = path;
+  const publicCustoms = ['/business/customs/query', '/business/customs/tax-estimate', '/business/customs/tax-estimates/batch'].includes(path) && !organizationSession();
+  if (publicCustoms) { await ensureSession(); path = path.replace('/business/customs/', '/public/customs/'); }
   const writes = method !== 'GET'; const headers = { Accept: 'application/json' };
   if (writes) Object.assign(headers, { 'Content-Type': 'application/json', 'X-CSRF-Token': model.session?.csrf_token || '', 'Idempotency-Key': key || crypto.randomUUID() });
+  const generation = model.sessionGeneration || 0;
   let response; try { response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(writes ? { body: JSON.stringify(body || {}) } : {}), signal: AbortSignal.timeout(20000) }); } catch { throw Object.assign(new Error('network'), { code: 'network' }); }
+  if (publicCustoms && response.headers.has('x-freightclaw-quota-remaining')) model.publicQuota = { limit: Number(response.headers.get('x-freightclaw-quota-limit')), remaining: Number(response.headers.get('x-freightclaw-quota-remaining')), resets_at: response.headers.get('x-freightclaw-quota-reset') };
   let result; try { result = await response.json(); } catch { throw Object.assign(new Error('invalid_response'), { code: 'portal_unavailable' }); }
+  if (generation !== (model.sessionGeneration || 0)) throw Object.assign(new Error('account_changed'), { code: 'account_changed' });
+  if (publicCustoms && !guestRetry && (response.status === 401 || response.status === 403 && result.reason_codes?.includes('csrf_invalid'))) {
+    model.session = null;
+    await ensureSession();
+    if (!model.session.authenticated) { model.state = null; model.directory = null; model.businessCatalog = []; model.credentials.clear(); }
+    return request(originalPath, { method, body, key, acceptBusiness, guestRetry: true });
+  }
   if (acceptBusiness && typeof result.schema_version === 'string' && ['success', 'needs_input', 'manual_review', 'blocked', 'unavailable'].includes(result.status)) return result;
   if (response.ok && result.status === 'manual_review' && result.secret_delivery?.status === 'withheld') return result;
   if (!response.ok || (result.status && result.status !== 'success')) {
@@ -148,44 +177,32 @@ function renderLogin() {
   rememberLoginDestination(route().page, loginStorage());
   document.title = '登录 · FreightClaw';
   app.className = 'login-shell';
-  app.innerHTML = `<section class="login-story">${brand()}<h1>物流能力，<br>一个账号连接。</h1><p>使用询价、关务与货物工具，也能把已开通的能力接入你的系统和 Agent。</p><div class="login-features"><div class="login-feature">${icon('users')}团队成员与权限统一管理</div><div class="login-feature">${icon('grid')}业务服务在工作台内完成</div><div class="login-feature">${icon('key')}一把 Key 接入系统与 Agent</div></div></section><section class="login-panel"><h2>${model.session?.mode === 'fixtures' ? '进入本地验收工作台' : '登录工作台'}</h2><p>${model.session?.mode === 'fixtures' ? '选择身份，体验真实的申请、审核与凭证流程。' : '使用已验证的邮箱和密码登录，继续你的工作。'}</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? `<div class="identity-list">${model.session.fixture_identities.map((identity) => `<button class="identity-option" type="button" data-action="login" data-id="${esc(identity.user_id)}"><span class="avatar">${esc(identity.display_name.slice(0, 1))}</span><span class="identity-copy"><strong>${esc(identity.display_name)}</strong><small>${esc(identity.email)}</small></span>${icon('arrow')}</button>`).join('')}</div><p class="login-fineprint">这里使用隔离的本地测试企业与身份，提交内容会保存在本地。测试结果不代表生产账号、正式报价或关税数据已接通。</p>` : '<a class="button primary" href="/console/auth/login">邮箱账号登录</a>'}</section>`;
+  app.innerHTML = `<section class="login-story">${brand()}<h1>你的业务，<br>在这里继续。</h1><p>登录后管理个人记录、团队与 API Key。海运询价和关税查询可以直接使用。</p><div class="login-features"><div class="login-feature">${icon('users')}团队成员与权限统一管理</div><div class="login-feature">${icon('grid')}业务服务在工作台内完成</div><div class="login-feature">${icon('key')}一把 Key 接入系统与 Agent</div></div></section><section class="login-panel"><h2>${model.session?.mode === 'fixtures' ? '进入本地验收工作台' : '登录个人中心'}</h2><p>${model.session?.mode === 'fixtures' ? '选择身份，体验真实的申请、审核与凭证流程。' : '使用已验证的邮箱和密码登录，继续你的工作。'}</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? `<div class="identity-list">${model.session.fixture_identities.map((identity) => `<button class="identity-option" type="button" data-action="login" data-id="${esc(identity.user_id)}"><span class="avatar">${esc(identity.display_name.slice(0, 1))}</span><span class="identity-copy"><strong>${esc(identity.display_name)}</strong><small>${esc(identity.email)}</small></span>${icon('arrow')}</button>`).join('')}</div><p class="login-fineprint">这里使用隔离的本地测试企业与身份，提交内容会保存在本地。测试结果不代表生产账号、正式报价或关税数据已接通。</p>` : '<a class="button primary" href="/console/auth/login">邮箱账号登录</a><a class="login-return" href="#home">返回首页，继续浏览</a>'}</section>`;
 }
 function ensureShell() {
-  const className = reviewer() && !model.session.organization_id ? 'app-shell' : 'customer-shell';
+  const className = 'customer-shell';
   if (app.className === className) return;
   app.className = className;
   app.innerHTML = '<aside id="sidebar" class="sidebar" aria-label="主要导航"></aside><div class="workspace"><header id="topbar" class="topbar"></header><div id="environment-note"></div><main id="content" tabindex="-1"></main></div>';
 }
 function customerNav() {
   const { page } = route();
-  const center = model.session?.authenticated && !developer() ? (model.session.organization_id ? 'workbench' : 'members') : 'api-keys';
+  const center = reviewer() ? 'platform' : model.session?.authenticated && !developer() ? (model.session.organization_id ? 'workbench' : 'members') : 'api-keys';
   const active = page === 'cli' ? 'cli' : page === 'home' ? 'home' : ['market', 'catalog', 'service'].includes(page) ? 'market' : ['guide', 'diagnostics'].includes(page) ? 'guide' : center;
-  const targets = [['首页', 'home'], ['市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide'], ['个人中心', center]];
+  const targets = [['首页', 'home'], ['市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide']];
   const navItems = targets.map(([title, target]) => `<button type="button" class="nav-item" data-go="${target}" ${active === target ? 'aria-current="page"' : ''}>${title}</button>`).join('');
   const signedIn = model.session?.authenticated;
-  const account = signedIn ? `<span class="customer-avatar" aria-hidden="true">${esc(model.session.identity.display_name.slice(0, 1))}</span><button class="button quiet" type="button" data-action="logout">退出</button>` : '<button class="button primary" type="button" data-go="login">登录 / 注册</button>';
+  const account = `<div class="account-disclosure"><button class="account-toggle" type="button" data-action="account-menu" aria-label="账号菜单" aria-expanded="false" aria-controls="account-menu"><span class="customer-avatar">${signedIn ? esc(model.session.identity.display_name.slice(0, 1)) : icon('account')}</span><svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="account-menu" class="account-dropdown" hidden><div class="account-summary"><strong>${signedIn ? esc(model.session.identity.display_name) : '欢迎来到 FreightClaw'}</strong><span>${signedIn ? '管理你的账号与业务' : '登录后管理个人记录与服务'}</span></div><button type="button" data-go="account">${icon('account')}${signedIn ? '个人中心' : '登录个人中心'}</button>${signedIn && !reviewer() ? `<button type="button" data-go="customs-history">${icon('clock')}关务历史</button><button type="button" data-go="quote-history">${icon('file')}我的报价记录</button>${developer() ? `<button type="button" data-go="api-keys">${icon('key')}API Key</button>` : ''}` : ''}${signedIn ? '<button class="account-logout" type="button" data-action="logout">退出登录</button>' : ''}</div></div>`;
   document.querySelector('#sidebar').innerHTML = `<nav>${navItems}</nav>${signedIn ? `<div class="sidebar-footer"><span>${esc(model.session.identity.display_name)}</span></div>` : ''}`;
   document.querySelector('#topbar').innerHTML = `${brand()}<nav class="customer-navigation" aria-label="主导航">${navItems}</nav><div class="customer-account">${account}<button type="button" class="button quiet mobile-menu" data-action="menu" aria-expanded="false" aria-label="打开导航">${icon('menu')}</button></div>`;
   const orgs = model.directory?.organizations?.filter((item) => item.status === 'active' && model.directory.memberships.some((member) => member.organization_id === item.organization_id && member.user_id === model.session.identity.user_id && member.status === 'active')) || [];
   const organization = orgs.length > 1 ? `<label for="organization">当前企业</label><select id="organization" class="organization-select">${orgs.map((item) => `<option value="${esc(item.organization_id)}" ${model.session.organization_id === item.organization_id ? 'selected' : ''}>${esc(item.display_name)}</option>`).join('')}</select>` : `<span>${esc(orgs[0]?.display_name || (signedIn ? model.session.identity.display_name : ''))}</span>`;
-  const consolePages = ['workbench', 'customs-history', 'calls', 'quote', 'quote-history', 'customs', 'tax', 'api-keys', 'apply', 'requests', 'request', 'request-new', 'request-edit', 'grants', 'grant-edit', 'app', 'app-new', 'applications', 'credential-new', 'business-request', 'business-request-new', 'business-request-edit', 'business-grant', 'business-credential', 'activity', 'members', 'member-new', 'member-edit'];
-  const subTarget = ['api-keys', 'credential-new', 'business-credential'].includes(page) ? 'api-keys' : ['apply', 'requests', 'request', 'request-new', 'request-edit', 'grants', 'grant-edit', 'business-request', 'business-request-new', 'business-request-edit', 'business-grant'].includes(page) ? 'apply' : page.startsWith('member') ? 'members' : page.startsWith('app') ? 'applications' : page;
-  const subnav = signedIn && consolePages.includes(page) ? `<div class="console-context"><div class="console-organization">${organization}</div><nav aria-label="个人中心导航">${[['工作台', 'workbench'], ...(developer() ? [['API Key', 'api-keys'], ['已开通服务', 'apply']] : []), [manager() ? '成员管理' : '企业成员', 'members'], ['关务历史', 'customs-history'], ['调用记录', 'calls'], ['操作记录', 'activity']].map(([label, target]) => `<button type="button" class="console-tab" data-go="${target}" ${target === subTarget ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav></div>` : '';
+  const consolePages = ['platform', 'organizations', 'organization', 'organization-new', 'workbench', 'customs-history', 'calls', 'quote', 'quote-history', 'account', 'api-keys', 'apply', 'requests', 'request', 'request-new', 'request-edit', 'grants', 'grant-edit', 'app', 'app-new', 'applications', 'credential-new', 'business-request', 'business-request-new', 'business-request-edit', 'business-grant', 'business-credential', 'activity', 'members', 'member-new', 'member-edit'];
+  const subTarget = page === 'account' ? center : ['api-keys', 'credential-new', 'business-credential'].includes(page) ? 'api-keys' : ['apply', 'requests', 'request', 'request-new', 'request-edit', 'grants', 'grant-edit', 'business-request', 'business-request-new', 'business-request-edit', 'business-grant'].includes(page) ? 'apply' : page.startsWith('member') ? 'members' : page.startsWith('app') ? 'applications' : page;
+  const subnav = signedIn && consolePages.includes(page) ? `<div class="console-context"><div class="console-organization">${organization}</div><nav aria-label="个人中心导航">${(reviewer() ? [['工作概览', 'platform'], ['申请审核', 'requests'], ...(model.session.identity.platform_role === 'operator' ? [['服务授权', 'grants'], ['企业准入', 'organizations']] : [])] : [['工作台', 'workbench'], ...(developer() ? [['API Key', 'api-keys'], ['已开通服务', 'apply']] : []), [manager() ? '成员管理' : '企业成员', 'members'], ['关务历史', 'customs-history'], ['调用记录', 'calls'], ['操作记录', 'activity']]).map(([label, target]) => `<button type="button" class="console-tab" data-go="${target}" ${target === subTarget ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav></div>` : '';
   document.querySelector('#environment-note').innerHTML = `${model.session?.mode === 'fixtures' ? '<div class="fixture-note">本地验收环境 · 测试身份和隔离数据，结果不代表生产数据。</div>' : ''}${subnav}`;
 }
-function nav() {
-  if (!reviewer() || model.session.organization_id) { customerNav(); return; }
-  const { page } = route(); const groupPage = ({ 'app-new': 'applications', app: 'applications', 'request-new': 'requests', request: 'requests', 'member-new': 'members', 'grant-edit': 'grants', 'credential-new': 'applications' })[page] || page;
-  const item = (title, target, glyph, count) => `<button type="button" class="nav-item" data-go="${target}" ${groupPage === target ? 'aria-current="page"' : ''}>${icon(glyph)}<span>${title}</span>${count ? `<span class="nav-count">${count}</span>` : ''}</button>`;
-  const pending = [...model.state.requests, ...businessAccess.overview().requests].filter((value) => ['submitted', 'in_review', 'needs_input'].includes(value.state)).length;
-  const platform = reviewer() && !model.session.organization_id;
-  let navigation;
-  if (platform) navigation = `<div class="nav-group">${item('工作概览', 'home', 'home')}</div><div class="nav-group"><p class="nav-label">平台运营</p>${item('申请审核', 'requests', 'file', pending)}${model.session.identity.platform_role === 'operator' ? `${item('服务授权', 'grants', 'shield')}${item('企业准入', 'organizations', 'users')}` : ''}</div>`;
-  else navigation = `<div class="nav-group">${item('工作概览', 'home', 'home')}<p class="nav-label">业务工作</p>${model.session.organization_id ? `${item('加拿大尾程询价', 'quote', 'truck')}${item('我的报价记录', 'quote-history', 'clock')}${item('关税与归类', 'customs', 'file')}${item('税费估算', 'tax', 'file')}${item('调用记录', 'calls', 'clock')}` : ''}${item('服务目录', 'catalog', 'grid')}</div>${developer() ? `<div class="nav-group"><p class="nav-label">应用与接入</p>${item('我的应用', 'applications', 'code')}${item('API 申请', 'requests', 'file', pending)}${item('服务授权', 'grants', 'shield')}${item('接入指引', 'guide', 'key')}</div>` : ''}<div class="nav-group"><p class="nav-label">组织管理</p>${item('成员与邀请', 'members', 'users')}${model.session.organization_id ? item('操作记录', 'activity', 'clock') : ''}</div>`;
-  document.querySelector('#sidebar').innerHTML = `${brand()}<nav>${navigation}</nav><div class="sidebar-footer"><span class="avatar">${esc(model.session.identity.display_name.slice(0, 1))}</span><div><p class="account-name">${esc(model.session.identity.display_name)}</p><p class="account-role">${esc(labels[model.session.identity.platform_role] || labels[orgRole()] || '尚未加入企业')}</p></div></div>`;
-  document.querySelector('#topbar').innerHTML = `<div class="topbar-left"><button class="button quiet mobile-menu" type="button" data-action="menu" aria-label="打开导航" aria-expanded="false">${icon('menu')}</button><span class="topbar-label">当前企业</span><label class="sr-only" for="organization">选择企业</label><select class="organization-select" id="organization" ${platform ? 'disabled' : ''}>${reviewer() ? '<option value="">平台审核工作区</option>' : `<option value="" disabled ${!model.session.organization_id ? 'selected' : ''}>选择企业</option>`}${model.directory.organizations.filter((item) => item.status === 'active' && model.directory.memberships.some((member) => member.organization_id === item.organization_id && member.user_id === model.session.identity.user_id && member.status === 'active')).map((item) => `<option value="${esc(item.organization_id)}" ${model.session.organization_id === item.organization_id ? 'selected' : ''}>${esc(item.display_name)}</option>`).join('')}</select></div><div class="topbar-right"><span class="environment-chip">${model.session.mode === 'fixtures' ? '本地验收' : '正式环境'}</span><button type="button" class="button quiet" data-action="logout">退出</button></div>`;
-  document.querySelector('#environment-note').innerHTML = model.session.mode === 'fixtures' ? '<div class="fixture-note"><span>本地验收环境 · 测试企业与身份，业务数据以服务实际返回为准。</span><button type="button" data-action="logout">切换身份</button></div>' : '';
-}
+function nav() { customerNav(); }
 function serviceItems() {
   const ordinary = model.state.catalog.filter((item) => item.available).map((item) => ({ id: item.capability_id, name: capName(item.capability_id), description: capabilities[item.capability_id]?.description || '', configured: true, business: false }));
   return [...ordinary, ...Object.entries(businessAccess.names).map(([id, name]) => ({ id, name, description: businessAccess.descriptions[id], business: true, configured: model.businessCatalog?.find((item) => item.operation === id)?.configured === true }))];
@@ -309,15 +326,17 @@ async function loadCredentials(id) {
   if (route().page === 'app' && route().id === id) render();
 }
 function render() {
-  const { page, id } = route();
-  const publicPages = ['home', 'market', 'catalog', 'service', 'guide', 'cli'];
+  let { page, id } = route();
+  const publicPages = PUBLIC_PAGES;
   if (page === 'login' || (!model.session?.authenticated && (!publicPages.includes(page) || new URLSearchParams(location.search).has('auth_error')))) { renderLogin(); return; }
   ensureShell(); nav();
+  if (model.session?.authenticated && !model.state && !publicPages.includes(page)) { document.querySelector('#content').innerHTML = '<p role="status">正在读取个人中心…</p>'; return; }
+  if (page === 'account') page = reviewer() ? 'platform' : developer() ? 'api-keys' : model.session.organization_id ? 'workbench' : 'members';
   const main = document.querySelector('#content');
-  if (reviewer() && !model.session.organization_id && !['home', 'cli', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'home')); return; }
-  const pages = { apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => reviewer() && location.pathname.startsWith('/console') ? dashboard() : serviceHome(), cli: () => cli.page(), market: () => market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => market.workbench(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
-  const requiresOrganization = ['calls', 'customs-history', 'quote', 'quote-history', 'customs', 'tax'];
-  main.innerHTML = requiresOrganization.includes(page) && !model.session.organization_id ? market.workbench() : (pages[page] || serviceHome)();
+  if (reviewer() && !model.session.organization_id && ![...PUBLIC_PAGES, 'platform', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'home')); return; }
+  const pages = { apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => serviceHome(), platform: () => reviewer() ? dashboard() : serviceHome(), cli: () => cli.page(), market: () => market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => market.workbench(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
+  const requiresOrganization = ['calls', 'customs-history', 'quote', 'quote-history'];
+  main.innerHTML = (['customs', 'tax'].includes(page) ? quotaBanner() : '') + (requiresOrganization.includes(page) && !model.session.organization_id ? market.workbench() : (pages[page] || serviceHome)());
   if (page === 'api-keys' && model.verification) main.insertAdjacentHTML('beforeend', verificationPanel());
   main.setAttribute('aria-busy', 'false');
   document.title = `${main.querySelector('h1')?.textContent || '工作台'} · FreightClaw`;
@@ -371,11 +390,11 @@ async function runAction(button) {
   if (await calls.action(button)) return;
   if (await business.action(button)) return;
   const action = button.dataset.action; const id = button.dataset.id; const applicationId = button.dataset.app;
-  if (action === 'menu') { const open = !document.querySelector('#sidebar').classList.contains('open'); if (!open) closeMenu(); else { document.querySelector('#sidebar').classList.add('open'); button.setAttribute('aria-expanded', 'true'); document.querySelector('#content').inert = true; document.querySelector('#sidebar .nav-item')?.focus(); } return; }
+  if (action === 'menu') { closeAccount(); const open = !document.querySelector('#sidebar').classList.contains('open'); if (!open) closeMenu(); else { document.querySelector('#sidebar').classList.add('open'); button.setAttribute('aria-expanded', 'true'); document.querySelector('#content').inert = true; document.querySelector('#sidebar .nav-item')?.focus(); } return; }
   if (action === 'close-secret') { closeSecret(); return; }
   if (action === 'copy-secret') { if (model.secret) { await navigator.clipboard.writeText(model.secret.key); notify('Key 已复制，请妥善保存。'); } return; }
   if (action === 'login') { model.session = await mutate('/fixture-login', 'POST', { identity_id: id }); await refresh(); go(consumeLoginDestination(loginStorage()) || 'home'); render(); return; }
-  if (action === 'logout') { consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); render(); return; }
+  if (action === 'logout') { model.sessionGeneration = (model.sessionGeneration || 0) + 1; consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); model.directory = null; model.businessCatalog = []; go('home'); render(); return; }
   if (action === 'ack-secret') { await acknowledgeSecret(); return; }
   const currentRequest = model.state?.requests.find((v) => v.request_id === id);
   const currentGrant = model.state?.grants.find((v) => v.grant_id === id);
@@ -430,7 +449,9 @@ const serviceHome = createServiceHome({ icon, link });
 const apiKeys = createApiKeysUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, showSecret, render, businessAccess, model: () => model });
 const serviceAccess = createServiceAccessUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, render, businessAccess, model: () => model });
 document.addEventListener('click', async (event) => {
+  if (!event.target.closest('.account-disclosure')) closeAccount();
   const button = event.target.closest('button'); if (!button || button.disabled) return;
+  if (button.dataset.action === 'account-menu') { const menu = document.querySelector('#account-menu'); const open = menu.hidden; closeMenu(); menu.hidden = !open; button.setAttribute('aria-expanded', String(open)); if (open) menu.querySelector('button')?.focus(); return; }
   if (button.dataset.go) { go(button.dataset.go); return; }
   if (!button.dataset.action) return;
   clearNotice(); const previous = button.innerHTML; button.disabled = true;
@@ -452,13 +473,14 @@ document.addEventListener('change', async (event) => {
   if (developerGuide.change(event)) return;
   if (cli.change(event)) return;
   if (event.target.id !== 'organization') return;
-  try { model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go('home'); render(); } catch (error) { notify(errorMessage(error), true); render(); }
+  try { model.sessionGeneration = (model.sessionGeneration || 0) + 1; model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go('home'); render(); } catch (error) { notify(errorMessage(error), true); render(); }
 });
 document.addEventListener('input', (event) => { if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });
 dialog.addEventListener('cancel', () => closeSecret());
 dialog.addEventListener('close', () => closeSecret());
-window.addEventListener('hashchange', () => { clearNotice(); closeMenu(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 }); });
+window.addEventListener('hashchange', () => { clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 }); });
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.querySelector('#account-menu')?.hidden === false) { event.preventDefault(); closeAccount(true); return; }
   if (!document.querySelector('#sidebar')?.classList.contains('open')) return;
   if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
   if (event.key === 'Tab') {
@@ -467,8 +489,18 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault(); nodes[next]?.focus();
   }
 });
-try { model.session = await request('/session'); if (model.session.authenticated) { await refresh(); const destination = consumeLoginDestination(loginStorage()); if (destination && ['home', 'login'].includes(route().page)) go(destination); } render(); }
-catch (error) { content.innerHTML = empty('工作台暂时无法读取', errorMessage(error), '<button class="button primary" data-action="reload">重新加载</button>'); document.addEventListener('click', (event) => { if (event.target.closest('[data-action=reload]')) location.reload(); }); }
+render();
+try {
+  await ensureSession();
+  if (model.session.authenticated) { await refresh(); const destination = consumeLoginDestination(loginStorage()); if (destination && ['home', 'login'].includes(route().page)) go(destination); }
+  try { model.publicQuota = (await request('/public/customs/quota')).data; } catch { model.publicQuota = null; }
+  render();
+} catch (error) {
+  if (PUBLIC_PAGES.includes(route().page)) render();
+  else { ensureShell(); document.querySelector('#content').innerHTML = empty('个人中心暂时无法读取', errorMessage(error), '<button class="button primary" data-action="reload">重新加载</button>'); }
+}
+document.addEventListener('click', (event) => { if (event.target.closest('[data-action=reload]')) location.reload(); });
+document.addEventListener('focusin', (event) => { if (!event.target.closest('.account-disclosure')) closeAccount(); });
 
 // Native validation can focus a field inside a collapsed batch item.
 document.addEventListener('invalid', (event) => { const section = event.target.closest('details'); if (section) section.open = true; }, true);

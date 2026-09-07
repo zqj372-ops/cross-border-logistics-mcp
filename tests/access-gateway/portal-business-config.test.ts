@@ -27,6 +27,8 @@ describe("portal business deployment configuration", () => {
     const root = mkdtempSync(join(tmpdir(), "portal-business-config-")); roots.push(root);
     const cases: unknown[] = [
       { connections: [], unknown: true },
+      { connections: [], publicAccess: { organizationId: "org-1", tenantId: "tenant-1", applicationId: "app-1", clientId: "client-1", enabledOperations: ["customs.query"] } },
+      { connections: [], publicAccess: { organizationId: "org-1", tenantId: "tenant-1", applicationId: "app-1", clientId: "client-1", enabledOperations: ["quote.zone_preview"] } },
       { connections: [{ organizationId: "org-1", tenantId: "tenant-1", enabledOperations: ["customs.query"], customs: { baseUrl: "https://customs.example.invalid", serviceCallerId: "caller", applicationId: "app", connectionSecretFile: "/missing", issuer: "https://issuer.example.invalid/", audience: "customs", keyId: "key", delegationPrivateKeyFile: "/missing" } }, { organizationId: "org-1", tenantId: "tenant-2", enabledOperations: ["quote.zone_preview"] }] },
       { connections: [{ organizationId: "org-1", tenantId: "tenant-1", enabledOperations: ["customs.query"] }] },
       { connections: [{ organizationId: "org-1", tenantId: "tenant-1", enabledOperations: ["customs.tax.estimate"] }] },

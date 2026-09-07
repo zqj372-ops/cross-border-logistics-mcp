@@ -1,0 +1,149 @@
+{
+  "capture": "CUA in-app browser, live production, anonymous session",
+  "images": [
+    {
+      "file": "01-home-desktop.jpg",
+      "url": "https://www.freightclaw.net/",
+      "captured_at": "2026-09-07T04:36:20.823021+00:00",
+      "viewport": {
+        "width": 1440,
+        "height": 1040
+      },
+      "image_pixels": {
+        "width": 1440,
+        "height": 1004
+      },
+      "bytes": 70883,
+      "sha256": "cd7d437a1613ae169634ff88c6354a560c5d3b4b48f26aeb0d99822a3f311cd1",
+      "content_edited": false
+    },
+    {
+      "file": "02-account-desktop.jpg",
+      "url": "https://www.freightclaw.net/",
+      "captured_at": "2026-09-07T04:36:40.752527+00:00",
+      "viewport": {
+        "width": 1440,
+        "height": 1040
+      },
+      "image_pixels": {
+        "width": 1440,
+        "height": 1004
+      },
+      "bytes": 75909,
+      "sha256": "9024e88a1d0b6beddc2abb6c8c2dbb832f52f904e3bdde24e76adb7b49ce4754",
+      "content_edited": false
+    },
+    {
+      "file": "03-customs-desktop.jpg",
+      "url": "https://www.freightclaw.net/#customs",
+      "captured_at": "2026-09-07T04:36:54.310421+00:00",
+      "viewport": {
+        "width": 1440,
+        "height": 1040
+      },
+      "image_pixels": {
+        "width": 1425,
+        "height": 994
+      },
+      "bytes": 59381,
+      "sha256": "95e2e1cabdf0c3f3e6cbdc968841a2df1d6f7a4bd6356cacb441e70ef63a86eb",
+      "content_edited": false
+    },
+    {
+      "file": "04-customs-result-desktop.jpg",
+      "url": "https://www.freightclaw.net/#customs",
+      "captured_at": "2026-09-07T04:38:04.520532+00:00",
+      "viewport": {
+        "width": 1440,
+        "height": 1040
+      },
+      "image_pixels": {
+        "width": 1425,
+        "height": 994
+      },
+      "bytes": 54770,
+      "sha256": "9f939afcc178a29fee9c0282ab2a240e253c4024a8734f27a6f63a0b50be390d",
+      "content_edited": false
+    },
+    {
+      "file": "05-tail-login-desktop.jpg",
+      "url": "https://www.freightclaw.net/#quote",
+      "captured_at": "2026-09-07T04:38:19.673872+00:00",
+      "viewport": {
+        "width": 1440,
+        "height": 1040
+      },
+      "image_pixels": {
+        "width": 1440,
+        "height": 1004
+      },
+      "bytes": 36367,
+      "sha256": "ad7a76ccb4f641b3f35957e8d1a06c53377a3de345accea71c53895baa1bebdf",
+      "content_edited": false
+    },
+    {
+      "file": "06-home-mobile.jpg",
+      "url": "https://www.freightclaw.net/#home",
+      "captured_at": "2026-09-07T04:38:35.710701+00:00",
+      "viewport": {
+        "width": 390,
+        "height": 1000
+      },
+      "image_pixels": {
+        "width": 375,
+        "height": 962
+      },
+      "bytes": 35522,
+      "sha256": "b7818373a062af8458e0a5ba24de5e2ae0de247472999756d6a6ae22ee77952e",
+      "content_edited": false
+    },
+    {
+      "file": "07-account-mobile.jpg",
+      "url": "https://www.freightclaw.net/#home",
+      "captured_at": "2026-09-07T04:38:47.554457+00:00",
+      "viewport": {
+        "width": 390,
+        "height": 1000
+      },
+      "image_pixels": {
+        "width": 375,
+        "height": 962
+      },
+      "bytes": 35440,
+      "sha256": "21fdc2e629e305165dd6c5159608d107e11cac1308c71381414b81594f54c9e0",
+      "content_edited": false
+    },
+    {
+      "file": "08-cli-mobile.jpg",
+      "url": "https://www.freightclaw.net/#cli",
+      "captured_at": "2026-09-07T04:39:14.537374+00:00",
+      "viewport": {
+        "width": 390,
+        "height": 1000
+      },
+      "image_pixels": {
+        "width": 375,
+        "height": 962
+      },
+      "bytes": 43320,
+      "sha256": "9f1da354ad7403eafd943028108ac8fd95ff03633c0a92eafd89dbfd33bac119",
+      "content_edited": false
+    },
+    {
+      "file": "09-tax-mobile.jpg",
+      "url": "https://www.freightclaw.net/#tax",
+      "captured_at": "2026-09-07T04:40:13.096775+00:00",
+      "viewport": {
+        "width": 390,
+        "height": 1000
+      },
+      "image_pixels": {
+        "width": 375,
+        "height": 962
+      },
+      "bytes": 30061,
+      "sha256": "461ab43caa6e89442dfa80f9b9cb1cc62d2c5b019005891df89c120f2179910c",
+      "content_edited": false
+    }
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "captured_at": "2026-09-07T04:36:36.054665+00:00",
+  "origin": "https://www.freightclaw.net",
+  "readiness": {
+    "http": 200,
+    "body": {
+      "status": "success",
+      "data": {
+        "service": "freightclaw-portal",
+        "release_id": "portal-history-20260907",
+        "build_id": "db4ac278e9dd8b6400240230100b51d1724f3d724499c512ae29d8b1b340bf27",
+        "ready": true,
+        "checks": {
+          "portal_database": true,
+          "session_database": true,
+          "business_access_database": true,
+          "identity": true,
+          "business_configuration": true,
+          "call_log_database": true
+        }
+      },
+      "reason_codes": []
+    }
+  },
+  "pages": {
+    "/": {
+      "http": 200,
+      "bytes": 2964,
+      "sha256": "6322b12e4e970bbc53f34779a48a1e4bf5816d483cfebe73a83be51eac921005",
+      "cache_control": "no-cache"
+    },
+    "/console/": {
+      "http": 200,
+      "bytes": 2964,
+      "sha256": "6322b12e4e970bbc53f34779a48a1e4bf5816d483cfebe73a83be51eac921005",
+      "cache_control": "no-store"
+    },
+    "/inquiry/": {
+      "http": 200,
+      "bytes": 2095,
+      "sha256": "7399bbe4ecb6e62fbd60fb63216dbb79668407222dddcd2a490fed6a0579dcb5",
+      "cache_control": "no-cache"
+    },
+    "/inquiry/details/": {
+      "http": 200,
+      "bytes": 2564,
+      "sha256": "3b22a4dc28efc2dda683396fc9cc19008df8c9b108ac371376c045796a328c03",
+      "cache_control": "no-cache"
+    }
+  },
+  "assets": {
+    "/console/styles.css?v=1e63464511140056": {
+      "http": 200,
+      "sha256": "1e63464511140056cc7502ee19a880ed5fe82e22789086f12b9a485a31ba7a3b"
+    },
+    "/console/app.js?v=8cd374c35000ca1e": {
+      "http": 200,
+      "sha256": "8cd374c35000ca1e1b6ebe7eb3d1c8cc64bdca8ee1f1e4db065fb4b2b58e9da3"
+    }
+  },
+  "anonymous_session": true,
+  "quota_before": {
+    "limit": 20,
+    "remaining": 20,
+    "resets_at": "2026-09-07T16:00:00.000Z"
+  },
+  "boundaries": {
+    "business/quote/preview": {
+      "http": 401,
+      "reason_codes": [
+        "authentication_required"
+      ]
+    },
+    "business/customs/history/list": {
+      "http": 401,
+      "reason_codes": [
+        "authentication_required"
+      ]
+    },
+    "business/customs/query": {
+      "http": 401,
+      "reason_codes": [
+        "authentication_required"
+      ]
+    },
+    "applications": {
+      "http": 401,
+      "reason_codes": [
+        "authentication_required"
+      ]
+    },
+    "state": {
+      "http": 401,
+      "reason_codes": [
+        "authentication_required"
+      ]
+    },
+    "public/quote/preview": {
+      "http": 404,
+      "reason_codes": [
+        "route_not_found"
+      ]
+    },
+    "public/customs/history/list": {
+      "http": 404,
+      "reason_codes": [
+        "route_not_found"
+      ]
+    }
+  },
+  "query": {
+    "http": 200,
+    "status": "unavailable",
+    "reason_codes": [
+      "customs_upstream_unavailable"
+    ],
+    "remaining": "19"
+  },
+  "quota_after": {
+    "limit": 20,
+    "remaining": 19,
+    "resets_at": "2026-09-07T16:00:00.000Z"
+  },
+  "feature_commit": "e4ff39d6af8e06b9e71c51aa197babc92a8fcffb",
+  "build_id": "db4ac278e9dd8b6400240230100b51d1724f3d724499c512ae29d8b1b340bf27",
+  "image": "freightclaw-portal:db4ac278e9dd",
+  "previous_image": "freightclaw-portal:9dd46df9052f",
+  "source_status": {
+    "http_status": 503,
+    "source": {
+      "contractVersion": "riskcustoms-query.v1",
+      "serviceVersion": "0.2.3-history-18c113bf3243",
+      "publishedAt": null,
+      "ready": false,
+      "testData": true,
+      "ruleDate": "2026-09-07",
+      "releaseIds": [],
+      "snapshotHash": null,
+      "releaseHash": null,
+      "reasons": [
+        "Publication snapshot reasons are invalid.",
+        "No reviewed publication snapshot is available.",
+        "Publication snapshot is marked as test data or lacks a production marker.",
+        "Publication snapshot release identity is not ready.",
+        "Publication snapshot M2M identity is incomplete."
+      ],
+      "error": {
+        "code": "data_not_ready",
+        "message": "Reviewed customs data is not ready for M2M status."
+      }
+    }
+  },
+  "existing_business_config_preserved": true,
+  "quota_store": {
+    "integrity": "ok",
+    "mode": "0o600",
+    "usage": [
+      {
+        "day": 20703,
+        "networks": 2,
+        "attempts": 2
+      }
+    ]
+  },
+  "existing_public_files_preserved": 32,
+  "state_backup": "/data/logistics-mcp/portal/backups/public-portal-db4ac278e9dd",
+  "config_backup": "/data/logistics-mcp/portal/backups/portal-promotion-20260907T043510Z",
+  "ci": {
+    "url": "https://github.com/zqj372-ops/cross-border-logistics-mcp/actions/runs/34083407769",
+    "passed_files": 181,
+    "passed_tests": 1736,
+    "skipped_tests": 0
+  },
+  "browser": {
+    "anonymous_customs_before": 20,
+    "anonymous_customs_after": 19,
+    "tax_shared_remaining": 19,
+    "tail_requires_login": true,
+    "market_cli_manual_public": true,
+    "account_escape_focus_restored": true,
+    "real_customer_writes": false
+  }
+}

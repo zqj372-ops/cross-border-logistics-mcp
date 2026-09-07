@@ -1,0 +1,34 @@
+[
+  {
+    "clientWidth": 1440,
+    "height": 1040,
+    "page": "https://www.freightclaw.net/",
+    "scripts": [
+      "https://www.freightclaw.net/console/app.js?v=8cd374c35000ca1e"
+    ],
+    "scrollWidth": 1440,
+    "title": "询运费，查关税。 · FreightClaw",
+    "width": 1440
+  },
+  {
+    "clientWidth": 375,
+    "height": 1000,
+    "page": "https://www.freightclaw.net/#home",
+    "scrollWidth": 375,
+    "width": 390
+  },
+  {
+    "clientWidth": 375,
+    "height": 1000,
+    "page": "https://www.freightclaw.net/#cli",
+    "scrollWidth": 375,
+    "width": 390
+  },
+  {
+    "clientWidth": 375,
+    "height": 1000,
+    "page": "https://www.freightclaw.net/#tax",
+    "scrollWidth": 375,
+    "width": 390
+  }
+]

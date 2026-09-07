@@ -1,6 +1,6 @@
 """Back up and restore-check Portal state on its production host.
 
-Briefly stops only the Portal so its three stores and key references share a
+Briefly stops only the Portal so its stores and key references share a
 consistent application boundary. The previous MCP and source services keep
 running. Private values are copied to a protected directory and never printed.
 """
@@ -31,7 +31,9 @@ if not state['State']['Running']:
 subprocess.run(['docker', 'stop', '--time', '20', container], check=True, stdout=subprocess.DEVNULL)
 checks = []
 try:
-    for name in ('portal.sqlite', 'sessions.sqlite', 'business-access.sqlite'):
+    databases = ['portal.sqlite', 'sessions.sqlite', 'business-access.sqlite']
+    databases.extend(name for name in ('calls.sqlite', 'public-quota.sqlite') if (root / 'state' / name).exists())
+    for name in databases:
         source = root / 'state' / name
         if source.is_symlink() or not source.is_file():
             raise RuntimeError('Expected a regular Portal database')
