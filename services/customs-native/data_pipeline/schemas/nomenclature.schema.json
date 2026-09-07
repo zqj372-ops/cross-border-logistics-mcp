@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riskcustoms.com/schemas/customs-data/v1/nomenclature.schema.json",
+  "title": "Nomenclature row",
+  "type": "object", "additionalProperties": false,
+  "required": ["release_id", "artifact_id", "country", "code", "display_code", "code_digits", "level", "parent_code", "is_declarable", "description_original", "language", "statistical_unit_json", "effective_from", "effective_to", "source_locator", "raw_row_hash"],
+  "properties": {
+    "release_id": {"type": "string", "minLength": 1}, "artifact_id": {"type": "string", "minLength": 1}, "country": {"type": "string", "enum": ["CN", "US", "CA"]},
+    "code": {"type": "string", "minLength": 1}, "display_code": {"type": "string", "minLength": 1}, "code_digits": {"type": "string", "pattern": "^[0-9]+$"}, "level": {"type": "string", "minLength": 1},
+    "parent_code": {"type": ["string", "null"]}, "is_declarable": {"type": "boolean"}, "description_original": {"type": "string", "minLength": 1}, "language": {"type": "string", "minLength": 2},
+    "statistical_unit_json": {}, "effective_from": {"type": "string", "format": "date"}, "effective_to": {"type": ["string", "null"], "format": "date"},
+    "source_locator": {"type": "string", "minLength": 1}, "raw_row_hash": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+  }
+}

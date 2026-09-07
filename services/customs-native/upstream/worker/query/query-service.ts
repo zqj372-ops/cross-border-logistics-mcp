@@ -564,6 +564,16 @@ export class QueryService {
     };
   }
 
+  private async legalNamesForRow(row: NomenclatureRow, ruleDate: string, sourceIds: Set<string>, evidence: Map<string, SourceEvidence>): Promise<Candidate["legalNames"]> {
+    const matches = row.country === "CA" ? await this.repository.findExactCode("CA", row.code, ruleDate) : [row];
+    const names = [row, ...matches.filter(item => item.release_edition === row.release_edition && item.release_revision === row.release_revision && item.effective_from === row.effective_from)];
+    const seen = new Set<string>();
+    return names.filter(item => { const key = `${item.language}:${item.description_original}`; if (seen.has(key)) return false; seen.add(key); return true; }).map(item => {
+      const sourceId = addSourceEvidence(evidence, item); sourceIds.add(sourceId);
+      return {language: item.language, text: item.description_original, sourceId};
+    });
+  }
+
   private async makeCandidates(
     rows: readonly NomenclatureRow[],
     status: Candidate["status"],
@@ -588,7 +598,7 @@ export class QueryService {
         codeDigits: row.code_digits,
         parentCode: row.parent_code,
         hierarchy: hierarchy.map((item) => ({ code: item.code, displayCode: item.display_code, codeDigits: item.code_digits, legalNames: [toLegalName(item)] })),
-        legalNames: [toLegalName(row)],
+        legalNames: await this.legalNamesForRow(row, ruleDate, sourceIds, sourceEvidence),
         chineseExplanation: chineseExplanationForRow(row, rowSourceId),
         classificationReason: reason,
         classificationSourceIds: [rowSourceId],
@@ -648,7 +658,7 @@ export class QueryService {
       codeDigits: row.code_digits,
       parentCode: row.parent_code,
       hierarchy: hierarchy.map((item) => ({ code: item.code, displayCode: item.display_code, codeDigits: item.code_digits, legalNames: [toLegalName(item)] })),
-      legalNames: [toLegalName(row)],
+      legalNames: await this.legalNamesForRow(row, request.ruleDate, sourceIds, sourceEvidence),
       chineseExplanation: chineseExplanationForRow(row, rowSourceId),
       classificationReason,
       classificationSourceIds: [rowSourceId],

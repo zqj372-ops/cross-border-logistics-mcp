@@ -77,8 +77,8 @@
       "source": "src/worker/query/query-service.ts",
       "source_sha256": "6ec5658efbe211a107b0c4b7d6628f16101edbf83237b7b254563eda0930574a",
       "target": "services/customs-native/upstream/worker/query/query-service.ts",
-      "target_sha256": "7d05cfe2e0553ea77589cfe5a18a60e968979a808ca70582df281bedbedc8ec8",
-      "adaptation": "Require explicit assistant injection; no default fixture assistant.; Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included."
+      "target_sha256": "f326ca4822b7c62742f32307c04bcb8e469b2f15e474dcbbf13fe3009742c805",
+      "adaptation": "Require explicit assistant injection; no default fixture assistant.; Type-only lint adaptations. Rate display rejects non-scalar numeric fields; fixture assistant not included. Include paired Canadian English/French legal names from the same edition and revision, preserving each source reference."
     },
     {
       "source": "src/worker/query/question-policy.ts",
@@ -112,8 +112,8 @@
       "source": "src/worker/repositories/customs.ts",
       "source_sha256": "8c98b311295715f1bb36c957f0afb7fe00a64875dcceff19ccb57f24759dacd5",
       "target": "services/customs-native/upstream/worker/repositories/customs-sql.ts",
-      "target_sha256": "c03c1e3cc3d41750a004b89dcdb1cd07603367f8d6b964502e8df9d99239f970",
-      "adaptation": "Read-only SQLite statement port replaces D1 types; SQL query and dated lookup logic preserved."
+      "target_sha256": "56cee20194ad788629cff69016dafe3e813fc921bc5ff93330b64fd9dd64c96a",
+      "adaptation": "Read-only local SQLite port; includes general measures and explicit tariff prefixes, deduplicates equivalent Canadian statistical-suffix rates without hiding conflicts."
     }
   ]
 }

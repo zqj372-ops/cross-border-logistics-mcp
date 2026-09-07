@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riskcustoms.com/schemas/customs-data/v1/source-release.schema.json",
+  "title": "RiskCustoms source release",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "releaseId", "country", "authority", "dataset", "edition", "revision", "language", "officialUrl", "publishedAt", "effectiveFrom", "effectiveTo", "retrievedAt", "supersedesReleaseId", "artifacts", "parser", "status"],
+  "properties": {
+    "schemaVersion": {"type": "string", "minLength": 1},
+    "releaseId": {"type": "string", "minLength": 1},
+    "country": {"type": "string", "enum": ["CN", "US", "CA"]},
+    "authority": {"type": "string", "minLength": 1},
+    "dataset": {"type": "string", "minLength": 1},
+    "edition": {"type": "string", "minLength": 1},
+    "revision": {"type": "string", "minLength": 1},
+    "language": {
+      "oneOf": [
+        {"type": "string", "minLength": 2},
+        {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 2}}
+      ]
+    },
+    "officialUrl": {"type": "string", "format": "uri", "pattern": "^https://"},
+    "publishedAt": {"type": "string", "format": "date-time"},
+    "effectiveFrom": {"type": "string", "format": "date"},
+    "effectiveTo": {"type": ["string", "null"], "format": "date"},
+    "retrievedAt": {"type": "string", "format": "date-time"},
+    "supersedesReleaseId": {"type": ["string", "null"]},
+    "artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/artifact"}},
+    "parser": {"type": "object", "required": ["name", "version"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "version": {"type": "string"}}},
+    "status": {"type": "string", "enum": ["candidate", "reviewed", "published", "superseded", "rejected"]}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifactId", "path", "bytes", "sha256", "mediaType", "etag", "lastModified"],
+      "properties": {
+        "artifactId": {"type": "string", "minLength": 1}, "path": {"type": "string", "minLength": 1},
+        "bytes": {"type": "integer", "minimum": 0}, "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+        "mediaType": {"type": "string", "minLength": 1}, "etag": {"type": ["string", "null"]}, "lastModified": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

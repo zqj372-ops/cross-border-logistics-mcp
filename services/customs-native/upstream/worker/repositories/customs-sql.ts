@@ -2,6 +2,7 @@
 export interface NativeSqlStatement {bind(...values:unknown[]):NativeSqlStatement;all<T>():Promise<{results:T[]}>;first<T>():Promise<T|null>}
 export interface NativeSqlDatabase {prepare(sql:string):NativeSqlStatement}
 import { normalizeCode } from "../../shared/domain/code";
+import { distinctCanadianTariffs } from '../../../tariff-matching';
 
 export type Country = "CN" | "US" | "CA";
 export type TradeCountry = "US" | "CA";
@@ -383,23 +384,29 @@ export class CustomsRepository {
 
   public async findTariffRules(country: Country, code: string, ruleDate: string): Promise<TariffRuleRow[]> {
     const normalizedCode = normalizeCode(code);
+    if (!normalizedCode) return [];
+    // Enumerating a code's prefixes preserves the country/code index, instead
+    // of scanning the complete tariff table with a per-row substring predicate.
+    const prefixes = Array.from({length:normalizedCode.length},(_,i)=>normalizedCode.slice(0,i+1));
+    const match = `tr.code IN (${prefixes.map(()=>'?').join(',')}) AND (tr.code = ? OR tr.code_match_type = 'prefix')`;
+    const codeValues = [country,...prefixes,normalizedCode];
     const statement = this.db.prepare(`
       SELECT tr.*, ${RELEASE_COLUMNS}
       FROM tariff_rule AS tr
       JOIN source_release AS sr ON sr.id = tr.release_id
-      WHERE tr.country = ? AND tr.code = ? AND sr.status = 'published'
+      WHERE tr.country = ? AND ${match} AND sr.status = 'published'
         AND tr.effective_from <= ? AND (tr.effective_to IS NULL OR tr.effective_to >= ?)
         AND ${EFFECTIVE_SR}
       ORDER BY tr.priority ASC, tr.id ASC
-    `).bind(country, normalizedCode, ruleDate, ruleDate, ruleDate, ruleDate);
+    `).bind(...codeValues, ruleDate, ruleDate, ruleDate, ruleDate);
     const activeRows = await all<TariffRuleRow>(statement);
-    if (activeRows.length > 0) return activeRows;
-    return this.latestPriorRows<TariffRuleRow>(
+    if (activeRows.length > 0) return distinctCanadianTariffs(activeRows,normalizedCode);
+    const priorRows = await this.latestPriorRows<TariffRuleRow>(
       `
         SELECT tr.*, ${RELEASE_COLUMNS}
         FROM tariff_rule AS tr
         JOIN source_release AS sr ON sr.id = tr.release_id
-        WHERE tr.country = ? AND tr.code = ? AND sr.status = 'published'
+        WHERE tr.country = ? AND ${match} AND sr.status = 'published'
           AND tr.effective_from <= ? AND sr.effective_from <= ?
         ORDER BY tr.effective_from DESC, sr.effective_from DESC, tr.id DESC
         LIMIT 1
@@ -408,13 +415,14 @@ export class CustomsRepository {
         SELECT tr.*, ${RELEASE_COLUMNS}
         FROM tariff_rule AS tr
         JOIN source_release AS sr ON sr.id = tr.release_id
-        WHERE tr.country = ? AND tr.code = ? AND sr.id = ? AND sr.status = 'published'
+        WHERE tr.country = ? AND ${match} AND sr.id = ? AND sr.status = 'published'
           AND tr.effective_from <= ? AND sr.effective_from <= ?
         ORDER BY tr.priority ASC, tr.id ASC
       `,
-      [country, normalizedCode, ruleDate, ruleDate],
-      (releaseId) => [country, normalizedCode, releaseId, ruleDate, ruleDate],
+      [...codeValues, ruleDate, ruleDate],
+      (releaseId) => [...codeValues, releaseId, ruleDate, ruleDate],
     );
+    return distinctCanadianTariffs(priorRows,normalizedCode);
   }
 
   public async findTradeMeasures(country: TradeCountry, code: string, ruleDate: string): Promise<TradeMeasureRow[]> {
@@ -423,7 +431,7 @@ export class CustomsRepository {
       SELECT tm.*, ${RELEASE_COLUMNS}
       FROM trade_measure AS tm
       JOIN source_release AS sr ON sr.id = tm.release_id
-      WHERE tm.country = ? AND tm.code_hint = ? AND sr.status = 'published'
+      WHERE tm.country = ? AND (tm.code_hint = ? OR tm.code_hint IS NULL) AND sr.status = 'published'
         AND tm.effective_from <= ? AND (tm.effective_to IS NULL OR tm.effective_to >= ?)
         AND ${EFFECTIVE_SR}
       ORDER BY tm.id ASC
@@ -435,7 +443,7 @@ export class CustomsRepository {
         SELECT tm.*, ${RELEASE_COLUMNS}
         FROM trade_measure AS tm
         JOIN source_release AS sr ON sr.id = tm.release_id
-        WHERE tm.country = ? AND tm.code_hint = ? AND sr.status = 'published'
+        WHERE tm.country = ? AND (tm.code_hint = ? OR tm.code_hint IS NULL) AND sr.status = 'published'
           AND tm.effective_from <= ? AND sr.effective_from <= ?
         ORDER BY tm.effective_from DESC, sr.effective_from DESC, tm.id DESC
         LIMIT 1
@@ -444,7 +452,7 @@ export class CustomsRepository {
         SELECT tm.*, ${RELEASE_COLUMNS}
         FROM trade_measure AS tm
         JOIN source_release AS sr ON sr.id = tm.release_id
-        WHERE tm.country = ? AND tm.code_hint = ? AND sr.id = ? AND sr.status = 'published'
+        WHERE tm.country = ? AND (tm.code_hint = ? OR tm.code_hint IS NULL) AND sr.id = ? AND sr.status = 'published'
           AND tm.effective_from <= ? AND sr.effective_from <= ?
         ORDER BY tm.id ASC
       `,

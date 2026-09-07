@@ -2,7 +2,7 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**本地开发进度：2026-09-08。** 混装计价、原生报价保存／审核／退回／PDF、完整关务快照更新，以及两种询价共用资料已实现网页和人员 CLI 流程。已只读迁入线上 Toronto / Calgary 共 754 档价格和完整法规快照供本地验收；运价截止为用户确认的 2027-01-01，报价单有效期 7 天。175 项冲突邮编保持人工复核；关务来源仍为 15 staged、0 发布快照，未启用正式查询。当前未部署生产，Freightcom 正式报价、企业模板和目标容器仍待验收。见 [本次图文进度与真实数据边界](docs/product/2026-09-08-native-business-completion.md)、[部署与回滚手册](docs/runbooks/native-business-completion-2026-09-08.md)及[配置和 CLI 操作说明](apps/console/native-business.md)。
+**本地开发进度：2026-09-08。** 混装计价、原生报价保存／审核／退回／PDF、完整关务快照更新，以及两种询价共用资料已实现网页和人员 CLI 流程。已只读迁入线上 Toronto / Calgary 共 754 档价格和完整法规快照供本地验收；运价截止为用户确认的 2027-01-01，报价单有效期 7 天。城市匹配已恢复，仅 2 组同城多分区保持人工复核。目标候选容器 PDF 沙箱验收通过，公司资料由各企业自行填写。关务补齐前缀税率、双语名称、通用措施、缺税率提示和快照校验，并增加 [CBSA 候选数据 CLI](docs/runbooks/cbsa-candidate-preparation.md)。迁入的关务来源仍为 15 staged、0 发布快照；正式来源核验、Freightcom 实际询价及生产迁移/切换尚未完成。见 [本次图文进度与真实数据边界](docs/product/2026-09-08-native-business-completion.md)、[最新关务复核](docs/product/2026-09-08-customs-recheck.md)、[部署与回滚手册](docs/runbooks/native-business-completion-2026-09-08.md)及[配置和 CLI 操作说明](apps/console/native-business.md)。
 
 **既有生产记录：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 

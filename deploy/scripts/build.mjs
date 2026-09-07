@@ -186,6 +186,12 @@ await buildInquiry();
 
 // Ship the native Python calculation core with the Portal build.
 cpSync("services/quote-native", "dist/services/quote-native", { recursive: true, filter: (source) => !source.includes("__pycache__") });
+// Operator CLI: offline, hash-bound CBSA candidate preparation. It never runs
+// inside a request handler or grants publication approval.
+mkdirSync(resolve('dist/services/customs-native'),{recursive:true});
+cpSync('services/customs-native/data_pipeline','dist/services/customs-native/data_pipeline',{recursive:true,filter:(source)=>!source.includes('__pycache__')});
+mkdirSync(resolve('dist/deploy/scripts'),{recursive:true});
+cpSync('deploy/scripts/prepare-cbsa-release.py','dist/deploy/scripts/prepare-cbsa-release.py');
 
 mkdirSync(resolve('dist/services/quote-documents'),{recursive:true});
 cpSync(resolve('apps/console/fonts'),resolve('dist/services/quote-documents/fonts'),{recursive:true});

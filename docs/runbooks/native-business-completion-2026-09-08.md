@@ -20,7 +20,9 @@ freightclaw workspace customs-packages browse --input browse.json --session-file
 
 `import.json` 包含 `filename`、`sha256`、`label`；`browse.json` 如 `{"selection":"draft","collection":"tariffs","country":"CA","limit":25}`。`draft` 指最新接收候选包；`published` 指当前启用包。可选目录为 nomenclature、tariffs、measures、requirements、sources。
 
-只有 `ready=1`、`test_data=0`、快照来源均 published、存在审核引用且门禁原因为空，才允许启用。发布请求为 `{id,sha256,expected_active,confirmation:"reviewed_sources_and_conditions"}`；停用为 `{expected_active}`。两者要求人员管理权限和幂等键。重复接收同一幂等请求返回原结果，原传输文件被移走也不会重复复制。选过完整数据包后，停用不会暗中回落到手动 JSON 数据。
+只有 `ready=1`、`test_data=0`、快照来源均 published、每个来源有独立审核引用、绑定哈希一致且门禁原因为空，才允许启用。发布请求为 `{id,sha256,expected_active,confirmation:"reviewed_sources_and_conditions"}`；停用为 `{expected_active}`。两者要求人员管理权限和幂等键。重复接收同一幂等请求返回原结果，原传输文件被移走也不会重复复制。选过完整数据包后，停用不会暗中回落到手动 JSON 数据。
+
+首次打开已启用包时重新核验管理文件的 SHA-256；后续发现文件身份、大小、修改时间或 WAL 变化时停止查询。不可原地替换或修改已管理的数据包，应按新包接收、预览、发布流程操作。加拿大原始数据重新准备见 [CBSA 离线 CLI](cbsa-candidate-preparation.md)，该命令只生成待审候选，不能代替正式源发布。
 
 每包最大 4 GiB，接收时每进程仅一项复制；校验与只读浏览需要磁盘/CPU 资源，安排维护窗口。维护人员保留 inbox、managed snapshot 和源导出三份时，应预留至少数据包大小三倍空间。目录按当前企业隔离元数据，不将法规快照放进 Git。手动 JSON 导入仍可用于小范围补录；完整包选中时手动 JSON 不改变查询来源。
 

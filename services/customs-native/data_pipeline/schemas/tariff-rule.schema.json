@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riskcustoms.com/schemas/customs-data/v1/tariff-rule.schema.json",
+  "title": "Tariff rule",
+  "type": "object", "additionalProperties": false,
+  "required": ["release_id", "artifact_id", "rule_id", "country", "code", "code_match_type", "measure_type", "treatment", "origin_country", "rate_expression_raw", "rate_components_json", "parse_status", "condition_text_raw", "conditions_json", "interaction_json", "effective_from", "effective_to", "priority", "source_locator", "raw_row_hash"],
+  "properties": {
+    "release_id": {"type": "string", "minLength": 1}, "artifact_id": {"type": "string", "minLength": 1}, "rule_id": {"type": "string", "minLength": 1}, "country": {"type": "string", "enum": ["CN", "US", "CA"]}, "code": {"type": "string", "minLength": 1}, "code_match_type": {"type": "string", "minLength": 1}, "measure_type": {"type": "string", "minLength": 1}, "treatment": {"type": "string", "minLength": 1}, "origin_country": {"type": ["string", "null"]},
+    "rate_expression_raw": {"type": ["string", "null"]}, "rate_components_json": {"type": ["array", "null"]}, "parse_status": {"type": "string", "minLength": 1}, "condition_text_raw": {"type": ["string", "null"]}, "conditions_json": {}, "interaction_json": {}, "effective_from": {"type": "string", "format": "date"}, "effective_to": {"type": ["string", "null"], "format": "date"}, "priority": {"type": "integer"}, "source_locator": {"type": "string", "minLength": 1}, "raw_row_hash": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+  }
+}

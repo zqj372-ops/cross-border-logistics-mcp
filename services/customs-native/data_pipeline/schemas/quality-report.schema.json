@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riskcustoms.com/schemas/customs-data/v1/quality-report.schema.json",
+  "title": "Quality report",
+  "type": "object", "additionalProperties": false,
+  "required": ["release_id", "schema_version", "status", "checks", "generated_at"],
+  "properties": {
+    "release_id": {"type": "string", "minLength": 1}, "schema_version": {"type": "string", "minLength": 1}, "status": {"type": "string", "enum": ["pass", "fail", "review"]}, "checks": {"type": ["array", "object"]}, "generated_at": {"type": "string", "format": "date-time"}, "reasons": {"type": "array"}
+  }
+}

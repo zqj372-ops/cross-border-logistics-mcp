@@ -1,0 +1,44 @@
+{
+  "source_repository": "https://github.com/zqj372-ops/riskcustoms-hs",
+  "source_revision": "Recovered source files bound by SHA-256; local CBSA 1.1.0 normalization additions were not represented by the older deployed commit.",
+  "authorization": "User-owned source migration; no credentials or regulatory data included.",
+  "adaptation": "Exact metadata-header recognition and evidence-preserving omissions; whole-business-row deduplication; missing-table/column, blank-name and conflicting-code checks. Eight-digit Canadian tariff items explicitly cover statistical suffixes. Rate parser and source schemas retained. Offline CLI creates candidates only; official chapter differences require review.",
+  "files": [
+    {
+      "source": "tools/customs_data/adapters/cbsa.py",
+      "source_sha256": "b10e7118b6e6b2db9882bddb12f28ad78fb68e18e81f39c7c34bd1ce3f3ebe3a",
+      "target": "services/customs-native/data_pipeline/cbsa.py",
+      "target_sha256": "2b4edd55670b62521a122f4cf87a6750f7c2efc707a22b3da659bf70a813721f"
+    },
+    {
+      "source": "tools/customs_data/rate_parser.py",
+      "source_sha256": "75e0624cc8b93f0b6d0de84f64046f44ffdd5416be1b82c87e8999dbb140e227",
+      "target": "services/customs-native/data_pipeline/rate_parser.py",
+      "target_sha256": "75e0624cc8b93f0b6d0de84f64046f44ffdd5416be1b82c87e8999dbb140e227"
+    },
+    {
+      "source": "schemas/customs-data/v1/source-release.schema.json",
+      "source_sha256": "110765728a8834a31f638a0dca13fd3479570f7eab6309e88943e205154d4d61",
+      "target": "services/customs-native/data_pipeline/schemas/source-release.schema.json",
+      "target_sha256": "110765728a8834a31f638a0dca13fd3479570f7eab6309e88943e205154d4d61"
+    },
+    {
+      "source": "schemas/customs-data/v1/quality-report.schema.json",
+      "source_sha256": "1c532495ba5057da6f64177a1cd51cb63e8e528d81b219e3fd1d97018437377c",
+      "target": "services/customs-native/data_pipeline/schemas/quality-report.schema.json",
+      "target_sha256": "1c532495ba5057da6f64177a1cd51cb63e8e528d81b219e3fd1d97018437377c"
+    },
+    {
+      "source": "schemas/customs-data/v1/nomenclature.schema.json",
+      "source_sha256": "f70a4404f723257463de47aae609403dc25b34018667cf577fa81fd80fb82223",
+      "target": "services/customs-native/data_pipeline/schemas/nomenclature.schema.json",
+      "target_sha256": "f70a4404f723257463de47aae609403dc25b34018667cf577fa81fd80fb82223"
+    },
+    {
+      "source": "schemas/customs-data/v1/tariff-rule.schema.json",
+      "source_sha256": "381ee40aae0d64689e84fa7ff19da949f722506b0638723ef4ce76b439307b04",
+      "target": "services/customs-native/data_pipeline/schemas/tariff-rule.schema.json",
+      "target_sha256": "381ee40aae0d64689e84fa7ff19da949f722506b0638723ef4ce76b439307b04"
+    }
+  ]
+}

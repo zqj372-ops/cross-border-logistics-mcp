@@ -1,4 +1,5 @@
 import type { CustomsDataset } from './contracts';
+import { distinctCanadianTariffs, tariffCodeMatches } from './tariff-matching';
 import { QueryRequestSchema, type QueryResponse } from './upstream/shared/contracts/query';
 import { QueryService, publicationStatus, type CustomsRepositoryLike } from './upstream/worker/query/query-service';
 import type { CandidateAssistant } from './upstream/worker/ai/adapter';
@@ -21,6 +22,10 @@ const assistant:CandidateAssistant={
  chooseQuestion:input=>Promise.resolve(selectNextApprovedQuestion({answeredAttributes:input.answeredAttributes,...(input.approvedQuestionIds[0]?{preferredId:input.approvedQuestionIds[0]}:{})})?.id??null),
 };
 const active=(from:string,to:string|null,date:string)=>from<=date&&(to===null||to>=date);
+function queryRequiresReview(data:QueryResponse){
+ return data.results.length===0||data.candidates.some(r=>r.status==='manual_review')||data.results.some(r=>
+  r.status!=='confirmed'||r.confirmedTotalPercent===null||r.documents.some(d=>d.status==='manual_review')||r.measures.some(m=>m.matchStatus==='manual_review'||m.matchStatus==='possible'));
+}
 export function releaseRepository(release:NativeCustomsRelease):CustomsRepositoryLike{
  const sources=new Map(release.sources.map(s=>[s.id,s]));
  const eligible=(row:NomenclatureRow|TariffRuleRow|TradeMeasureRow|RequirementRow,date:string)=>{const source=sources.get(row.release_id);return source?.status==='published'&&row.release_status==='published'&&active(row.effective_from,row.effective_to,date)&&active(source.effective_from,source.effective_to,date);};
@@ -30,8 +35,8 @@ export function releaseRepository(release:NativeCustomsRelease):CustomsRepositor
  searchNames:(terms,date,limit)=>{const words=terms.normalize('NFKC').toLowerCase().split(/\s+/u).filter(Boolean);return Promise.resolve(release.nomenclature.filter(r=>eligible(r,date)&&words.some(w=>`${r.code} ${r.description_original}`.normalize('NFKC').toLowerCase().includes(w))).slice(0,limit));},
  findByHs6:(hs6,country,date)=>Promise.resolve(release.nomenclature.filter(r=>r.country===country&&r.concept_code===hs6&&r.mapping_status!==undefined&&eligible(r,date))),
  findHierarchy:(id,date)=>{const row=release.nomenclature.find(r=>r.id===id);if(!row)return Promise.resolve([]);const parents:NomenclatureRow[]=[row];let code=row.parent_code;const seen=new Set<string>();while(code&&!seen.has(code)&&parents.length<7){seen.add(code);const parent=release.nomenclature.find(r=>r.country===row.country&&r.release_id===row.release_id&&r.code===code&&eligible(r,date));if(!parent)break;parents.unshift(parent);code=parent.parent_code;}return Promise.resolve(parents);},
- findTariffRules:(country,code,date)=>Promise.resolve(release.tariffs.filter(r=>r.country===country&&eligible(r,date)&&r.code===code)),
- findTradeMeasures:(country,code,date)=>Promise.resolve(release.measures.filter(r=>r.country===country&&eligible(r,date)&&r.code_hint===code)),
+ findTariffRules:(country,code,date)=>Promise.resolve(distinctCanadianTariffs(release.tariffs.filter(r=>r.country===country&&eligible(r,date)&&tariffCodeMatches(r,code)),code)),
+ findTradeMeasures:(country,code,date)=>Promise.resolve(release.measures.filter(r=>r.country===country&&eligible(r,date)&&(r.code_hint===null||r.code_hint===code))),
  findRequirements:(country,date)=>Promise.resolve(release.requirements.filter(r=>r.country===country&&eligible(r,date))),
  findSources:ids=>Promise.resolve(release.sources.filter(r=>ids.includes(r.id))),
  findPublicationSnapshot:date=>Promise.resolve(release.snapshot.rule_date<=date?release.snapshot:null),
@@ -45,6 +50,6 @@ export class NativeCustomsEngine{
   const release=this.releases.current(parsed.data.ruleDate);if(!release)return fail('unavailable','native_customs_not_published');
   const repository=release.repository??releaseRepository(release);const before=await publicationStatus(release.snapshot,release.sources.map(s=>s.id),[...release.sources]);
   if(!before.dataStatus.ready||before.testData)return fail('unavailable','native_customs_release_not_ready');
-  try{const data=await new QueryService(repository,assistant).query(parsed.data);if(this.releases.current(parsed.data.ruleDate)?.release_id!==release.release_id)return fail('unavailable','native_customs_release_changed');if(!data.dataStatus.ready||data.testData)return fail('unavailable','native_customs_release_not_ready');return {schema_version:'portal-customs-native@2026-09-07.v1',status:data.nextQuestion?'needs_input':data.results.length===0||data.results.some(r=>r.status!=='confirmed')||data.candidates.some(r=>r.status==='manual_review')?'manual_review':'success',data,reason_codes:data.nextQuestion?['customs_clarification_required']:[]};}catch{return fail('manual_review','native_customs_query_requires_review');}
+  try{const data=await new QueryService(repository,assistant).query(parsed.data);if(this.releases.current(parsed.data.ruleDate)?.release_id!==release.release_id)return fail('unavailable','native_customs_release_changed');if(!data.dataStatus.ready||data.testData)return fail('unavailable','native_customs_release_not_ready');const review=queryRequiresReview(data);return {schema_version:'portal-customs-native@2026-09-07.v1',status:data.nextQuestion?'needs_input':review?'manual_review':'success',data,reason_codes:data.nextQuestion?['customs_clarification_required']:review?['customs_result_requires_review']:[]};}catch{return fail('manual_review','native_customs_query_requires_review');}
  }
 }

@@ -3,7 +3,31 @@ import { customsRelease, validateCustomsDataset } from '../../services/customs-n
 import { createNativeCustomsClients } from '../../services/customs-native/client';
 import { NativeCustomsEngine, releaseRepository } from '../../services/customs-native/engine';
 import { dataset } from './publication-fixture';
+import {DEMO_MEASURES} from './demo-data';
 const query={query:'7323930090',codeCountry:'CA',ruleDate:'2026-09-07',attributes:{originCountry:'CN',vacuumInsulated:'no',contains_steel_aluminum:'no'}};
 it('runs migrated query offline with the existing full Portal contract and immutable identity',async()=>{expect(validateCustomsDataset(dataset)).toEqual([]);const release=customsRelease(dataset,'native-test-release','2026-09-07T12:00:00.000Z');const client=createNativeCustomsClients({current:()=>release});const r=await client.customsClient.query({input:query,actor:{type:'user',id:'user1'},requestId:'req_native1234'});expect(r.data,r.reason_codes.join(',')).not.toBeNull();expect(r.data).toMatchObject({contractVersion:'riskcustoms-query.v2',testData:false,delegatedActor:{ref:'user1'},dataStatus:{ready:true,serviceVersion:'freightclaw-native-customs/1'}});});
 it('preserves test-data, snapshot integrity, changed-release and no-result gates',async()=>{const release=customsRelease(dataset,'native-test-release','2026-09-07T12:00:00.000Z');for(const bad of [{...release,snapshot:{...release.snapshot,test_data:1}},{...release,snapshot:{...release.snapshot,gate_report_sha256:'b'.repeat(64)}}])expect((await new NativeCustomsEngine({current:()=>bad}).query({...query,attributes:{originCountry:'CN'}})).status).toBe('unavailable');expect((await new NativeCustomsEngine({current:()=>release}).query({...query,query:'9999999999',attributes:{originCountry:'CN'}})).status).not.toBe('success');expect(customsRelease({...dataset,test_data:true},'test','2026-09-07T12:00:00.000Z').snapshot.test_data).toBe(1);});
 it('keeps chapter99-linked rules and excludes expired data without latest-prior fallback',async()=>{const release=customsRelease(dataset,'native-test-release','2026-09-07T12:00:00.000Z'),rule={...release.tariffs[0]!,code_match_type:'chapter99_link' as const};const repo=releaseRepository({...release,tariffs:[rule]});expect(await repo.findTariffRules(rule.country,rule.code,'2026-09-07')).toHaveLength(1);expect(await releaseRepository({...release,tariffs:[{...rule,effective_to:'2026-09-06'}]}).findTariffRules(rule.country,rule.code,'2026-09-07')).toEqual([]);});
+it('includes general reviewed measures without a code hint and still filters other countries and expired rows',async()=>{const release=customsRelease({...dataset,measures:DEMO_MEASURES.map(m=>({...m,raw_row_hash:'a'.repeat(64),release_manifest_sha256:'a'.repeat(64)}))},'native-test-release','2026-09-07T12:00:00.000Z'),base=release.measures[0]!;const general={...base,id:'general-guard',code_hint:null,match_status:'manual_review' as const};const repo=releaseRepository({...release,measures:[general,{...general,id:'expired',effective_to:'2026-09-06'},{...general,id:'unrelated',code_hint:'1111111111'}]});expect((await repo.findTradeMeasures(base.country,'7323930090','2026-09-07')).map(r=>r.id)).toEqual(['general-guard']);});
+it('returns both Canadian legal languages with their own evidence references',async()=>{const ca=dataset.nomenclature.find(r=>r.country==='CA'&&r.code===query.query)!;const release=customsRelease({...dataset,nomenclature:[...dataset.nomenclature,{...ca,id:900001,language:'fr',description_original:'Article de demonstration',source_locator:'fixture://CA/fr/name'}]},'bilingual-test','2026-09-07T12:00:00Z');const result=await new NativeCustomsEngine({current:()=>release}).query({...query,selectedHs6:'732393'});expect(result.data?.results.find(r=>r.country==='CA')?.legalNames.map(n=>n.language)).toEqual(['en','fr']);const names=result.data!.results.find(r=>r.country==='CA')!.legalNames;expect(names.every(n=>result.data!.sources.some(s=>s.id===n.sourceId))).toBe(true);});
+it('matches explicit tariff-item prefixes without expanding exact rules or counting equivalent CA parent rates twice',async()=>{
+ const release=customsRelease(dataset,'tariff-prefix-test','2026-09-07T12:00:00Z');
+ const exact={...release.tariffs.find(r=>r.country==='CA')!,id:'rate-exact',code:'7323930090',measure_type:'customs_duty',code_match_type:'exact' as const};
+ const parent={...exact,id:'rate-prefix',code:'73239300',code_match_type:'prefix' as const};
+ const read=(rows:typeof release.tariffs)=>releaseRepository({...release,tariffs:rows}).findTariffRules('CA',exact.code,'2026-09-07');
+ expect((await read([parent])).map(r=>r.id)).toEqual(['rate-prefix']);
+ expect(await read([{...parent,code_match_type:'exact'}])).toEqual([]);
+ expect((await read([parent,exact])).map(r=>r.id)).toEqual(['rate-exact']);
+ expect(await read([{...parent,code:'73239400'}])).toEqual([]);
+ expect(await read([{...parent,effective_to:'2026-09-06'}])).toEqual([]);
+ expect(await read([{...parent,rate_expression_raw:'different source rate'},exact])).toHaveLength(2);
+});
+it('returns manual review when a confirmed code has no usable base tariff',async()=>{
+ const release=customsRelease({...dataset,nomenclature:dataset.nomenclature.filter(r=>r.country==='CA'),tariffs:dataset.tariffs.filter(r=>r.country!=='CA')},'missing-rate-test','2026-09-07T12:00:00Z');
+ const result=await new NativeCustomsEngine({current:()=>release}).query({...query,selectedHs6:'732393'});
+ expect(result.data?.results.find(r=>r.country==='CA')?.code).toBe(query.query);
+ expect(result.data?.results.every(r=>r.status==='confirmed')).toBe(true);
+ expect(result.data?.candidates.some(r=>r.status==='manual_review')).toBe(false);
+ expect(result.status).toBe('manual_review');
+ expect(result.reason_codes).toContain('customs_result_requires_review');
+});

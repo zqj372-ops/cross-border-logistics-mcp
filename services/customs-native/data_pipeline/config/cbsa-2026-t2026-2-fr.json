@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "1.0.0",
+  "releaseId": "ca-cbsa-customs-tariff-2026-t2026-2-fr",
+  "language": "fr",
+  "effectiveFrom": "2026-09-01",
+  "businessTables": [
+    {
+      "name": "TPHS",
+      "file": "tphs.csv",
+      "parentStrategy": "source_prefix",
+      "declarableDigits": [
+        10
+      ],
+      "columns": {
+        "code": "TARIF",
+        "description": [
+          "DESC1",
+          "DESC2",
+          "DESC3"
+        ],
+        "unit": "UDM",
+        "footnote": "NOTE DE BAS DE PAGE"
+      },
+      "technicalColumns": [
+        "row_id"
+      ]
+    }
+  ],
+  "unmappedTablePolicy": "record_exclusion_reason",
+  "ratePolicy": "legal_names_only",
+  "nonBusinessTables": {
+    "pbcatvld.csv": {
+      "columns": [
+        "pbv_name",
+        "pbv_vald",
+        "pbv_type",
+        "pbv_cntr",
+        "pbv_msg"
+      ],
+      "reason": "powerbuilder_presentation_metadata",
+      "evidence": "https://docs.appeon.com/pb2022/connecting_to_your_database/XREF_96173_About_the.html"
+    },
+    "pbcattbl.csv": {
+      "columns": [
+        "pbt_tnam",
+        "pbt_tid",
+        "pbt_ownr",
+        "pbd_fhgt",
+        "pbd_fwgt",
+        "pbd_fitl",
+        "pbd_funl",
+        "pbd_fchr",
+        "pbd_fptc",
+        "pbd_ffce",
+        "pbh_fhgt",
+        "pbh_fwgt",
+        "pbh_fitl",
+        "pbh_funl",
+        "pbh_fchr",
+        "pbh_fptc",
+        "pbh_ffce",
+        "pbl_fhgt",
+        "pbl_fwgt",
+        "pbl_fitl",
+        "pbl_funl",
+        "pbl_fchr",
+        "pbl_fptc",
+        "pbl_ffce",
+        "pbt_cmnt"
+      ],
+      "reason": "powerbuilder_presentation_metadata",
+      "evidence": "https://docs.appeon.com/pb2022/connecting_to_your_database/XREF_96173_About_the.html"
+    },
+    "pbcatedt.csv": {
+      "columns": [
+        "pbe_name",
+        "pbe_edit",
+        "pbe_type",
+        "pbe_cntr",
+        "pbe_seqn",
+        "pbe_flag",
+        "pbe_work"
+      ],
+      "reason": "powerbuilder_presentation_metadata",
+      "evidence": "https://docs.appeon.com/pb2022/connecting_to_your_database/XREF_96173_About_the.html"
+    },
+    "pbcatfmt.csv": {
+      "columns": [
+        "pbf_name",
+        "pbf_frmt",
+        "pbf_type",
+        "pbf_cntr"
+      ],
+      "reason": "powerbuilder_presentation_metadata",
+      "evidence": "https://docs.appeon.com/pb2022/connecting_to_your_database/XREF_96173_About_the.html"
+    },
+    "pbcatcol.csv": {
+      "columns": [
+        "pbc_tnam",
+        "pbc_tid",
+        "pbc_ownr",
+        "pbc_cnam",
+        "pbc_cid",
+        "pbc_labl",
+        "pbc_lpos",
+        "pbc_hdr",
+        "pbc_hpos",
+        "pbc_jtfy",
+        "pbc_mask",
+        "pbc_case",
+        "pbc_hght",
+        "pbc_wdth",
+        "pbc_ptrn",
+        "pbc_bmap",
+        "pbc_init",
+        "pbc_cmnt",
+        "pbc_edit",
+        "pbc_tag"
+      ],
+      "reason": "powerbuilder_presentation_metadata",
+      "evidence": "https://docs.appeon.com/pb2022/connecting_to_your_database/XREF_96173_About_the.html"
+    }
+  },
+  "archiveSha256": "6d4b5a84460e857418547eb3429075dac55e2c6fd1f78bf3fc1f0abe11e91b22"
+}
