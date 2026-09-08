@@ -88,7 +88,7 @@ input, textarea { caret-color: var(--brand); }
 .market-result-heading h2 { font-size: 18px; font-weight: 650; }
 .market-result-heading > span { font-size: 12px; color: #627088; }
 .cap-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
-.cap-card { display: flex; flex-direction: column; padding: 23px; min-height: 236px; text-align: left; background: white; border: 1px solid #e3e7ef; border-radius: 12px; color: var(--ink); transition: border-color 180ms ease, background-color 180ms ease; }
+.cap-card { display: flex; flex-direction: column; min-width: 0; padding: 23px; min-height: 236px; text-align: left; background: white; border: 1px solid #e3e7ef; border-radius: 12px; color: var(--ink); transition: border-color 180ms ease, background-color 180ms ease; }
 .cap-card:hover { background: #fcfdff; border-color: #aebfe7; }
 .cap-card:focus-visible { outline: 3px solid #bdcdf7; outline-offset: 3px; }
 .cap-card-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
@@ -103,7 +103,7 @@ input, textarea { caret-color: var(--brand); }
 .cap-card h3 { font-size: 17px; font-weight: 650; line-height: 1.5; }
 .cap-card > p { color: #637087; font-size: 13px; line-height: 1.8; margin-top: 9px; flex: 1; }
 .cap-card-foot { display: flex; align-items: center; justify-content: space-between; color: #6c7990; font-size: 11px; margin-top: 23px; gap: 10px; }
-.cap-card-foot svg { width: 17px; height: 17px; color: #7585a2; }
+.cap-card-foot svg { width: 17px; height: 17px; flex-shrink: 0; color: #7585a2; }
 .market-bottom { padding: 26px 0 0 188px; display: flex; align-items: center; justify-content: space-between; gap: 20px; color: #66748c; font-size: 12px; }
 .service-detail-head { display: flex; align-items: center; gap: 19px; margin: 26px 0 35px; }
 .service-detail-head .cap-icon { width: 62px; height: 62px; border-radius: 15px; }
@@ -844,6 +844,19 @@ code, pre { font-family: var(--font-code); }
 .native-price-matrix tbody th{min-width:150px;white-space:normal}.native-billing-editor .field-grid{margin-top:16px}
 @media(max-width:540px){.native-admin-surface .native-admin-head p{display:none}.native-admin-surface .native-tabs{flex-wrap:nowrap;overflow-x:auto;gap:16px}.native-admin-surface .native-tabs a{flex-shrink:0}.native-price-matrix tbody th{min-width:130px}.native-price-matrix th,.native-price-matrix td{padding:10px}.native-price-matrix input:not([type=checkbox]){min-width:100px;width:100px}}
 .market-mode{margin-bottom:28px}.module-context{padding-bottom:8px}.module-config-card .protocol-label{white-space:normal;text-align:right;max-width:65%;line-height:1.6}.module-config-card .cap-card-head{align-items:flex-start}.module-config-card .cap-card-foot{color:var(--brand)}
+@media (max-width: 1024px) {
+  .market-toolbar { flex-direction: column; align-items: stretch; gap: 16px; }
+  .market-search { width: 100%; }
+  .market-layout { grid-template-columns: minmax(0,1fr); gap: 18px; }
+  .market-categories { flex-direction: row; min-width: 0; max-width: 100%; overflow-x: auto; gap: 8px; padding-bottom: 4px; }
+  .market-category { flex-shrink: 0; }
+  .market-help { display: none; }
+  .market-bottom { padding-left: 0; }
+}
+@media (max-width: 540px) {
+  .market-protocols { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .market-tab { min-width: 0; justify-content: space-between; }
+}
 
 .extraction-review { margin-top: 20px; min-width: 0; }
 .extraction-totals { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 16px 0; }
@@ -864,9 +877,10 @@ code, pre { font-family: var(--font-code); }
 .maritime-query,.maritime-editor,.maritime-publish{padding:28px;margin-bottom:24px}
 .maritime-query>.button{margin-top:18px}.maritime-query>small{display:block;margin-top:14px;color:#66748b}
 .maritime-source-grid,.maritime-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:20px 0 36px}
-.maritime-source{display:block;padding:24px;color:inherit;text-decoration:none;transition:border-color .15s}
-.maritime-source:hover{border-color:#7392df}.maritime-source svg{width:22px;height:22px}.maritime-source>span{color:#3c62d7}
-.maritime-source h3{display:flex;align-items:center;justify-content:space-between;gap:12px}.maritime-source p{color:#617189;line-height:1.8;margin-bottom:0}
+.maritime-source-grid>.panel,.maritime-results>.panel{margin:0;min-width:0}
+.maritime-source{display:flex;flex-direction:column;gap:12px;padding:24px;color:inherit;text-decoration:none;transition:border-color .15s}
+.maritime-source:hover{border-color:#7392df}.maritime-source svg{width:22px;height:22px;flex-shrink:0}.maritime-source>span{display:grid;place-items:center;width:40px;height:40px;border-radius:10px;background:#edf1ff;color:#3c62d7}
+.maritime-source h3{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:18px;line-height:1.5}.maritime-source p{color:#617189;line-height:1.8;margin:0;overflow-wrap:anywhere}
 .maritime-empty{padding:36px 0;color:#617189}.maritime-empty h2{color:#263b5a}
 .maritime-provenance{display:flex;flex-wrap:wrap;gap:10px 24px;background:#f1f5fa;border-radius:12px;padding:20px;margin:24px 0;font-size:14px}.maritime-provenance small{flex-basis:100%;overflow-wrap:anywhere}
 .sailing-card,.metric-card{padding:26px}.sailing-card-head,.sailing-route{display:flex;align-items:center;justify-content:space-between;gap:20px}.sailing-route{margin-top:22px}.sailing-route time,.sailing-route span{display:block;font-size:14px;color:#66748b;margin-top:8px}.sailing-route h3{margin:0}.sailing-route-icon svg{width:24px;height:24px;color:#4775cb}.sailing-card>p{padding-top:18px;border-top:1px solid #e5eaf2;color:#617189;margin-bottom:0}.metric-value{font-size:36px;font-weight:600;color:#263f60}.metric-value small{font-size:16px;font-weight:400}.metric-card>small{display:block;color:#617189}

@@ -67,3 +67,15 @@
 ![手机端船期查询](assets/independent-quotes-maritime/schedules-result-mobile.png)
 
 正式运价与关务的既有发布门禁继续有效；本次没有配置 Freightcom 正式凭证、发起真实承运商查询或部署生产。公司资料仍由企业自行填写。
+
+## 卡片布局修正
+
+2026-09-08 复查发现，通用面板的相邻间距被继承到船期和效率网格，使第二张卡片下移 24 px；手机市场新增第四个筛选项后，筛选条也超出页面。现已将网格间距限定在网格容器，统一来源卡片的图标、标题和说明间隔。平板分类栏移到卡片上方，给正文留出足够宽度；手机筛选采用两列。
+
+使用现有 Playwright 在本地 Chromium 验证 1440、1024、820、768、600、540、390、320 px，共 40 个页面/宽度组合无横向溢出，来源卡片同排顶边及高度一致。另验证 13 组筛选、搜索、清除、键盘打开、配置往返，以及四条船期/效率结果的排版；无相关控制台错误。结果卡片使用合成 UI 响应，未写入发布数据。市场相关 4 项测试和应用/CLI 构建通过。
+
+![平板市场扩大卡片内容宽度](assets/independent-quotes-maritime/cards-market-tablet.png)
+
+![手机筛选与卡片保持在屏幕内](assets/independent-quotes-maritime/cards-market-mobile.png)
+
+![多条合成船期结果的卡片对齐](assets/independent-quotes-maritime/cards-schedules-desktop.png)
