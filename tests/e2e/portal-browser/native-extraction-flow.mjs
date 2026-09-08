@@ -20,7 +20,7 @@ try{
   await loginFixture(page,base,'企业负责人 owner@example.test');
   const start=cli(['login','start','--endpoint',base]);assert.equal(start.code,3);await page.goto(start.data.verification_url);await page.getByRole('button',{name:'确认连接',exact:true}).click();await page.getByRole('heading',{name:'CLI 已获准连接'}).waitFor();assert.equal(cli(['login','finish']).code,0);
   assert.equal(cli(['residential-rates','get']).data.data.draft,null,'requires fresh blank fixture');
-  await page.goto(base+'/console/#quote/private');await page.getByRole('heading',{name:'私人地址询价',exact:true}).waitFor();
+  await page.goto(base+'/console/#quote/private');await page.getByRole('heading',{name:'私人地址报价 · 自有运价',exact:true}).waitFor();
   const text='2纸箱 每件10kg 100x100x100cm\n收货地址: 20 Synthetic Road, Toronto ON M1B 5W9\n私人地址';
   const parsed=cli(['quote','extract'],{customer_message:text});assert.equal(parsed.code,3,JSON.stringify(parsed));assert.equal(parsed.data.data.extraction.weight_kg,'20');
   await extract(text);assert.equal(await page.locator('[name="weight_kg"]').inputValue(),'20');assert.equal(await page.locator('[name="cbm"]').inputValue(),'2');for(const name of ['delivery_unload','pallet_jack_choice','appointment_choice'])assert.equal(await page.locator(`[name="${name}"]`).inputValue(),'');

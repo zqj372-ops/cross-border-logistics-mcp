@@ -1,0 +1,20 @@
+{
+  "checks": [
+    "both public modules usable without login; official links identified as navigation",
+    "private quote login gate retained",
+    "workspace filter shows exactly documents and two maritime modules",
+    "independent quote routes, drafts and results; carrier receives two distinct physical pallets",
+    "web schedule save, preview, publish; CLI and web return same release and records",
+    "CLI terminal publication visible on web with exact decimal, unit, terminal and period",
+    "web disable immediately closes CLI query",
+    "HTTP configuration save requires CSRF"
+  ],
+  "errors": [],
+  "expected": [
+    "fixture quota not enabled",
+    "fixture quota not enabled",
+    "fixture quota not enabled"
+  ],
+  "browserPlugin": "not available; existing Playwright used",
+  "scope": "isolated synthetic local validation; no live carrier or maritime API calls"
+}

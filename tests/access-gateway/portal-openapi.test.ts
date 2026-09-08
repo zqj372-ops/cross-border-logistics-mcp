@@ -11,15 +11,15 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  for(const ref of refs){expect(ref.startsWith("#/components/schemas/")).toBe(true);let value:unknown=document;for(const part of ref.slice(2).split("/")){value=(value as Record<string,unknown>)[part];}expect(value,ref).toBeDefined();}
  const paths=document.paths as Record<string,{post?:{requestBody:{content:{"application/json":{schema:unknown}}}}}>;
  // New personnel routes must not silently become machine/API-Key capabilities.
- const personnel=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/quote-documents/')||path.startsWith('/console/api/v1/admin/customs-packages'));
+ const personnel=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/quote-documents/')||path.startsWith('/console/api/v1/admin/customs-packages')||path.startsWith('/console/api/v1/admin/sailing-schedules')||path.startsWith('/console/api/v1/admin/terminal-efficiency')||path.startsWith('/console/api/v1/maritime/'));
  expect(Object.keys(paths).filter(path=>!personnel.includes(path))).toHaveLength(17);
- expect(personnel).toHaveLength(15);
+ expect(personnel).toHaveLength(29);
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
   for(const [method,operation] of Object.entries(methods)){
    expect(operation.security,path).toEqual([{PortalSession:[]}]);
    if(method==='post')expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'X-CSRF-Token',required:true})]));
-   if(/\/(?:save|config-save|approve|reject|import|publish|disable)$/u.test(path))expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'Idempotency-Key',required:true})]));
+   if(/\/(?:save|config-save|approve|reject|import|publish|disable|rollback)$/u.test(path))expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'Idempotency-Key',required:true})]));
   }
  }
  const ajv=new Ajv2020({strict:false});addFormats(ajv);

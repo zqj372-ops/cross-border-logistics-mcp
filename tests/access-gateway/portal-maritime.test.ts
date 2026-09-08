@@ -1,0 +1,70 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { NativeAdminService, NativeAdminStore } from '../../services/access-gateway/portal/native-admin';
+import type { PortalContext } from '../../services/access-gateway/portal/contracts';
+import type { PortalService } from '../../services/access-gateway/portal/service';
+import { queryMaritime, maritimeDatasetSchema, validateMaritimeDataset } from '../../services/maritime/contracts';
+const ctx: PortalContext = { organizationId:'org1',identity:{userId:'owner',displayName:'Owner',email:'owner@example.test',emailVerified:true,platformRole:null} };
+const portal = {getState:(c:PortalContext)=>({data:{current_organization:{status:'active'},memberships:[{organizationId:c.organizationId,userId:c.identity.userId,role:c.identity.userId==='viewer'?'viewer':'owner',status:'active'}]}})} as unknown as PortalService;
+const source = {name:'Synthetic authority',url:'https://example.invalid/report',version:'test-v1',observed_at:'2026-09-07T00:00:00Z',expires_at:'2099-09-10T00:00:00Z',verified:true};
+const row = {id:'one',origin:'CNSHA',destination:'CAVAN',carrier:'Synthetic',vessel:'Fixture Vessel',voyage:'FIX-1',departure:'2026-09-10T10:00:00+08:00',arrival:'2026-09-25T09:00:00-07:00',departure_kind:'planned',arrival_kind:'estimated',routing:'direct',via:null};
+const input = {label:'Synthetic schedule',source,records:[row]};
+const query = {origin:'CNSHA',destination:'CAVAN',from:'2026-09-01',until:'2026-09-30'};
+const open:NativeAdminStore[]=[];
+afterEach(()=>open.splice(0).forEach(store=>store.close()));
+function service(){const path=join(mkdtempSync(join(tmpdir(),'maritime-')),'native.sqlite'),store=new NativeAdminStore(path);open.push(store);return {store,service:new NativeAdminService(store,portal)};}
+describe('maritime sources and publication',()=>{
+  it('starts blank and publishes a tenant-bound snapshot with preview, readback and CLI-shaped input',()=>{
+    const {store,service:s}=service();
+    expect(queryMaritime('schedules',query,null).status).toBe('unavailable');
+    expect(()=>s.save({...ctx,identity:{...ctx.identity,userId:'viewer'}},'schedules',{expected_version:0,input},'schedule-save-001')).toThrow('native_management_denied');
+    s.save(ctx,'schedules',{expected_version:0,input},'schedule-save-001');
+    expect(s.save(ctx,'schedules',{expected_version:0,input},'schedule-save-001').version).toBe(1);
+    expect(()=>s.save(ctx,'schedules',{expected_version:0,input:{...input,label:'changed'}},'schedule-save-001')).toThrow('idempotency_conflict');
+    const preview=s.preview(ctx,'schedules');expect(preview.can_publish).toBe(true);
+    expect(()=>s.publish(ctx,'schedules',{expected_version:1,preview_hash:'0'.repeat(64),confirmation:'reviewed_sources_and_conditions'},'schedule-pub-001')).toThrow('native_preview_mismatch');
+    const result=s.publish(ctx,'schedules',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'},'schedule-pub-002');
+    const release=result.active_release!;
+    expect(queryMaritime('schedules',query,release).data.records).toHaveLength(1);
+    expect(s.query(ctx,'schedules',query).status).toBe('success');
+    expect(store.db.prepare("SELECT action FROM native_audit WHERE action='query'").all()).toHaveLength(1);
+    expect(queryMaritime('schedules',{...query,destination:'CAMTR'},release).reason_codes).toContain('no_matching_records');
+    expect(store.current('org2','schedules')).toBeNull();
+    expect(()=>s.preview({...ctx,organizationId:'org2'},'schedules',release.release_id)).toThrow('native_draft_missing');
+    expect(s.get(ctx,'terminals').active_release).toBeNull();
+    s.disable(ctx,'schedules',{expected_version:2},'schedule-stop-01');
+    expect(store.current('org1','schedules')).toBeNull();
+    const back=s.preview(ctx,'schedules',release.release_id);
+    s.rollback(ctx,'schedules',{expected_version:3,release_id:release.release_id,preview_hash:back.preview_hash,confirmation:'reviewed_sources_and_conditions'},'schedule-back-01');
+    expect(s.get(ctx,'schedules').active_release?.release_id).toBe(release.release_id);
+    store.close();open.splice(open.indexOf(store),1);
+    const reopened=new NativeAdminStore(store.path);open.push(reopened);const resumed=new NativeAdminService(reopened,portal);
+    expect(resumed.query(ctx,'schedules',query).data.records).toHaveLength(1);
+    reopened.db.prepare('UPDATE native_releases SET payload=? WHERE id=?').run(JSON.stringify({...release,input:{...input,label:'corrupted'}}),release.release_id);
+    expect(()=>resumed.query(ctx,'schedules',query)).toThrow('native_publication_blocked');
+  });
+  it('keeps stale or unverified source data out of current-success results',()=>{
+    const stale={...input,source:{...source,expires_at:'2026-09-07T12:00:00Z'}};
+    expect(validateMaritimeDataset('schedules',stale,new Date('2026-09-08'))).toContain('source_expired');
+    expect(validateMaritimeDataset('schedules',{...input,source:{...source,verified:false}},new Date('2026-09-08'))).toContain('source_unverified');
+    const release={release_id:'test-release',digest:'a'.repeat(64),version:2,published_at:'2026-09-07T10:00:00Z',input:stale};
+    expect(queryMaritime('schedules',query,release,new Date('2026-09-08')).status).toBe('manual_review');
+    expect(validateMaritimeDataset('schedules',{...input,source:{...source,observed_at:'2099-01-01T00:00:00Z'}})).toContain('source_observed_in_future');
+  });
+  it('rejects missing offsets, impossible voyages, duplicate records and unsafe source links',()=>{
+    expect(maritimeDatasetSchema('schedules').safeParse({...input,records:[{...row,departure:'2026-09-10T10:00:00'}]}).success).toBe(false);
+    expect(validateMaritimeDataset('schedules',{...input,records:[{...row,arrival:'2026-09-01T00:00:00Z'}]})).toContain('arrival_before_departure');
+    expect(validateMaritimeDataset('schedules',{...input,records:[row,{...row,id:'two'}]})).toContain('duplicate_records');
+    expect(maritimeDatasetSchema('schedules').safeParse({...input,source:{...source,url:'javascript:alert(1)'}}).success).toBe(false);
+    expect(maritimeDatasetSchema('schedules').safeParse({...input,tenant:'org2'}).success).toBe(false);
+  });
+  it('does not confuse feet, containers, waiting hours and dwell days; missing is not zero',()=>{
+    const metric={id:'metric1',port:'CAVAN',terminal:'Synthetic terminal',metric:'rail_dwell_days',value:'3.25',unit:'days',period_start:'2026-09-01T00:00:00Z',period_end:'2026-09-06T00:00:00Z',definition:'Synthetic import rail dwell',missing_reason:null};
+    expect(maritimeDatasetSchema('terminals').safeParse({label:'Metrics',source,records:[metric]}).success).toBe(true);
+    expect(validateMaritimeDataset('terminals',{label:'Metrics',source,records:[{...metric,unit:'feet'}]})).toContain('metric_unit_mismatch');
+    expect(validateMaritimeDataset('terminals',{label:'Metrics',source,records:[{...metric,value:null}]})).toContain('missing_value_reason_required');
+    expect(queryMaritime('terminals',{port:'CAVAN'}, {release_id:'r',version:1,published_at:'2026-09-07T00:00:00Z',digest:'b'.repeat(64),input:{label:'Metrics',source,records:[{...metric,value:null,missing_reason:'Source missing'}]}}).status).toBe('manual_review');
+  });
+});

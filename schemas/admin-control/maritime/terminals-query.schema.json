@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "port": {
+      "type": "string",
+      "enum": [
+        "CAVAN",
+        "CAPRR",
+        "CAMTR",
+        "CAHAL"
+      ]
+    },
+    "terminal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "metric": {
+      "type": "string",
+      "enum": [
+        "rail_dwell_days",
+        "anchorage_wait_hours",
+        "truck_turn_minutes",
+        "on_dock_feet"
+      ]
+    }
+  },
+  "required": [
+    "port"
+  ],
+  "additionalProperties": false
+}

@@ -855,3 +855,28 @@ code, pre { font-family: var(--font-code); }
 
 .quote-extraction { margin: 20px 0; }
 @media (min-width: 1000px) { .business-layout.quote-business-layout { grid-template-columns: minmax(0,1.25fr) minmax(0,1fr); } }
+
+/* Independent shipping workspaces reuse the portal font, colors and controls. */
+.carrier-pallet,.maritime-record{border:1px solid var(--border,#dfe5ef);border-radius:12px;padding:22px;margin:22px 0;min-width:0}
+.carrier-pallet legend,.maritime-record legend{font-weight:600;padding:0 8px}
+.maritime-intro{display:flex;align-items:center;gap:14px;margin:20px 0 28px;color:#4a5d79}
+.maritime-intro>svg{width:30px;height:30px;color:#3c62d7;flex-shrink:0}
+.maritime-query,.maritime-editor,.maritime-publish{padding:28px;margin-bottom:24px}
+.maritime-query>.button{margin-top:18px}.maritime-query>small{display:block;margin-top:14px;color:#66748b}
+.maritime-source-grid,.maritime-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:20px 0 36px}
+.maritime-source{display:block;padding:24px;color:inherit;text-decoration:none;transition:border-color .15s}
+.maritime-source:hover{border-color:#7392df}.maritime-source svg{width:22px;height:22px}.maritime-source>span{color:#3c62d7}
+.maritime-source h3{display:flex;align-items:center;justify-content:space-between;gap:12px}.maritime-source p{color:#617189;line-height:1.8;margin-bottom:0}
+.maritime-empty{padding:36px 0;color:#617189}.maritime-empty h2{color:#263b5a}
+.maritime-provenance{display:flex;flex-wrap:wrap;gap:10px 24px;background:#f1f5fa;border-radius:12px;padding:20px;margin:24px 0;font-size:14px}.maritime-provenance small{flex-basis:100%;overflow-wrap:anywhere}
+.sailing-card,.metric-card{padding:26px}.sailing-card-head,.sailing-route{display:flex;align-items:center;justify-content:space-between;gap:20px}.sailing-route{margin-top:22px}.sailing-route time,.sailing-route span{display:block;font-size:14px;color:#66748b;margin-top:8px}.sailing-route h3{margin:0}.sailing-route-icon svg{width:24px;height:24px;color:#4775cb}.sailing-card>p{padding-top:18px;border-top:1px solid #e5eaf2;color:#617189;margin-bottom:0}.metric-value{font-size:36px;font-weight:600;color:#263f60}.metric-value small{font-size:16px;font-weight:400}.metric-card>small{display:block;color:#617189}
+.maritime-cli{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:28px}.maritime-cli a{display:inline-flex;align-items:center;gap:8px}.maritime-cli svg{width:20px;height:20px}.maritime-cli code{overflow-wrap:anywhere}
+.maritime-editor h2{margin-top:28px}.maritime-editor h2:first-child{margin-top:0}.maritime-record .field-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.maritime-record input,.maritime-record select{width:100%;min-width:0}
+.portal-maritime-links{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:24px 0 36px}.portal-maritime-links>a{display:flex;gap:18px;align-items:center;border:1px solid #dfe5ef;border-radius:16px;background:#fff;padding:24px;color:#263f60;text-decoration:none}.portal-maritime-links svg{width:28px;height:28px;color:#426cce;flex-shrink:0}.portal-maritime-links svg:last-child{margin-left:auto;width:20px}.portal-maritime-links strong,.portal-maritime-links small{display:block}.portal-maritime-links small{margin-top:6px;color:#617189}
+@media(max-width:900px){.maritime-record .field-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.maritime-source-grid,.maritime-results{grid-template-columns:1fr}}
+@media(max-width:600px){.portal-maritime-links{grid-template-columns:1fr}.maritime-query,.maritime-editor,.maritime-publish{padding:20px}.maritime-record .field-grid{grid-template-columns:1fr}.maritime-record,.carrier-pallet{padding:16px}.sailing-route{align-items:flex-start;flex-direction:column;gap:12px}.sailing-route-icon{display:none!important}.maritime-workspace .channel-actions{flex-wrap:wrap}}
+
+.carrier-business-layout{grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);align-items:start}.carrier-business-layout .carrier-pallet .field-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.carrier-business-layout .business-input-panel{min-width:0}
+.maritime-provenance>a{display:inline-flex;align-items:center;gap:6px}.maritime-provenance>a>svg{width:16px;height:16px}.maritime-provenance>details{flex-basis:100%;font-size:13px;color:#617189}.maritime-provenance summary{cursor:pointer}.maritime-provenance details small{display:block;margin-top:10px}
+@media(max-width:1000px){.carrier-business-layout{grid-template-columns:1fr}.carrier-business-layout .carrier-pallet .field-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.carrier-business-layout .carrier-pallet .field-grid{grid-template-columns:1fr}}

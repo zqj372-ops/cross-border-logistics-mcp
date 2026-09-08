@@ -2,7 +2,9 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**本地开发进度：2026-09-08。** 混装计价、原生报价保存／审核／退回／PDF、完整关务快照更新，以及两种询价共用资料已实现网页和人员 CLI 流程。已只读迁入线上 Toronto / Calgary 共 754 档价格和完整法规快照供本地验收；运价截止为用户确认的 2027-01-01，报价单有效期 7 天。城市匹配已恢复，仅 2 组同城多分区保持人工复核。目标候选容器 PDF 沙箱验收通过，公司资料由各企业自行填写。关务补齐前缀税率、双语名称、通用措施、缺税率提示和快照校验，并增加 [CBSA 候选数据 CLI](docs/runbooks/cbsa-candidate-preparation.md)。迁入的关务来源仍为 15 staged、0 发布快照；正式来源核验、Freightcom 实际询价及生产迁移/切换尚未完成。见 [本次图文进度与真实数据边界](docs/product/2026-09-08-native-business-completion.md)、[最新关务复核](docs/product/2026-09-08-customs-recheck.md)、[部署与回滚手册](docs/runbooks/native-business-completion-2026-09-08.md)及[配置和 CLI 操作说明](apps/console/native-business.md)。
+**本地开发进度：2026-09-08。** 混装计价、原生报价保存／审核／退回／PDF、完整关务快照更新，以及两种询价各自独立的网页和人员 CLI 流程已实现。已只读迁入线上 Toronto / Calgary 共 754 档价格和完整法规快照供本地验收；运价截止为用户确认的 2027-01-01，报价单有效期 7 天。城市匹配已恢复，仅 2 组同城多分区保持人工复核。目标候选容器 PDF 沙箱验收通过，公司资料由各企业自行填写。关务补齐前缀税率、双语名称、通用措施、缺税率提示和快照校验，并增加 [CBSA 候选数据 CLI](docs/runbooks/cbsa-candidate-preparation.md)。迁入的关务来源仍为 15 staged、0 发布快照；正式来源核验、Freightcom 实际询价及生产迁移/切换尚未完成。见 [本次图文进度与真实数据边界](docs/product/2026-09-08-native-business-completion.md)、[最新关务复核](docs/product/2026-09-08-customs-recheck.md)、[部署与回滚手册](docs/runbooks/native-business-completion-2026-09-08.md)及[配置和 CLI 操作说明](apps/console/native-business.md)。
+
+**新增本地模块：2026-09-08。** 两种私人地址报价已按独立链接、资料、结果与配置入口拆分；Freightcom 支持逐托盘填写。服务市场新增船期查询和码头效率，支持来源核验、草稿、预览发布、查询、停用与回退，新增 14 项人员 CLI 命令。公开官方入口和企业快照分别展示；当前没有自动同步船司/港口 API，未部署生产。见 [图文操作与数据边界](docs/product/2026-09-08-independent-quotes-maritime.md)。
 
 **既有生产记录：2026-09-07。** 代码已补齐八项 MCP 能力、调用记录、来源历史接入、签名模块切换和共享 Portal 持久化。RiskCustoms 来源服务与历史迁移已部署，Portal 已更新并开启关务历史，生产历史空列表读回通过。旧 `t0-v1` 保留三项；五项业务 MCP 的 `business-v1`、签名 Provider 与 PostgreSQL 多实例尚未由此次部署启用。正式关务数据、供应商凭证与真实客户验收仍须独立完成。
 
@@ -30,6 +32,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | [全部服务与费用](https://www.freightclaw.net/inquiry/details/) | 保留原 84 项费用目录、分币种汇总和完整询价表单 |
 | [能力市场](https://www.freightclaw.net/console/#market) | 浏览能力、查询实际协议和接口、打开在线工作台 |
 | [关税查询](https://www.freightclaw.net/console/#customs) / [税费估算](https://www.freightclaw.net/console/#tax) | 访客共用每天 20 次查询；企业用户沿用已开通服务 |
+| [船期查询](https://www.freightclaw.net/console/#schedules) / [码头效率](https://www.freightclaw.net/console/#terminal-efficiency) | 新增本地候选页面：官方入口与企业核验快照，生产尚未更新 |
 | [个人中心](https://www.freightclaw.net/console/#account) | 从右上角账号图标进入；登录后按角色查看工作区、历史和账号相关功能 |
 | [业务工作台](https://www.freightclaw.net/console/#workbench) | 企业成员通过登录会话处理询价、关务和税费，无需粘贴 API Key |
 | [API Key](https://www.freightclaw.net/console/#api-keys) | 应用负责人管理统一 Key、服务范围、交付、轮换和撤销 |

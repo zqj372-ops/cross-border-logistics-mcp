@@ -85,6 +85,8 @@ npm pack ./dist/cli
 
 ## 后台人员操作（本地开发版）
 
-渠道与仓库、询价管理已新增 `workspace` 命令，与网页调用同一 API。使用浏览器核对代码后签发的独立 CLI 会话，不复用浏览器 Cookie，不提升应用 Key 权限。官网 v0.1.0 安装包尚未包含该扩展；本地从本分支构建。
+渠道与仓库、询价管理、原生报价及发布配置使用 `workspace` 命令，与网页调用同一 API。使用浏览器核对代码后签发的独立 CLI 会话，不复用浏览器 Cookie，不提升应用 Key 权限。官网 v0.1.0 安装包尚未包含该扩展；本地从当前源码构建。
 
-完整登录、输入、命令与范围说明：[管理 CLI 使用说明](../../apps/console/workspace-cli.md)。`workspace commands` 返回 18 个具名管理操作，另有登录、退出、帮助与渠道写入 Schema 命令。既有成员/授权/个人历史等功能的 CLI 尚待补齐。
+完整登录、输入、命令与范围说明：[管理 CLI 使用说明](../../apps/console/workspace-cli.md)。`workspace commands` 当前返回 74 个具名操作，另有登录、退出、帮助与 Schema 命令。命令目录是当前版本的支持范围，不代表所有网页操作都有 CLI 入口。
+
+两种私人地址报价分别使用 `workspace quote self` 和 `workspace quote freightcom`，各自提供输入文件，不自动共享或覆盖另一份资料。新增 `workspace schedules`（船期）和 `workspace terminals`（码头效率），每组均支持 `query`、`get`、`save`、`preview`、`publish`、`disable`、`rollback`。查询与网页读取同一份企业发布快照；配置写入要求管理权限、版本校验及幂等键。数据初始为空，目前没有自动船司或港口数据同步，详见[模块图文说明](../../docs/product/2026-09-08-independent-quotes-maritime.md)。

@@ -8,7 +8,7 @@ describe("Freightcom Portal console", () => {
   it("offers an independent carrier preview without a quote save or booking action", () => {
     const source = readFileSync(`${consoleDirectory}/business.js`, "utf8");
     const freightcomView = source.slice(source.indexOf("function freightcomResults"), source.indexOf("function quoteResults"));
-    expect(source).toContain("获取承运商当前费率、附加费和有效期");
+    expect(source).toContain("按实际托盘查询承运商费率");
     expect(source).toContain("data-form=\"business-freightcom\"");
     expect(source).toContain("call('quote/freightcom-ltl-preview', state.freightcomInput)");
     expect(freightcomView).toContain("承运商预估费用");

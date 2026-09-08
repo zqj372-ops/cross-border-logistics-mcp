@@ -1,3 +1,4 @@
+import {createMaritimeWorkspace} from './maritime.js';
 import {createQuoteDocuments} from './quote-documents.js';
 import { legacyConfigurationRoute } from './service-catalog.js';
 import { createWorkspaceHome } from './workspace-home.js';
@@ -20,7 +21,7 @@ import { createApiKeysUi } from './api-keys.js';
 import { createServiceAccessUi } from './service-access.js';
 import { createOperationManual } from './manual.js';
 import { verifyCredentialAfterDelivery } from './credential-verification.js';
-const PUBLIC_PAGES = ['home', 'market', 'catalog', 'service', 'guide', 'cli', 'customs', 'tax'];
+const PUBLIC_PAGES = ['home', 'market', 'catalog', 'service', 'guide', 'cli', 'customs', 'tax', 'schedules', 'terminal-efficiency'];
 const API = '/console/api/v1';
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#secret-dialog');
@@ -327,7 +328,7 @@ function render() {
   if (page === 'account') page = reviewer() ? 'platform' : orgRole() === 'developer' ? 'api-keys' : model.session.organization_id ? 'workbench' : 'members';
   const main = document.querySelector('#content');
   if (reviewer() && !model.session.organization_id && ![...PUBLIC_PAGES, 'platform', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant', 'channels', 'cli-authorize', 'cases', 'operations', 'case'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'home')); return; }
-  const pages = { 'quote-documents': () => quoteDocuments.page(), configure: () => id === 'quote.documents' ? quoteDocuments.page() : nativeAdmin.page(id), channels: () => channels.page(id), 'cli-authorize': () => cliAuthorization.page(id), cases: () => cases.page(), operations: () => cases.page(true), case: () => cases.detail(id), apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => serviceHome(), platform: () => reviewer() ? dashboard() : serviceHome(), cli: () => cli.page(), market: () => id === 'configure' && !manager() ? empty('需要企业管理权限', '请使用当前企业的负责人或管理员账号配置模块。', link('返回服务市场','market')) : market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => workspaceHome.page(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(id), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
+  const pages = { 'quote-documents': () => quoteDocuments.page(), schedules:()=>maritime.page('schedules'), 'terminal-efficiency':()=>maritime.page('terminals'), configure: () => ['ocean.schedules','port.efficiency'].includes(id) ? maritime.admin(id==='ocean.schedules'?'schedules':'terminals') : id === 'quote.documents' ? quoteDocuments.page() : nativeAdmin.page(id), channels: () => channels.page(id), 'cli-authorize': () => cliAuthorization.page(id), cases: () => cases.page(), operations: () => cases.page(true), case: () => cases.detail(id), apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => serviceHome(), platform: () => reviewer() ? dashboard() : serviceHome(), cli: () => cli.page(), market: () => id === 'configure' && !manager() ? empty('需要企业管理权限', '请使用当前企业的负责人或管理员账号配置模块。', link('返回服务市场','market')) : market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => workspaceHome.page(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(id), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
   const requiresOrganization = ['quote-documents','calls', 'customs-history', 'quote', 'quote-history'];
   main.innerHTML = (['customs', 'tax'].includes(page) ? quotaBanner() : '') + (requiresOrganization.includes(page) && !model.session.organization_id ? workspaceHome.page() : (pages[page] || serviceHome)());
   if (page === 'api-keys' && model.verification) main.insertAdjacentHTML('beforeend', verificationPanel());
@@ -375,6 +376,7 @@ function showSecret(result, applicationId, kind = 't0') {
 async function runAction(button) {
   if (await loginForm.action(button)) return;
   if (workspaceHome.action(button)) return;
+  if (await maritime.action(button)) return;
   if (await quoteDocuments.action(button)) return;
   if (await nativeAdmin.action(button)) return;
   if (await channels.action(button)) return;
@@ -394,7 +396,7 @@ async function runAction(button) {
   if (action === 'close-secret') { closeSecret(); return; }
   if (action === 'copy-secret') { if (model.secret) { await navigator.clipboard.writeText(model.secret.key); notify('Key 已复制，请妥善保存。'); } return; }
   if (action === 'login') { model.session = await mutate('/fixture-login', 'POST', { identity_id: id }); await refresh(); go(consumeLoginDestination(loginStorage()) || 'home'); render(); return; }
-  if (action === 'logout') { model.sessionGeneration = (model.sessionGeneration || 0) + 1; consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); model.directory = null; model.businessCatalog = []; go('home'); render(); return; }
+  if (action === 'logout') { model.sessionGeneration = (model.sessionGeneration || 0) + 1; consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); maritime.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); model.directory = null; model.businessCatalog = []; go('home'); render(); return; }
   if (action === 'ack-secret') { await acknowledgeSecret(); return; }
   const currentRequest = model.state?.requests.find((v) => v.request_id === id);
   const currentGrant = model.state?.grants.find((v) => v.grant_id === id);
@@ -415,6 +417,7 @@ async function runAction(button) {
 }
 async function submitForm(form) {
   if (await loginForm.submit(form)) return;
+  if (await maritime.submit(form)) return;
   if (await quoteDocuments.submit(form)) return;
   if (await nativeAdmin.submit(form)) return;
   if (await channels.submit(form)) return;
@@ -443,18 +446,19 @@ async function submitForm(form) {
 }
 const loginForm = createLoginForm({ api: request, esc, formError, authenticated: async session => { model.session = session; await refresh(); go(consumeLoginDestination(loginStorage()) || (reviewer() ? 'operations' : 'cases')); render(); } });
 const workspaceHome = createWorkspaceHome({api:request,model:()=>model,head,esc,icon,rerender:render});
+const maritime=createMaritimeWorkspace({api:request,mutate,esc,head,note,icon,model:()=>model,rerender:render,canConfigure:manager});
 const quoteDocuments = createQuoteDocuments({api:request,mutate,model:()=>model,esc,head,icon,rerender:render,canConfigure:manager});
 const nativeAdmin = createNativeAdminUi({ canConfigure: manager,api:request,mutate,esc,head,note,icon,formError,model:()=>model,rerender:render});
 const channels = createChannelsUi({api:request,mutate,esc,head,note,icon,formError,model:()=>model,rerender:render});
 const cliAuthorization = createCliAuthorizationUi({api:request,esc,head,note,model:()=>model,rerender:render});
 const cases = createCasesUi({ api: request, mutate, head, panel, empty, note, esc, date, icon, formError, rerender: render, model: () => model });
 const calls = createCallLogUi({ api: request, head, panel, note, esc, date, capName, formError, rerender: render, model: () => model });
-const business = createBusinessWorkspace({quoteDocumentFromPreview: (result,input)=>quoteDocuments.fromQuote(result,input), api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
+const business = createBusinessWorkspace({canConfigure:manager,quoteDocumentFromPreview: (result,input)=>quoteDocuments.fromQuote(result,input), api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
 const tax = createTaxWorkspace({ esc, head, panel, field, input, actions, formError, note, icon, api: request, rerender: render });
 const customsHistory = createCustomsHistoryUi({ api: request, esc, head, panel, note, date, formError, rerender: render, restore: (operation, input) => { if (operation === 'customs.query') business.restoreHistory(input); else tax.restoreHistory(input); go(operation === 'customs.query' ? 'customs' : 'tax'); } });
 const developerGuide = createDeveloperGuide({ esc, head, panel, field, input, actions, formError, note, link, mode: () => model.session?.mode, rerender: render });
 const businessAccess = createBusinessAccessUi({ esc, head, panel, field, input, actions, formError, note, table, badge, link, textLink, empty, date, developer, manager, canCredential, api: request, mutate, refresh, go, notify, showSecret, rerender: render, model: () => model });
-const market = createCapabilityMarket({ canConfigure: manager, configurationStatus: kind=>kind==='quote-documents'?'企业模板':nativeAdmin.configurationStatus(kind), esc, icon, head, panel, note, empty, link, notify, rerender: render, model: () => model });
+const market = createCapabilityMarket({ canConfigure: manager, configurationStatus: kind=>kind==='quote-documents'?'企业模板':['sailing-schedules','terminal-efficiency'].includes(kind)?maritime.configurationStatus(kind):nativeAdmin.configurationStatus(kind), esc, icon, head, panel, note, empty, link, notify, rerender: render, model: () => model });
 const manual = createOperationManual({ esc, icon, link });
 const cli = createCliGuide({ esc, icon, link, notify });
 const serviceHome = createServiceHome({ icon, link });
@@ -488,9 +492,9 @@ document.addEventListener('change', async (event) => {
   if (developerGuide.change(event)) return;
   if (cli.change(event)) return;
   if (event.target.id !== 'organization') return;
-  try { model.sessionGeneration = (model.sessionGeneration || 0) + 1; model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go('home'); render(); } catch (error) { notify(errorMessage(error), true); render(); }
+  try { model.sessionGeneration = (model.sessionGeneration || 0) + 1; model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); maritime.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go('home'); render(); } catch (error) { notify(errorMessage(error), true); render(); }
 });
-document.addEventListener('input', (event) => { if (quoteDocuments.input(event)) return; business.input(event); if (nativeAdmin.input(event)) return; if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });
+document.addEventListener('input', (event) => { if (maritime.input(event)) return; if (quoteDocuments.input(event)) return; business.input(event); if (nativeAdmin.input(event)) return; if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });
 dialog.addEventListener('cancel', () => closeSecret());
 dialog.addEventListener('close', () => closeSecret());
 window.addEventListener('hashchange', () => { clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 }); });
@@ -520,4 +524,4 @@ document.addEventListener('focusin', (event) => { if (!event.target.closest('.ac
 // Native validation can focus a field inside a collapsed batch item.
 document.addEventListener('invalid', (event) => { const section = event.target.closest('details'); if (section) section.open = true; }, true);
 
-window.addEventListener('beforeunload', event => { if (nativeAdmin.isDirty() || quoteDocuments.isDirty()) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('beforeunload', event => { if (nativeAdmin.isDirty() || quoteDocuments.isDirty() || maritime.isDirty()) { event.preventDefault(); event.returnValue = ''; } });

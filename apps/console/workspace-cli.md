@@ -96,3 +96,42 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 - `workspace residential-rates export --input selection.json --file calgary.csv`：selection 可为 `{"table":"rates","selection":"published","origin":"calgary"}`。import-preview 同样支持 origin，生成完整待保存配置，保留其他起运地。
 
 通过 `freightclaw workspace schema <两段命令>` 获取闭合输入 Schema。所有命令复用 `--session-file` 指定的人员会话；公开查询 Key 没有配置、保存或审核权限。官网已发布下载包仍需正式部署后才包含本候选功能。
+
+
+## 船期与码头效率（本地候选功能）
+
+前台分别为 `#schedules`、`#terminal-efficiency`，配置分别为 `#configure/ocean.schedules`、`#configure/port.efficiency`。市场的官方查询链接可公开使用；企业维护的数据必须通过人员会话读取。没有自动同步船司或港口网站。
+
+两个命令组均提供 `query`、`get`、`save`、`preview`、`publish`、`disable`、`rollback`，共 14 条操作：
+
+```sh
+freightclaw workspace schedules get --session-file session.json
+freightclaw workspace schema schedules save
+freightclaw workspace schedules save --session-file session.json --input schedule-draft.json --idempotency-key schedule-draft-00001
+freightclaw workspace schedules preview --session-file session.json
+freightclaw workspace schedules publish --session-file session.json --input schedule-publish.json --idempotency-key schedule-publish-001
+freightclaw workspace schedules query --session-file session.json --input route.json
+freightclaw workspace terminals query --session-file session.json --input port.json
+```
+
+`route.json` 示例（日期由调用者选择，以离港港口本地日期过滤，最多 90 天）：
+
+```json
+{"origin":"CNSHA","destination":"CAVAN","from":"2026-09-10","until":"2026-09-30"}
+```
+
+`port.json` 示例，可另填 `terminal` 和 `metric`：
+
+```json
+{"port":"CAVAN","metric":"rail_dwell_days"}
+```
+
+`save` 输入为 `{expected_version,input}`。`input` 必须包含 `label`、`source`、`records`。一批数据绑定一份明确来源，来源为 `{name,url,version,observed_at,expires_at,verified}`，URL 必须为 HTTPS；它只作为证据链接，后台不会抓取任意 URL。每批最多 500 条记录、512 KiB 请求。
+
+船期字段：`id,origin,destination,carrier,vessel,voyage,departure,arrival,departure_kind,arrival_kind,routing,via`。事件时间要求 RFC3339 并包含时区；事件类型 `planned|estimated|actual`。`routing=direct` 时 `via=null`；中转必须提供 `via`。
+
+效率字段：`id,port,terminal,metric,value,unit,period_start,period_end,definition,missing_reason`。数值为十进制字符串；缺失用 null 并说明原因。指标单位固定为 `rail_dwell_days/days`、`anchorage_wait_hours/hours`、`truck_turn_minutes/minutes`、`on_dock_feet/feet`。不同统计口径不自动汇总。
+
+发布仍要求 `{expected_version,preview_hash,confirmation:"reviewed_sources_and_conditions"}`，字段来自刚完成的预览。停用需 `expected_version`；回退先 `preview --input` 传入 `{"release_id":"历史UUID"}`，再以同一哈希和 release_id 调用 rollback。写操作必须给幂等键；同次重试保持同一键。管理员变更不扩张机器 API Key 的权限。
+
+结果 `unavailable` / 退出码 6 表示没有可用发布；过期或缺失指标为 `manual_review` / 4。无匹配行带 `no_matching_records`，不代表没有航次或码头运行正常。结果保留来源版本、观察/失效时间、发布 ID 与哈希。生产网站未部署该候选版本前，命令会明确返回不可用。

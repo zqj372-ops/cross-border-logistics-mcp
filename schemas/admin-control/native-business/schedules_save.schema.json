@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "expected_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "url": {
+              "type": "string",
+              "maxLength": 2000,
+              "format": "uri"
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "observed_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "verified": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "url",
+            "version",
+            "observed_at",
+            "expires_at",
+            "verified"
+          ],
+          "additionalProperties": false
+        },
+        "records": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "CNSHA",
+                  "CNNGB",
+                  "CNSZX",
+                  "CNTAO",
+                  "CNXMN",
+                  "CNTXG"
+                ]
+              },
+              "destination": {
+                "type": "string",
+                "enum": [
+                  "CAVAN",
+                  "CAPRR",
+                  "CAMTR",
+                  "CAHAL"
+                ]
+              },
+              "carrier": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "vessel": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "voyage": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "departure": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "arrival": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "departure_kind": {
+                "type": "string",
+                "enum": [
+                  "planned",
+                  "estimated",
+                  "actual"
+                ]
+              },
+              "arrival_kind": {
+                "type": "string",
+                "enum": [
+                  "planned",
+                  "estimated",
+                  "actual"
+                ]
+              },
+              "routing": {
+                "type": "string",
+                "enum": [
+                  "direct",
+                  "transshipment"
+                ]
+              },
+              "via": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "origin",
+              "destination",
+              "carrier",
+              "vessel",
+              "voyage",
+              "departure",
+              "arrival",
+              "departure_kind",
+              "arrival_kind",
+              "routing",
+              "via"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "label",
+        "source",
+        "records"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "expected_version",
+    "input"
+  ],
+  "additionalProperties": false
+}
