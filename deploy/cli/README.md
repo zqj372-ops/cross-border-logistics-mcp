@@ -18,6 +18,8 @@ freightclaw schema customs query
 
 也可先下载 `.tgz`，把安装命令中的网址换成本地文件的实际路径。`status` 不需要 Key，只检查 Portal 就绪状态；它不证明关税、报价来源或供应商凭证可用。`commands` 是当前 CLI 支持的命令列表，不代表你的应用已开通全部服务。
 
+本地验收环境如果尚未配置就绪检查，`status` 会保留服务器的 `portal_readiness_unconfigured` 原因并返回退出码 6；这表示尚未进行运行依赖验收，不是业务功能已就绪。
+
 应用负责人在 [API Key 页面](https://www.freightclaw.net/console/#api-keys) 管理已有统一 Key。由本机凭证工具或 CI secret 注入 `FREIGHTCLAW_API_KEY`；也可以把既有 Key 放在本人私有文件中，通过 `--key-file` 读取。macOS/Linux 文件须归本人所有且无其他用户权限（例如600）；Windows 需自行设置仅本人可读的文件 ACL。Key 文件只放 Key 文本，可有一个末尾换行。两种来源不能同时使用。
 
 ```sh

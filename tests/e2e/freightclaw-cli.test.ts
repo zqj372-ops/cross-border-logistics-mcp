@@ -113,6 +113,16 @@ describe("FreightClaw command line client", () => {
     expect((await invoke(["status"], { env, fetch: () => Promise.resolve(Response.json({ status: "success", data: { ...data, ready: false }, reason_codes: [] })) })).code).toBe(1);
   });
 
+  it("preserves the server's explicit unconfigured readiness without accepting malformed checks", async () => {
+    const body = { status: "unavailable", data: { service: "freightclaw-portal", release_id: "unknown", build_id: "unknown", ready: false, checks: null }, reason_codes: ["portal_readiness_unconfigured"] };
+    const result = await invoke(["status", "--json"], { env: {}, fetch: () => Promise.resolve(Response.json(body, { status: 503 })) });
+    expect(result.code).toBe(6); expect(JSON.parse(result.stdout)).toEqual(body); expect(result.stderr).toBe("");
+    for (const invalid of [{ ...body, status: "success" }, { ...body, reason_codes: [] }, { ...body, data: { ...body.data, ready: true } }, { ...body, data: { ...body.data, checks: {} } }]) {
+      const rejected = await invoke(["status"], { env: {}, fetch: () => Promise.resolve(Response.json(invalid, { status: 503 })) });
+      expect(rejected.code).toBe(1); expect(rejected.stdout).toBe("");
+    }
+  });
+
   it("accepts a private key file, and rejects ambiguous key sources and public file permissions", async () => {
     const folder = await mkdtemp(join(tmpdir(), "freightclaw-cli-test-")); directories.push(folder);
     const filename = join(folder, "application-key"); await writeFile(filename, key + "\n", { mode: 0o600 });

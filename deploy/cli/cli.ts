@@ -143,8 +143,12 @@ function responseCode(command: Command | undefined, httpStatus: number, payload:
     if (payload.status === "success" && payload.data === null) throw new CliError("response_invalid", 1, "成功响应缺少业务结果。");
     if (payload.status === "success" && record(payload.data) && (payload.data.testData === true || (record(payload.data.dataStatus) && payload.data.dataStatus.ready === false))) throw new CliError("response_not_ready", 1, "来源未就绪或返回测试数据，不能判定为业务成功。");
   } else {
-    if (!record(payload.data) || payload.data.service !== "freightclaw-portal" || typeof payload.data.ready !== "boolean" || typeof payload.data.build_id !== "string" || typeof payload.data.release_id !== "string" || !record(payload.data.checks) || !Object.keys(payload.data.checks).length || Object.values(payload.data.checks).some(value => typeof value !== "boolean")) throw new CliError("response_invalid", 1, "服务就绪响应不完整。");
-    if (payload.status === "success" && (!payload.data.ready || Object.values(payload.data.checks).some(value => !value))) throw new CliError("response_invalid", 1, "就绪响应的状态与检查结果冲突。");
+    if (!record(payload.data) || payload.data.service !== "freightclaw-portal" || typeof payload.data.ready !== "boolean" || typeof payload.data.build_id !== "string" || typeof payload.data.release_id !== "string") throw new CliError("response_invalid", 1, "服务就绪响应不完整。");
+    const checks = payload.data.checks;
+    // The Portal emits this exact unavailable response before readiness is configured.
+    const unconfigured = httpStatus === 503 && payload.status === "unavailable" && payload.data.ready === false && checks === null && Array.isArray(payload.reason_codes) && payload.reason_codes.length === 1 && payload.reason_codes[0] === "portal_readiness_unconfigured";
+    if (!unconfigured && (!record(checks) || !Object.keys(checks).length || Object.values(checks).some(value => typeof value !== "boolean"))) throw new CliError("response_invalid", 1, "服务就绪响应不完整。");
+    if (payload.status === "success" && (!payload.data.ready || !record(checks) || Object.values(checks).some(value => !value))) throw new CliError("response_invalid", 1, "就绪响应的状态与检查结果冲突。");
   }
   if ((httpStatus < 200 || httpStatus >= 300) && payload.status === "success") throw new CliError("response_invalid", 1, "HTTP 状态与业务成功状态冲突。");
   return exitCodes[payload.status]!;
