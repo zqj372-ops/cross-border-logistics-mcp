@@ -12,11 +12,11 @@ export function createFixturePorts() {
   const now = Date.parse("2026-09-11T08:00:00Z");
   const ports: OutreachPorts = {
     previewKey: randomBytes(32), now: () => now,
-    capture: (_tenant, ref) => ref !== "capture_fixture" ? null : {
+    capture: (_tenant, ref) => Promise.resolve(ref !== "capture_fixture" ? null : {
       capture_ref: ref, company: "Fixture Furniture", city: "Toronto",
       url: "https://example.invalid/contact", captured_at: "2026-09-11T07:00:00Z", test_data: true,
       html: '<main>Fixture Furniture <a href="mailto:SALES@example.invalid">Sales</a><a href="mailto:privacy@example.invalid">Privacy</a></main><script>"hidden@example.invalid"</script>',
-    },
+    }),
     sender: () => ({ company: "Fixture Logistics", name: "Fixture Sales Team", email: "outreach@example.invalid", mailing_address: "1 Fixture Road, Toronto, ON, Canada (synthetic test address)", service_description: "We coordinate China–Toronto ocean freight, including LCL and FCL shipments." }),
     sendEnabled: () => state.sendEnabled,
     mayDispatch: () => Promise.resolve(state.dispatchAllowed),

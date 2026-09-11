@@ -4,6 +4,7 @@ import {
 } from "./contract-errors";
 import type { ActorRole, ExecutionContext } from "./context";
 import { APPLICATION_MCP_TOOLS, isApplicationMcpIdentity, type BusinessMcpTool } from "./application-tools";
+import { OUTREACH_TOOL_NAMES, OUTREACH_TOOL_POLICIES, type OutreachToolName } from "./outreach-tools";
 
 export { CrossTenantAccessError, ForbiddenError } from "./contract-errors";
 
@@ -22,7 +23,7 @@ export const phaseOneToolNames = Object.freeze([
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
 export const agentContextToolName = "system.agent_context.get" as const;
 export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
-type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName | BusinessMcpTool;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName | BusinessMcpTool | OutreachToolName;
 
 export const tenantApiKeyToolNames = Object.freeze([
   "cargo.calculate",
@@ -34,6 +35,7 @@ export type TenantApiKeyToolName = (typeof tenantApiKeyToolNames)[number];
 export type TenantApiKeyToolScope = `tool:${TenantApiKeyToolName}`;
 
 const tenantApiKeyToolNameSet = new Set<string>(tenantApiKeyToolNames);
+const outreachToolNameSet = new Set<string>(OUTREACH_TOOL_NAMES);
 
 export function tenantApiKeyScopeForToolName(
   toolName: TenantApiKeyToolName,
@@ -109,6 +111,7 @@ const toolPolicies: Readonly<Record<KnownToolName, ToolPolicy>> = Object.freeze(
   "quote.save_draft": freezePolicy("quote:draft_write", "write", draftRoles),
   "review.create_task": freezePolicy("review:create_task", "write", taskRoles),
   [agentContextToolName]: freezePolicy("system:agent_context", "read", readRoles),
+  ...OUTREACH_TOOL_POLICIES,
 });
 
 function hasScope(context: ExecutionContext, permission: string): boolean {
@@ -124,6 +127,11 @@ function usesExactToolEntitlements(context: ExecutionContext): boolean {
 }
 
 function hasExactToolEntitlement(context: ExecutionContext, toolName: string): boolean {
+  if (outreachToolNameSet.has(toolName)) {
+    return context.profile === undefined
+      && context.role !== "service"
+      && context.scopes.includes(`tool:${toolName}`);
+  }
   return (context.profile === "business-v1" ? (APPLICATION_MCP_TOOLS as readonly string[]).includes(toolName) : tenantApiKeyToolNameSet.has(toolName))
     && context.scopes.includes(`tool:${toolName}`);
 }

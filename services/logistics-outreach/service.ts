@@ -36,7 +36,8 @@ function captureEmails(capture: Capture): string[] {
   return [...values].filter((value) => !/^(privacy|careers|jobs|abuse|noreply|no-reply|postmaster|dpo)@/u.test(value)).sort().slice(0, 30);
 }
 
-interface QueueInput { readonly draft_ref: string; readonly approval_ref: string; readonly digest: string; readonly idempotency_key: string }
+interface QueueInput { readonly draft_ref: string; readonly approval_ref: string; readonly digest: string }
+interface QueueCommitInput extends QueueInput { readonly idempotency_key: string; readonly preview_ref: string }
 interface IdempotencyRecord { readonly input_hash: string; readonly result_ref: string }
 
 /** Candidate business service. No network access except explicitly injected ports. */
@@ -85,8 +86,8 @@ export class OutreachService {
     this.store.set(context.tenantId, "idempotency", this.identity(context, operation, key), { input_hash: hash(input), result_ref: ref });
     this.audit(context, operation, ref);
   }
-  private capture(context: OutreachActor, ref: string): Capture {
-    const captured = requireValue(this.ports.capture(context.tenantId, bounded(ref, 128)));
+  private async capture(context: OutreachActor, ref: string): Promise<Capture> {
+    const captured = requireValue(await this.ports.capture(context.tenantId, bounded(ref, 128)));
     bounded(captured.company, 200); bounded(captured.html, 250_000);
     if (captured.capture_ref !== ref || captured.city !== "Toronto" || typeof captured.test_data !== "boolean" || !Number.isFinite(Date.parse(captured.captured_at)) || Date.parse(captured.captured_at) > this.ports.now()) throw new OutreachError("capture_invalid");
     const url = new URL(captured.url);
@@ -94,12 +95,12 @@ export class OutreachService {
     return captured;
   }
   private researchPayload(c: Capture) { return { capture_ref: c.capture_ref, evidence_digest: hash(c), emails: captureEmails(c) }; }
-  research(context: OutreachActor, captureRef: string) {
-    const c = this.capture(context, captureRef); const p = this.researchPayload(c);
+  async research(context: OutreachActor, captureRef: string) {
+    const c = await this.capture(context, captureRef); const p = this.researchPayload(c);
     return { ...p, company: c.company, city: c.city, china_import_status: "unknown" as const, test_data: c.test_data, preview_ref: this.preview(context, "import", p) };
   }
-  importLead(context: OutreachActor, input: { readonly capture_ref: string; readonly email: string; readonly preview_ref: string; readonly idempotency_key: string }): Lead {
-    const c = this.capture(context, input.capture_ref); const p = this.researchPayload(c); const address = email(input.email);
+  async importLead(context: OutreachActor, input: { readonly capture_ref: string; readonly email: string; readonly preview_ref: string; readonly idempotency_key: string }): Promise<Lead> {
+    const c = await this.capture(context, input.capture_ref); const p = this.researchPayload(c); const address = email(input.email);
     const fingerprint = { capture_ref: input.capture_ref, evidence_digest: p.evidence_digest, email: address };
     return this.store.transaction(() => {
       const old = this.existing(context, "lead.import", input.idempotency_key, fingerprint);
@@ -194,7 +195,7 @@ export class OutreachService {
     const payload = { draft_ref: input.draft_ref, approval_ref: input.approval_ref, digest: input.digest };
     return { ...payload, preview_ref: this.preview(context, "queue", payload), sends_email: false as const };
   }
-  async queue(context: OutreachActor, input: QueueInput & { readonly preview_ref: string }): Promise<Job> {
+  async queue(context: OutreachActor, input: QueueCommitInput): Promise<Job> {
     const payload = { draft_ref: input.draft_ref, approval_ref: input.approval_ref, digest: input.digest };
     const old = this.existing(context, "message.queue", input.idempotency_key, payload);
     if (old !== null) return this.getJob(context, old);
@@ -226,7 +227,7 @@ export class OutreachService {
     let final: Job;
     try {
       const d = this.getDraft(context, job.draft_ref);
-      await this.eligible(context, { draft_ref: d.draft_ref, approval_ref: job.approval_ref, digest: d.digest, idempotency_key: job.job_ref });
+      await this.eligible(context, { draft_ref: d.draft_ref, approval_ref: job.approval_ref, digest: d.digest });
       if (!await this.boundedCall(() => this.ports.mayDispatch(tenant, job.created_by))) throw new OutreachError("dispatch_unauthorized");
       // Re-read local stops after every awaited policy check, immediately before IO.
       const lead = this.getLead(context, d.lead_ref);

@@ -76,7 +76,7 @@ export interface MailPort {
 export interface OutreachPorts {
   readonly previewKey: Uint8Array;
   readonly now: () => number;
-  readonly capture: (tenantId: string, ref: string) => Capture | null;
+  readonly capture: (tenantId: string, ref: string) => Promise<Capture | null>;
   readonly sender: (tenantId: string) => Sender | null;
   readonly sendEnabled: (tenantId: string) => boolean;
   readonly mayDispatch: (tenantId: string, actorId: string) => Promise<boolean>;

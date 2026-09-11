@@ -7,6 +7,7 @@ import { CapabilityRegistry } from "../../src/logistics_mcp/module-runtime/capab
 import { ModuleHost } from "../../src/logistics_mcp/module-runtime/host";
 import { parseExecutionContext } from "../../src/logistics_mcp/platform/context";
 import { createLogisticsOutreachModule, OUTREACH_CAPABILITY, OUTREACH_CAPABILITY_VERSION, OUTREACH_TOOL_NAMES, OUTREACH_VERSION } from "../../src/logistics_mcp/modules/logistics-outreach/module";
+import { OUTREACH_TOOL_NAMES as PLATFORM_OUTREACH_TOOL_NAMES } from "../../src/logistics_mcp/platform/outreach-tools";
 import { OutreachService } from "../../services/logistics-outreach/service.js";
 import { createFixturePorts } from "../../services/logistics-outreach/fixtures.js";
 
@@ -38,6 +39,7 @@ test("candidate mounts through the existing ModuleHost with exactly 16 tools", a
   const f = setup(); try {
     expect(f.host.catalog.list().map((tool) => tool.name).sort()).toEqual([...OUTREACH_TOOL_NAMES].sort());
     expect(OUTREACH_TOOL_NAMES).toHaveLength(16);
+    expect([...OUTREACH_TOOL_NAMES].sort()).toEqual([...PLATFORM_OUTREACH_TOOL_NAMES].sort());
     expect(f.host.snapshot().modules[0]?.risk_level).toBe("T2");
     expect(OUTREACH_TOOL_NAMES.some((name) => /approve|dispatch|send$/u.test(name))).toBe(false);
   } finally { await f.close(); }
@@ -73,7 +75,7 @@ test("untrusted identity and missing exact tool grants fail before source access
     const tool = researchTool(f.host); const trusted = context(tool.name, tool.permission);
     expect((await tool.handler({ ...baseInput, capture_ref: "capture_fixture" }, { ...trusted })).status).toBe("blocked");
     expect((await tool.handler({ ...baseInput, capture_ref: "capture_fixture" }, context("other.tool", tool.permission))).status).toBe("blocked");
-    expect((await tool.handler({ ...baseInput, capture_ref: "capture_fixture" }, context(tool.name, "outreach:read"))).status).toBe("blocked");
+    expect((await tool.handler({ ...baseInput, capture_ref: "capture_fixture" }, context(tool.name, "outreach:read"))).status).toBe("manual_review");
   } finally { await f.close(); }
 });
 
@@ -90,9 +92,25 @@ test("client tenant, arbitrary URL, credentials and script parameters are reject
 test("write tools require trusted business roles and a bound preview", async () => {
   const f = setup(); try {
     const tool = f.host.catalog.get("outreach.lead.import"); if (!tool) throw new Error("missing_candidate_tool");
-    const value = { ...baseInput, capture_ref: "capture_fixture", candidate_index: 0, operation_mode: "commit", idempotency_key: "i", preview_ref: `${Date.now() + 1000}.${"0".repeat(64)}` };
-    expect((await tool.handler(value, context(tool.name, tool.permission, ["viewer"]))).status).toBe("blocked");
-    expect((await tool.handler(value, context(tool.name, tool.permission))).status).toBe("blocked");
+    const previewRef = `${Date.now() + 1000}.${"0".repeat(64)}`;
+    const writeContext = (ctx: ReturnType<typeof context>) => ({
+      tenant_context: {
+        tenant_id: ctx.tenantId,
+        actor_id: ctx.actorId,
+        actor_role: ctx.role,
+        client_id: ctx.clientId,
+        session_id: ctx.sessionId,
+      },
+      idempotency_key: "gateway_import_0001",
+      operation_mode: "commit",
+      preview_ref: previewRef,
+      approval: { required: false },
+    });
+    const viewer = context(tool.name, tool.permission, ["viewer"]);
+    const value = { ...baseInput, capture_ref: "capture_fixture", candidate_index: 0, write_context: writeContext(viewer) };
+    expect((await tool.handler(value, viewer)).status).toBe("blocked");
+    const sales = context(tool.name, tool.permission);
+    expect((await tool.handler({ ...value, write_context: writeContext(sales) }, sales)).status).toBe("blocked");
     expect(f.service.listLeads({ tenantId: "tenant_fixture", actorId: "sales_fixture" })).toEqual([]);
     expect(f.ports.state.sent).toEqual([]);
   } finally { await f.close(); }

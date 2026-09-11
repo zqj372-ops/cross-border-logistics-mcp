@@ -16,12 +16,12 @@ function setup() {
   const service = new OutreachService(path, ports);
   return { service, ports, path, close() { service.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
-function lead(service: OutreachService) {
-  const preview = service.research(actor, "capture_fixture");
+async function lead(service: OutreachService) {
+  const preview = await service.research(actor, "capture_fixture");
   return service.importLead(actor, { capture_ref: "capture_fixture", email: "sales@example.invalid", preview_ref: preview.preview_ref, idempotency_key: "import_1" });
 }
 async function draft(service: OutreachService) {
-  const item = lead(service);
+  const item = await lead(service);
   return service.prepareDraft(actor, { lead_ref: item.lead_ref, idempotency_key: "draft_1", preview_ref: service.previewDraft(actor, item.lead_ref).preview_ref });
 }
 function sync(service: OutreachService, key = "sync_1") {
@@ -38,33 +38,33 @@ function code(expected: string) {
 }
 
 export function registerOutreachCases(test: TestRegistrar): void {
-  test("research extracts only observed addresses and keeps China demand unknown", () => {
+  test("research extracts only observed addresses and keeps China demand unknown", async () => {
     const f = setup(); try {
-      const p = f.service.research(actor, "capture_fixture");
+      const p = await f.service.research(actor, "capture_fixture");
       assert.deepEqual(p.emails, ["sales@example.invalid"]);
       assert.equal(p.china_import_status, "unknown");
       assert.equal(f.service.listLeads(actor).length, 0);
     } finally { f.close(); }
   });
-  test("a preview cannot be replayed across tenants or actors", () => {
+  test("a preview cannot be replayed across tenants or actors", async () => {
     const f = setup(); try {
-      const p = f.service.research(actor, "capture_fixture");
-      assert.throws(() => f.service.importLead(other, { capture_ref: "capture_fixture", email: "sales@example.invalid", preview_ref: p.preview_ref, idempotency_key: "import_1" }), code("preview_invalid"));
-      assert.throws(() => f.service.importLead({ ...actor, actorId: "another_actor" }, { capture_ref: "capture_fixture", email: "sales@example.invalid", preview_ref: p.preview_ref, idempotency_key: "import_1" }), code("preview_invalid"));
+      const p = await f.service.research(actor, "capture_fixture");
+      await assert.rejects(f.service.importLead(other, { capture_ref: "capture_fixture", email: "sales@example.invalid", preview_ref: p.preview_ref, idempotency_key: "import_1" }), code("preview_invalid"));
+      await assert.rejects(f.service.importLead({ ...actor, actorId: "another_actor" }, { capture_ref: "capture_fixture", email: "sales@example.invalid", preview_ref: p.preview_ref, idempotency_key: "import_1" }), code("preview_invalid"));
     } finally { f.close(); }
   });
-  test("lead import is idempotent, normalized and tenant-scoped", () => {
+  test("lead import is idempotent, normalized and tenant-scoped", async () => {
     const f = setup(); try {
-      const first = lead(f.service); assert.deepEqual(lead(f.service), first);
+      const first = await lead(f.service); assert.deepEqual(await lead(f.service), first);
       assert.equal(f.service.listLeads(actor).length, 1);
       assert.equal(f.service.listLeads(other).length, 0);
       assert.throws(() => f.service.getLead(other, first.lead_ref), code("not_found"));
     } finally { f.close(); }
   });
-  test("addresses not observed in the capture cannot be imported", () => {
+  test("addresses not observed in the capture cannot be imported", async () => {
     const f = setup(); try {
-      const p = f.service.research(actor, "capture_fixture");
-      assert.throws(() => f.service.importLead(actor, { capture_ref: "capture_fixture", email: "guessed@example.invalid", preview_ref: p.preview_ref, idempotency_key: "import_1" }), code("email_not_observed"));
+      const p = await f.service.research(actor, "capture_fixture");
+      await assert.rejects(f.service.importLead(actor, { capture_ref: "capture_fixture", email: "guessed@example.invalid", preview_ref: p.preview_ref, idempotency_key: "import_1" }), code("email_not_observed"));
     } finally { f.close(); }
   });
   test("drafts contain sender identity and reply-based unsubscribe", async () => {
@@ -90,7 +90,7 @@ export function registerOutreachCases(test: TestRegistrar): void {
   test("changed content digest invalidates send approval", async () => {
     const f = setup(); try {
       const d = await draft(f.service);
-      await assert.rejects(f.service.previewQueue(actor, { draft_ref: d.draft_ref, approval_ref: "approval_fixture", digest: "0".repeat(64), idempotency_key: "q" }), code("digest_mismatch"));
+      await assert.rejects(f.service.previewQueue(actor, { draft_ref: d.draft_ref, approval_ref: "approval_fixture", digest: "0".repeat(64) }), code("digest_mismatch"));
     } finally { f.close(); }
   });
   test("sending is disabled by default and queued is not sent", async () => {
@@ -153,7 +153,7 @@ export function registerOutreachCases(test: TestRegistrar): void {
   });
   test("reply preparation does not send and uses the same reviewed path", async () => {
     const f = setup(); try {
-      lead(f.service);
+      await lead(f.service);
       f.ports.state.inbox.push({ message_ref: "incoming_1", from: "sales@example.invalid", body: "Please quote my shipment.", auto_submitted: false });
       await sync(f.service);
       const d = await f.service.prepareReply(actor, { message_ref: "incoming_1", idempotency_key: "reply_1", preview_ref: f.service.previewReply(actor, "incoming_1").preview_ref });
@@ -163,7 +163,7 @@ export function registerOutreachCases(test: TestRegistrar): void {
   });
   test("automated messages never trigger reply generation", async () => {
     const f = setup(); try {
-      lead(f.service);
+      await lead(f.service);
       f.ports.state.inbox.push({ message_ref: "auto_1", from: "sales@example.invalid", body: "Out of office", auto_submitted: true });
       await sync(f.service);
       await assert.rejects(f.service.prepareReply(actor, { message_ref: "auto_1", idempotency_key: "r", preview_ref: "not_allowed" }), code("reply_blocked"));
