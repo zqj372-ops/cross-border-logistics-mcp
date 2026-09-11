@@ -4,8 +4,8 @@ import { createProviderClient, providerError, providerHeaders, providerInvalid, 
 
 const responseSchema = z.object({
   choices: z.array(z.object({
-    message: z.object({ content: z.string().min(1).max(20_000) }).strict(),
-  }).strict()).min(1).max(1),
+    message: z.object({ content: z.string().min(1).max(20_000) }).passthrough(),
+  }).passthrough()).min(1).max(1),
 }).passthrough();
 const draftSchema = z.object({
   subject: z.string().min(1).max(200),

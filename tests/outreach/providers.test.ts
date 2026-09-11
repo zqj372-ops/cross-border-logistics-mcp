@@ -113,7 +113,14 @@ test("OpenAI-compatible model adapter parses only strict subject/body JSON and t
     fetchImpl: (_input, init) => {
       const parsedBody = requestBodyForTest(init);
       requestBody = parsedBody;
-      return Promise.resolve(jsonResponse({ id: "completion_1", choices: [{ message: { content: JSON.stringify({ subject: "Freight help", body: "A human-reviewed draft." }) } }] }));
+      return Promise.resolve(jsonResponse({
+        id: "completion_1",
+        choices: [{
+          index: 0,
+          finish_reason: "stop",
+          message: { role: "assistant", content: JSON.stringify({ subject: "Freight help", body: "A human-reviewed draft." }) },
+        }],
+      }));
     },
   });
 
