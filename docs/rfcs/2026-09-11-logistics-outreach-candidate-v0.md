@@ -34,12 +34,13 @@ The module imports service types only; it neither instantiates SQLite nor runs a
 - Dedicated SQLite WAL store, immediate write-readback check, transaction-bound audit/idempotency records and atomic queue claim. Draft-reference uniqueness prevents the same draft being sent again under a fresh operation key.
 - Send disabled in supplied fixtures. A configured private worker can exercise the mail port; fixture acceptance is `simulated`, not delivery. Real-provider acceptance, if implemented later, is not proof of inbox delivery.
 - Ambiguous sends and mismatched readbacks become `manual_review`, never automatic resends. Pre-send policy failures cancel the job.
+- HTTP provider adapters cover opaque capture snapshots, an OpenAI-compatible model endpoint and private send/readback/inbox mail endpoints. They are inert unless explicitly configured; tests use fake HTTP implementations only.
 - Bounded inbox batches, duplicate event suppression, conservative unsubscribe detection, automatic-message classification and pause/cancellation of cold follow-ups. Human-reply drafts use the same approval path.
 - Tenant-scoped summaries and opaque content references; no raw address, HTML or message body in MCP results or audit records.
 
 ## Proposed tool permissions and effects
 
-Every input has `schema_version=2026-08-11.v1`, `version=2026-09-11.v0`, a strict Zod object convertible to Draft 2020-12, and no unknown fields. No new top-level envelope states are introduced. Every handler requires a trusted, unexpired `ExecutionContext`, the named permission and the exact `tool:<name>` scope. Writes also require an authorized business role. Existing credentials acquire **no** new permission from this code.
+Every input has `schema_version=2026-08-11.v1`, `version=2026-09-11.v0`, a strict Zod object convertible to Draft 2020-12, and no unknown fields. No new top-level envelope states are introduced. Every handler requires a trusted, unexpired `ExecutionContext` and a role allowed by `platform/outreach-tools.ts`. When the token contains exact `tool:*` entitlements, only the matching exact entitlement is accepted; legacy role-scoped contexts use the named permission. Writes additionally use the platform's `write_context` contract with server-checked tenant/actor binding, `operation_mode=commit`, `preview_ref`, and an idempotency key. Existing credentials acquire **no** new permission from this code.
 
 | Tool | Permission | Effect |
 | --- | --- | --- |
@@ -60,7 +61,7 @@ Every input has `schema_version=2026-08-11.v1`, `version=2026-09-11.v0`, a stric
 | outreach.contact.preview | outreach:suppress | Preview monotonic suppression |
 | outreach.contact.suppress | outreach:suppress | Suppress and cancel queued follow-ups |
 
-Writes require `operation_mode=commit`, `idempotency_key` and `preview_ref`. Preview endpoints do not perform the subsequent source write. Candidate successful operations retain `manual_review`, `candidate_only=true` and `production_eligible=false`. Clients must inspect the returned object reference/state before retrying; `manual_review` does not mean that a local draft/job was not saved.
+Writes use the platform `write_context` envelope with `operation_mode=commit`, `preview_ref`, `idempotency_key`, and the server-checked tenant/actor/session binding. Preview endpoints do not perform the subsequent source write. Candidate successful operations retain `manual_review`, `candidate_only=true` and `production_eligible=false`. Clients must inspect the returned object reference/state before retrying; `manual_review` does not mean that a local draft/job was not saved.
 
 ### Old/new examples and compatibility
 
@@ -75,15 +76,29 @@ Proposed research input:
 Proposed import input (preview token must actually come from the preceding operation):
 
 ```json
-{"schema_version":"2026-08-11.v1","version":"2026-09-11.v0","operation_mode":"commit","capture_ref":"capture_fixture","candidate_index":0,"preview_ref":"<server-issued-token>","idempotency_key":"lead_import_001"}
+{"schema_version":"2026-08-11.v1","version":"2026-09-11.v0","capture_ref":"capture_fixture","candidate_index":0,"write_context":{"tenant_context":{"tenant_id":"tenant_fixture","actor_id":"sales_fixture","actor_role":"sales","client_id":"client_fixture","session_id":"session_fixture"},"operation_mode":"commit","preview_ref":"<server-issued-token>","idempotency_key":"lead_import_001","approval":{"required":false}}}
 ```
 
-This is a candidate, additive code delivery; there is no migration of existing data and no change to existing scopes. The manifest follows current static ModuleDefinition syntax, not the future generic hot-plug artifact contract. Production naming, formal input/output schema publication, delegated scopes, readback evidence DTOs, signed provider descriptor and profile changes require acceptance and baseline work. The factory alone is not a public deployment.
+This is a candidate, additive code delivery; there is no migration of existing data and no change to existing scopes. The manifest follows current static ModuleDefinition syntax, not the future generic hot-plug artifact contract. The platform RBAC policy for the candidate tools and the standard `write_context` input contract are implemented and covered by `executeRegisteredToolWithResult` tests, but the module is deliberately not added to `t0-v1`, `business-v1`, the production composition or any existing API Key entitlement. Production naming, formal input/output schema publication, delegated scopes, readback evidence DTOs, signed provider descriptor and profile changes require acceptance and baseline work. The factory alone is not a public deployment.
+
+### Provider integration contract
+
+`services/logistics-outreach/runtime.ts` composes the private service only when `MCP_OUTREACH_ENABLED=true`. Construction validates configuration and secret files but does not open a provider connection; the first actual request is made by the corresponding port.
+
+| Provider | Adapter | Private bridge contract |
+| --- | --- | --- |
+| Mail | `providers/http-mail.ts` | `POST /v1/messages`, `GET /v1/messages/{idempotency_key}`, `GET /v1/inbox`; tenant header `x-freightclaw-tenant`; exact receipt/readback digest required |
+| Model | `providers/openai-model.ts` | OpenAI-compatible `POST /v1/chat/completions`; untrusted company/incoming text is passed as JSON data; response must contain strict `subject`/`body` JSON |
+| Capture | `providers/http-capture.ts` | `GET /v1/captures/{capture_ref}` and private collector `POST /v1/captures` with an opaque reference only; the bridge worker owns Chrome CDP, URL allowlists and page capture |
+
+The base URLs must be HTTPS and their hosts must match `MCP_OUTREACH_*_ALLOWED_HOST`; secrets are read from absolute, non-symlink, owner-readable files. HTTP requests are bounded by timeout and response-size limits. Provider errors and response bodies are not returned in MCP results or logs. The capture bridge must never accept a URL or script from the model; it is an isolated worker boundary.
+
+Required runtime settings are `MCP_OUTREACH_STATE_DB_PATH`, `MCP_OUTREACH_PREVIEW_KEY_FILE`, `MCP_OUTREACH_CAPTURE_BASE_URL`, `MCP_OUTREACH_CAPTURE_ALLOWED_HOST`, `MCP_OUTREACH_CAPTURE_TOKEN_FILE`, `MCP_OUTREACH_MODEL_BASE_URL`, `MCP_OUTREACH_MODEL_ALLOWED_HOST`, `MCP_OUTREACH_MODEL_API_KEY_FILE`, `MCP_OUTREACH_MODEL_NAME`, `MCP_OUTREACH_MAIL_BASE_URL`, `MCP_OUTREACH_MAIL_ALLOWED_HOST`, and `MCP_OUTREACH_MAIL_TOKEN_FILE`. `MCP_OUTREACH_PROVIDER_TIMEOUT_MS` is optional.
 
 ## Mandatory production gates / known gaps
 
-1. **Browser discovery not implemented:** no Google Maps API and no CDP connection is invoked. `capture` is an injected snapshot reader. A reviewed browser worker must produce immutable tenant-scoped captures, enforce permitted sources, redirect/DNS/egress and size/time limits, and stop at access restrictions. Reading public email is not an approval to contact it.
-2. **Real providers not implemented:** SMTP/Gmail/Graph, OAuth/secrets rotation, authentic webhook/inbox cursor, bounce/complaint handling and model HTTP adapters still require implementation/verification. The supplied mailbox and contacts are synthetic `.invalid` fixtures only.
+1. **Chrome CDP/map bridge not deployed:** the HTTP capture port/collector contract is implemented, but no real Chrome CDP, Google Maps or other discovery worker is connected. The bridge worker must produce immutable tenant-scoped captures, enforce permitted sources, redirect/DNS/egress and size/time limits, and stop at access restrictions. Reading public email is not an approval to contact it.
+2. **Real vendor bridge not connected:** the OpenAI-compatible model, private mail and capture adapters are implemented and tested with fake HTTP implementations, but no real SMTP/Gmail/Graph/OAuth/webhook/inbox credential, bounce/complaint handling or provider health evidence exists in this PR. The supplied mailbox and contacts are synthetic `.invalid` fixtures only.
 3. **Policy authority is not fixture approval:** production must provide current contact-basis evidence, exact-content human review, sender address and operational permission checks through trusted authority ports. This code does not certify CASL/PIPEDA compliance or automatically infer consent.
 4. **No continuous worker or auto-reply deployment:** scheduling, mailbox serialization, rate/budget limits, Toronto send windows and managed worker lifecycle remain to implement. A response draft never autonomously sends. Per-call 15-second bounds do not guarantee a remote provider cancelled its operation.
 5. **Crash ambiguity:** queued work survives restart. An attempt left in `dispatching` by a crash must be investigated/read back; it is deliberately not requeued. Durable lease-based reconciliation and provider idempotency contracts must be completed before live operation.
