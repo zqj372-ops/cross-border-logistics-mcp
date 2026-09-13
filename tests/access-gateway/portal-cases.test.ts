@@ -74,3 +74,26 @@ it('isolates organizations, revokes management immediately and paginates without
   active=false;expect(()=>service.get(member,first.case_id)).toThrow('case_access_denied');
  }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
+
+it('derives a server-owned customer supplement reference without exposing actor_id',()=>{
+ const root=mkdtempSync(join(tmpdir(),'cases-link-')),store=new CaseStore(join(root,'cases.sqlite'));
+ const orgPortal={getState:(ctx:PortalContext)=>({data:{current_organization:ctx.organizationId?{organizationId:ctx.organizationId,status:'active'}:null,memberships:ctx.organizationId?[{userId:ctx.identity.userId,organizationId:ctx.organizationId,status:'active',role:ctx.identity.userId==='viewer-a'?'viewer':'owner'}]:[]}})};
+ const service=new CaseService(store,orgPortal as never),member={...customer,organizationId:'org-a'};
+ try {
+  const created=service.create(member,draft,'link-case-create-0001');
+  const view=service.getV2(member,created.case_id);
+  expect(view.review_context.latest_customer_supplement_ref).toBeNull();
+  expect(JSON.stringify(view)).not.toContain('actor_id');
+  service.update(member,created.case_id,{expected_version:1,status:'needs_input',public_note:'Please confirm packing.',internal_note:''},'link-case-update-0001');
+  service.reply(member,created.case_id,{expected_version:2,message:'Confirmed carton packing.'},'link-case-reply-0001');
+  const linked=service.getV2(member,created.case_id);
+  const event=linked.events.find(e=>e.version===3);
+  expect(event).toBeDefined();
+  expect(linked.review_context.latest_customer_supplement_ref).toBe(event?.event_id);
+  const read=service.readForQuoteLink(member,created.case_id);
+  expect(read).toMatchObject({case_ref:created.case_id,organization_id:'org-a',status:'in_review',latest_customer_supplement_ref:event?.event_id});
+  expect(JSON.stringify(read)).not.toContain('actor_id');
+  expect(()=>service.readForQuoteLink({...member,identity:{...member.identity,userId:'viewer-a'}},created.case_id)).toThrow();
+  expect(()=>service.readForQuoteLink({...member,organizationId:'org-b'},created.case_id)).toThrow('case_not_found');
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});

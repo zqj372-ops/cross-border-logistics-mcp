@@ -1,7 +1,7 @@
 import {maritimeSaveSchema,maritimeQuerySchema,maritimeResponseSchema} from '../../services/maritime/contracts';
 import {sharedQuoteSchema,prepareSharedQuote} from '../../services/quote-native/shared-quote';
 import {packageSchemas,packageList} from '../../services/customs-native/package-contracts';
-import {quoteDocumentSchemas,responseSchema as documentResponseSchema,exportViewSchema} from '../../services/quote-documents/contracts';
+import {quoteDocumentSchemas,quoteDocumentSchemasV2,responseSchema as documentResponseSchema,exportViewSchema,INQUIRY_QUOTE_LINK_VERSION,V2_VERSION} from '../../services/quote-documents/contracts';
 import {createHash} from 'node:crypto';
 import {selectRateOrigin,rateTableInput,readRateWorkbook,parseRateSheet,mergeRateSheet,exportRateRows} from '../../services/quote-native/admin-tables';
 import type {ResidentialRates} from '../../services/quote-native/contracts';
@@ -15,7 +15,7 @@ import { freightcomInputSchema } from '../../services/access-gateway/portal/busi
 import { customsHistoryListInput, customsHistoryGetInput, customsHistoryListResponse, customsHistoryGetResponse } from '../../services/access-gateway/portal/business/customs-history-client';
 import { customsSaveSchema, residentialSaveSchema, nativePublishSchema, nativeRollbackSchema, nativeDisableSchema } from '../../services/access-gateway/portal/native-admin-contracts';
 import { freightcomSaveSchema, freightcomDisableSchema, nativeDataSchema, nativeResponseSchema, freightcomViewSchema } from '../../services/access-gateway/portal/native-admin-contracts';
-import { caseSchemas, validCaseInput, validateCaseResponse } from './workspace-contracts';
+import { caseSchemas, linkedDocumentInputValidators, linkedDocumentResponseValidators, validCaseInput, validateCaseResponse, validateCaseResponseV2 } from './workspace-contracts';
 import { constants } from 'node:fs';
 import { open, mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -23,6 +23,7 @@ import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CliIO } from './cli';
+import {CASE_LINK_VERSION} from '../../services/access-gateway/portal/cases';
 import { channelInput, channelSave, channelPublish, channelDisable, channelRollback, channelViewSchema, channelListSchema, channelPreviewSchema, channelHistorySchema, CHANNEL_VERSION } from '../../services/access-gateway/portal/channel-contracts';
 type Helpers={endpoint:(s:string)=>URL;readFileBounded:(s:string,n:number,secret?:boolean)=>Promise<Buffer>;readStdin:(s:NodeJS.ReadStream,n:number)=>Promise<Buffer>;parseJson:(b:Uint8Array)=>unknown;readResponse:(r:Response,maximum?:number)=>Promise<string>};
 const maritimeCommands=(['schedules','terminals'] as const).flatMap(kind=>{
@@ -63,11 +64,15 @@ for(const action of ['import','publish','disable','browse'] as const)schemas['cu
 for(const name of ['customs-data','residential-rates']){schemas[name+' save']=name==='customs-data'?customsSaveSchema:residentialSaveSchema;schemas[name+' publish']=nativePublishSchema;schemas[name+' rollback']=nativeRollbackSchema;schemas[name+' disable']=nativeDisableSchema;}schemas['freightcom save']=freightcomSaveSchema;schemas['freightcom disable']=freightcomDisableSchema;
 Object.assign(schemas,{'customs query':customsInput,'tax estimate':taxInput,'tax batch':taxBatchInput,'quote extract':extractInputSchema,'quote self':zoneInputSchema,'quote freightcom':freightcomInputSchema,'customs-history list':customsHistoryListInput,'customs-history get':customsHistoryGetInput});
 for(const action of ['config-save','preview','native-prepare','save','list','get','approve','reject','export']) schemas['documents '+action]=quoteDocumentSchemas[(action==='export'?'get':action) as keyof typeof quoteDocumentSchemas];
+for(const action of ['native-prepare','save','list','get','approve','reject','export']) schemas['documents v2 '+action]=quoteDocumentSchemasV2[action+'-v2']!;
+const caseLinkInputSchema=z.object({contract_version:z.literal(CASE_LINK_VERSION)}).strict();
+schemas['cases get v2']=caseLinkInputSchema;
 for(const kind of ['schedules','terminals'] as const)Object.assign(schemas,{[kind+' query']:maritimeQuerySchema(kind),[kind+' save']:maritimeSaveSchema(kind),[kind+' publish']:nativePublishSchema,[kind+' disable']:nativeDisableSchema,[kind+' rollback']:nativeRollbackSchema});
 const token=z.string().regex(/^[A-Za-z0-9_-]{32,128}$/u);
 const sessionSchema=z.object({origin:z.string(),session_token:token,csrf_token:token,expires_at:z.number()}).strict();
 const pendingSchema=z.object({origin:z.string(),device_secret:token,user_code:z.string().regex(/^[A-F0-9]{8}$/u),expires_at:z.number()}).strict();
 class Failure extends Error{constructor(readonly code:string,readonly exitCode=2){super(code);}}
+const linkedInputValidators:Record<string,(value:unknown)=>boolean>=linkedDocumentInputValidators,linkedResponseValidators:Record<string,(value:unknown)=>boolean>=linkedDocumentResponseValidators,linkedErrorValidator:(value:unknown)=>boolean=linkedDocumentResponseValidators.error;
 export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promise<number>{
  const output=io.stdout??(s=>{process.stdout.write(s);}),errorOutput=io.stderr??(s=>{process.stderr.write(s);});const env=io.env??process.env;
  try{
@@ -81,11 +86,11 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   const suppliedOrigin=values.endpoint??env.FREIGHTCLAW_ENDPOINT;
   let stored:Record<string,unknown>|undefined;if(name!=='login start'){const input=helpers.parseJson(await helpers.readFileBounded(filename,4096,true));stored=(name==='login finish'?pendingSchema:sessionSchema).parse(input);}
   const base=helpers.endpoint(suppliedOrigin??(typeof stored?.origin==='string'?stored.origin:'https://www.freightclaw.net'));if(stored&&base.origin!==stored.origin)throw new Failure('session_origin_mismatch');
-  const request=async(path:string,method='GET',body?:unknown,authenticated=true)=>{
+  const request=async(path:string,method='GET',body?:unknown,authenticated=true,acceptBusiness=false)=>{
    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),['customs-packages import','customs-packages publish'].includes(name)?120000:15000);
    try{const response=await(io.fetch??fetch)(new URL('/console/api/v1'+path,base),{method,redirect:'error',credentials:'omit',signal:controller.signal,headers:{accept:'application/json',origin:base.origin,...(authenticated?{cookie:`fc_portal_session=${String(stored!.session_token)}`,'x-csrf-token':String(stored!.csrf_token)}:{}),...(method==='GET'?{}:{'content-type':'application/json','idempotency-key':values['idempotency-key']??randomUUID()})},...(method==='GET'?{}:{body:JSON.stringify(body??{})})});const text=await helpers.readResponse(response,name.startsWith('customs-data ')||name.startsWith('residential-rates ')||name==='documents export'?40*1024*1024:undefined);let data:Record<string,unknown>;try{data=JSON.parse(text) as Record<string,unknown>;}catch{throw new Failure('response_invalid',1);}if(!data||typeof data!=='object')throw new Failure('response_invalid',1);
     if(authenticated&&[stored!.session_token,stored!.csrf_token].some(t=>text.includes(String(t)))&&path!=='/session'&&path!=='/session/organization'&&path!=='/logout')throw new Failure('credential_reflected',1);
-    if(!response.ok){const status=String(data.status);throw new Failure(status==='blocked'?'permission_or_session_denied':status==='needs_input'?'input_or_version_invalid':'service_unavailable',status==='blocked'?5:status==='needs_input'?3:6);}return data;
+    if(!response.ok){if(acceptBusiness&&data.schema_version===V2_VERSION&&typeof data.status==='string'&&data.status!=='success'&&['needs_input','manual_review','blocked','unavailable'].includes(data.status))return data;const status=String(data.status);throw new Failure(status==='blocked'?'permission_or_session_denied':status==='needs_input'?'input_or_version_invalid':'service_unavailable',status==='blocked'?5:status==='needs_input'?3:6);}return data;
    }finally{clearTimeout(timer);}
   };
   const save=async(value:unknown,create=false)=>{await mkdir(dirname(filename),{recursive:true,mode:0o700});const file=await open(filename,create?'wx':constants.O_WRONLY|constants.O_NOFOLLOW,0o600);try{const st=await file.stat();if(!st.isFile()||process.platform!=='win32'&&((st.mode&0o077)!==0||st.uid!==process.getuid?.()))throw new Failure('session_file_permissions');await file.truncate(0);await file.writeFile(JSON.stringify(value));await file.sync();}finally{await file.close();}};
@@ -98,10 +103,22 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   const command=map.find(c=>c[0]===name);if(!command)throw new Failure('command_unknown');
   let path:string=command[2];if(path.includes(':id')){if(!values.id||!/^[A-Za-z0-9_-]{1,128}$/u.test(values.id))throw new Failure('id_required');path=path.replace(':id',encodeURIComponent(values.id));}else if(values.id)throw new Failure('unexpected_id');
   let input:unknown={};if(values.input){input=helpers.parseJson(values.input==='-'?await helpers.readStdin((io.stdin??process.stdin) as NodeJS.ReadStream,name.startsWith("customs-data ")||name.startsWith("residential-rates ")?16*1024*1024:name==='schedules save'||name==='terminals save'?512*1024:name==='quote extract'||name==='quote shared-preview'||name.startsWith('documents ')?131072:15000):await helpers.readFileBounded(values.input,name.startsWith("customs-data ")||name.startsWith("residential-rates ")?16*1024*1024:name==='schedules save'||name==='terminals save'?512*1024:name==='quote extract'||name==='quote shared-preview'||name.startsWith('documents ')?131072:32768,name==="freightcom save"));}if(!input||typeof input!=='object'||Array.isArray(input))throw new Failure('input_invalid');
-  if(!validCaseInput(name,input)||schemas[name]&&!schemas[name].safeParse(input).success)throw new Failure('input_schema_invalid');
+  const documentAction=name.startsWith('documents ')?name.split(' ')[1]:undefined,requestedVersion=typeof input==='object'&&input!==null?(input as {contract_version?:unknown}).contract_version:undefined;
+  const linkedRequest=documentAction!==undefined&&requestedVersion===INQUIRY_QUOTE_LINK_VERSION,caseLinkedRequest=name==='cases get'&&requestedVersion!==undefined;
+  if(documentAction!==undefined&&requestedVersion!==undefined&&!linkedRequest)throw new Failure('input_schema_invalid');
+  if(caseLinkedRequest&&!caseLinkInputSchema.safeParse(input).success)throw new Failure('input_schema_invalid');
+  if(linkedRequest){const validator=linkedInputValidators[documentAction];if(!validator||!validator(input))throw new Failure('input_schema_invalid');}
+  else if(!caseLinkedRequest&&(!validCaseInput(name,input)||schemas[name]&&!schemas[name].safeParse(input).success))throw new Failure('input_schema_invalid');
   if(command[1]==='POST'&&!path.startsWith('/business/')&&!['schedules query','terminals query','documents list','customs-packages browse','documents get','documents preview','documents native-prepare','documents export'].includes(name)&&(!values['idempotency-key']||!/^[A-Za-z0-9._:-]{16,128}$/u.test(values['idempotency-key'])))throw new Failure('idempotency_key_required');
   if(command[1]==='GET'){const query=new URLSearchParams();for(const[k,v]of Object.entries(name==='customs-data browse'||name==='quote shared-preview'||tableCommand?{}:input)){if(!['string','number','boolean'].includes(typeof v))throw new Failure('query_invalid');query.set(k,String(v));}if(query.size)path+='?'+query.toString();}
-  const response=await request(path,command[1],path.startsWith('/business/')?{input}:input);
+  const response=await request(path,command[1],path.startsWith('/business/')?{input}:input,true,linkedRequest);
+  if(linkedRequest){
+   const status=String(response.status),check=(status==='success'||status==='manual_review')?linkedResponseValidators[documentAction]:linkedErrorValidator;
+   if(!check||!check(response)||status==='success'&&response.schema_version!==V2_VERSION)throw new Failure('response_invalid',1);
+   if(name==='documents export'&&status==='success'){const d=response.data as {content_base64:string;byte_length:number;sha256:string;totals:unknown;[key:string]:unknown},bytes=Buffer.from(d.content_base64,'base64');if(bytes.length!==d.byte_length||bytes.subarray(0,5).toString()!=='%PDF-'||createHash('sha256').update(bytes).digest('hex')!==d.sha256)throw new Failure('pdf_integrity_failed',1);const file=await open(values.file!,'wx',0o600);try{await file.writeFile(bytes);await file.sync();}finally{await file.close();}const {content_base64:_bytes,totals:_totals,...metadata}=d;void _bytes;void _totals;emit({...response,data:{...metadata,file:values.file}});return 0;}
+   emit(response);return ({success:0,needs_input:3,manual_review:4,blocked:5,unavailable:6} as Record<string,number>)[status]!;
+  }
+  if(caseLinkedRequest){if(!validateCaseResponseV2(response))throw new Failure('response_invalid',1);}
   if(name==='quote shared-preview'){if(response.authenticated!==true)throw new Failure('session_expired',5);const result=prepareSharedQuote(input);emit({schema_version:'shared-quote@2026-09-08.v1',...result});return result.status==='success'?0:3;}
   if(name.startsWith('schedules ')||name.startsWith('terminals ')){
    const kind=name.startsWith('schedules ')?'schedules':'terminals';
@@ -109,7 +126,7 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
    if(!schema.safeParse(response).success)throw new Failure('response_invalid',1);
   }
   if(name.startsWith('customs-packages ')&&response.status==='success'){if(response.schema_version!=='native-customs-packages@2026-09-08.v1'||!(name==='customs-packages browse'?packageSchemas.browse_output:packageList).safeParse(response.data).success)throw new Failure('response_invalid',1);}
-  if(name.startsWith('documents ')&&response.status==='success'){
+  if(name.startsWith('documents ')&&!linkedRequest&&response.status==='success'){
    if(!documentResponseSchema(name.split(' ')[1]!).safeParse(response).success)throw new Failure('response_invalid',1);
    if(name==='documents export'){const d=exportViewSchema.parse(response.data),bytes=Buffer.from(d.content_base64,'base64');if(bytes.length!==d.byte_length||bytes.subarray(0,5).toString()!=='%PDF-'||createHash('sha256').update(bytes).digest('hex')!==d.sha256)throw new Failure('pdf_integrity_failed',1);const file=await open(values.file!,'wx',0o600);try{await file.writeFile(bytes);await file.sync();}finally{await file.close();}const {content_base64:_bytes,totals:_totals,...metadata}=d;void _bytes;void _totals;emit({status:'success',data:{...metadata,file:values.file}});return 0;}
   }
@@ -117,7 +134,7 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   if(name.startsWith('customs-history ')&&response.data!==null&&!(name.endsWith(' list')?customsHistoryListResponse:customsHistoryGetResponse).safeParse(response).success)throw new Failure('response_invalid',1);
   if(response.status==='success'&&(name.startsWith('customs-data ')||name.startsWith('residential-rates ')||name.startsWith('freightcom '))){const schema=name.startsWith('freightcom ')?freightcomViewSchema:nativeDataSchema(name.startsWith('customs-data ')?'customs':'residential',name.endsWith(' preview'));if(!nativeResponseSchema(schema).safeParse(response).success)throw new Failure('response_invalid',1);}
   if(name.startsWith('channels ')&&response.status==='success'){const dataSchema=name==='channels list'?channelListSchema:name==='channels preview'?channelPreviewSchema:name==='channels history'?channelHistorySchema:channelViewSchema;if(!z.object({schema_version:z.literal(CHANNEL_VERSION),status:z.literal('success'),data:dataSchema,reason_codes:z.array(z.string()).length(0)}).strict().safeParse(response).success)throw new Failure('response_invalid',1);}
-  if(name.startsWith('cases ')&&response.status==='success'&&!validateCaseResponse(response))throw new Failure('response_invalid',1);
+  if(name.startsWith('cases ')&&!caseLinkedRequest&&response.status==='success'&&!validateCaseResponse(response))throw new Failure('response_invalid',1);
   if(tableCommand&&response.status==='success'){
    const f=rateTableInput.parse(input),view=response.data as {version:number;draft:ResidentialRates|null;active_release:{input:ResidentialRates;version:number}|null};
    const source=f.selection==='published'?view.active_release?.input:view.draft;if(!source)throw new Failure('selected_configuration_missing',3);let selected:ResidentialRates;try{selected=selectRateOrigin(source,f.origin);}catch{throw new Failure('rate_origin_not_found',3);}

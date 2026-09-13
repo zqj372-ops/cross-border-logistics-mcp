@@ -1,30 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { createDraft, validateStep, type Draft } from '../../../apps/inquiry/model';
+import type { Draft } from '../../../apps/inquiry/model';
 import { PortalError, type PortalContext } from './contracts';
 import type { PortalService } from './service';
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from './production-persistence';
+import { caseInputSchema, caseUpdateSchema, caseReplySchema, caseListSchema, type CaseStatus } from './case-contracts';
+export { CASE_VERSION, CASE_STATUSES, CASE_LINK_VERSION, CASE_V2_VERSION, caseInputSchema, caseUpdateSchema, caseReplySchema, caseListSchema, caseViewSchema, caseResponseSchema, caseReviewContextSchema, caseViewV2Schema, caseResponseV2Schema } from './case-contracts';
 
-export const CASE_VERSION = 'portal-cases@2026-09-07.v1';
-export const CASE_STATUSES = ['submitted','in_review','needs_input','closed','cancelled'] as const;
-type CaseStatus = typeof CASE_STATUSES[number];
-// Reject control characters while allowing normal multiline notes.
-// eslint-disable-next-line no-control-regex
-const safeText = (max:number) => z.string().max(max).refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value));
-const draftFields = Object.fromEntries(Object.entries(createDraft()).map(([key,value])=>[key, typeof value === 'boolean' ? z.boolean() : Array.isArray(value) ? z.array(z.string().max(40)).min(1).max(5).refine(values=>new Set(values).size===values.length) : safeText(key==='notes'?4000:254)]));
-export const caseInputSchema = z.object(draftFields).strict().superRefine((input,ctx)=>{
- const value=input as Draft;
- if (!['shipping','business'].includes(value.mode)) ctx.addIssue({code:'custom',message:'invalid mode'});
- for(const step of [1,2,3]) for(const [field,message] of Object.entries(validateStep(value,step)))ctx.addIssue({code:'custom',path:[field],message});
-});
-export const caseUpdateSchema = z.object({expected_version:z.number().int().positive(),status:z.enum(CASE_STATUSES),public_note:safeText(2000).refine(v=>v.trim().length>0),internal_note:safeText(2000).default('')}).strict();
-export const caseReplySchema = z.object({expected_version:z.number().int().positive(),message:safeText(2000).refine(v=>v.trim().length>0)}).strict();
-export const caseListSchema = z.object({management:z.boolean().default(false),status:z.enum(CASE_STATUSES).optional(),cursor:z.string().max(300).optional(),limit:z.number().int().min(1).max(50).default(25)}).strict();
 type Scope = {user:string;org:string|null;manager:boolean;platform:boolean};
 type Row = {case_id:string;owner_id:string;organization_id:string|null;status:CaseStatus;version:number;input_json:string;created_at:string;updated_at:string};
 type Event = {event_id:string;version:number;status:CaseStatus;message:string;visibility:'customer'|'internal';actor_label:string;created_at:string};
+type EventWithActor = Event & {actor_id:string;rowid:number};
 export type CaseView = {case_id:string;status:CaseStatus;version:number;input:Draft;created_at:string;updated_at:string;can_manage:boolean;can_reply:boolean;events:Event[]};
+export type CaseViewV2 = CaseView & {review_context:{latest_customer_supplement_ref:string|null}};
+export type QuoteLinkCaseRead = {case_ref:string;owner_id:string;organization_id:string|null;status:CaseStatus;version:number;latest_customer_supplement_ref:string|null};
 const parse = <T>(schema:z.ZodType<T>,input:unknown):T => {const result=schema.safeParse(input);if(!result.success)throw new PortalError('case_input_invalid');return result.data;};
 
 export class CaseStore {
@@ -70,7 +60,12 @@ export class CaseService {
   const events=this.store.db.prepare(`SELECT event_id,version,status,message,visibility,actor_label,created_at FROM business_case_events WHERE case_id=? ${manages?'':"AND visibility='customer'"} ORDER BY version,rowid`).all(row.case_id) as Event[];
   return {case_id:row.case_id,status:row.status,version:row.version,input:JSON.parse(row.input_json) as Draft,created_at:row.created_at,updated_at:row.updated_at,can_manage:manages,can_reply:row.owner_id===scope.user&&row.status==='needs_input',events};
  }
+ private eventsWithActor(caseId:string):EventWithActor[]{return this.store.db.prepare('SELECT rowid,event_id,version,status,message,visibility,actor_label,created_at,actor_id FROM business_case_events WHERE case_id=? ORDER BY version,rowid').all(caseId) as EventWithActor[];}
+ private latestCustomerSupplement(row:Row):string|null{const events=this.eventsWithActor(row.case_id);let latest:string|null=null;for(let index=0;index<events.length;index++){const event=events[index];if(event===undefined||event.version===1&&event.status==='submitted'||event.visibility!=='customer'||event.actor_id!==row.owner_id||event.status!=='in_review')continue;const previous=events[index-1];if(previous===undefined||previous.status!=='needs_input')continue;latest=event.event_id;}return latest;}
  get(ctx:PortalContext,id:string){const scope=this.scope(ctx);return this.view(scope,this.read(scope,id));}
+ getV2(ctx:PortalContext,id:string):CaseViewV2{const scope=this.scope(ctx),row=this.read(scope,id);return {...this.view(scope,row),review_context:{latest_customer_supplement_ref:this.latestCustomerSupplement(row)}};}
+ readForQuoteView(ctx:PortalContext,id:string):QuoteLinkCaseRead{const scope=this.scope(ctx),row=this.read(scope,id);return {case_ref:row.case_id,owner_id:row.owner_id,organization_id:row.organization_id,status:row.status,version:row.version,latest_customer_supplement_ref:this.latestCustomerSupplement(row)};}
+ readForQuoteLink(ctx:PortalContext,id:string):QuoteLinkCaseRead{const scope=this.scope(ctx);if(!scope.manager&&!scope.platform)throw new PortalError('case_management_denied');return this.readForQuoteView(ctx,id);}
  list(ctx:PortalContext,input:unknown){
   const query=parse(caseListSchema,input),scope=this.scope(ctx);
   if(query.management&&!scope.manager)throw new PortalError('case_management_denied');
@@ -129,7 +124,3 @@ export class CaseService {
   });
  }
 }
-
-const caseEventSchema = z.object({event_id:z.string(),version:z.number().int().positive(),status:z.enum(CASE_STATUSES),message:z.string(),visibility:z.enum(['customer','internal']),actor_label:z.string(),created_at:z.string()}).strict();
-export const caseViewSchema = z.object({case_id:z.string(),status:z.enum(CASE_STATUSES),version:z.number().int().positive(),input:caseInputSchema,created_at:z.string(),updated_at:z.string(),can_manage:z.boolean(),can_reply:z.boolean(),events:z.array(caseEventSchema).max(1000)}).strict();
-export const caseResponseSchema = z.object({schema_version:z.literal(CASE_VERSION),status:z.literal('success'),data:z.union([caseViewSchema,z.object({items:z.array(caseViewSchema).max(50),next_cursor:z.string().nullable(),can_manage:z.boolean()}).strict()]),reason_codes:z.array(z.string()).length(0)}).strict();

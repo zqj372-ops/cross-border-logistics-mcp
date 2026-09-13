@@ -133,7 +133,9 @@ async function mutate(path, method, body, options = {}) {
   if (!model.requestKeys.has(fingerprint)) model.requestKeys.set(fingerprint, crypto.randomUUID());
   const value = await request(path, { method, body, key: model.requestKeys.get(fingerprint), ...options });
   // A saved write without verified readback must be retried as the same operation.
-  if (!options.acceptBusiness || value.data?.readback_verified === true || value.data?.preview_changed === true) model.requestKeys.delete(fingerprint);
+  // Linked document writes keep the same key until the request body itself changes; other callers keep their existing semantics.
+  if (options.keepKeyOnSuccess === true) { /* keep */ }
+  else if (!options.acceptBusiness || value.data?.readback_verified === true || value.data?.preview_changed === true) model.requestKeys.delete(fingerprint);
   return value;
 }
 async function refresh() {
@@ -451,9 +453,9 @@ const quoteDocuments = createQuoteDocuments({api:request,mutate,model:()=>model,
 const nativeAdmin = createNativeAdminUi({ canConfigure: manager,api:request,mutate,esc,head,note,icon,formError,model:()=>model,rerender:render});
 const channels = createChannelsUi({api:request,mutate,esc,head,note,icon,formError,model:()=>model,rerender:render});
 const cliAuthorization = createCliAuthorizationUi({api:request,esc,head,note,model:()=>model,rerender:render});
-const cases = createCasesUi({ api: request, mutate, head, panel, empty, note, esc, date, icon, formError, rerender: render, model: () => model });
+const cases = createCasesUi({ api: request, mutate, head, panel, empty, note, esc, date, icon, formError, rerender: render, model: () => model, openLinkedQuote: (link) => { if ((business.isDirty?.() || quoteDocuments.isDirty()) && !window.confirm('当前还有未保存的修改（报价单或运价试算），继续将放弃这些修改。是否继续？')) return false; quoteDocuments.reset(); business.openLinkedCase(link); return true; } });
 const calls = createCallLogUi({ api: request, head, panel, note, esc, date, capName, formError, rerender: render, model: () => model });
-const business = createBusinessWorkspace({canConfigure:manager,quoteDocumentFromPreview: (result,input)=>quoteDocuments.fromQuote(result,input), api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
+const business = createBusinessWorkspace({canConfigure:manager,quoteDocumentFromPreview: (result,input,link)=>{if(quoteDocuments.isDirty()&&!window.confirm('当前报价单还有未保存的修改，继续将在新的报价单中重新开始。是否继续？'))return;quoteDocuments.fromQuote(result,input,link);}, api: request, mutate, head, panel, note, field, input, actions, formError, esc, icon, rerender: render });
 const tax = createTaxWorkspace({ esc, head, panel, field, input, actions, formError, note, icon, api: request, rerender: render });
 const customsHistory = createCustomsHistoryUi({ api: request, esc, head, panel, note, date, formError, rerender: render, restore: (operation, input) => { if (operation === 'customs.query') business.restoreHistory(input); else tax.restoreHistory(input); go(operation === 'customs.query' ? 'customs' : 'tax'); } });
 const developerGuide = createDeveloperGuide({ esc, head, panel, field, input, actions, formError, note, link, mode: () => model.session?.mode, rerender: render });
@@ -486,6 +488,8 @@ document.addEventListener('submit', async (event) => {
   finally { form.dataset.busy = 'false'; button.disabled = form.dataset.form === 'password-login' && !form.dataset.captchaId; button.textContent = previous; }
 });
 document.addEventListener('change', async (event) => {
+  if (cases.change(event)) return;
+  if (quoteDocuments.change(event)) return;
   if (business.change(event)) return;
   if (await nativeAdmin.change(event)) return;
   if (serviceAccess.change(event)) return;

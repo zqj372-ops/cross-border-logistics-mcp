@@ -1,0 +1,800 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "quote-documents@2026-09-13.v2"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "filename": {
+              "type": "string",
+              "pattern": "^quotation-[a-f0-9-]+-v[0-9]+\\.pdf$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "byte_length": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 8388608
+            },
+            "content_base64": {
+              "type": "string",
+              "maxLength": 11184812,
+              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+            },
+            "totals": {
+              "type": "object",
+              "properties": {
+                "rows": {
+                  "maxItems": 60,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "group": {
+                        "type": "string",
+                        "enum": [
+                          "A",
+                          "B",
+                          "C"
+                        ]
+                      },
+                      "quantity": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 20
+                      },
+                      "unit_price": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD",
+                          "CAD",
+                          "CNY"
+                        ]
+                      },
+                      "display": {
+                        "type": "string",
+                        "enum": [
+                          "detail",
+                          "hiddenIncluded",
+                          "hiddenExcluded",
+                          "merged"
+                        ]
+                      },
+                      "merge_name": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "note": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "amount": {
+                        "type": "string",
+                        "pattern": "^[0-9]+\\.[0-9]{2}$"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "description",
+                      "group",
+                      "quantity",
+                      "unit",
+                      "unit_price",
+                      "currency",
+                      "display",
+                      "merge_name",
+                      "note",
+                      "amount"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "by_currency": {
+                  "type": "object",
+                  "properties": {
+                    "USD": {
+                      "type": "string"
+                    },
+                    "CAD": {
+                      "type": "string"
+                    },
+                    "CNY": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "USD",
+                    "CAD",
+                    "CNY"
+                  ],
+                  "additionalProperties": false
+                },
+                "total_cny": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "total_usd": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "calculation_version": {
+                  "type": "string",
+                  "const": "quote-documents-decimal-v1"
+                }
+              },
+              "required": [
+                "rows",
+                "by_currency",
+                "total_cny",
+                "total_usd",
+                "warnings",
+                "calculation_version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "draft",
+            "filename",
+            "sha256",
+            "byte_length",
+            "content_base64",
+            "totals"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "maxItems": 0,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "quote-documents@2026-09-13.v2"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "draft": {
+              "type": "boolean",
+              "const": false
+            },
+            "filename": {
+              "type": "string",
+              "pattern": "^quotation-[a-f0-9-]+-v[0-9]+\\.pdf$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "byte_length": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 8388608
+            },
+            "content_base64": {
+              "type": "string",
+              "maxLength": 11184812,
+              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+            },
+            "totals": {
+              "type": "object",
+              "properties": {
+                "rows": {
+                  "maxItems": 60,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "group": {
+                        "type": "string",
+                        "enum": [
+                          "A",
+                          "B",
+                          "C"
+                        ]
+                      },
+                      "quantity": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 20
+                      },
+                      "unit_price": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD",
+                          "CAD",
+                          "CNY"
+                        ]
+                      },
+                      "display": {
+                        "type": "string",
+                        "enum": [
+                          "detail",
+                          "hiddenIncluded",
+                          "hiddenExcluded",
+                          "merged"
+                        ]
+                      },
+                      "merge_name": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "note": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "amount": {
+                        "type": "string",
+                        "pattern": "^[0-9]+\\.[0-9]{2}$"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "description",
+                      "group",
+                      "quantity",
+                      "unit",
+                      "unit_price",
+                      "currency",
+                      "display",
+                      "merge_name",
+                      "note",
+                      "amount"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "by_currency": {
+                  "type": "object",
+                  "properties": {
+                    "USD": {
+                      "type": "string"
+                    },
+                    "CAD": {
+                      "type": "string"
+                    },
+                    "CNY": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "USD",
+                    "CAD",
+                    "CNY"
+                  ],
+                  "additionalProperties": false
+                },
+                "total_cny": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "total_usd": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "calculation_version": {
+                  "type": "string",
+                  "const": "quote-documents-decimal-v1"
+                }
+              },
+              "required": [
+                "rows",
+                "by_currency",
+                "total_cny",
+                "total_usd",
+                "warnings",
+                "calculation_version"
+              ],
+              "additionalProperties": false
+            },
+            "historical": {
+              "type": "boolean",
+              "const": false
+            },
+            "valid_now": {
+              "type": "boolean",
+              "const": true
+            },
+            "inquiry_case_link_v1": {
+              "type": "object",
+              "properties": {
+                "case_ref": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "reviewed_customer_event_ref": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "case_ref",
+                "reviewed_customer_event_ref"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "draft",
+            "filename",
+            "sha256",
+            "byte_length",
+            "content_base64",
+            "totals",
+            "historical",
+            "valid_now",
+            "inquiry_case_link_v1"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "maxItems": 0,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "quote-documents@2026-09-13.v2"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "filename": {
+              "type": "string",
+              "pattern": "^quotation-[a-f0-9-]+-v[0-9]+\\.pdf$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "byte_length": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 8388608
+            },
+            "content_base64": {
+              "type": "string",
+              "maxLength": 11184812,
+              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+            },
+            "totals": {
+              "type": "object",
+              "properties": {
+                "rows": {
+                  "maxItems": 60,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "group": {
+                        "type": "string",
+                        "enum": [
+                          "A",
+                          "B",
+                          "C"
+                        ]
+                      },
+                      "quantity": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 20
+                      },
+                      "unit_price": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD",
+                          "CAD",
+                          "CNY"
+                        ]
+                      },
+                      "display": {
+                        "type": "string",
+                        "enum": [
+                          "detail",
+                          "hiddenIncluded",
+                          "hiddenExcluded",
+                          "merged"
+                        ]
+                      },
+                      "merge_name": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "note": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "amount": {
+                        "type": "string",
+                        "pattern": "^[0-9]+\\.[0-9]{2}$"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "description",
+                      "group",
+                      "quantity",
+                      "unit",
+                      "unit_price",
+                      "currency",
+                      "display",
+                      "merge_name",
+                      "note",
+                      "amount"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "by_currency": {
+                  "type": "object",
+                  "properties": {
+                    "USD": {
+                      "type": "string"
+                    },
+                    "CAD": {
+                      "type": "string"
+                    },
+                    "CNY": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "USD",
+                    "CAD",
+                    "CNY"
+                  ],
+                  "additionalProperties": false
+                },
+                "total_cny": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "total_usd": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "calculation_version": {
+                  "type": "string",
+                  "const": "quote-documents-decimal-v1"
+                }
+              },
+              "required": [
+                "rows",
+                "by_currency",
+                "total_cny",
+                "total_usd",
+                "warnings",
+                "calculation_version"
+              ],
+              "additionalProperties": false
+            },
+            "historical": {
+              "type": "boolean",
+              "const": true
+            },
+            "valid_now": {
+              "type": "boolean",
+              "const": false
+            },
+            "inquiry_case_link_v1": {
+              "type": "object",
+              "properties": {
+                "case_ref": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "reviewed_customer_event_ref": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "case_ref",
+                "reviewed_customer_event_ref"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "draft",
+            "filename",
+            "sha256",
+            "byte_length",
+            "content_base64",
+            "totals",
+            "historical",
+            "valid_now",
+            "inquiry_case_link_v1"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "const": "inquiry_quote_history_only"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "quote-documents@2026-09-13.v2"
+        },
+        "status": {
+          "type": "string",
+          "const": "manual_review"
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "inquiry_quote_export_expired",
+              "native_quote_source_changed",
+              "native_quote_release_expired",
+              "inquiry_quote_case_review_required",
+              "version_conflict"
+            ]
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

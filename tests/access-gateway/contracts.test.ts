@@ -62,6 +62,7 @@ describe("Unified Access Gateway Draft 2020-12 contracts", () => {
       "portal-cases-input.schema.json",
       "portal-cases-list.schema.json",
       "portal-cases-reply.schema.json",
+      "portal-cases-response-v2.schema.json",
       "portal-cases-response.schema.json",
       "portal-cases-update.schema.json",
       "portal-channels-disable.schema.json",
