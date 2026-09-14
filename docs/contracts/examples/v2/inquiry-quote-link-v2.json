@@ -1,0 +1,2097 @@
+{
+  "schema_version": "inquiry-quote-link-examples@2026-09-13.v1",
+  "reviewed_body_sha256": "3a25b400f289643958936f3a1bd920cf5b1052f3c7138da79f9fe232c2755610",
+  "examples": [
+    {
+      "iql_ids": [
+        "IQL-12"
+      ],
+      "kind": "native-prepare-success",
+      "schema_key": "native-prepare",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "case_ref": "00000000-0000-4000-8000-000000000003",
+        "expected_customer_event_ref": null,
+        "request": {
+          "address_line": "100 King St W",
+          "postal_code": "M5X 1A9",
+          "city": "Toronto",
+          "province": "ON",
+          "cbm": "4.2",
+          "weight_kg": "850",
+          "piece_count": 10,
+          "packaging_type": "carton",
+          "longest_side_cm": "100",
+          "address_type": "commercial",
+          "requires_liftgate": false,
+          "requires_pallet_jack": false,
+          "requires_appointment": false,
+          "explicit_pallet_count": null,
+          "is_stackable": false,
+          "detention_minutes": 0,
+          "extensions": {
+            "origin_v1": "toronto"
+          }
+        },
+        "customer": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture"
+        }
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "input": {
+            "quote_no": "Q-2026-001",
+            "customer_name": "Synthetic Shipper Ltd.",
+            "quote_date": "2026-09-13",
+            "valid_until": "2026-10-13",
+            "origin": "Toronto",
+            "destination": "Toronto, ON",
+            "route_name": "Toronto synthetic",
+            "job_no": "",
+            "so_no": "",
+            "container_no": "",
+            "remark": "Synthetic fixture",
+            "exchange_rates": {
+              "USD": null,
+              "CAD": null
+            },
+            "fee_items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture"
+              }
+            ]
+          },
+          "template_version": 1,
+          "preview_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "preview_expires_at": 1789261200000,
+          "native_quote_v1": {
+            "request": {
+              "address_line": "100 King St W",
+              "postal_code": "M5X 1A9",
+              "city": "Toronto",
+              "province": "ON",
+              "cbm": "4.2",
+              "weight_kg": "850",
+              "piece_count": 10,
+              "packaging_type": "carton",
+              "longest_side_cm": "100",
+              "address_type": "commercial",
+              "requires_liftgate": false,
+              "requires_pallet_jack": false,
+              "requires_appointment": false,
+              "explicit_pallet_count": null,
+              "is_stackable": false,
+              "detention_minutes": 0,
+              "extensions": {
+                "origin_v1": "toronto"
+              }
+            },
+            "preview": {
+              "currency": "USD",
+              "source_type": "zone_matrix",
+              "confidence": 95,
+              "postal_code": "M5X 1A9",
+              "postal_prefix": "M5X",
+              "preferred_city": "Toronto",
+              "city": "Toronto",
+              "province": "ON",
+              "origin": "toronto",
+              "zone": 1,
+              "billing_pallets": 1,
+              "pallet_breakdown": {
+                "volume": 1,
+                "weight": 1
+              },
+              "base_price": "200.00",
+              "fuel": "40.00",
+              "accessorials": {},
+              "total_price": "240.00",
+              "risk_tags": [],
+              "manual_review_required": false,
+              "matched_rule": "synthetic-rule",
+              "matched_by": "fixture",
+              "candidate_count": 1,
+              "match_trace": {},
+              "sales_note": null
+            },
+            "source_refs": [
+              {
+                "source_id": "native-release-2026-09-13",
+                "source_type": "internal_system",
+                "system": "freightclaw-native-quote",
+                "locator": "synthetic://native-release-2026-09-13",
+                "version": "1",
+                "retrieved_at": "2026-09-13T00:00:00.000Z",
+                "authority": "authoritative",
+                "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "release_id": "native-release-2026-09-13",
+            "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "totals": {
+            "rows": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture",
+                "amount": "240.00"
+              }
+            ],
+            "by_currency": {
+              "USD": "240.00",
+              "CAD": "0.00",
+              "CNY": "0.00"
+            },
+            "total_cny": null,
+            "total_usd": null,
+            "warnings": [],
+            "calculation_version": "quote-documents-decimal-v1"
+          },
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-12"
+      ],
+      "kind": "native-prepare-review-required",
+      "schema_key": "native-prepare",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "case_ref": "00000000-0000-4000-8000-000000000003",
+        "expected_customer_event_ref": "00000000-0000-4000-8000-000000000004",
+        "request": {
+          "address_line": "100 King St W",
+          "postal_code": "M5X 1A9",
+          "city": "Toronto",
+          "province": "ON",
+          "cbm": "4.2",
+          "weight_kg": "850",
+          "piece_count": 10,
+          "packaging_type": "carton",
+          "longest_side_cm": "100",
+          "address_type": "commercial",
+          "requires_liftgate": false,
+          "requires_pallet_jack": false,
+          "requires_appointment": false,
+          "explicit_pallet_count": null,
+          "is_stackable": false,
+          "detention_minutes": 0,
+          "extensions": {
+            "origin_v1": "toronto"
+          }
+        },
+        "customer": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture"
+        }
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_case_review_required"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-13"
+      ],
+      "kind": "native-prepare-source-changed",
+      "schema_key": "native-prepare",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "case_ref": "00000000-0000-4000-8000-000000000003",
+        "expected_customer_event_ref": null,
+        "request": {
+          "address_line": "100 King St W",
+          "postal_code": "M5X 1A9",
+          "city": "Toronto",
+          "province": "ON",
+          "cbm": "4.2",
+          "weight_kg": "850",
+          "piece_count": 10,
+          "packaging_type": "carton",
+          "longest_side_cm": "100",
+          "address_type": "commercial",
+          "requires_liftgate": false,
+          "requires_pallet_jack": false,
+          "requires_appointment": false,
+          "explicit_pallet_count": null,
+          "is_stackable": false,
+          "detention_minutes": 0,
+          "extensions": {
+            "origin_v1": "toronto"
+          }
+        },
+        "customer": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture"
+        }
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_source_changed"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-13"
+      ],
+      "kind": "native-prepare-release-expired",
+      "schema_key": "native-prepare",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "case_ref": "00000000-0000-4000-8000-000000000003",
+        "expected_customer_event_ref": null,
+        "request": {
+          "address_line": "100 King St W",
+          "postal_code": "M5X 1A9",
+          "city": "Toronto",
+          "province": "ON",
+          "cbm": "4.2",
+          "weight_kg": "850",
+          "piece_count": 10,
+          "packaging_type": "carton",
+          "longest_side_cm": "100",
+          "address_type": "commercial",
+          "requires_liftgate": false,
+          "requires_pallet_jack": false,
+          "requires_appointment": false,
+          "explicit_pallet_count": null,
+          "is_stackable": false,
+          "detention_minutes": 0,
+          "extensions": {
+            "origin_v1": "toronto"
+          }
+        },
+        "customer": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture"
+        }
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_release_expired"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-17"
+      ],
+      "kind": "save-success",
+      "schema_key": "save",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "input": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "origin": "Toronto",
+          "destination": "Toronto, ON",
+          "route_name": "Toronto synthetic",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture",
+          "exchange_rates": {
+            "USD": null,
+            "CAD": null
+          },
+          "fee_items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000005",
+              "name": "Base freight",
+              "description": "",
+              "group": "A",
+              "quantity": "1",
+              "unit": "shipment",
+              "unit_price": "240.00",
+              "currency": "USD",
+              "display": "detail",
+              "merge_name": "",
+              "note": "Synthetic fixture"
+            }
+          ]
+        },
+        "template_version": 1,
+        "preview_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "preview_expires_at": 1789261200000,
+        "native_quote_v1": {
+          "request": {
+            "address_line": "100 King St W",
+            "postal_code": "M5X 1A9",
+            "city": "Toronto",
+            "province": "ON",
+            "cbm": "4.2",
+            "weight_kg": "850",
+            "piece_count": 10,
+            "packaging_type": "carton",
+            "longest_side_cm": "100",
+            "address_type": "commercial",
+            "requires_liftgate": false,
+            "requires_pallet_jack": false,
+            "requires_appointment": false,
+            "explicit_pallet_count": null,
+            "is_stackable": false,
+            "detention_minutes": 0,
+            "extensions": {
+              "origin_v1": "toronto"
+            }
+          },
+          "preview": {
+            "currency": "USD",
+            "source_type": "zone_matrix",
+            "confidence": 95,
+            "postal_code": "M5X 1A9",
+            "postal_prefix": "M5X",
+            "preferred_city": "Toronto",
+            "city": "Toronto",
+            "province": "ON",
+            "origin": "toronto",
+            "zone": 1,
+            "billing_pallets": 1,
+            "pallet_breakdown": {
+              "volume": 1,
+              "weight": 1
+            },
+            "base_price": "200.00",
+            "fuel": "40.00",
+            "accessorials": {},
+            "total_price": "240.00",
+            "risk_tags": [],
+            "manual_review_required": false,
+            "matched_rule": "synthetic-rule",
+            "matched_by": "fixture",
+            "candidate_count": 1,
+            "match_trace": {},
+            "sales_note": null
+          },
+          "source_refs": [
+            {
+              "source_id": "native-release-2026-09-13",
+              "source_type": "internal_system",
+              "system": "freightclaw-native-quote",
+              "locator": "synthetic://native-release-2026-09-13",
+              "version": "1",
+              "retrieved_at": "2026-09-13T00:00:00.000Z",
+              "authority": "authoritative",
+              "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "release_id": "native-release-2026-09-13",
+          "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "inquiry_case_link_v1": {
+          "case_ref": "00000000-0000-4000-8000-000000000003",
+          "reviewed_customer_event_ref": null
+        },
+        "confirmed": true
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "state": "draft",
+          "input": {
+            "quote_no": "Q-2026-001",
+            "customer_name": "Synthetic Shipper Ltd.",
+            "quote_date": "2026-09-13",
+            "valid_until": "2026-10-13",
+            "origin": "Toronto",
+            "destination": "Toronto, ON",
+            "route_name": "Toronto synthetic",
+            "job_no": "",
+            "so_no": "",
+            "container_no": "",
+            "remark": "Synthetic fixture",
+            "exchange_rates": {
+              "USD": null,
+              "CAD": null
+            },
+            "fee_items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture"
+              }
+            ]
+          },
+          "template": {
+            "company_name": "Synthetic Logistics",
+            "company_address": "1 Fixture Road, Toronto, ON",
+            "company_phone": "+1 416 555 0100",
+            "company_email": "ops@example.invalid",
+            "terms": "Synthetic terms for fixture validation.",
+            "fee_items": []
+          },
+          "template_version": 1,
+          "created_at": "2026-09-13T00:00:00.000Z",
+          "owner_id": "user_fixture",
+          "native_quote_v1": {
+            "request": {
+              "address_line": "100 King St W",
+              "postal_code": "M5X 1A9",
+              "city": "Toronto",
+              "province": "ON",
+              "cbm": "4.2",
+              "weight_kg": "850",
+              "piece_count": 10,
+              "packaging_type": "carton",
+              "longest_side_cm": "100",
+              "address_type": "commercial",
+              "requires_liftgate": false,
+              "requires_pallet_jack": false,
+              "requires_appointment": false,
+              "explicit_pallet_count": null,
+              "is_stackable": false,
+              "detention_minutes": 0,
+              "extensions": {
+                "origin_v1": "toronto"
+              }
+            },
+            "preview": {
+              "currency": "USD",
+              "source_type": "zone_matrix",
+              "confidence": 95,
+              "postal_code": "M5X 1A9",
+              "postal_prefix": "M5X",
+              "preferred_city": "Toronto",
+              "city": "Toronto",
+              "province": "ON",
+              "origin": "toronto",
+              "zone": 1,
+              "billing_pallets": 1,
+              "pallet_breakdown": {
+                "volume": 1,
+                "weight": 1
+              },
+              "base_price": "200.00",
+              "fuel": "40.00",
+              "accessorials": {},
+              "total_price": "240.00",
+              "risk_tags": [],
+              "manual_review_required": false,
+              "matched_rule": "synthetic-rule",
+              "matched_by": "fixture",
+              "candidate_count": 1,
+              "match_trace": {},
+              "sales_note": null
+            },
+            "source_refs": [
+              {
+                "source_id": "native-release-2026-09-13",
+                "source_type": "internal_system",
+                "system": "freightclaw-native-quote",
+                "locator": "synthetic://native-release-2026-09-13",
+                "version": "1",
+                "retrieved_at": "2026-09-13T00:00:00.000Z",
+                "authority": "authoritative",
+                "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "release_id": "native-release-2026-09-13",
+            "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "approval": null,
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "save-case-review",
+      "schema_key": "save",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "input": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "origin": "Toronto",
+          "destination": "Toronto, ON",
+          "route_name": "Toronto synthetic",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture",
+          "exchange_rates": {
+            "USD": null,
+            "CAD": null
+          },
+          "fee_items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000005",
+              "name": "Base freight",
+              "description": "",
+              "group": "A",
+              "quantity": "1",
+              "unit": "shipment",
+              "unit_price": "240.00",
+              "currency": "USD",
+              "display": "detail",
+              "merge_name": "",
+              "note": "Synthetic fixture"
+            }
+          ]
+        },
+        "template_version": 1,
+        "preview_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "preview_expires_at": 1789261200000,
+        "native_quote_v1": {
+          "request": {
+            "address_line": "100 King St W",
+            "postal_code": "M5X 1A9",
+            "city": "Toronto",
+            "province": "ON",
+            "cbm": "4.2",
+            "weight_kg": "850",
+            "piece_count": 10,
+            "packaging_type": "carton",
+            "longest_side_cm": "100",
+            "address_type": "commercial",
+            "requires_liftgate": false,
+            "requires_pallet_jack": false,
+            "requires_appointment": false,
+            "explicit_pallet_count": null,
+            "is_stackable": false,
+            "detention_minutes": 0,
+            "extensions": {
+              "origin_v1": "toronto"
+            }
+          },
+          "preview": {
+            "currency": "USD",
+            "source_type": "zone_matrix",
+            "confidence": 95,
+            "postal_code": "M5X 1A9",
+            "postal_prefix": "M5X",
+            "preferred_city": "Toronto",
+            "city": "Toronto",
+            "province": "ON",
+            "origin": "toronto",
+            "zone": 1,
+            "billing_pallets": 1,
+            "pallet_breakdown": {
+              "volume": 1,
+              "weight": 1
+            },
+            "base_price": "200.00",
+            "fuel": "40.00",
+            "accessorials": {},
+            "total_price": "240.00",
+            "risk_tags": [],
+            "manual_review_required": false,
+            "matched_rule": "synthetic-rule",
+            "matched_by": "fixture",
+            "candidate_count": 1,
+            "match_trace": {},
+            "sales_note": null
+          },
+          "source_refs": [
+            {
+              "source_id": "native-release-2026-09-13",
+              "source_type": "internal_system",
+              "system": "freightclaw-native-quote",
+              "locator": "synthetic://native-release-2026-09-13",
+              "version": "1",
+              "retrieved_at": "2026-09-13T00:00:00.000Z",
+              "authority": "authoritative",
+              "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "release_id": "native-release-2026-09-13",
+          "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "inquiry_case_link_v1": {
+          "case_ref": "00000000-0000-4000-8000-000000000003",
+          "reviewed_customer_event_ref": null
+        },
+        "confirmed": true
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_case_review_required"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "save-preview-stale",
+      "schema_key": "save",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "input": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "origin": "Toronto",
+          "destination": "Toronto, ON",
+          "route_name": "Toronto synthetic",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture",
+          "exchange_rates": {
+            "USD": null,
+            "CAD": null
+          },
+          "fee_items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000005",
+              "name": "Base freight",
+              "description": "",
+              "group": "A",
+              "quantity": "1",
+              "unit": "shipment",
+              "unit_price": "240.00",
+              "currency": "USD",
+              "display": "detail",
+              "merge_name": "",
+              "note": "Synthetic fixture"
+            }
+          ]
+        },
+        "template_version": 1,
+        "preview_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "preview_expires_at": 1789261200000,
+        "native_quote_v1": {
+          "request": {
+            "address_line": "100 King St W",
+            "postal_code": "M5X 1A9",
+            "city": "Toronto",
+            "province": "ON",
+            "cbm": "4.2",
+            "weight_kg": "850",
+            "piece_count": 10,
+            "packaging_type": "carton",
+            "longest_side_cm": "100",
+            "address_type": "commercial",
+            "requires_liftgate": false,
+            "requires_pallet_jack": false,
+            "requires_appointment": false,
+            "explicit_pallet_count": null,
+            "is_stackable": false,
+            "detention_minutes": 0,
+            "extensions": {
+              "origin_v1": "toronto"
+            }
+          },
+          "preview": {
+            "currency": "USD",
+            "source_type": "zone_matrix",
+            "confidence": 95,
+            "postal_code": "M5X 1A9",
+            "postal_prefix": "M5X",
+            "preferred_city": "Toronto",
+            "city": "Toronto",
+            "province": "ON",
+            "origin": "toronto",
+            "zone": 1,
+            "billing_pallets": 1,
+            "pallet_breakdown": {
+              "volume": 1,
+              "weight": 1
+            },
+            "base_price": "200.00",
+            "fuel": "40.00",
+            "accessorials": {},
+            "total_price": "240.00",
+            "risk_tags": [],
+            "manual_review_required": false,
+            "matched_rule": "synthetic-rule",
+            "matched_by": "fixture",
+            "candidate_count": 1,
+            "match_trace": {},
+            "sales_note": null
+          },
+          "source_refs": [
+            {
+              "source_id": "native-release-2026-09-13",
+              "source_type": "internal_system",
+              "system": "freightclaw-native-quote",
+              "locator": "synthetic://native-release-2026-09-13",
+              "version": "1",
+              "retrieved_at": "2026-09-13T00:00:00.000Z",
+              "authority": "authoritative",
+              "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "release_id": "native-release-2026-09-13",
+          "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "inquiry_case_link_v1": {
+          "case_ref": "00000000-0000-4000-8000-000000000003",
+          "reviewed_customer_event_ref": null
+        },
+        "confirmed": true
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "document_preview_stale"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "save-source-changed",
+      "schema_key": "save",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "input": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "origin": "Toronto",
+          "destination": "Toronto, ON",
+          "route_name": "Toronto synthetic",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture",
+          "exchange_rates": {
+            "USD": null,
+            "CAD": null
+          },
+          "fee_items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000005",
+              "name": "Base freight",
+              "description": "",
+              "group": "A",
+              "quantity": "1",
+              "unit": "shipment",
+              "unit_price": "240.00",
+              "currency": "USD",
+              "display": "detail",
+              "merge_name": "",
+              "note": "Synthetic fixture"
+            }
+          ]
+        },
+        "template_version": 1,
+        "preview_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "preview_expires_at": 1789261200000,
+        "native_quote_v1": {
+          "request": {
+            "address_line": "100 King St W",
+            "postal_code": "M5X 1A9",
+            "city": "Toronto",
+            "province": "ON",
+            "cbm": "4.2",
+            "weight_kg": "850",
+            "piece_count": 10,
+            "packaging_type": "carton",
+            "longest_side_cm": "100",
+            "address_type": "commercial",
+            "requires_liftgate": false,
+            "requires_pallet_jack": false,
+            "requires_appointment": false,
+            "explicit_pallet_count": null,
+            "is_stackable": false,
+            "detention_minutes": 0,
+            "extensions": {
+              "origin_v1": "toronto"
+            }
+          },
+          "preview": {
+            "currency": "USD",
+            "source_type": "zone_matrix",
+            "confidence": 95,
+            "postal_code": "M5X 1A9",
+            "postal_prefix": "M5X",
+            "preferred_city": "Toronto",
+            "city": "Toronto",
+            "province": "ON",
+            "origin": "toronto",
+            "zone": 1,
+            "billing_pallets": 1,
+            "pallet_breakdown": {
+              "volume": 1,
+              "weight": 1
+            },
+            "base_price": "200.00",
+            "fuel": "40.00",
+            "accessorials": {},
+            "total_price": "240.00",
+            "risk_tags": [],
+            "manual_review_required": false,
+            "matched_rule": "synthetic-rule",
+            "matched_by": "fixture",
+            "candidate_count": 1,
+            "match_trace": {},
+            "sales_note": null
+          },
+          "source_refs": [
+            {
+              "source_id": "native-release-2026-09-13",
+              "source_type": "internal_system",
+              "system": "freightclaw-native-quote",
+              "locator": "synthetic://native-release-2026-09-13",
+              "version": "1",
+              "retrieved_at": "2026-09-13T00:00:00.000Z",
+              "authority": "authoritative",
+              "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "release_id": "native-release-2026-09-13",
+          "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "inquiry_case_link_v1": {
+          "case_ref": "00000000-0000-4000-8000-000000000003",
+          "reviewed_customer_event_ref": null
+        },
+        "confirmed": true
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_source_changed"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "save-release-expired",
+      "schema_key": "save",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "input": {
+          "quote_no": "Q-2026-001",
+          "customer_name": "Synthetic Shipper Ltd.",
+          "quote_date": "2026-09-13",
+          "valid_until": "2026-10-13",
+          "origin": "Toronto",
+          "destination": "Toronto, ON",
+          "route_name": "Toronto synthetic",
+          "job_no": "",
+          "so_no": "",
+          "container_no": "",
+          "remark": "Synthetic fixture",
+          "exchange_rates": {
+            "USD": null,
+            "CAD": null
+          },
+          "fee_items": [
+            {
+              "id": "00000000-0000-4000-8000-000000000005",
+              "name": "Base freight",
+              "description": "",
+              "group": "A",
+              "quantity": "1",
+              "unit": "shipment",
+              "unit_price": "240.00",
+              "currency": "USD",
+              "display": "detail",
+              "merge_name": "",
+              "note": "Synthetic fixture"
+            }
+          ]
+        },
+        "template_version": 1,
+        "preview_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "preview_expires_at": 1789261200000,
+        "native_quote_v1": {
+          "request": {
+            "address_line": "100 King St W",
+            "postal_code": "M5X 1A9",
+            "city": "Toronto",
+            "province": "ON",
+            "cbm": "4.2",
+            "weight_kg": "850",
+            "piece_count": 10,
+            "packaging_type": "carton",
+            "longest_side_cm": "100",
+            "address_type": "commercial",
+            "requires_liftgate": false,
+            "requires_pallet_jack": false,
+            "requires_appointment": false,
+            "explicit_pallet_count": null,
+            "is_stackable": false,
+            "detention_minutes": 0,
+            "extensions": {
+              "origin_v1": "toronto"
+            }
+          },
+          "preview": {
+            "currency": "USD",
+            "source_type": "zone_matrix",
+            "confidence": 95,
+            "postal_code": "M5X 1A9",
+            "postal_prefix": "M5X",
+            "preferred_city": "Toronto",
+            "city": "Toronto",
+            "province": "ON",
+            "origin": "toronto",
+            "zone": 1,
+            "billing_pallets": 1,
+            "pallet_breakdown": {
+              "volume": 1,
+              "weight": 1
+            },
+            "base_price": "200.00",
+            "fuel": "40.00",
+            "accessorials": {},
+            "total_price": "240.00",
+            "risk_tags": [],
+            "manual_review_required": false,
+            "matched_rule": "synthetic-rule",
+            "matched_by": "fixture",
+            "candidate_count": 1,
+            "match_trace": {},
+            "sales_note": null
+          },
+          "source_refs": [
+            {
+              "source_id": "native-release-2026-09-13",
+              "source_type": "internal_system",
+              "system": "freightclaw-native-quote",
+              "locator": "synthetic://native-release-2026-09-13",
+              "version": "1",
+              "retrieved_at": "2026-09-13T00:00:00.000Z",
+              "authority": "authoritative",
+              "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "release_id": "native-release-2026-09-13",
+          "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "inquiry_case_link_v1": {
+          "case_ref": "00000000-0000-4000-8000-000000000003",
+          "reviewed_customer_event_ref": null
+        },
+        "confirmed": true
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_release_expired"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-17"
+      ],
+      "kind": "get-linked-success",
+      "schema_key": "get",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "state": "draft",
+          "input": {
+            "quote_no": "Q-2026-001",
+            "customer_name": "Synthetic Shipper Ltd.",
+            "quote_date": "2026-09-13",
+            "valid_until": "2026-10-13",
+            "origin": "Toronto",
+            "destination": "Toronto, ON",
+            "route_name": "Toronto synthetic",
+            "job_no": "",
+            "so_no": "",
+            "container_no": "",
+            "remark": "Synthetic fixture",
+            "exchange_rates": {
+              "USD": null,
+              "CAD": null
+            },
+            "fee_items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture"
+              }
+            ]
+          },
+          "template": {
+            "company_name": "Synthetic Logistics",
+            "company_address": "1 Fixture Road, Toronto, ON",
+            "company_phone": "+1 416 555 0100",
+            "company_email": "ops@example.invalid",
+            "terms": "Synthetic terms for fixture validation.",
+            "fee_items": []
+          },
+          "template_version": 1,
+          "created_at": "2026-09-13T00:00:00.000Z",
+          "owner_id": "user_fixture",
+          "native_quote_v1": {
+            "request": {
+              "address_line": "100 King St W",
+              "postal_code": "M5X 1A9",
+              "city": "Toronto",
+              "province": "ON",
+              "cbm": "4.2",
+              "weight_kg": "850",
+              "piece_count": 10,
+              "packaging_type": "carton",
+              "longest_side_cm": "100",
+              "address_type": "commercial",
+              "requires_liftgate": false,
+              "requires_pallet_jack": false,
+              "requires_appointment": false,
+              "explicit_pallet_count": null,
+              "is_stackable": false,
+              "detention_minutes": 0,
+              "extensions": {
+                "origin_v1": "toronto"
+              }
+            },
+            "preview": {
+              "currency": "USD",
+              "source_type": "zone_matrix",
+              "confidence": 95,
+              "postal_code": "M5X 1A9",
+              "postal_prefix": "M5X",
+              "preferred_city": "Toronto",
+              "city": "Toronto",
+              "province": "ON",
+              "origin": "toronto",
+              "zone": 1,
+              "billing_pallets": 1,
+              "pallet_breakdown": {
+                "volume": 1,
+                "weight": 1
+              },
+              "base_price": "200.00",
+              "fuel": "40.00",
+              "accessorials": {},
+              "total_price": "240.00",
+              "risk_tags": [],
+              "manual_review_required": false,
+              "matched_rule": "synthetic-rule",
+              "matched_by": "fixture",
+              "candidate_count": 1,
+              "match_trace": {},
+              "sales_note": null
+            },
+            "source_refs": [
+              {
+                "source_id": "native-release-2026-09-13",
+                "source_type": "internal_system",
+                "system": "freightclaw-native-quote",
+                "locator": "synthetic://native-release-2026-09-13",
+                "version": "1",
+                "retrieved_at": "2026-09-13T00:00:00.000Z",
+                "authority": "authoritative",
+                "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "release_id": "native-release-2026-09-13",
+            "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "approval": null,
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-05",
+        "IQL-06"
+      ],
+      "kind": "get-unlinked-v2-success",
+      "schema_key": "get",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "state": "draft",
+          "input": {
+            "quote_no": "Q-2026-001",
+            "customer_name": "Synthetic Shipper Ltd.",
+            "quote_date": "2026-09-13",
+            "valid_until": "2026-10-13",
+            "origin": "Toronto",
+            "destination": "Toronto, ON",
+            "route_name": "Toronto synthetic",
+            "job_no": "",
+            "so_no": "",
+            "container_no": "",
+            "remark": "Synthetic fixture",
+            "exchange_rates": {
+              "USD": null,
+              "CAD": null
+            },
+            "fee_items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture"
+              }
+            ]
+          },
+          "template": {
+            "company_name": "Synthetic Logistics",
+            "company_address": "1 Fixture Road, Toronto, ON",
+            "company_phone": "+1 416 555 0100",
+            "company_email": "ops@example.invalid",
+            "terms": "Synthetic terms for fixture validation.",
+            "fee_items": []
+          },
+          "template_version": 1,
+          "created_at": "2026-09-13T00:00:00.000Z",
+          "owner_id": "user_fixture",
+          "approval": null
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-16"
+      ],
+      "kind": "replay-not-current",
+      "schema_key": "get",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "current_version": 2,
+          "current_state": "approved",
+          "current": false,
+          "committed": true,
+          "replay": true,
+          "historical": true
+        },
+        "reason_codes": [
+          "inquiry_quote_replay_not_current"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-16"
+      ],
+      "kind": "replay-expired",
+      "schema_key": "get",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "committed": true,
+          "replay": true,
+          "valid_now": false,
+          "historical": true
+        },
+        "reason_codes": [
+          "inquiry_quote_replay_expired"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-15"
+      ],
+      "kind": "replay-stale",
+      "schema_key": "get",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "committed": true,
+          "replay": true,
+          "valid_now": false,
+          "historical": true
+        },
+        "reason_codes": [
+          "inquiry_quote_replay_stale"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-05"
+      ],
+      "kind": "approved-linked-document",
+      "schema_key": "approve",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "evidence_ref": "synthetic:evidence",
+        "evidence_version": "1",
+        "review_notes": "Synthetic review",
+        "confirmation": "human_verified_price_and_source"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 2,
+          "state": "approved",
+          "input": {
+            "quote_no": "Q-2026-001",
+            "customer_name": "Synthetic Shipper Ltd.",
+            "quote_date": "2026-09-13",
+            "valid_until": "2026-10-13",
+            "origin": "Toronto",
+            "destination": "Toronto, ON",
+            "route_name": "Toronto synthetic",
+            "job_no": "",
+            "so_no": "",
+            "container_no": "",
+            "remark": "Synthetic fixture",
+            "exchange_rates": {
+              "USD": null,
+              "CAD": null
+            },
+            "fee_items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture"
+              }
+            ]
+          },
+          "template": {
+            "company_name": "Synthetic Logistics",
+            "company_address": "1 Fixture Road, Toronto, ON",
+            "company_phone": "+1 416 555 0100",
+            "company_email": "ops@example.invalid",
+            "terms": "Synthetic terms for fixture validation.",
+            "fee_items": []
+          },
+          "template_version": 1,
+          "created_at": "2026-09-13T00:00:00.000Z",
+          "owner_id": "user_fixture",
+          "native_quote_v1": {
+            "request": {
+              "address_line": "100 King St W",
+              "postal_code": "M5X 1A9",
+              "city": "Toronto",
+              "province": "ON",
+              "cbm": "4.2",
+              "weight_kg": "850",
+              "piece_count": 10,
+              "packaging_type": "carton",
+              "longest_side_cm": "100",
+              "address_type": "commercial",
+              "requires_liftgate": false,
+              "requires_pallet_jack": false,
+              "requires_appointment": false,
+              "explicit_pallet_count": null,
+              "is_stackable": false,
+              "detention_minutes": 0,
+              "extensions": {
+                "origin_v1": "toronto"
+              }
+            },
+            "preview": {
+              "currency": "USD",
+              "source_type": "zone_matrix",
+              "confidence": 95,
+              "postal_code": "M5X 1A9",
+              "postal_prefix": "M5X",
+              "preferred_city": "Toronto",
+              "city": "Toronto",
+              "province": "ON",
+              "origin": "toronto",
+              "zone": 1,
+              "billing_pallets": 1,
+              "pallet_breakdown": {
+                "volume": 1,
+                "weight": 1
+              },
+              "base_price": "200.00",
+              "fuel": "40.00",
+              "accessorials": {},
+              "total_price": "240.00",
+              "risk_tags": [],
+              "manual_review_required": false,
+              "matched_rule": "synthetic-rule",
+              "matched_by": "fixture",
+              "candidate_count": 1,
+              "match_trace": {},
+              "sales_note": null
+            },
+            "source_refs": [
+              {
+                "source_id": "native-release-2026-09-13",
+                "source_type": "internal_system",
+                "system": "freightclaw-native-quote",
+                "locator": "synthetic://native-release-2026-09-13",
+                "version": "1",
+                "retrieved_at": "2026-09-13T00:00:00.000Z",
+                "authority": "authoritative",
+                "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "release_id": "native-release-2026-09-13",
+            "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "approval": {
+            "evidence_ref": "synthetic:evidence",
+            "evidence_version": "1",
+            "review_notes": "Synthetic review",
+            "actor": "reviewer_fixture",
+            "at": "2026-09-13T00:10:00.000Z"
+          },
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "approve-case-review",
+      "schema_key": "approve",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "evidence_ref": "synthetic:evidence",
+        "evidence_version": "1",
+        "review_notes": "Synthetic review",
+        "confirmation": "human_verified_price_and_source"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_case_review_required"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "approve-preview-stale",
+      "schema_key": "approve",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "evidence_ref": "synthetic:evidence",
+        "evidence_version": "1",
+        "review_notes": "Synthetic review",
+        "confirmation": "human_verified_price_and_source"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "document_preview_stale"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "approve-source-changed",
+      "schema_key": "approve",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "evidence_ref": "synthetic:evidence",
+        "evidence_version": "1",
+        "review_notes": "Synthetic review",
+        "confirmation": "human_verified_price_and_source"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_source_changed"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-14"
+      ],
+      "kind": "approve-release-expired",
+      "schema_key": "approve",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "evidence_ref": "synthetic:evidence",
+        "evidence_version": "1",
+        "review_notes": "Synthetic review",
+        "confirmation": "human_verified_price_and_source"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_release_expired"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-19"
+      ],
+      "kind": "reject-linked-stale-draft",
+      "schema_key": "reject",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "reason": "Synthetic correction"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 2,
+          "state": "rejected",
+          "input": {
+            "quote_no": "Q-2026-001",
+            "customer_name": "Synthetic Shipper Ltd.",
+            "quote_date": "2026-09-13",
+            "valid_until": "2026-10-13",
+            "origin": "Toronto",
+            "destination": "Toronto, ON",
+            "route_name": "Toronto synthetic",
+            "job_no": "",
+            "so_no": "",
+            "container_no": "",
+            "remark": "Synthetic fixture",
+            "exchange_rates": {
+              "USD": null,
+              "CAD": null
+            },
+            "fee_items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture"
+              }
+            ]
+          },
+          "template": {
+            "company_name": "Synthetic Logistics",
+            "company_address": "1 Fixture Road, Toronto, ON",
+            "company_phone": "+1 416 555 0100",
+            "company_email": "ops@example.invalid",
+            "terms": "Synthetic terms for fixture validation.",
+            "fee_items": []
+          },
+          "template_version": 1,
+          "created_at": "2026-09-13T00:00:00.000Z",
+          "owner_id": "user_fixture",
+          "native_quote_v1": {
+            "request": {
+              "address_line": "100 King St W",
+              "postal_code": "M5X 1A9",
+              "city": "Toronto",
+              "province": "ON",
+              "cbm": "4.2",
+              "weight_kg": "850",
+              "piece_count": 10,
+              "packaging_type": "carton",
+              "longest_side_cm": "100",
+              "address_type": "commercial",
+              "requires_liftgate": false,
+              "requires_pallet_jack": false,
+              "requires_appointment": false,
+              "explicit_pallet_count": null,
+              "is_stackable": false,
+              "detention_minutes": 0,
+              "extensions": {
+                "origin_v1": "toronto"
+              }
+            },
+            "preview": {
+              "currency": "USD",
+              "source_type": "zone_matrix",
+              "confidence": 95,
+              "postal_code": "M5X 1A9",
+              "postal_prefix": "M5X",
+              "preferred_city": "Toronto",
+              "city": "Toronto",
+              "province": "ON",
+              "origin": "toronto",
+              "zone": 1,
+              "billing_pallets": 1,
+              "pallet_breakdown": {
+                "volume": 1,
+                "weight": 1
+              },
+              "base_price": "200.00",
+              "fuel": "40.00",
+              "accessorials": {},
+              "total_price": "240.00",
+              "risk_tags": [],
+              "manual_review_required": false,
+              "matched_rule": "synthetic-rule",
+              "matched_by": "fixture",
+              "candidate_count": 1,
+              "match_trace": {},
+              "sales_note": null
+            },
+            "source_refs": [
+              {
+                "source_id": "native-release-2026-09-13",
+                "source_type": "internal_system",
+                "system": "freightclaw-native-quote",
+                "locator": "synthetic://native-release-2026-09-13",
+                "version": "1",
+                "retrieved_at": "2026-09-13T00:00:00.000Z",
+                "authority": "authoritative",
+                "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "release_id": "native-release-2026-09-13",
+            "release_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "rejection": {
+            "reason": "Synthetic rejection",
+            "actor": "reviewer_fixture",
+            "at": "2026-09-13T00:10:00.000Z"
+          },
+          "approval": null,
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-16"
+      ],
+      "kind": "reject-not-current",
+      "schema_key": "reject",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "expected_version": 1,
+        "reason": "Synthetic correction"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 1,
+          "current_version": 2,
+          "current_state": "approved",
+          "current": false,
+          "committed": true,
+          "replay": true,
+          "historical": true
+        },
+        "reason_codes": [
+          "inquiry_quote_replay_not_current"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "formal-export",
+      "schema_key": "export",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "formal"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 2,
+          "draft": false,
+          "filename": "quotation-00000000-0000-4000-8000-000000000002-v2.pdf",
+          "sha256": "d67486fab5991cf4d23b2020af7af457d0c26863f446e859059e72d828400f5e",
+          "byte_length": 150,
+          "content_base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFtdIC9Db3VudCAwID4+CmVuZG9iagp0cmFpbGVyCjw8IC9TaXplIDMgL1Jvb3QgMSAwIFIgPj4KJSVFT0YK",
+          "totals": {
+            "rows": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture",
+                "amount": "240.00"
+              }
+            ],
+            "by_currency": {
+              "USD": "240.00",
+              "CAD": "0.00",
+              "CNY": "0.00"
+            },
+            "total_cny": null,
+            "total_usd": null,
+            "warnings": [],
+            "calculation_version": "quote-documents-decimal-v1"
+          },
+          "historical": false,
+          "valid_now": true,
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": []
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "history-export",
+      "schema_key": "export",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "history"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "version": 2,
+          "draft": true,
+          "filename": "quotation-00000000-0000-4000-8000-000000000002-v2.pdf",
+          "sha256": "d67486fab5991cf4d23b2020af7af457d0c26863f446e859059e72d828400f5e",
+          "byte_length": 150,
+          "content_base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFtdIC9Db3VudCAwID4+CmVuZG9iagp0cmFpbGVyCjw8IC9TaXplIDMgL1Jvb3QgMSAwIFIgPj4KJSVFT0YK",
+          "totals": {
+            "rows": [
+              {
+                "id": "00000000-0000-4000-8000-000000000005",
+                "name": "Base freight",
+                "description": "",
+                "group": "A",
+                "quantity": "1",
+                "unit": "shipment",
+                "unit_price": "240.00",
+                "currency": "USD",
+                "display": "detail",
+                "merge_name": "",
+                "note": "Synthetic fixture",
+                "amount": "240.00"
+              }
+            ],
+            "by_currency": {
+              "USD": "240.00",
+              "CAD": "0.00",
+              "CNY": "0.00"
+            },
+            "total_cny": null,
+            "total_usd": null,
+            "warnings": [],
+            "calculation_version": "quote-documents-decimal-v1"
+          },
+          "historical": true,
+          "valid_now": false,
+          "inquiry_case_link_v1": {
+            "case_ref": "00000000-0000-4000-8000-000000000003",
+            "reviewed_customer_event_ref": null
+          }
+        },
+        "reason_codes": [
+          "inquiry_quote_history_only"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "export-expired",
+      "schema_key": "export",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "formal"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_export_expired"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "export-source-changed",
+      "schema_key": "export",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "formal"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_source_changed"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "export-release-expired",
+      "schema_key": "export",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "formal"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "native_quote_release_expired"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "export-case-review",
+      "schema_key": "export",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "formal"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "manual_review",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_case_review_required"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-02"
+      ],
+      "kind": "history-unavailable",
+      "schema_key": "error",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "mode": "history"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "unavailable",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_history_bytes_missing"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-18"
+      ],
+      "kind": "v1-reject-linked-blocked",
+      "schema_key": "error",
+      "request": {
+        "id": "00000000-0000-4000-8000-000000000002"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "blocked",
+        "data": null,
+        "reason_codes": [
+          "document_contract_version_required"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-05"
+      ],
+      "kind": "v2-input-invalid",
+      "schema_key": "error",
+      "request": {
+        "contract_version": "inquiry-quote-link@2026-09-13.v1"
+      },
+      "envelope": {
+        "schema_version": "quote-documents@2026-09-13.v2",
+        "status": "needs_input",
+        "data": null,
+        "reason_codes": [
+          "inquiry_quote_link_input_invalid"
+        ]
+      }
+    },
+    {
+      "iql_ids": [
+        "IQL-20"
+      ],
+      "kind": "case-review-context",
+      "schema_key": "case",
+      "request": {
+        "case_id": "00000000-0000-4000-8000-000000000003",
+        "contract_version": "inquiry-quote-link@2026-09-13.v1"
+      },
+      "envelope": {
+        "schema_version": "portal-cases@2026-09-13.v2",
+        "status": "success",
+        "data": {
+          "case_id": "00000000-0000-4000-8000-000000000003",
+          "status": "in_review",
+          "version": 2,
+          "input": {
+            "mode": "shipping",
+            "services": [
+              "delivery"
+            ],
+            "transportMode": "lcl",
+            "origin": "",
+            "destination": "Toronto, ON M5X 1A9",
+            "product": "Furniture",
+            "readyDate": "2026-09-20",
+            "containerType": "",
+            "containerCount": "",
+            "containerCountUnknown": false,
+            "volume": "4.2",
+            "volumeUnknown": false,
+            "weight": "850",
+            "weightUnknown": false,
+            "cargoType": "normal",
+            "palletCount": "",
+            "skuCount": "",
+            "deliverySite": "commercial",
+            "unloading": "self",
+            "businessRegion": "",
+            "notes": "",
+            "contactName": "Synthetic User",
+            "email": "synthetic@example.invalid",
+            "company": "Synthetic Shipper Ltd.",
+            "phone": "+1 416 555 0100",
+            "consent": true
+          },
+          "created_at": "2026-09-13T00:00:00.000Z",
+          "updated_at": "2026-09-13T00:05:00.000Z",
+          "can_manage": true,
+          "can_reply": false,
+          "events": [
+            {
+              "event_id": "00000000-0000-4000-8000-000000000004",
+              "version": 2,
+              "status": "in_review",
+              "message": "Synthetic customer supplement",
+              "visibility": "customer",
+              "actor_label": "客户",
+              "created_at": "2026-09-13T00:05:00.000Z"
+            }
+          ],
+          "review_context": {
+            "latest_customer_supplement_ref": "00000000-0000-4000-8000-000000000004"
+          }
+        },
+        "reason_codes": []
+      }
+    }
+  ]
+}

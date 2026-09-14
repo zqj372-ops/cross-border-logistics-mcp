@@ -11,9 +11,9 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  for(const ref of refs){expect(ref.startsWith("#/components/schemas/")).toBe(true);let value:unknown=document;for(const part of ref.slice(2).split("/")){value=(value as Record<string,unknown>)[part];}expect(value,ref).toBeDefined();}
  const paths=document.paths as Record<string,{post?:{requestBody:{content:{"application/json":{schema:unknown}}}}}>;
  // New personnel routes must not silently become machine/API-Key capabilities.
- const personnel=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/quote-documents/')||path.startsWith('/console/api/v1/admin/customs-packages')||path.startsWith('/console/api/v1/admin/sailing-schedules')||path.startsWith('/console/api/v1/admin/terminal-efficiency')||path.startsWith('/console/api/v1/maritime/'));
+ const personnel=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/quote-documents/')||path.startsWith('/console/api/v1/cases/')||path.startsWith('/console/api/v1/admin/customs-packages')||path.startsWith('/console/api/v1/admin/sailing-schedules')||path.startsWith('/console/api/v1/admin/terminal-efficiency')||path.startsWith('/console/api/v1/maritime/'));
  expect(Object.keys(paths).filter(path=>!personnel.includes(path))).toHaveLength(17);
- expect(personnel).toHaveLength(29);
+ expect(personnel).toHaveLength(30);
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
   for(const [method,operation] of Object.entries(methods)){
@@ -22,6 +22,21 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
    if(/\/(?:save|config-save|approve|reject|import|publish|disable|rollback)$/u.test(path))expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'Idempotency-Key',required:true})]));
   }
  }
+ const caseRead=(paths['/console/api/v1/cases/{case_id}'] as unknown as {get:{parameters:{name:string;required?:boolean;schema:Record<string,unknown>}[];responses:Record<string,{content:{'application/json':{schema:unknown}}}>}}).get;
+ expect(caseRead.parameters.find(parameter=>parameter.name==='contract_version')?.schema).toEqual({const:'inquiry-quote-link@2026-09-13.v1'});
+ expect(JSON.stringify(caseRead.responses['200'])).toContain('#/components/schemas/AccessPortalCasesResponseV2');
+ const components=(document as {components:{schemas:Record<string,unknown>}}).components;const linkedRequest=components.schemas.LinkedSaveV2 as {properties:{contract_version:{const:string}};additionalProperties:boolean};
+ expect(linkedRequest.properties.contract_version.const).toBe('inquiry-quote-link@2026-09-13.v1');
+ expect(linkedRequest.additionalProperties).toBe(false);
+ const saveBody=paths['/console/api/v1/quote-documents/save']!.post!.requestBody.content['application/json'].schema as {oneOf:{$ref?:string}[]};
+ expect(saveBody.oneOf.some(entry=>entry.$ref==='#/components/schemas/LinkedSaveV2')).toBe(true);
+ const saveResponses=(paths['/console/api/v1/quote-documents/save'] as unknown as {post:{responses:Record<string,unknown>}}).post.responses,saveErrors=JSON.stringify(saveResponses);
+ expect(saveErrors).toContain('#/components/schemas/PortalError');
+ expect(saveErrors).toContain('#/components/schemas/LinkedErrorV2Response');
+ // Real HTTP statuses observed in the loopback linked chain (401 session, 403 forgery/scope, 404 invisibility, 409 v1-linked/terminal/idempotency/version, 503 dependencies).
+ for(const status of ['400','401','403','404','409','503'])expect(saveResponses[status],`documents save ${status}`).toBeDefined();
+ const caseReadResponses=(paths['/console/api/v1/cases/{case_id}'] as unknown as {get:{responses:Record<string,unknown>}}).get.responses;
+ for(const status of ['200','400','401','403','404','503'])expect(caseReadResponses[status],`case read ${status}`).toBeDefined();
  const ajv=new Ajv2020({strict:false});addFormats(ajv);
  ajv.addSchema({...document,$id:"https://test.invalid/openapi"});
  const pointer="https://test.invalid/openapi#/paths/~1api~1v2~1business~1customs~1query/post/requestBody/content/application~1json/schema";
