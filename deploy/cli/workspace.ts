@@ -23,7 +23,7 @@ import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CliIO } from './cli';
-import {CASE_LINK_VERSION} from '../../services/access-gateway/portal/cases';
+import {CASE_LINK_VERSION} from '../../services/access-gateway/portal/case-contracts';
 import { channelInput, channelSave, channelPublish, channelDisable, channelRollback, channelViewSchema, channelListSchema, channelPreviewSchema, channelHistorySchema, CHANNEL_VERSION } from '../../services/access-gateway/portal/channel-contracts';
 type Helpers={endpoint:(s:string)=>URL;readFileBounded:(s:string,n:number,secret?:boolean)=>Promise<Buffer>;readStdin:(s:NodeJS.ReadStream,n:number)=>Promise<Buffer>;parseJson:(b:Uint8Array)=>unknown;readResponse:(r:Response,maximum?:number)=>Promise<string>};
 const maritimeCommands=(['schedules','terminals'] as const).flatMap(kind=>{

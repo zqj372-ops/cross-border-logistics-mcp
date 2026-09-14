@@ -57,6 +57,7 @@ describe("standalone CLI installation", () => {
     expect((await installed(["--version"])).stdout.trim()).toBe("0.1.0");
     const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { dependencies?: unknown };
     expect(metadata.dependencies).toBeUndefined();
+    expect(await readFile(join(packageRoot, "bin/freightclaw.mjs"), "utf8")).not.toContain("node:sqlite");
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
     expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(74);

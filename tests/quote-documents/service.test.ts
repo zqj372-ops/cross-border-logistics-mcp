@@ -5,6 +5,7 @@ import {describe,it,expect,afterEach,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {createHash,randomUUID} from 'node:crypto';
 import {DocumentService,DocumentStore,isLinkedReplayResult,type DocumentView,type LinkedWriteResult} from '../../services/quote-documents/service';
 import {CaseService,CaseStore} from '../../services/access-gateway/portal/cases';
@@ -42,6 +43,31 @@ describe('native quote record binding',()=>{
 it('marks the binding and rejection storage format for rollback safety',()=>{const {store}=setup();expect(store.db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);});
 
 it('reopens version 2 without losing stored documents',()=>{const {store}=setup();const again=new DocumentStore(store.path);expect(again.db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);again.close();});
+
+it('migrates the historical v1 schema without changing stored documents or PDF bytes',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'quote-docs-v1-')),path=join(dir,'documents.sqlite'),legacy=new DatabaseSync(path),id=randomUUID(),input=sample(),pdf=Buffer.from('%PDF-1.7\n'+'.'.repeat(120)),pdfSha=createHash('sha256').update(pdf).digest('hex');dirs.push(dir);
+ const document:DocumentView={id,version:2,state:'approved',input,template,template_version:1,created_at:'2026-09-08T00:00:00.000Z',owner_id:'owner-v1',approval:{evidence_ref:'manual:v1-review',evidence_version:'1',review_notes:'historical approval',actor:'owner-v1',at:'2026-09-08T00:05:00.000Z'}};
+ legacy.exec(`CREATE TABLE portal_database_identity(singleton INTEGER PRIMARY KEY CHECK(singleton=1),application_id TEXT NOT NULL);
+ CREATE TABLE document_configs(org TEXT PRIMARY KEY,version INTEGER NOT NULL,input TEXT NOT NULL);
+ CREATE TABLE quote_documents(id TEXT PRIMARY KEY,org TEXT NOT NULL,owner TEXT NOT NULL,payload TEXT NOT NULL);
+ CREATE TABLE document_idempotency(scope TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scope,key));
+ CREATE TABLE document_audit(id TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL);
+ CREATE TABLE document_pdfs(id TEXT NOT NULL,version INTEGER NOT NULL,sha256 TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(id,version));
+ PRAGMA user_version=1;`);
+ legacy.prepare('INSERT INTO portal_database_identity VALUES(1,?)').run('freightclaw-quote-documents');
+ legacy.prepare('INSERT INTO document_configs VALUES(?,?,?)').run('org-v1',1,JSON.stringify(template));
+ legacy.prepare('INSERT INTO quote_documents VALUES(?,?,?,?)').run(id,'org-v1','owner-v1',JSON.stringify(document));
+ legacy.prepare('INSERT INTO document_idempotency VALUES(?,?,?,?)').run('["org-v1","owner-v1","approve"]','legacy-idempotency',createHash('sha256').update('legacy').digest('hex'),JSON.stringify(document));
+ legacy.prepare('INSERT INTO document_audit VALUES(?,?,?,?,?,?)').run('audit-v1','org-v1','owner-v1','approve',createHash('sha256').update('audit').digest('hex'),'2026-09-08T00:05:00.000Z');
+ legacy.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(id,2,pdfSha,pdf);legacy.close();
+ const store=new DocumentStore(path);stores.push(store);
+ expect(store.db.prepare('PRAGMA user_version').get()).toEqual({user_version:2});
+ expect(store.db.prepare('SELECT version,input FROM document_configs WHERE org=?').get('org-v1')).toEqual({version:1,input:JSON.stringify(template)});
+ expect(JSON.parse((store.db.prepare('SELECT payload FROM quote_documents WHERE id=?').get(id) as {payload:string}).payload)).toEqual(document);
+ const cached=store.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=?').get(id,2) as {sha256:string;bytes:Uint8Array};expect(cached.sha256).toBe(pdfSha);expect(Buffer.from(cached.bytes)).toEqual(pdf);
+ expect(store.db.prepare('SELECT action,actor FROM document_audit WHERE id=?').get('audit-v1')).toEqual({action:'approve',actor:'owner-v1'});
+ expect(store.db.prepare('SELECT result FROM document_idempotency WHERE key=?').get('legacy-idempotency')).toEqual({result:JSON.stringify(document)});
+});
 
 describe('linked inquiry quote flow',()=>{
  function linkedSetup(){
