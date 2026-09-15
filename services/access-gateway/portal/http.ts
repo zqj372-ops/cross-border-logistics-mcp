@@ -169,6 +169,8 @@ const WORKFLOW_REASON_OUTCOMES:Record<string,{http:number;status:'needs_input'|'
   document_preview_stale:{http:409,status:'blocked'},
   document_template_missing:{http:409,status:'blocked'},
   document_expired:{http:409,status:'blocked'},
+  document_v3_rollback_read_only:{http:409,status:'blocked'},
+  document_v3_upgrade_ownership_required:{http:409,status:'blocked'},
   version_conflict:{http:409,status:'blocked'},
   document_state_not_editable:{http:409,status:'blocked'},
   document_management_denied:{http:403,status:'blocked'},

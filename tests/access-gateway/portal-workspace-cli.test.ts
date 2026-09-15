@@ -95,7 +95,7 @@ it('selects the v3 personnel contract, validates its response and preserves manu
   next={schema_version:'quote-documents@2026-09-15.v3',status:'success',data:{items:[],next_cursor:null},reason_codes:[]};nextStatus=200;
   expect(await runCli(['workspace','documents','list','--session-file',filename,'--input',requestFile],io)).toBe(0);
   expect(requests).toHaveLength(1);expect(requests[0]!.body).toEqual(request);
-  next={schema_version:'quote-documents@2026-09-15.v3',status:'manual_review',data:{replay:true,committed:true,current:false,historical:true,id:'00000000-0000-4000-8000-000000000001',version:1,revision_id:'00000000-0000-4000-8000-000000000002',current_version:2,current_revision_id:'00000000-0000-4000-8000-000000000003',current_state:'draft'},reason_codes:['document_replay_not_current']};nextStatus=200;
+  next={schema_version:'quote-documents@2026-09-15.v3',status:'manual_review',data:{replay:true,committed:true,current:false,historical:true,valid_now:false,id:'00000000-0000-4000-8000-000000000001',version:1,revision_id:'00000000-0000-4000-8000-000000000002',current_version:2,current_revision_id:'00000000-0000-4000-8000-000000000003',current_state:'draft'},reason_codes:['document_replay_not_current']};nextStatus=200;
   expect(await runCli(['workspace','documents','list','--session-file',filename,'--input',requestFile],io)).toBe(4);
   expect(output).toContain('document_replay_not_current');
  }finally{await rm(root,{recursive:true,force:true});}

@@ -81,7 +81,7 @@ let nativeStore:NativeAdminStore|undefined,nativeFreightcom:NativeFreightcomServ
  if(environment.PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH){
   if(shared)throw new Error("documents_shared_store_unavailable");
   documentStore=new DocumentStore(environment.PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH);
-  documentWorkflowStore=new DocumentWorkflowStore(documentStore);
+  documentWorkflowStore=new DocumentWorkflowStore(documentStore,{oldWritersStopped:environment.PORTAL_QUOTE_WORKFLOW_OLD_WRITERS_STOPPED==='true'});
   const documentService=new DocumentService(documentStore,portal,undefined,nativeStore?{business,current:org=>nativeStore!.current(org,'residential')}:undefined,caseService);
   documentWorkflowService=new DocumentWorkflowService(documentWorkflowStore,documentService,portal);
  }

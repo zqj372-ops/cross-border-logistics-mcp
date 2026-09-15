@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {zoneInputSchema,zoneDataSchema,sourceRefSchema} from '../access-gateway/portal/business/quote-client';
+import {nativeQuoteBindingSchema} from './contracts';
 
 export const WORKFLOW_REQUEST_VERSION='quote-documents-workflow@2026-09-15.v1' as const;
 export const WORKFLOW_RESPONSE_VERSION='quote-documents@2026-09-15.v3' as const;
@@ -118,6 +119,7 @@ export const nativeBindingV3Schema=z.object({
   binding_hash:z.string().regex(/^[a-f0-9]{64}$/u),
   provenance:z.enum(['v3_server_signed','legacy_v1_v2']),
 }).strict();
+export const legacyNativeBindingSchema=nativeQuoteBindingSchema;
 
 export const inquiryCaseLinkSchema=z.object({
   case_ref:uuid,
@@ -310,7 +312,7 @@ export const workflowDocumentViewSchema=documentSummarySchema.extend({
   completeness:completenessSchema,
   template:z.object({company_name:text(),company_address:text(500),company_phone:text(50),company_email:text(254),terms:text(4000)}).strict(),
   template_version:z.number().int().positive(),
-  native_quote_v1:nativeBindingV3Schema.nullable(),
+  native_quote_v1:z.union([nativeBindingV3Schema,legacyNativeBindingSchema]).nullable(),
   approval:z.union([approvalViewSchema,legacyApprovalViewSchema]).nullable(),
   approval_provenance:approvalProvenanceSchema.nullable(),
   rejection:z.object({reason:z.string(),actor:z.string(),at:z.iso.datetime()}).strict().nullable(),
@@ -368,6 +370,7 @@ export const replayViewSchema=z.object({
   committed:z.literal(true),
   current:z.literal(false),
   historical:z.literal(true),
+  valid_now:z.literal(false),
   id:uuid,
   version:z.number().int().positive(),
   revision_id:uuid.nullable(),
@@ -384,6 +387,8 @@ export const workflowReasonCodeSchema=z.enum([
   'document_preview_stale',
   'document_template_missing',
   'document_expired',
+  'document_v3_rollback_read_only',
+  'document_v3_upgrade_ownership_required',
   'version_conflict',
   'document_state_not_editable',
   'document_management_denied',

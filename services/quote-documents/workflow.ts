@@ -3,7 +3,7 @@ import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
 import type {DocumentService,DocumentStore} from './service';
-import {renderHtml} from './engine';
+import {calculate,renderHtml} from './engine';
 import {renderPdf} from './renderer';
 import {
   DRAFT_VERSION,
@@ -25,7 +25,7 @@ import {
   type WorkflowDocumentView,
 } from './workflow-contracts';
 import type {z} from 'zod';
-import {INQUIRY_QUOTE_LINK_VERSION} from './contracts';
+import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema} from './contracts';
 
 const parse=<T>(schema:z.ZodType<T>,input:unknown,code='document_input_invalid'):T=>{
   const parsed=schema.safeParse(input);
@@ -90,6 +90,10 @@ const nativeBindingPayload=(binding:NativeBindingV3)=>{
   return payload;
 };
 
+function isNativeBindingV3(binding:StoredPayload['native_quote_v1']):binding is NativeBindingV3{
+  return binding!==null&&'schema_version' in binding&&'binding_hash' in binding&&'document_fee_digest' in binding;
+}
+
 function encodeCursor(value:{updated_at:string;id:string;filter_digest:string}):string{
   return Buffer.from(JSON.stringify(value),'utf8').toString('base64url');
 }
@@ -105,6 +109,7 @@ function decodeCursor(value:string):{updated_at:string;id:string;filter_digest:s
 }
 
 type Scope={org:string;user:string;manager:boolean};
+type LegacyNativeBinding=z.infer<typeof nativeQuoteBindingSchema>;
 type RevisionRow={
   revision_id:string;
   document_id:string;
@@ -133,7 +138,7 @@ type StoredPayload={
   input:DraftDocument;
   template:Record<string,unknown>;
   template_version:number;
-  native_quote_v1:NativeBindingV3|null;
+  native_quote_v1:NativeBindingV3|LegacyNativeBinding|null;
   inquiry_case_link_v1:{case_ref:string;reviewed_customer_event_ref:string|null}|null;
   owner_id:string;
   created_at:string;
@@ -204,6 +209,8 @@ export function completenessOf(input:DraftDocument){
 }
 
 function totalsOf(input:DraftDocument){
+  const completeness=completenessOf(input);
+  if(completeness.complete)return {partial:false,complete:true,...calculate(renderDocument(input))};
   const sums={USD:new Decimal(0),CAD:new Decimal(0),CNY:new Decimal(0)};
   const rows=input.fee_items.map(fee=>{
     const complete=fee.quantity!==null&&fee.unit_price!==null&&fee.currency!==null&&fee.display!=='hiddenExcluded';
@@ -211,14 +218,14 @@ function totalsOf(input:DraftDocument){
     if(amount!==null&&fee.currency!==null)sums[fee.currency]=sums[fee.currency].add(amount);
     return {...fee,amount};
   });
-  const partial=completenessOf(input).partial;
+  const partial=completeness.partial;
   const byCurrency={USD:sums.USD.toFixed(2),CAD:sums.CAD.toFixed(2),CNY:sums.CNY.toFixed(2)};
   const cnyParts=(['USD','CAD'] as const).map(currency=>{
     if(sums[currency].isZero())return new Decimal(0);
     const rate=input.exchange_rates[currency];
     return rate===null?null:sums[currency].mul(rate);
   });
-  const totalCny=cnyParts.some(value=>value===null)?null:cnyParts.reduce<Decimal>((a,b)=>a.add(b!).add(sums.CNY),new Decimal(0)).toFixed(2);
+  const totalCny=cnyParts.some(value=>value===null)?null:cnyParts.reduce<Decimal>((a,b)=>a.add(b!),sums.CNY).toFixed(2);
   const totalUsd=sums.CAD.isZero()&&sums.CNY.isZero()?sums.USD.toFixed(2):input.exchange_rates.USD!==null&&totalCny!==null?new Decimal(totalCny).div(input.exchange_rates.USD).toFixed(2):null;
   return {partial,complete:!partial,rows,by_currency:byCurrency,total_cny:totalCny,total_usd:totalUsd,warnings:input.fee_items.some(fee=>fee.display==='hiddenIncluded')?['合计包含隐藏计入费用，请核对客户展示。']:[],calculation_version:'quote-documents-decimal-v1' as const};
 }
@@ -253,16 +260,50 @@ function renderDocument(input:DraftDocument){
   };
 }
 
+/** oldWritersStopped is an explicit deployment attestation, not a probing inference. */
+export interface DocumentWorkflowStoreOptions{readonly oldWritersStopped?:boolean;readonly readOnly?:boolean}
 export class DocumentWorkflowStore{
   readonly db;
   readonly signingSecret:string;
-  constructor(readonly store:DocumentStore){
+  private schemaReady=false;
+  private readonly oldWritersStopped:boolean;
+  readonly readOnly:boolean;
+  constructor(readonly store:DocumentStore,options:DocumentWorkflowStoreOptions={}){
     this.db=store.db;
+    this.oldWritersStopped=options.oldWritersStopped===true;
+    this.readOnly=options.readOnly===true;
+    const db=this.db;
+    const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
+    if(version>3)throw new Error('workflow_schema_incompatible');
+    if(this.readOnly&&version!==3)throw new Error('workflow_read_only_requires_v3');
+    if(version===3){
+      const row=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
+      const revisionTable=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_revisions'").get();
+      if(!row?.value||!revisionTable)throw new Error('workflow_metadata_invalid');
+      this.signingSecret=row.value;
+      this.schemaReady=true;
+      if(this.readOnly)db.exec('PRAGMA query_only=ON;');
+    }else{
+      this.signingSecret=randomBytes(32).toString('hex');
+    }
+  }
+  static openReadOnly(store:DocumentStore):DocumentWorkflowStore{return new DocumentWorkflowStore(store,{readOnly:true});}
+  private upgrade():void{
+    if(this.schemaReady)return;
+    if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');
+    if(!this.oldWritersStopped)throw new PortalError('document_v3_upgrade_ownership_required');
     const db=this.db;
     db.exec('BEGIN EXCLUSIVE');
     try{
       const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
       if(version>3)throw new Error('workflow_schema_incompatible');
+      if(version===3){
+        const existing=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
+        if(!existing||existing.value!==this.signingSecret)throw new Error('workflow_upgrade_ownership_conflict');
+        this.schemaReady=true;
+        db.exec('COMMIT');
+        return;
+      }
       db.exec(`CREATE TABLE IF NOT EXISTS document_store_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS document_revisions(revision_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,org TEXT NOT NULL,owner TEXT NOT NULL,version INTEGER NOT NULL,state TEXT NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL,input_digest TEXT NOT NULL,template_digest TEXT NOT NULL,source_revision_id TEXT,review_hash TEXT,rejection_reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(document_id,version));
 CREATE TABLE IF NOT EXISTS document_current_revisions(document_id TEXT PRIMARY KEY,org TEXT NOT NULL,owner TEXT NOT NULL,revision_id TEXT NOT NULL UNIQUE,version INTEGER NOT NULL,schema_version INTEGER NOT NULL,projection_digest TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -270,14 +311,15 @@ CREATE TABLE IF NOT EXISTS document_revision_events(audit_id TEXT PRIMARY KEY,do
 CREATE INDEX IF NOT EXISTS document_revisions_document ON document_revisions(document_id,version DESC);
 CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(org,updated_at DESC);`);
       db.prepare('INSERT INTO document_store_metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','3');
-      const existingSecret=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
-      this.signingSecret=existingSecret?.value??randomBytes(32).toString('hex');
       db.prepare('INSERT INTO document_store_metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('workflow_signing_secret',this.signingSecret);
       db.exec('PRAGMA user_version=3; COMMIT');
+      this.schemaReady=true;
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
   close(){void this.store;}
-  health(){try{this.store.db.prepare('SELECT revision_id FROM document_revisions LIMIT 1').get();return true;}catch{return false;}}
+  isV3(){return this.schemaReady;}
+  ensureWritable(){if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');this.upgrade();}
+  health(){try{const version=Number((this.store.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);if(version<=2)return true;this.store.db.prepare('SELECT revision_id FROM document_revisions LIMIT 1').get();return true;}catch{return false;}}
 }
 
 export class DocumentWorkflowService{
@@ -295,8 +337,8 @@ export class DocumentWorkflowService{
     return {org:ctx.organizationId,user:ctx.identity.userId,manager};
   }
   private contentDigest(payload:StoredPayload){return canonicalHash({input:payload.input,template:payload.template,native_quote_v1:payload.native_quote_v1,inquiry_case_link_v1:payload.inquiry_case_link_v1});}
-  private expectedBindingHash(scope:Scope,documentKind:StoredPayload['document_kind'],caseRef:string|null,binding:NativeBindingV3){
-    return hash([this.secret,scope.org,scope.user,documentKind,caseRef,nativeBindingPayload(binding)]);
+  private expectedBindingHash(scope:Scope,ownerId:string,documentKind:StoredPayload['document_kind'],caseRef:string|null,binding:NativeBindingV3){
+    return hash([this.secret,scope.org,ownerId,documentKind,caseRef,nativeBindingPayload(binding)]);
   }
   private previewHash(scope:Scope,documentKind:StoredPayload['document_kind'],caseRef:string|null,bindingHash:string,expires:number){
     return hash([this.secret,scope.org,scope.user,'native_prepare',documentKind,caseRef,bindingHash,expires]);
@@ -304,14 +346,14 @@ export class DocumentWorkflowService{
   private assertSignedPreview(scope:Scope,documentKind:StoredPayload['document_kind'],caseRef:string|null,bindingHash:string,previewHash:string,expires:number){
     if(expires<Date.now()||previewHash!==this.previewHash(scope,documentKind,caseRef,bindingHash,expires))throw new PortalError('document_preview_stale');
   }
-  private assertSignedNative(scope:Scope,payload:Pick<StoredPayload,'document_kind'|'input'|'native_quote_v1'|'inquiry_case_link_v1'>){
+  private assertSignedNative(scope:Scope,ownerId:string,payload:Pick<StoredPayload,'document_kind'|'input'|'native_quote_v1'|'inquiry_case_link_v1'>){
     const binding=payload.native_quote_v1;
-    if(!binding)throw new PortalError('native_quote_rebind_required');
+    if(!isNativeBindingV3(binding))throw new PortalError('native_quote_rebind_required');
     if(binding.provenance!=='v3_server_signed')throw new PortalError('native_quote_rebind_required');
     const caseRef=payload.inquiry_case_link_v1?.case_ref??null;
     if(caseRef!==null&&payload.document_kind!=='linked')throw new PortalError('inquiry_quote_link_forgery');
     if(binding.source_refs_digest!==canonicalHash(binding.source_refs)||binding.request_hash!==hash(binding.request)||binding.document_fee_digest!==nativeFeeDigest(payload.input.fee_items))throw new PortalError('inquiry_quote_link_forgery');
-    if(binding.binding_hash!==this.expectedBindingHash(scope,payload.document_kind,caseRef,binding))throw new PortalError('inquiry_quote_link_forgery');
+    if(binding.binding_hash!==this.expectedBindingHash(scope,ownerId,payload.document_kind,caseRef,binding))throw new PortalError('inquiry_quote_link_forgery');
   }
   private assertNativeRows(input:DraftDocument){
     if(input.fee_items.some(fee=>fee.source_kind!=='native'))throw new PortalError('native_quote_rebind_required');
@@ -355,8 +397,8 @@ export class DocumentWorkflowService{
     return payload;
   }
   private assertSignedNativeForRead(ctx:PortalContext,payload:StoredPayload){
-    if(payload.native_quote_v1?.provenance==='legacy_v1_v2')return;
-    this.assertSignedNative(this.scope(ctx),payload);
+    if(payload.native_quote_v1&&!isNativeBindingV3(payload.native_quote_v1))return;
+    this.assertSignedNative(this.scope(ctx),payload.owner_id,payload);
   }
   private configRaw(scope:Scope):{version:number;input:Record<string,unknown>|null}{
     const row=this.store.store.db.prepare('SELECT version,input FROM document_configs WHERE org=?').get(scope.org) as {version:number;input:string}|undefined;
@@ -406,6 +448,7 @@ export class DocumentWorkflowService{
     };
   }
   private readClaimed(scope:Scope,id:string):StoredPayload|null{
+    if(!this.store.isV3())return null;
     const current=this.store.store.db.prepare('SELECT * FROM document_current_revisions WHERE document_id=? AND org=?').get(id,scope.org) as CurrentRow|undefined;
     if(!current)return null;
     if(current.owner!==scope.user&&!scope.manager)throw new PortalError('document_not_found');
@@ -496,8 +539,21 @@ export class DocumentWorkflowService{
     if(next.approval)next.approval={...next.approval,approved_revision_id:next.revision_id,approved_version:current.version+1};
     return this.insertRevision(scope,next,current.version+1,next.state,action,sourceRevision,reviewHash,next.rejection?.reason??null);
   }
+  private replayAvailable(ctx:PortalContext,scope:Scope,action:string,current:StoredPayload):boolean{
+    try{
+      this.assertPayloadGates(ctx,current,action==='save'||action==='approve'||action==='reject',action==='approve'||action==='reject');
+      return true;
+    }catch(error){
+      if(error instanceof PortalError&&['native_quote_source_changed','native_quote_release_expired','document_expired','inquiry_quote_case_closed','inquiry_quote_case_review_required'].includes(error.code))return false;
+      throw error;
+    }
+  }
+  private historicalReplay(current:StoredPayload,committed:{version:number;revision_id?:unknown}){
+    return {replay:true as const,committed:true as const,current:false as const,historical:true as const,valid_now:false as const,id:current.id,version:committed.version,revision_id:typeof committed.revision_id==='string'?committed.revision_id:null,current_version:current.version,current_revision_id:current.revision_id??null,current_state:current.state};
+  }
   private idempotent<T>(ctx:PortalContext,scope:Scope,action:string,target:string,key:string,input:unknown,fn:()=>T):T{
     if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
     const partition=JSON.stringify(['v3',scope.org,scope.user,action,target]),digest=canonicalHash(input),db=this.store.store.db;
     db.exec('BEGIN IMMEDIATE');
     try{
@@ -509,9 +565,9 @@ export class DocumentWorkflowService{
         if(typeof candidate.id==='string'&&typeof candidate.version==='number'){
           const current=this.read(scope,candidate.id);
           this.assertContextLinked(ctx,current,action==='save'||action==='approve'||action==='reject');
-          if(current.version!==candidate.version||current.state!==candidate.state){
+          if(current.version!==candidate.version||current.state!==candidate.state||!this.replayAvailable(ctx,scope,action,current)){
             db.exec('COMMIT');
-            return {replay:true,committed:true,current:false,historical:true,id:current.id,version:candidate.version,revision_id:typeof candidate.revision_id==='string'?candidate.revision_id:null,current_version:current.version,current_revision_id:current.revision_id??null,current_state:current.state} as T;
+            return this.historicalReplay(current,candidate as {version:number;revision_id?:unknown}) as T;
           }
         }
         db.exec('COMMIT');return committed;
@@ -540,7 +596,8 @@ export class DocumentWorkflowService{
           if(payload.document_kind==='linked'&&!payload.inquiry_case_link_v1)throw new PortalError('inquiry_quote_link_input_invalid');
           if(payload.document_kind==='native_unlinked'&&payload.inquiry_case_link_v1)throw new PortalError('inquiry_quote_link_forgery');
           this.assertNativeRows(payload.input);
-          this.assertSignedNative(scope,payload);
+          this.assertSignedNative(scope,payload.owner_id,payload);
+          if(!isNativeBindingV3(payload.native_quote_v1))throw new PortalError('native_quote_rebind_required');
           this.assertSignedPreview(scope,payload.document_kind,payload.inquiry_case_link_v1?.case_ref??null,payload.native_quote_v1.binding_hash,data.preview_hash,data.preview_expires_at);
         }
         this.assertPayloadGates(ctx,payload,payload.document_kind==='linked');
@@ -557,14 +614,14 @@ export class DocumentWorkflowService{
       if(current.native_quote_v1){
         this.assertNativeRows(data.input);
         const digest=nativeFeeDigest(data.input.fee_items);
-        if(bindingUpdate.mode==='retain'&&(current.native_quote_v1.provenance!=='v3_server_signed'||digest!==current.native_quote_v1.document_fee_digest))throw new PortalError('native_quote_rebind_required');
+        if(bindingUpdate.mode==='retain'&&(!isNativeBindingV3(current.native_quote_v1)||current.native_quote_v1.provenance!=='v3_server_signed'||digest!==current.native_quote_v1.document_fee_digest))throw new PortalError('native_quote_rebind_required');
         if(bindingUpdate.mode==='replace'){
           const caseRef=current.inquiry_case_link_v1?.case_ref??null;
           if(bindingUpdate.native_quote_v1.document_fee_digest!==digest)throw new PortalError('native_quote_rebind_required');
           if(data.document_kind==='linked'&&bindingUpdate.inquiry_case_link_v1?.case_ref!==caseRef)throw new PortalError('inquiry_quote_link_forgery');
           if(data.document_kind==='native_unlinked'&&bindingUpdate.inquiry_case_link_v1)throw new PortalError('inquiry_quote_link_forgery');
           const candidate:StoredPayload={...current,input:data.input,native_quote_v1:bindingUpdate.native_quote_v1,inquiry_case_link_v1:data.document_kind==='linked'?(bindingUpdate.inquiry_case_link_v1??current.inquiry_case_link_v1):null};
-          this.assertSignedNative(scope,candidate);
+          this.assertSignedNative(scope,current.owner_id,candidate);
           this.assertSignedPreview(scope,data.document_kind,caseRef,bindingUpdate.native_quote_v1.binding_hash,bindingUpdate.preview_hash,bindingUpdate.preview_expires_at);
           this.assertPayloadGates(ctx,candidate,data.document_kind==='linked');
         }else{
@@ -588,9 +645,10 @@ export class DocumentWorkflowService{
   list(ctx:PortalContext,input:unknown){
     const scope=this.scope(ctx),data=parse(listWorkflowSchema,input);
     const items:WorkflowDocumentView[]=[];
-    const claimed=this.store.store.db.prepare('SELECT document_id FROM document_current_revisions WHERE org=? AND (?=1 OR owner=?) ORDER BY updated_at DESC').all(scope.org,scope.manager?1:0,scope.user) as Array<{document_id:string}>;
+    const claimed=this.store.isV3()?this.store.store.db.prepare('SELECT document_id FROM document_current_revisions WHERE org=? AND (?=1 OR owner=?) ORDER BY updated_at DESC').all(scope.org,scope.manager?1:0,scope.user) as Array<{document_id:string}>:[];
     for(const row of claimed){const item=this.readClaimed(scope,row.document_id)!;try{this.assertPayloadGates(ctx,item,false);items.push(this.view(item));}catch(error){if(error instanceof PortalError&&error.code==='document_not_found')continue;throw error;}}
-    const legacy=this.store.store.db.prepare('SELECT id FROM quote_documents WHERE org=? AND (?=1 OR owner=?) AND id NOT IN (SELECT document_id FROM document_current_revisions) ORDER BY rowid DESC').all(scope.org,scope.manager?1:0,scope.user) as Array<{id:string}>;
+    const unclaimed=this.store.isV3()?'id NOT IN (SELECT document_id FROM document_current_revisions)':'1=1';
+    const legacy=this.store.store.db.prepare(`SELECT id FROM quote_documents WHERE org=? AND (?=1 OR owner=?) AND ${unclaimed} ORDER BY rowid DESC`).all(scope.org,scope.manager?1:0,scope.user) as Array<{id:string}>;
     for(const row of legacy){const item=this.readLegacy(scope,row.id);try{this.assertPayloadGates(ctx,item,false);items.push(this.view(item,'legacy_unclaimed'));}catch(error){if(error instanceof PortalError&&error.code==='document_not_found')continue;throw error;}}
     const filterDigest=canonicalHash(data.filters),cursor=data.cursor?decodeCursor(data.cursor):null;
     if(cursor&&cursor.filter_digest!==filterDigest)throw new PortalError('document_input_invalid');
@@ -632,6 +690,7 @@ export class DocumentWorkflowService{
     return error instanceof PortalError&&['document_expired','native_quote_release_expired','native_quote_source_changed','inquiry_quote_case_closed','inquiry_quote_case_review_required','document_review_stale','document_not_approved'].includes(error.code);
   }
   async export(ctx:PortalContext,input:unknown){
+    this.store.ensureWritable();
     const scope=this.scope(ctx),data=parse(exportWorkflowSchema,input),current=this.read(scope,data.id);
     if(data.mode==='history'){
       if(current.version!==data.expected_current_version)throw new PortalError('version_conflict');

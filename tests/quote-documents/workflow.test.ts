@@ -6,7 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {DocumentStore,DocumentService} from '../../services/quote-documents/service';
 import {openPortalProductionDatabase} from '../../services/access-gateway/portal/production-persistence';
 import {DocumentWorkflowStore,DocumentWorkflowService,nativeFeeDigest} from '../../services/quote-documents/workflow';
-import {DRAFT_VERSION,WORKFLOW_REQUEST_VERSION} from '../../services/quote-documents/workflow-contracts';
+import {DRAFT_VERSION,WORKFLOW_REQUEST_VERSION,workflowDocumentViewSchema,type DraftDocument,type DraftFee} from '../../services/quote-documents/workflow-contracts';
 import {createNativeQuoteClient,type QuoteRelease} from '../../services/quote-native/client';
 import type {PortalBusinessService} from '../../services/access-gateway/portal/business/service';
 import {config as rates,request as quoteRequest} from '../quote-native/fixture';
@@ -29,7 +29,7 @@ function setup(role:'owner'|'admin'|'sales'='owner',native?:ConstructorParameter
     readForQuoteLink:()=>{if(caseDenied)throw new Error('case_not_found');return {case_ref:caseRef,owner_id:'owner',organization_id:'org',status:mutableCaseStatus,version:1,latest_customer_supplement_ref:latestRef};},
   };
   const legacyService=new DocumentService(legacyStore,portal,undefined,native,caseAccess);
-  const store=new DocumentWorkflowStore(legacyStore);
+  const store=new DocumentWorkflowStore(legacyStore,{oldWritersStopped:true});
   let renders=0;
   const service=new DocumentWorkflowService(store,legacyService,portal,()=>{renders++;return Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120)));});
   const ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'};
@@ -54,13 +54,13 @@ function setupLegacy(options:{version:number;state:'draft'|'rejected'}){
 
   it('reopens a claimed v3 database with the current document store',()=>{
   const {dir,legacyStore}=setup();
-  const first=new DocumentWorkflowStore(legacyStore);
+  const first=new DocumentWorkflowStore(legacyStore,{oldWritersStopped:true});
   first.close();
   legacyStore.close();
   const reopened=new DocumentStore(join(dir,'documents.sqlite'));
   expect((reopened.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(3);
   expect(reopened.health()).toBe(true);
-  const workflow=new DocumentWorkflowStore(reopened);
+  const workflow=new DocumentWorkflowStore(reopened,{oldWritersStopped:true});
   expect((workflow.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(3);
   workflow.close();
     reopened.close();
@@ -252,5 +252,84 @@ describe('quote workflow v3',()=>{
     if(review.status!=='success')throw new Error('review unexpectedly requires input');
     f.revoke('owner');
     expect(()=>f.service.approve(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2,review_hash:review.review_hash,evidence_ref:'review:revoked',evidence_version:'1',review_notes:'核验',confirmation:'human_verified_price_and_source'},'workflow-permission-0004')).toThrow('document_not_found');
+  });
+
+  it('uses one decimal engine rule for pure CNY, mixed currencies, missing rates, hidden rows and precision',()=>{
+    const f=setup(),base:DraftDocument=completeDraft();
+    const fee=(currency:'USD'|'CAD'|'CNY',quantity:string,unitPrice:string,display:'detail'|'hiddenIncluded'|'hiddenExcluded'='detail'):DraftFee=>({...base.fee_items[0]!,id:randomUUID(),currency,quantity,unit_price:unitPrice,display});
+    const totals=(input:DraftDocument)=>f.service.preview(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,input}).totals;
+    expect(totals({...base,fee_items:[fee('CNY','1','10')]})).toMatchObject({by_currency:{CNY:'10.00'},total_cny:'10.00'});
+    expect(totals({...base,exchange_rates:{USD:'7',CAD:'5'},fee_items:[fee('USD','1','10'),fee('CAD','1','10'),fee('CNY','1','10')]})).toMatchObject({by_currency:{USD:'10.00',CAD:'10.00',CNY:'10.00'},total_cny:'130.00',total_usd:'18.57'});
+    expect(totals({...base,exchange_rates:{USD:null,CAD:'5'},fee_items:[fee('USD','1','10'),fee('CAD','1','10'),fee('CNY','1','10')]})).toMatchObject({total_cny:null,total_usd:null});
+    expect(totals({...base,exchange_rates:{USD:'7',CAD:null},fee_items:[fee('USD','1','10'),fee('USD','1','5','hiddenIncluded'),fee('USD','1','999','hiddenExcluded')]})).toMatchObject({by_currency:{USD:'15.00'},total_cny:'105.00'});
+    expect(totals({...base,fee_items:[fee('CNY','0.1','0.2')]})).toMatchObject({by_currency:{CNY:'0.02'},total_cny:'0.02'});
+  });
+
+  it('verifies server-signed native bindings against immutable document owner for authorized managers',async()=>{
+    const f=nativeSetup(),prepared=await f.prepare();
+    const saved=f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'native_unlinked',input:prepared.input,template_selection:{mode:'current'},native_quote_v1:prepared.native_quote_v1,preview_hash:prepared.preview_hash,preview_expires_at:prepared.preview_expires_at,save_intent:'save_draft'},'workflow-owner-signature-01');
+    const admin=f.ctxFor('admin-user');
+    expect(f.service.get(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id}).owner_id).toBe('owner');
+    expect(f.service.list(admin,{contract_version:WORKFLOW_REQUEST_VERSION,limit:10,cursor:null,filters:{state:'all',quote_no:null,customer_name:null}}).items.some(item=>item.id===saved.id)).toBe(true);
+    const review=f.service.review(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:1});
+    if(review.status!=='success')throw new Error('manager review unexpectedly requires input');
+    const updated=f.service.save(admin,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'update',document_kind:'native_unlinked',id:saved.id,expected_version:1,input:{...prepared.input,quote_no:'ADMIN-RETAIN'},template_selection:{mode:'retain'},binding_update:{mode:'retain'},save_intent:'save_draft'},'workflow-owner-signature-02');
+    expect(updated).toMatchObject({id:saved.id,owner_id:'owner',version:2});
+    const managerReview=f.service.review(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2});
+    if(managerReview.status!=='success')throw new Error('manager review unexpectedly requires input');
+    const approved=f.service.approve(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2,review_hash:managerReview.review_hash,evidence_ref:'review:manager',evidence_version:'1',review_notes:'核验',confirmation:'human_verified_price_and_source'},'workflow-owner-signature-03');
+    expect(approved).toMatchObject({owner_id:'owner',state:'approved'});
+    await expect(f.service.export(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,mode:'formal',expected_version:approved.version})).resolves.toMatchObject({id:saved.id,mode:'formal'});
+  });
+
+  it('preserves a legacy v1/v2 native binding without fabricating v3 proof',async()=>{
+    const f=nativeSetup(),prepared=await f.legacyService.prepareNative(f.ctx,{request:quoteRequest,customer:f.customer});
+    const saved=f.legacyService.save(f.ctx,{...prepared,confirmed:true},'workflow-legacy-native-01');
+    const view=f.service.get(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id});
+    expect(workflowDocumentViewSchema.safeParse(view).success).toBe(true);
+    expect(view).toMatchObject({claim_state:'legacy_unclaimed',document_kind:'native_unlinked'});
+    expect(view.native_quote_v1).not.toHaveProperty('schema_version');
+    expect(view.native_quote_v1).not.toHaveProperty('provenance');
+  });
+
+  it('rechecks source and permission on exact idempotency replay',async()=>{
+    const f=nativeSetup(),prepared=await f.prepare(),saveInput={contract_version:WORKFLOW_REQUEST_VERSION,operation:'create' as const,document_kind:'native_unlinked' as const,input:prepared.input,template_selection:{mode:'current' as const},native_quote_v1:prepared.native_quote_v1,preview_hash:prepared.preview_hash,preview_expires_at:prepared.preview_expires_at,save_intent:'save_draft' as const};
+    const saved=f.service.save(f.ctx,saveInput,'workflow-replay-source-01');
+    const review=f.service.review(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:1});
+    if(review.status!=='success')throw new Error('native review unexpectedly requires input');
+    const approval={contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:1,review_hash:review.review_hash,evidence_ref:'review:replay',evidence_version:'1',review_notes:'核验',confirmation:'human_verified_price_and_source' as const};
+    f.service.approve(f.ctx,approval,'workflow-replay-approve-01');
+    f.disable();
+    expect(f.service.save(f.ctx,saveInput,'workflow-replay-source-01')).toMatchObject({replay:true,current:false,historical:true,valid_now:false,version:1,current_version:2});
+    expect(f.service.approve(f.ctx,approval,'workflow-replay-approve-01')).toMatchObject({replay:true,current:false,historical:true,valid_now:false,version:2});
+    const revoked=setup(),draft=revoked.service.save(revoked.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-replay-reject-01');
+    const reject={contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,expected_version:1,reason:'reject for replay'};
+    revoked.service.reject(revoked.ctx,reject,'workflow-replay-reject-02');
+    revoked.revoke('owner');
+    expect(()=>revoked.service.reject(revoked.ctx,reject,'workflow-replay-reject-02')).toThrow('document_not_found');
+  });
+
+  it('does not upgrade on read and requires explicit ownership plus guarded read-only rollback',()=>{
+    const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-owner-'));dirs.push(dir);
+    const documentStore=new DocumentStore(join(dir,'documents.sqlite')),portal={getState:(ctx:PortalContext)=>({data:{current_organization:{organizationId:ctx.organizationId,status:'active'},memberships:[{userId:ctx.identity.userId,organizationId:'org',status:'active',role:'owner'}]}})} as unknown as Pick<PortalService,'getState'>;
+    const legacyService=new DocumentService(documentStore,portal),store=new DocumentWorkflowStore(documentStore),service=new DocumentWorkflowService(store,legacyService,portal);
+    const ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'},id=randomUUID();
+    documentStore.db.prepare('INSERT INTO quote_documents VALUES(?,?,?,?)').run(id,'org','owner',JSON.stringify({id,version:2,state:'draft',input:completeDraft(),template,template_version:1,created_at:'2026-09-15T00:00:00.000Z',owner_id:'owner',approval:null}));
+    expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    expect(service.get(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id}).claim_state).toBe('legacy_unclaimed');
+    expect(service.list(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,limit:10,cursor:null,filters:{state:'all',quote_no:null,customer_name:null}}).items).toHaveLength(1);
+    expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    const config={contract_version:WORKFLOW_REQUEST_VERSION,expected_version:0,input:{...template,standard_fee_template_v1:{template_id:'freightclaw-standard-v1',template_version:1,items:[]}},confirmed:true} as const;
+    expect(()=>service.saveConfig(ctx,config,'workflow-upgrade-owner-01')).toThrow('document_v3_upgrade_ownership_required');
+    expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    const authorized=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),legacyService,portal);
+    authorized.saveConfig(ctx,config,'workflow-upgrade-owner-02');
+    const claimed=authorized.save(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-upgrade-owner-03');
+    expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(3);
+    documentStore.close();
+    const reopened=new DocumentStore(join(dir,'documents.sqlite')),readOnly=new DocumentWorkflowService(DocumentWorkflowStore.openReadOnly(reopened),new DocumentService(reopened,portal),portal);
+    expect(readOnly.get(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:claimed.id})).toMatchObject({id:claimed.id,claim_state:'claimed_v3'});
+    expect(()=>readOnly.saveConfig(ctx,{...config,expected_version:1},'workflow-upgrade-owner-04')).toThrow('document_v3_rollback_read_only');
+    reopened.close();
   });
 });

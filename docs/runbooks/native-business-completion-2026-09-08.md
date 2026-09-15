@@ -35,7 +35,7 @@ freightclaw workspace customs-packages browse --input browse.json --session-file
 ## 迁移和发布检查
 
 1. 备份现有业务 SQLite、密钥文件、业务连接配置和数据包目录；保留当前镜像及配置。不得导入本地 fixture 身份或合成企业模板。
-2. 新版本将 native-business 与 quote-documents 数据库格式升至 **2**，保留原记录。共享身份/调用库仍保持自身版本；新业务库不支持共享 Postgres。
+2. native-business 保持格式 2；quote-documents 的 v1/v2 读取保持格式 2，只有首个获授权的 v3 写入才在同一写路径升级到 `user_version=3`。升级前必须停止全部旧写进程和连接，显式设置 `PORTAL_QUOTE_WORKFLOW_OLD_WRITERS_STOPPED=true`；该值不是运行时探测结论。未设置时只允许 legacy 投影读取，v3 写入返回 `document_v3_upgrade_ownership_required`。旧二进制仍拒绝打开已升级库，受控回滚只允许 `DocumentWorkflowStore.openReadOnly` 的查询模式并拒绝全部 v3 写入。
 3. 配置原生引擎、正式企业连接及 `PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH`；`PORTAL_PDF_BROWSER_EXECUTABLE` 为绝对路径。候选 Dockerfile 加装 Chromium，已在 Oracle 候选容器验证。部署时将 `deploy/portal/chromium-seccomp.json` 与 compose.yml 放在同目录，保持 256 MiB /tmp 和 init。保持浏览器沙箱，不默认传 `--no-sandbox`。
 4. 以真实企业身份核对两地运价、未知/冲突地址、混装、卸货条件、报价保存/审核/退回与 PDF；CLI 读回同一版本及文件 SHA-256。Freightcom 单独执行实际只读询价，不发邮件或订舱。
 5. 关务完成真实来源发布后再启用其数据包，检查税号、适用条件、税率与来源证据；未就绪时保持不可用。

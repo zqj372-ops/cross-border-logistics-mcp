@@ -369,6 +369,10 @@
               "type": "boolean",
               "const": true
             },
+            "valid_now": {
+              "type": "boolean",
+              "const": false
+            },
             "id": {
               "type": "string",
               "format": "uuid",
@@ -422,6 +426,7 @@
             "committed",
             "current",
             "historical",
+            "valid_now",
             "id",
             "version",
             "revision_id",
@@ -446,6 +451,8 @@
           "document_preview_stale",
           "document_template_missing",
           "document_expired",
+          "document_v3_rollback_read_only",
+          "document_v3_upgrade_ownership_required",
           "version_conflict",
           "document_state_not_editable",
           "document_management_denied",
