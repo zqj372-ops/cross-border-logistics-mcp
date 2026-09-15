@@ -1,5 +1,6 @@
 import {CustomsPackages} from '../../services/customs-native/packages';
 import {DocumentStore,DocumentService} from '../../services/quote-documents/service';
+import {DocumentWorkflowStore,DocumentWorkflowService} from '../../services/quote-documents/workflow';
 import { NativeAdminStore, NativeAdminService } from '../../services/access-gateway/portal/native-admin';
 import { NativeFreightcomService } from '../../services/access-gateway/portal/native-freightcom';
 import { ChannelStore, ChannelService } from "../../services/access-gateway/portal/channels";
@@ -26,6 +27,7 @@ const boundaries = { allowedHosts: [`127.0.0.1:${port}`], allowedOrigins: [origi
 const callStore = new SqliteCallLogStore(resolve(databaseDirectory, "calls.sqlite"));
 const channelStore = new ChannelStore(resolve(databaseDirectory, "business-channels.sqlite"));
 const documentStore=new DocumentStore(resolve(databaseDirectory,"quote-documents.sqlite"));
+const documentWorkflowStore=new DocumentWorkflowStore(documentStore,{oldWritersStopped:true});
 const nativeStore=new NativeAdminStore(resolve(databaseDirectory,"native-business.sqlite"));
 nativeStore.packages=new CustomsPackages(nativeStore,runtime.service,resolve(databaseDirectory,'customs-inbox'));
 const nativeFreightcom=new NativeFreightcomService(nativeStore,runtime.service);
@@ -46,7 +48,9 @@ try {
   const t0Machine = createProductionT0HttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries, trustedProxyAddresses: [] });
   const businessMachine = createBusinessMachineHttpHandler({ mode: "fixtures", service: businessAccess.service, executor: { execute: async (request) => businessService.executeMachine(request) }, ...boundaries, trustedProxyAddresses: [] });
   const caseService=new CaseService(caseStore, runtime.service);
-  const server = await startPortalServer({customsPackages:nativeStore.packages, documentService:new DocumentService(documentStore,runtime.service,undefined,{business:businessService,current:org=>nativeStore.current(org,'residential')},caseService), nativeAdmin:new NativeAdminService(nativeStore,runtime.service),nativeFreightcom, channelService: new ChannelService(channelStore, runtime.service), caseService, mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
+  const documentService=new DocumentService(documentStore,runtime.service,undefined,{business:businessService,current:org=>nativeStore.current(org,'residential')},caseService);
+  const documentWorkflowService=new DocumentWorkflowService(documentWorkflowStore,documentService,runtime.service);
+  const server = await startPortalServer({customsPackages:nativeStore.packages, documentService, documentWorkflowService, nativeAdmin:new NativeAdminService(nativeStore,runtime.service),nativeFreightcom, channelService: new ChannelService(channelStore, runtime.service), caseService, mode: "fixtures", service: runtime.service, bridge: unifiedBridge, organizationBridge: runtime.organizationBridge, callLogService: new PortalCallLogService(callStore, runtime.service), businessService, businessAccessService: businessAccess.service, businessMachineHandler: { handle: (request,response) => t0Machine.handle(request,response)||businessMachine.handle(request,response) }, port, staticDirectory: "dist/console", machineHandler: machine });
   console.log(`FreightClaw local acceptance workspace: ${server.origin}/console/`);
   console.log("Isolated fixture identities and local storage. Business availability is verified per request.");
   let closing = false;

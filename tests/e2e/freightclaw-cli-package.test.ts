@@ -60,7 +60,7 @@ describe("standalone CLI installation", () => {
     expect(await readFile(join(packageRoot, "bin/freightclaw.mjs"), "utf8")).not.toContain("node:sqlite");
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
-    expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(74);
+    expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(75);
     expect((await installed(["workspace","schema","cases","create"])).code).toBe(0);
     expect((await installed(["workspace","schema","channels","publish"])).code).toBe(0);
     expect(await readFile(join(packageRoot,"workspace.md"),"utf8")).toContain("workspace login start");
