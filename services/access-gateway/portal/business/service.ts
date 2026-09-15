@@ -52,7 +52,7 @@ export class PortalBusinessService {
   constructor(options: PortalBusinessServiceOptions) { this.#publicAccess = options.publicAccess; this.#publicAuthority = options.publicAuthority; this.#recorder = options.callRecorder; this.#portal = options.portalService; this.#connections = Object.freeze([...options.connections]); }
 
   #access(ctx: PortalContext): BusinessAccess {
-    if (ctx.identity.platformRole !== null) throw new PortalError("business_personnel_session_required");
+    if (ctx.organizationId === null) throw new PortalError("business_personnel_session_required");
     const state = this.#portal.getState(ctx);
     const org = state.data?.current_organization;
     const membership = state.data?.memberships.find((item) => item.organizationId === org?.organizationId && item.userId === ctx.identity.userId && item.status === "active");

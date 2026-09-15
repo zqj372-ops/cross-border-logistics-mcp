@@ -75,10 +75,14 @@ export class PortalSessionManager {
   authenticate(sessionId: string, identity: PortalIdentity): { readonly session: PortalSession; readonly setCookie: string } {
     this.store.delete(sessionId); const session = this.#create(identity); return { session, setCookie: this.#cookie(session.sessionId) };
   }
-  selectOrganization(sessionId: string, organizationId: string, memberships: readonly Membership[]): PortalSession {
+  selectOrganization(sessionId: string, organizationId: string | null, memberships: readonly Membership[]): PortalSession {
     const current = this.get(sessionId); if (!current?.identity) throw new Error("authentication_required");
-    const allowed = memberships.some((membership) => membership.userId === current.identity!.userId && membership.organizationId === organizationId && membership.status === "active");
-    if (!allowed) throw new Error("organization_membership_required");
+    if (organizationId === null) {
+      if (current.identity.platformRole !== "reviewer" && current.identity.platformRole !== "operator") throw new Error("platform_identity_required");
+    } else {
+      const allowed = memberships.some((membership) => membership.userId === current.identity!.userId && membership.organizationId === organizationId && membership.status === "active");
+      if (!allowed) throw new Error("organization_membership_required");
+    }
     const next = Object.freeze({ ...current, organizationId, csrfToken: token(), expiresAt: this.#now() + this.#ttlMs }); if(this.store.replace?!this.store.replace(sessionId,current.csrfToken,next):(this.store.put(next),false))throw new Error("session_conflict"); return next;
   }
   beginOidc(sessionId: string, transaction: PortalOidcTransaction): PortalSession {

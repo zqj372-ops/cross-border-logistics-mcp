@@ -82,7 +82,7 @@ export class PortalCallLogService {
     const state = this.portal.getState(ctx).data;
     const org = state?.current_organization;
     const member = state?.memberships.find(value => value.organizationId === org?.organizationId && value.userId === ctx.identity.userId && value.status === "active");
-    if (!org || org.status !== "active" || !member || ctx.identity.platformRole !== null) throw new PortalError("business_access_denied");
+    if (!org || org.status !== "active" || !member) throw new PortalError("business_access_denied");
     const applications = state.applications.filter(value => value.organizationId === org.organizationId && (!parsed.data.application_id || value.applicationId === parsed.data.application_id));
     if (parsed.data.application_id && applications.length !== 1) throw new PortalError("application_access_denied");
     const data = await this.repository.query({ tenantId: org.tenantId, clientIds: applications.map(value => value.clientId), actorRef: ctx.identity.userId,

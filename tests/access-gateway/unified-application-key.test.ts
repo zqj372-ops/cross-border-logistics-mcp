@@ -17,7 +17,7 @@ describe("unified application Key integration",()=>{
   it("uses one flcbk credential for current T0 and Business grants and invalidates its MCP token after revocation",async()=>{
     const root=mkdtempSync(join(tmpdir(),"unified-application-key-"));roots.push(root);
     const runtime=await createPortalFixtureRuntime({databaseDirectory:root});
-    const owner=context(identity("fixture-owner",null),"org_fixture"),reviewer=context(identity("fixture-reviewer","reviewer"),"org_fixture"),operator=context(identity("fixture-operator","operator"),"org_fixture");
+    const owner=context(identity("fixture-owner",null),"org_fixture"),reviewer=context(identity("fixture-reviewer","reviewer"),null),operator=context(identity("fixture-operator","operator"),null);
     const application=await runtime.bridge.createApplication(owner,{idempotencyKey:"unified-create-app01",input:{name:"Unified",purpose:"Agent",environment:"test"}}).then(result=>result.data as {applicationId:string;clientId:string});
     const t0Request=runtime.service.createRequest(owner,{idempotencyKey:"unified-t0-request1",input:{requestId:"request_unified_t0",applicationId:application.applicationId,capabilities:["cargo.calculate","system.agent_context.get"],justification:"MCP"}}).data as {requestId:string};
     runtime.service.submitRequest(owner,t0Request.requestId,1,"unified-t0-submit01");
