@@ -40,7 +40,7 @@ describe('native quote record binding',()=>{
  it('records rejection once and refuses export or later approval',async()=>{const {svc,ctx,customer}=nativeSetup();const p=await svc.prepareNative(ctx,{request:quoteRequest,customer});const row=svc.save(ctx,{...p,confirmed:true},randomUUID());const input={id:row.id,expected_version:1,reason:'客户卸货条件需要修改'},key=randomUUID();expect(svc.reject(ctx,input,key).state).toBe('rejected');expect(svc.reject(ctx,input,key).version).toBe(2);await expect(svc.export(ctx,{id:row.id})).rejects.toThrow('document_rejected');expect(()=>svc.approve(ctx,{id:row.id,expected_version:2,evidence_ref:'review:test',evidence_version:'1',review_notes:'核对',confirmation:'human_verified_price_and_source'},randomUUID())).toThrow('version_conflict');});
 });
 
-it('marks the binding and rejection storage format for rollback safety',()=>{const {store}=setup();expect(store.db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);});
+it('marks the binding and rejection storage format for rollback safety',()=>{const {store}=setup();expect(store.db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);expect(store.health()).toBe(true);});
 
 it('reopens version 2 without losing stored documents',()=>{const {store}=setup();const again=new DocumentStore(store.path);expect(again.db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);again.close();});
 

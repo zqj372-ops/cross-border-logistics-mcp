@@ -28,6 +28,7 @@ export class DocumentStore{
  CREATE TABLE IF NOT EXISTS document_idempotency(scope TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(scope,key));
  CREATE TABLE IF NOT EXISTS document_audit(id TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS document_pdfs(id TEXT NOT NULL,version INTEGER NOT NULL,sha256 TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(id,version));PRAGMA user_version=2;`);securePortalDatabaseFiles(path);}
+ health(){try{this.db.prepare('SELECT id FROM quote_documents LIMIT 1').get();return true;}catch{return false;}}
  close(){this.db.close();securePortalDatabaseFiles(this.path);}
 }
 export class DocumentService{
