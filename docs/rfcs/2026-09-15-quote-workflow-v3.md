@@ -1,6 +1,6 @@
 # RFC: Quote document workflow v3
 
-Status: Proposed, revision R2. Mac review requested changes to the R1 proposal. This revision defines contracts and storage design only; it does not authorize business implementation or merge.
+Status: Proposed, revision R3. Mac review requested changes to R2. This revision defines contracts and storage design only; it does not authorize business implementation or merge.
 
 Date: 2026-09-15
 
@@ -8,18 +8,17 @@ Candidate scope: price-free standard fee templates, compact fee editing, an inde
 
 ## 1. Review disposition
 
-This revision explicitly addresses the six findings on PR #28:
+This revision explicitly addresses the four P1 findings and the synchronized corrections on PR #28:
 
-| Finding | R2 disposition |
+| Finding | R3 disposition |
 | --- | --- |
-| P1 incomplete drafts could not be saved | Adds a closed nullable draft schema, explicit missing-field pointers, separate save and review behavior, and manual versus native/linked gates. |
-| P1 in-place payload overwrite and missing historical snapshots | Adds append-only document revisions, current-pointer, audit-link and idempotency transaction design, with lazy legacy migration and rollback. |
-| P1 incomplete idempotency semantics | Defines key transport, scope, canonical digest, conflict behavior, authorization rechecks, historical replay and update/approve races. |
-| P1 v1/v2 exposure to v3 rows | Defines version-specific get/list/mutate behavior, pagination boundaries, config extension preservation and template snapshot retention. |
-| P2 history version ambiguity | Separates `target_version` from `expected_current_version`; history reads exact cached bytes and never re-renders. |
-| P2 missing workflow and UI acceptance detail | Adds the independent records view, same-id edit path, filters, conflict preservation, leave guards, template application rules, four viewport widths and PDF checks. |
+| P1 legacy payload must not be renumbered | Preserves original legacy version/state/PDF keys, imports only the actual current snapshot, and defines legacy approval provenance. |
+| P1 unmodified legacy writers cannot share an upgraded database | Changes rollback to a guarded read-only compatibility mode or a pre-upgrade backup restore; unmodified v2 writers are refused by the database version gate. |
+| P1 read-only v3 access must not claim or migrate | Claims a legacy row only on the first explicit authorized v3 write; v1/v2 list and get have one consistent claimed/unclaimed rule. |
+| P1 native/access invariants | Makes organization, owner, document kind and linked case reference immutable; supports `native_unlinked`; requires owner/admin for approve/reject/config-save/replay; defines server-owned native digest and source-kind transitions. |
+| Synchronized corrections | Fixes mode-specific version guards, expired-current history, incomplete-draft export, render-time rechecks, stale reason codes, legacy fee-item preservation and partial-total labeling. |
 
-The previous R1 text that claimed an in-place update was sufficient is withdrawn. R1 is not an accepted contract.
+The previous R1 and R2 text that allowed old payload renumbering, unguarded old writers or read-time migration is withdrawn. Neither revision is an accepted contract.
 
 ## 2. Problem and current evidence
 
@@ -49,6 +48,9 @@ These decisions are fixed for this RFC and do not require a further product-ques
 - Native price-bound fee rows cannot be replaced by a standard template.
 - `approved` documents are immutable. `draft` and `rejected` documents can be updated under the same document id with append-only history.
 - Price-affecting edits to a native-bound draft require a new native prepare. Non-price edits may retain the existing binding only after all current source, case, customer-supplement and permission gates pass again.
+- `document_kind` is immutable and is one of `manual`, `native_unlinked` or `linked`. Organization and owner are immutable after creation.
+- A linked document's `case_ref` is immutable. A replacement native prepare can update the reviewed customer supplement reference and price but cannot attach the document to another case.
+- Approve, reject, config-save and their replays require current organization owner/admin membership. A platform role does not create enterprise authority.
 
 ## 4. Goals and non-goals
 
@@ -147,6 +149,7 @@ Rules:
 - Exchange rates remain `null` when missing. They are never defaulted to `1`.
 - A fee currency is explicit or inherited only from a currency the user already selected for the document. The template does not select a currency.
 - Per-currency totals remain available from valid rows. A converted total is `null` with a visible missing-rate reason when a required rate is absent; it is never calculated with an assumed rate of one.
+- While a draft is incomplete, any monetary sum is marked `partial:true` and `complete:false`. Rows with a missing quantity or price contribute no amount, and the UI must not label the result as a complete quote total.
 - The draft may contain zero to 60 fee rows. The server enforces the limit before any mutation.
 - No business field uses a Zod/default transformation in v3. Defaults may be displayed by the UI, but the client must send the explicit value it presents to the user.
 
@@ -272,44 +275,77 @@ The `Idempotency-Key` header is required. The server checks `expected_version` i
 
 ### 6.6 Native and linked draft save
 
-Native and linked drafts retain the existing safety model, with two additional v3 rules:
+`document_kind`, organization, owner and linked `case_ref` are immutable from creation through every revision. A document cannot be converted between manual and native, and a linked document cannot be reattached to another case. Changing to another case requires creating a new document.
 
-1. A price-affecting change requires a new `native-prepare`. Price-affecting fields are fee row addition/removal, `id`, `quantity`, `unit`, `unit_price`, `currency` and `display`.
-2. A non-price edit may retain the existing binding only after the server rechecks organization membership, document owner/manager visibility, case permission intersection, current customer-supplement reference, release id/digest, request hash, source references and release validity.
+The three native-capable document kinds are:
 
-The server stores a `native_fee_digest` over the native-bearing fee fields. A mismatch returns `native_quote_rebind_required` before write. Removing a native binding is `inquiry_quote_link_forgery`.
+| Kind | Required evidence |
+| --- | --- |
+| `manual` | No native binding. |
+| `native_unlinked` | A server-issued native binding, with no inquiry case link. |
+| `linked` | A server-issued native binding plus an inquiry case link. |
 
-For v3, the native binding response adds `document_fee_digest`. Legacy bindings are lazily backfilled during v3 migration. Every save, review, approval and formal export re-runs the applicable gates; no old approval is reused.
+`native_unlinked` is a first-class path for a native quote that has no inquiry case. It must not be forced into manual mode or fabricated as a linked quote.
 
-Linked create carries the exact server-issued native result:
+Native bindings reserve these validation fields:
+
+```json
+{
+  "schema_version": "native-quote-binding@2026-09-15.v1",
+  "request": { "<native request>": "..." },
+  "preview": { "<native preview>": "..." },
+  "source_refs": [{ "<source ref>": "..." }],
+  "source_refs_digest": "<canonical sha256>",
+  "release_id": "release-1",
+  "release_digest": "<64 hex>",
+  "request_hash": "<64 hex>",
+  "document_fee_digest": "<canonical sha256>",
+  "document_fee_digest_format": "canonical-json-sha256-v1",
+  "binding_hash": "<server signature>",
+  "provenance": "v3_server_signed"
+}
+```
+
+`document_fee_digest` is computed by the server from the ordered native-bearing fields `id`, `source_kind`, `quantity`, `unit`, `unit_price`, `currency` and `display`. It excludes presentation-only name, description, note and merge label. The server recomputes it from persisted input and never trusts a client-supplied digest. `binding_hash` is server-generated over the complete binding, organization, owner, document kind, document id when known and linked `case_ref` when present. A client cannot manufacture or modify either value.
+
+`source_kind` transitions are fixed:
+
+| Current | Allowed next value |
+| --- | --- |
+| `manual` | `manual` or `template` |
+| `template` | `template` or `manual` |
+| `native` | `native` only |
+
+A client cannot submit a `native` row without a server-verified binding. A native row cannot be downgraded to manual or template to evade rebind or approval. A template cannot overwrite, remove or hide a native row.
+
+Native create carries the exact server-issued result:
 
 ```json
 {
   "contract_version": "quote-documents-workflow@2026-09-15.v1",
   "operation": "create",
-  "document_kind": "linked",
+  "document_kind": "native_unlinked",
   "input": { "<quote-document-draft>": "..." },
   "template_selection": { "mode": "current" },
-  "native_quote_v1": {
-    "request": { "<native request>": "..." },
-    "preview": { "<native preview>": "..." },
-    "source_refs": [{ "<source ref>": "..." }],
-    "release_id": "release-1",
-    "release_digest": "<64 hex>",
-    "request_hash": "<64 hex>",
-    "document_fee_digest": "<64 hex>"
-  },
-  "inquiry_case_link_v1": {
-    "case_ref": "00000000-0000-4000-8000-000000000020",
-    "reviewed_customer_event_ref": null
-  },
+  "native_quote_v1": { "<server-issued binding>": "..." },
   "preview_hash": "<native-prepare signature>",
   "preview_expires_at": 1790000000000,
   "save_intent": "save_draft"
 }
 ```
 
-Linked update does not accept an unreviewed replacement binding directly:
+A linked create uses the same object with `document_kind:"linked"` plus:
+
+```json
+{
+  "inquiry_case_link_v1": {
+    "case_ref": "00000000-0000-4000-8000-000000000020",
+    "reviewed_customer_event_ref": null
+  }
+}
+```
+
+Linked update retains the existing binding for non-price edits:
 
 ```json
 {
@@ -325,19 +361,28 @@ Linked update does not accept an unreviewed replacement binding directly:
 }
 ```
 
-For a price-affecting edit, `binding_update` is instead:
+`native_unlinked` uses the same update shape with `document_kind:"native_unlinked"` and no `inquiry_case_link_v1`. It rechecks the native release/source gates but has no case or customer-supplement gate. It cannot later add a case link; that requires a new linked document.
+
+`retain` rechecks organization membership, document owner/manager visibility, case permission intersection, current customer-supplement reference, release id/digest, request hash, source-reference digest and release validity. A changed price-affecting digest fails with `native_quote_rebind_required`; removing the binding is `inquiry_quote_link_forgery`.
+
+A price-affecting edit uses a new native prepare for the same organization and, for linked documents, the same `case_ref`:
 
 ```json
 {
   "mode": "replace",
   "native_quote_v1": { "<new server-issued binding>": "..." },
-  "inquiry_case_link_v1": { "<matching current link>": "..." },
+  "inquiry_case_link_v1": {
+    "case_ref": "<must equal the stored case_ref>",
+    "reviewed_customer_event_ref": "<current server-validated value>"
+  },
   "preview_hash": "<new native-prepare signature>",
   "preview_expires_at": 1790000000000
 }
 ```
 
-The replace path verifies the new binding signature, current case/source/customer-supplement gates and `document_fee_digest`. It updates the same document id and appends a revision. `retain` with a changed price-affecting digest fails with `native_quote_rebind_required`.
+The replacement path verifies that `case_ref` is unchanged, the customer supplement/current case/source gates pass, and the server recomputed `document_fee_digest` matches the new binding. It appends a revision under the same document id.
+
+Legacy native/approved rows retain `provenance:"legacy_v1_v2"` and their original binding. They may remain eligible for legacy formal export under the legacy gate, but they do not acquire a fabricated v3 review. A v3 edit, review or approval requires a new server-signed binding from `native-prepare`.
 
 ## 7. Standard fee template
 
@@ -536,6 +581,8 @@ Save and get return the current revision projection:
     "revision_id": "00000000-0000-4000-8000-000000000010",
     "version": 3,
     "state": "draft",
+    "document_kind": "manual",
+    "organization_id": "org-1",
     "input": { "<quote-document-draft@2026-09-15.v1>": "..." },
     "completeness": {
       "complete": false,
@@ -614,6 +661,7 @@ Filters are applied server-side before pagination. Status values are `all`, `dra
 | Update rejected draft | current rejected revision | version n+1, `draft` |
 | Reject draft | current draft | version n+1, `rejected`, rejection snapshot stored |
 | Approve reviewed draft | current version n | version n+1, `approved`, transition-only copy |
+| Claim legacy row on first v3 write | actual legacy version n | import n, then append n+1 for the authorized write |
 
 The approved version is a copy of the reviewed version with unchanged input/template content. It records:
 
@@ -637,7 +685,7 @@ Formal export uses approved version n+1 and verifies that `source_revision_id` c
 
 ### 9.2 Tables
 
-The existing `quote_documents`, `document_idempotency`, `document_audit` and `document_pdfs` table shapes are not changed. Old binaries must continue to read and write the legacy four-column projection during a rollback window.
+The existing `quote_documents`, `document_idempotency`, `document_audit` and `document_pdfs` table shapes are not changed. Their rows remain available to an explicitly guarded read-only rollback reader. An unmodified old binary that knows only schema version 2 is not allowed to write an upgraded database.
 
 New v3 tables:
 
@@ -686,45 +734,85 @@ CREATE TABLE IF NOT EXISTS document_revision_events(
 );
 ```
 
-`document_store_metadata` records logical `schema_version=3` and migration state. `PRAGMA user_version` remains compatible with the legacy reader during rollback.
+`document_store_metadata` records logical `schema_version=3` and migration state. The database upgrade transaction also sets `PRAGMA user_version=3`; an unmodified v2 process rejects that database before opening it for business writes. If `PRAGMA user_version` is greater than 3, the v3 reader fails closed as incompatible.
 
 ### 9.3 Atomic write transaction
 
 Every v3 write uses `BEGIN IMMEDIATE` and, before commit:
 
 1. Reads current pointer and revision.
-2. Resolves the current actor, organization, document ownership and linked case permission.
+2. Resolves the current actor, organization, document ownership, owner/admin management role and linked case permission. It rejects any change to organization, owner, document kind or linked `case_ref`.
 3. Checks the idempotency record and digest.
 4. Checks `expected_version` and allowed state transition.
 5. Validates the new draft/review/export contract.
 6. Appends the revision.
 7. Updates the current revision pointer.
-8. Writes the legacy projection only when it is a lossless v1/v2 representation.
+8. Does not create a second writable legacy authority. Any legacy-compatible projection is derived only for a guarded read-only compatibility path.
 9. Appends the existing audit row plus the revision-event link.
 10. Stores the idempotent result.
 11. Commits, then reads the new current revision back.
 
 No partial revision, audit, idempotency or current-pointer state is visible after a failure.
 
-### 9.4 Lazy migration
+### 9.4 Legacy claiming and version preservation
 
-Legacy `quote_documents` rows are not bulk-rewritten:
+V3 read operations do not claim, migrate or rewrite a legacy row. They may return a read-only legacy projection marked `claim_state:"legacy_unclaimed"`; a list or get must not create `document_revisions` or `document_current_revisions`.
 
-1. On first v3 get/update of a legacy row, transactionally create revision 1 from its current payload.
-2. Record `legacy_backfill=true` and the original payload digest in the revision.
-3. Keep the old `quote_documents` row as a rollback projection.
-4. On v3 list, backfill only the page of legacy rows needed for the response.
-5. If `quote_documents` changed outside v3 after migration, detect the projection-digest mismatch and append a `legacy_rollback_write` revision before continuing.
+Opening a v2 database for v3 reads is also non-mutating: the reader may inspect the legacy schema and serve projections, but it must not create v3 tables or set the v3 version marker. The first explicit authorized v3 write performs the upgrade and claim.
 
-Existing customer data is never deleted or rewritten in bulk.
+The first explicitly authorized v3 write against a legacy row performs the claim in one immediate transaction:
 
-### 9.5 Rollback
+1. Read the current legacy payload and preserve its actual `version=n`. Do not assume version 1.
+2. Allocate a new `revision_id` for that current snapshot.
+3. Store the actual state and the complete payload that exists now: input, template snapshot, native binding or case link, legacy approval object or rejection reason.
+4. Record `legacy_import=true`, `original_version=n`, `current_snapshot_only=true`, `reconstructed_prior_versions=false` and `approval_provenance` where applicable.
+5. Do not fabricate revisions for versions below n. Missing older editable inputs remain missing.
+6. Append the new revision as `n+1`, update the v3 current pointer and mark the document `claim_state:"claimed_v3"`.
 
-- Stop v3 routing and leave all new tables intact.
-- Old binaries continue to read/write legacy `quote_documents` rows.
-- V3-only rows remain stored and hidden from old list results; they are not deleted.
-- Re-enabling v3 reconciles a legacy-projection mismatch as a new revision.
-- No rollback step removes customer input, templates, rejection reasons or PDF caches.
+Existing PDF cache rows remain keyed by their original `(document_id, version)` values. A cache row for version 1, 4 or any other version is an exact historical receipt when bytes exist; it is not evidence that an editable revision snapshot exists. The history endpoint returns those cached bytes without converting them into revisions. No PDF is regenerated or renumbered during the claim.
+
+Legacy approval provenance:
+
+- A legacy `approved` payload has no v3 `review_hash` or `source_revision_id`. The claim records `approval_provenance:"legacy_v1_v2"`, the original approval object digest and the approved version.
+- The legacy approval can continue to support the existing formal export path while the original validity, source and case gates pass. It does not acquire a new v3 human-verification package.
+- A v3 edit of a legacy approved row is blocked; copy creates a new draft. A new v3 approval requires a new review and, for native/linked content, a new server-signed binding.
+- A legacy rejected payload imports its original rejection reason as the current revision; later v3 edits append a draft and preserve the rejected revision.
+
+```json
+{
+  "approval_provenance": {
+    "kind": "legacy_v1_v2",
+    "legacy_version": 4,
+    "legacy_approval_digest": "<canonical sha256 of the original approval object>",
+    "verified_by_rule": "legacy_approval_v1_v2",
+    "v3_review_hash": null,
+    "v3_source_revision_id": null
+  }
+}
+```
+
+### 9.5 Upgrade and rollback
+
+Upgrade:
+
+1. Acquire an exclusive SQLite transaction and require `PRAGMA user_version` to be 0 or 2.
+2. Create the additive v3 tables and verify no partial v3 metadata exists.
+3. Set logical metadata `schema_version=3` and `PRAGMA user_version=3` in the same transaction.
+4. Commit before serving v3 writes. A crash before commit leaves a legacy database; a crash after commit leaves a v3 database that old writers cannot open.
+
+Rollback is one of:
+
+- a guarded compatibility binary that opens `PRAGMA user_version=3` with `query_only=ON`, serves only the legacy read projection and rejects every v3 or legacy write with `document_v3_rollback_read_only`;
+- a full write rollback that restores the pre-upgrade SQLite backup into a separate path and atomically switches the configured database path.
+
+An unmodified binary that knows only version 2 must fail closed against the upgraded database. It must not mutate the same database after a v3 claim. No dual-write reconciliation or post-hoc conflict repair is part of this RFC.
+
+Rollback acceptance explicitly covers:
+
+- an old binary attempting to open a v3 database and being rejected by the version gate;
+- a read-only guarded reader denying approve/reject/save/PDF writes while returning permitted historical reads;
+- a pre-upgrade backup restoring to a separate path without deleting v3 rows from the upgraded database;
+- old documents at version greater than 1, in draft, approved and rejected states, retaining their original version and PDF cache keys.
 
 ## 10. Idempotency, replay and concurrency
 
@@ -745,12 +833,14 @@ For a new key, the transaction writes the result and revision metadata. For an e
 - same key and same digest: replay path;
 - same key and different digest: `idempotency_conflict`, no write.
 
+Permission is re-evaluated before idempotency result disclosure. `approve`, `reject`, `config-save` and all of their replays require current organization owner/admin membership. Document ownership alone grants edit visibility but never approval authority. Platform roles without an active organization membership have no enterprise authority.
+
 ### 10.2 Replay authorization
 
 Replay never returns a committed result before authorization:
 
 1. Re-resolve active membership and organization.
-2. Re-check document owner/managers.
+2. Re-check document owner/managers and, for approve/reject/config-save, require current organization owner/admin membership.
 3. For linked records, re-check case view/manage intersection.
 4. If permission was revoked, return `document_not_found`/`blocked` with no document metadata.
 5. If the committed revision is no longer current, return `manual_review` with committed id/version and current version/state, never a current success.
@@ -842,6 +932,15 @@ Saving remains available.
 
 The server verifies actor, organization, document revision, review expiry, current case/source gates and the exact reviewed version. It then appends the approved revision n+1 described in section 9.1.
 
+The caller must currently be an organization owner/admin. A document owner who is not an organization owner/admin cannot approve or reject. The platform role has no implicit enterprise permission.
+
+A legacy approved row is a separate branch:
+
+- It retains `approval_provenance:"legacy_v1_v2"` and the original approval object digest.
+- It can use the legacy formal-export verification path while its original validity/source/case checks pass.
+- It cannot synthesize `review_hash`, `source_revision_id` or `human_verified_price_and_source`.
+- A v3 change requires the user to copy/reopen under v3 and perform a fresh review.
+
 ## 12. Export contract
 
 ### 12.1 Modes
@@ -852,7 +951,14 @@ The server verifies actor, organization, document revision, review expiry, curre
 | `formal` | Current approved revision with current source/case/validity gates. |
 | `history` | Exact cached bytes for a specified historical version. |
 
-`expected_version` is required for all modes. Formal export cannot use a draft revision as though it were approved.
+Version guards are mode-specific:
+
+- `draft` and `formal` use `expected_version`.
+- `history` does not accept `expected_version`; it uses `target_version` plus `expected_current_version`.
+
+Formal export cannot use a draft revision as though it were approved. An incomplete draft request for `draft` export returns `needs_input`, includes the completeness pointers and does not invoke the renderer.
+
+After any draft or formal render await, the server re-reads the document and current permissions, rechecks the source/case gates, verifies the document version is unchanged, validates PDF magic bytes and SHA-256, and performs the protected cache/readback write. It must discard the bytes and write no cache entry if any check changed.
 
 Linked draft PDFs are disabled in v3 M1. The UI displays an explanation: the linked quote becomes formally exportable only after explicit approval; an existing cached receipt can be opened as history. A `draft` export request for linked input returns `document_export_mode_invalid` and never pretends to support it.
 
@@ -868,28 +974,33 @@ Linked draft PDFs are disabled in v3 M1. The UI displays an explanation: the lin
 }
 ```
 
-`target_version` selects cached bytes and must be strictly less than `current_version`. `expected_current_version` is a concurrency guard against reading history while the user is looking at a changed current document. If the current version differs, return `version_conflict`; if the target equals current, return `document_export_mode_invalid` and direct the caller to draft/formal mode. History never invokes the renderer and returns `historical:true`, `valid_now:false`, `target_version` and `current_version`.
+`target_version` selects cached bytes. Normally it is strictly less than `current_version`. It may equal the current version only when that current revision is no longer eligible for a new formal export because of expiry, source change or case terminal state and a cached PDF exists; this preserves v2-compatible historical receipt behavior. If the current version still supports formal export and target equals current, return `document_export_mode_invalid` and direct the caller to draft/formal mode.
+
+`expected_current_version` is always a concurrency guard against reading history while the user is looking at a changed current document. If it differs from the stored current version, return `version_conflict`. History never invokes the renderer and returns `historical:true`, `valid_now:false`, `target_version` and `current_version`. On the v1/v2 compatibility branch, the existing successful `inquiry_quote_history_only` reason is preserved.
 
 ## 13. V1 and V2 compatibility
 
 ### 13.1 Reads
 
-- Legacy v1/v2 rows not migrated to v3 continue to return their existing payloads.
-- V1/v2 `get` of a v3-managed row returns `blocked`, `data:null`, `document_contract_version_required`. It never fabricates a complete document by filling `null` with zero or empty strings.
-- V1/v2 `list` returns only rows that have a lossless legacy projection. V3 records are omitted, not converted into fake complete records.
-- Pagination scans the legacy rowid range and returns the rows visible to that version. A page may be short, but it never duplicates or silently wraps; `next_cursor` advances from the last scanned legacy row.
+- A legacy row remains `legacy_unclaimed` until the first authorized v3 write. V3 get/list may return its read-only legacy projection but do not claim it.
+- V1/v2 `get` of an unclaimed legacy row continues to return the existing payload.
+- Once a row is `claimed_v3`, v1/v2 `list` omits it and v1/v2 `get` returns `blocked`, `data:null`, `document_contract_version_required`. The list/get behavior is therefore consistent: a row is either listable and readable under v1/v2, or omitted and blocked.
+- V3 rows are never converted into fake complete records or zero-filled projections.
+- Pagination scans the legacy rowid range and filters claimed v3 rows. A page may be short, but it never duplicates or silently wraps; `next_cursor` advances from the last scanned legacy row.
 
 ### 13.2 Mutations
 
-V1/v2 `save`, `approve`, `reject` and `export` must resolve whether the target is v3-managed before any write or render. They return `document_contract_version_required` and do not bypass v3 review, revision or source gates.
+V1/v2 `save`, `approve`, `reject` and `export` must resolve whether the target is claimed v3 before any write or render. They return `document_contract_version_required` and do not bypass v3 review, revision or source gates.
+
+An unmodified v2 process must not open the upgraded database at all. A guarded read-only compatibility binary may serve permitted legacy reads but must deny every write. Full old-writer rollback is restore-of-backup, not concurrent access to the upgraded file.
 
 ### 13.3 Config-save
 
-V1/v2 config-save preserves `standard_fee_template_v1` and all v3-only config fields while updating only the legacy company/terms fields. It cannot replace the stored JSON with an old `templateSchema` object.
+V1/v2 config-save may update the legacy company, terms and `fee_items` fields, but it must preserve `standard_fee_template_v1` and all v3-only config fields. It cannot replace the stored JSON with an old `templateSchema` object or drop the v3 extension.
 
 ### 13.4 Template snapshots
 
-An old draft opened through v3 is backfilled with its stored company/terms snapshot. `template_selection:retain` is the default. Only an explicit `refresh_current` changes the snapshot and creates a new revision that invalidates review.
+An old draft opened through v3 is displayed with its stored company/terms snapshot but remains unclaimed. The first authorized v3 write imports that actual snapshot at its original version n, then appends n+1. `template_selection:retain` is the default. Only an explicit `refresh_current` changes the snapshot and invalidates review.
 
 ## 14. Console workflow and records
 
@@ -931,21 +1042,30 @@ V3 uses the existing five-state envelope:
 | --- | --- | --- | --- | --- |
 | Incomplete draft saved | 200 | `success` | draft projection | empty |
 | Review/preview called on incomplete draft | 200 | `needs_input` | completeness object | `document_incomplete` |
+| Draft PDF requested for incomplete draft | 200 | `needs_input` | completeness object | `document_incomplete` |
 | Unknown/mixed v3 version | 400 | `needs_input` | null | `document_contract_version_invalid` |
 | Missing update id/expected_version | 400 | `needs_input` | null | `document_update_input_invalid` |
 | Update current-version mismatch | 409 | `blocked` | null | `version_conflict` |
 | Approval source-version/review-hash mismatch | 409 | `blocked` | null | `document_review_stale` |
 | Approved row update | 409 | `blocked` | null | `document_state_not_editable` |
+| Non-owner/admin approve, reject, config-save or replay | 403 | `blocked` | null | `document_management_denied` |
+| Platform role without enterprise membership on manual/native_unlinked | 403 | `blocked` | null | `document_organization_required` |
+| Platform role without enterprise membership on linked data | 403 | `blocked` | null | `inquiry_quote_document_scope_required` |
 | Revoked replay permission | 404 | `blocked` | null | `document_not_found` |
 | Same idempotency key, different digest | 409 | `blocked` | null | `idempotency_conflict` |
 | Historical replay not current | 200 | `manual_review` | committed metadata | `document_replay_not_current` |
 | Linked draft PDF requested | 409 | `blocked` | null | `document_export_mode_invalid` |
-| History target equals current version | 409 | `blocked` | null | `document_export_mode_invalid` |
+| History target equals a still-valid current version | 409 | `blocked` | null | `document_export_mode_invalid` |
+| History target equals an expired/stale current version with cached bytes | 200 | `success` | historical cache metadata | empty or legacy history reason |
 | `expected_current_version` differs from current | 409 | `blocked` | null | `version_conflict` |
 | History bytes missing | 503 | `unavailable` | null | `inquiry_quote_history_bytes_missing` |
 | Native price-affecting edit without new prepare | 200 | `manual_review` | null | `native_quote_rebind_required` |
+| Guarded read-only rollback receives a write | 409 | `blocked` | null | `document_v3_rollback_read_only` |
+| Render completes after version/source/permission change | 200 | `manual_review` | null | applicable `version_conflict`, source/case reason |
 
 The exact v3 schema must list allowed reason codes; arbitrary exception text is never exposed as a reason.
+
+Legacy approval formal export is not converted into a v3 reason table. It uses the existing v1/v2 approval and export reason mapping, and only its original source, validity and case gates can permit new formal bytes.
 
 ## 17. Counterexample acceptance matrix
 
@@ -961,10 +1081,10 @@ The exact v3 schema must list allowed reason codes; arbitrary exception text is 
 | QW-08 | Two tabs update version 3 | One appends version 4; the other receives `version_conflict` and preserves its input. |
 | QW-09 | Edit rejected draft | Appends a new draft revision under the same id; rejection remains in revision history. |
 | QW-10 | Update approved draft | Blocked; copy creates a new draft id. |
-| QW-11 | Approve review at version 3 after update to version 4 | `document_review_stale`; no approval write. |
+| QW-11 | Approve review at version 3 after update to version 4 | `version_conflict`; no approval write. |
 | QW-12 | Approve review at version 3 | Appends approved version 4 with source/version evidence. |
 | QW-13 | Request history target 2 while current is 5 | Returns bytes for version 2, `historical:true`, `valid_now:false`. |
-| QW-14 | Request history target 5, current 5 | `document_export_mode_invalid`; use draft/formal mode. |
+| QW-14 | Request history target 5 while version 5 is still valid | `document_export_mode_invalid`; use draft/formal mode. |
 | QW-15 | Replay a save after membership revocation | `document_not_found`; no metadata leak. |
 | QW-16 | Replay an old save after the document advanced | `manual_review`, old revision/version, current version visible, never current success. |
 | QW-17 | v1 client lists v3 incomplete rows | Rows omitted; no zero-filled projection. |
@@ -975,8 +1095,24 @@ The exact v3 schema must list allowed reason codes; arbitrary exception text is 
 | QW-22 | Linked price edit without native prepare | `native_quote_rebind_required`; old binding unchanged. |
 | QW-23 | Linked history bytes missing | `unavailable`; renderer not called. |
 | QW-24 | 320/390/1280/1440 viewport | No overflow, no overlap, controls and focus order reachable. |
-| QW-25 | Legacy draft migrated lazily | Continues to edit under the same document id with its stored template snapshot. |
+| QW-25 | Legacy draft first explicit v3 write | Claims the actual version n snapshot, appends n+1 and continues under the same document id with its stored template snapshot. |
 | QW-26 | Browser flow finishes | Zero unexplained console/page errors, and generated draft/formal PDFs contain the expected state markers and totals. |
+| QW-27 | Review hash names version 3 while current version is also 3 but content/source changed | `document_review_stale`; no approval write. |
+| QW-28 | Legacy row is version 4 with PDF caches at versions 1 and 4 | Claim imports only actual version 4; first v3 write appends version 5; existing PDF keys are unchanged. |
+| QW-29 | Unmodified v2 binary opens upgraded database | Version gate rejects it before write; guarded rollback is read-only. |
+| QW-30 | Incomplete draft asks for draft PDF | `needs_input`, completeness pointers, no renderer call. |
+| QW-31 | Current version is expired and has cached PDF | History returns that cache as historical, still subject to read permission. |
+| QW-32 | Legacy config-save edits old fee_items | Legacy fee_items update while `standard_fee_template_v1` remains intact. |
+| QW-33 | Incomplete draft shows monetary subtotal | UI labels it as partial/incomplete subtotal, not a complete quote total. |
+| QW-34 | Legacy approved version 4 has no v3 review hash | Legacy provenance branch exports only when its original gates pass; no fabricated v3 review. |
+| QW-35 | Native quote has no inquiry case | Uses `native_unlinked`; it is not converted to manual or forced to bind a case. |
+| QW-36 | Linked replace prepare names another case | Blocked as forgery; original `case_ref` remains immutable. |
+| QW-37 | Legacy rejected row is version 5 | Claim preserves version 5 and its rejection reason; first v3 edit appends draft version 6. |
+| QW-38 | Legacy draft is version 7 with unrelated cached PDF versions | Claim preserves version 7; only actual revisions are stored and existing PDF keys remain unchanged. |
+| QW-39 | V3 list/get opens an unclaimed legacy row | Returns a read-only projection and performs no claim/revision write. |
+| QW-40 | Claimed v3 row appears through v1 list | It is omitted; direct get is blocked, so listing and opening remain consistent. |
+| QW-41 | Replay approve after owner/admin downgrade | `document_management_denied`; no result disclosure. |
+| QW-42 | Platform role without organization membership attempts approve/config-save | Blocked; platform role grants no enterprise authority. |
 
 ## 18. Candidate implementation files after acceptance
 
@@ -986,7 +1122,7 @@ This RFC does not authorize their modification yet.
 | --- | --- |
 | `services/quote-documents/contracts.ts` | v3 draft, revision, template, review, export and list schemas |
 | `services/quote-documents/service.ts` | append-only revisions, idempotency, review, update and export gates |
-| `services/quote-documents/storage.ts` | new v3 tables, lazy migration and transaction helpers if extraction is warranted |
+| `services/quote-documents/storage.ts` | new v3 tables, claim-on-first-write and transaction helpers if extraction is warranted |
 | `services/access-gateway/portal/http.ts` | v3 version dispatch, `review` action and v1/v2 projection boundaries |
 | `deploy/scripts/generate-native-schemas.ts` | generate v3 schemas after contract acceptance |
 | `deploy/scripts/generate-portal-openapi.ts` | v3 request/response variants and review route |
@@ -1001,13 +1137,13 @@ This RFC does not authorize their modification yet.
 
 1. Generate and validate closed v3 Draft 2020-12 schemas.
 2. Add failing tests for nullable drafts, completeness pointers, zero preservation and save/review separation.
-3. Add failing tests for append-only revisions, current pointer, audit linkage, lazy migration and rollback reconciliation.
+3. Add failing tests for append-only revisions, current pointer, audit linkage, actual-version claiming, legacy approval provenance, legacy version greater than 1 and guarded rollback.
 4. Add failing tests for idempotency scope/digest, replay authorization, stale replay and update/approve races.
-5. Add v1/v2 compatibility tests for list omission, get/mutate blocking, pagination and config preservation.
+5. Add v1/v2 compatibility tests for unclaimed reads, claimed-row list/get/mutate blocking, pagination, legacy fee_items plus v3 extension preservation and old-binary version refusal.
 6. Implement service and HTTP behind the explicit v3 selector; leave v1/v2 routes untouched.
 7. Implement CLI commands and examples using the same personnel session.
 8. Implement the separate records view, compact rows, template apply/replace flow, conflict preservation and leave guard.
-9. Run focused unit/HTTP/CLI/e2e checks, then `typecheck`, `lint`, `validate:schemas`, `build`, `build:cli` and diff checks.
+9. Run focused unit/HTTP/CLI/e2e checks, including `native_unlinked`, immutable case/kind checks, incomplete export no-render, render-time revalidation, expired-current history and partial totals; then `typecheck`, `lint`, `validate:schemas`, `build`, `build:cli` and diff checks.
 10. Verify actual Chromium screenshots at 1440/1280/390/320, zero unexplained console/page errors, and inspect draft/formal PDFs.
 
 ## 20. Acceptance gate
@@ -1015,10 +1151,12 @@ This RFC does not authorize their modification yet.
 This RFC remains proposed. It is not accepted until Mac confirms:
 
 - nullable incomplete draft save and completeness/review separation;
-- append-only revision storage, lazy migration, logical schema version and rollback;
-- idempotency and replay behavior;
-- v1/v2 filtering/blocking/pagination/config preservation;
-- target-version history semantics and review-version/approval-version evidence;
+- append-only revision storage, original-version legacy claim, legacy approval provenance and guarded rollback;
+- idempotency, replay authorization, owner/admin approval and immutable document/case identity;
+- v1/v2 claimed/unclaimed filtering, pagination, config-extension and legacy fee-item preservation;
+- native-bound and `native_unlinked` digest/source-kind rules;
+- target-version history semantics, expired-current cache compatibility and review/approval version evidence;
+- incomplete export no-render and post-render version/permission/source/checksum revalidation;
 - the console records view, template application rules and four-width PDF acceptance.
 
 No production deployment, real customer data, host security change or external write is part of this RFC.
