@@ -56,9 +56,10 @@ it('isolates organizations, revokes management immediately and paginates without
  const root=mkdtempSync(join(tmpdir(),'cases-org-')),store=new CaseStore(join(root,'cases.sqlite'));
  let role='admin',active=true;
  const orgPortal={getState:(ctx:PortalContext)=>({data:{current_organization:ctx.organizationId?{organizationId:ctx.organizationId,status:active?'active':'suspended'}:null,memberships:ctx.organizationId?[{userId:ctx.identity.userId,organizationId:ctx.organizationId,status:'active',role}]:[]}})};
- const service=new CaseService(store,orgPortal as never),member={...customer,organizationId:'org-a'},admin={...other,organizationId:'org-a'};
+ const service=new CaseService(store,orgPortal as never),member={...customer,organizationId:'org-a'},dualMember={...customer,identity:{...customer.identity,platformRole:'operator' as const},organizationId:'org-a'},admin={...other,organizationId:'org-a'};
  try {
-  const first=service.create(member,draft,'org-create-case-1');
+  const first=service.create(dualMember,{...draft,product:'Dual-role request'},'org-create-case-1');
+  expect(first.status).toBe('submitted');
   service.create(member,draft,'org-create-case-2');
   expect(service.list(admin,{management:true,limit:1}).items).toHaveLength(1);
   const page=service.list(admin,{management:true,limit:1}),next=service.list(admin,{management:true,limit:1,cursor:page.next_cursor});

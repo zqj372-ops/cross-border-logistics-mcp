@@ -32,7 +32,11 @@ const roots: string[] = [];
 const NOW_SECONDS = Math.floor(Date.now() / 1_000);
 const NOW = new Date(NOW_SECONDS * 1_000).toISOString();
 
-function identity(userId: string, platformRole: "reviewer" | "operator" | null = null) {
+function identity(
+  userId: string,
+  platformRole: "reviewer" | "operator" | null = null,
+  organizationId: string | null = "org_demo",
+) {
   return {
     identity: {
       userId,
@@ -41,7 +45,7 @@ function identity(userId: string, platformRole: "reviewer" | "operator" | null =
       emailVerified: true,
       platformRole,
     },
-    organizationId: "org_demo",
+    organizationId,
   } as const;
 }
 
@@ -251,7 +255,7 @@ async function fixture() {
     display_name: "Demo",
   }, "tenant-create-00000001");
   portalService.bootstrapOrganization(
-    identity("owner", "operator"),
+    identity("owner", "operator", null),
     { idempotencyKey: "org-bootstrap-0000001", input: {
       organizationId: "org_demo",
       tenantId: "tenant_demo",
@@ -287,7 +291,7 @@ async function approvedApplication(
   });
   value.portalService.submitRequest(owner, "request_demo", 1, "request-submit-00001");
   const decision = value.portalService.decideRequest(
-    identity("reviewer", "reviewer"),
+    identity("reviewer", "reviewer", null),
     "request_demo",
     {
       idempotencyKey: "request-decide-00001",
@@ -297,7 +301,7 @@ async function approvedApplication(
   );
   const grantId = (decision.data as { grant: { grantId: string } }).grant.grantId;
   await beforeProvision?.({ applicationId, grantId });
-  await value.bridge.provisionGrant(identity("operator", "operator"), grantId, {
+  await value.bridge.provisionGrant(identity("operator", "operator", null), grantId, {
     idempotencyKey: "grant-provision-00001",
     expectedVersion: 1,
     input: {},
@@ -412,7 +416,7 @@ describe("portal access bridge", () => {
     const signCount = value.crypto.signer.signCount;
     const auditCount = value.crypto.audit.events.length;
 
-    value.portalService.changeGrantState(identity("operator", "operator"), grantId, {
+    value.portalService.changeGrantState(identity("operator", "operator", null), grantId, {
       idempotencyKey: "grant-suspend-00001",
       expectedVersion: 2,
       input: { state: "suspended" },
@@ -476,7 +480,7 @@ describe("portal access bridge", () => {
     });
     expect(result).toMatchObject({ status: "success" });
     expect(JSON.stringify(result)).toContain('"version":"cargo-result@2026-08-11.v1"');
-    value.portalService.changeGrantState(identity("operator", "operator"), grantId, {
+    value.portalService.changeGrantState(identity("operator", "operator", null), grantId, {
       idempotencyKey: "grant-suspend-00002",
       expectedVersion: 2,
       input: { state: "suspended" },

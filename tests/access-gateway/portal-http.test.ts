@@ -17,7 +17,10 @@ afterEach(async () => Promise.all(servers.splice(0).map((server) => new Promise<
 
 async function setup(bridge?: PortalCredentialBridge, mode: "fixtures" | "production" = "fixtures") {
   const service = {
-    getState: (context: PortalContext) => success({ data_mode: "fixtures", identity: context.identity, current_organization: null, organizations: [], users: [], memberships: [{ organizationId: "org-a", userId: "fixture-owner", role: "owner", status: "active", createdAt: "2026-09-05T00:00:00.000Z" }], invitations: [], applications: [], requests: [], grants: [], catalog: [], operations: [] }),
+    getState: (context: PortalContext) => success({ data_mode: "fixtures", identity: context.identity, current_organization: null, organizations: [], users: [], memberships: [
+      { organizationId: "org-a", userId: "fixture-owner", role: "owner", status: "active", createdAt: "2026-09-05T00:00:00.000Z" },
+      { organizationId: "org-a", userId: "fixture-operator", role: "admin", status: "active", createdAt: "2026-09-15T00:00:00.000Z" },
+    ], invitations: [], applications: [], requests: [], grants: [], catalog: [], operations: [] }),
   } as unknown as PortalService;
   const handlerRef: { current?: ReturnType<typeof createPortalHttpHandler> } = {};
   const server = createServer((request, response) => { void handlerRef.current?.handle(request, response); });
@@ -47,6 +50,29 @@ describe("portal HTTP boundary", () => {
     const unknown = await fetch(`${origin}/console/api/v1/not-a-resource`, { headers: { cookie: cookieFrom(login) } });
     expect(unknown.status).toBe(404);
     expect(unknown.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("accepts an explicit null only when a platform identity switches back from an authorized organization", async () => {
+    const origin = await setup();
+    const anonymousResponse = await fetch(`${origin}/console/api/v1/session`);
+    const anonymous = await anonymousResponse.json() as { csrf_token: string };
+    const loginResponse = await fetch(`${origin}/console/api/v1/fixture-login`, { method: "POST", headers: { cookie: cookieFrom(anonymousResponse), origin, "x-csrf-token": anonymous.csrf_token, "idempotency-key": "idem_fixture_operator_01", "content-type": "application/json" }, body: JSON.stringify({ identity_id: "fixture-operator" }) });
+    const loggedIn = await loginResponse.json() as { csrf_token: string };
+    const selectedResponse = await fetch(`${origin}/console/api/v1/session/organization`, { method: "POST", headers: { cookie: cookieFrom(loginResponse), origin, "x-csrf-token": loggedIn.csrf_token, "idempotency-key": "idem_operator_select_001", "content-type": "application/json" }, body: JSON.stringify({ organization_id: "org-a" }) });
+    expect(selectedResponse.status).toBe(200);
+    const selected = await selectedResponse.json() as { csrf_token: string; organization_id: string | null };
+    expect(selected.organization_id).toBe("org-a");
+    const platformResponse = await fetch(`${origin}/console/api/v1/session/organization`, { method: "POST", headers: { cookie: cookieFrom(selectedResponse), origin, "x-csrf-token": selected.csrf_token, "idempotency-key": "idem_operator_platform_01", "content-type": "application/json" }, body: JSON.stringify({ organization_id: null }) });
+    expect(platformResponse.status).toBe(200);
+    expect(await platformResponse.json()).toMatchObject({ organization_id: null });
+
+    const ownerAnonymousResponse = await fetch(`${origin}/console/api/v1/session`);
+    const ownerAnonymous = await ownerAnonymousResponse.json() as { csrf_token: string };
+    const ownerLoginResponse = await fetch(`${origin}/console/api/v1/fixture-login`, { method: "POST", headers: { cookie: cookieFrom(ownerAnonymousResponse), origin, "x-csrf-token": ownerAnonymous.csrf_token, "idempotency-key": "idem_fixture_owner_null", "content-type": "application/json" }, body: JSON.stringify({ identity_id: "fixture-owner" }) });
+    const ownerLoggedIn = await ownerLoginResponse.json() as { csrf_token: string };
+    const denied = await fetch(`${origin}/console/api/v1/session/organization`, { method: "POST", headers: { cookie: cookieFrom(ownerLoginResponse), origin, "x-csrf-token": ownerLoggedIn.csrf_token, "idempotency-key": "idem_owner_platform_0001", "content-type": "application/json" }, body: JSON.stringify({ organization_id: null }) });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ reason_codes: ["platform_identity_required"] });
   });
 
   it("serves only exact console assets, supports port 0, and refuses incomplete production providers", async () => {

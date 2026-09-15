@@ -3,8 +3,8 @@ export function createBusinessAccessUi(ui) {
   const names = { 'customs.query': '关税与归类', 'customs.tax.estimate': '单项与批量税费估算', 'quote.zone_preview': '加拿大尾程规则试算', 'quote.ai_extract_preview': '询价资料提取', 'quote.freightcom_ltl.preview': 'Freightcom LTL 承运商询价' };
   const descriptions = { 'customs.query': '中国、美国与加拿大的完整归类、税率和依据', 'customs.tax.estimate': '按商品、申报价值、币种与税则日期逐项估算', 'quote.zone_preview': '调用已有报价规则，保留费用和适用条件', 'quote.ai_extract_preview': '仅提取客户资料，不自动报价、保存或发送', 'quote.freightcom_ltl.preview': '获取承运商当前费率、附加费和有效期' };
   let state = { requests: [], grants: [], credentials: [], applications: [] }; let unavailable = false;
-  const platform = () => ['operator', 'reviewer'].includes(ui.model().session?.identity?.platform_role);
-  const operator = () => ui.model().session?.identity?.platform_role === 'operator';
+  const platform = () => !ui.model().session?.organization_id && ['operator', 'reviewer'].includes(ui.model().session?.identity?.platform_role);
+  const operator = () => platform() && ui.model().session?.identity?.platform_role === 'operator';
   const appName = (id) => ui.model().state.applications.find((v) => v.application_id === id)?.name || state.applications?.find((v) => v.application_id === id)?.name || '业务应用';
   const pills = (ops) => `<div class="pill-list">${ops.map((op) => `<span class="badge info">${esc(names[op] || op)}</span>`).join('')}</div>`;
   const choose = (selected = [], scope = Object.keys(names)) => `<div class="choice-list">${scope.map((op) => `<label class="choice-row"><input type="checkbox" name="operations" value="${op}" ${selected.includes(op) ? 'checked' : ''}><span class="choice-copy"><strong>${names[op]}</strong><small>${descriptions[op]}</small></span></label>`).join('')}</div>`;

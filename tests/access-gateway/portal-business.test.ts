@@ -40,13 +40,14 @@ describe("portal business service", () => {
     expect(freightcomPreview).toHaveBeenCalledWith({ input: { packages: [] }, requestId: "request-6" });
   });
 
-  it("blocks platform sessions, tenant mismatches and operations outside the configured whitelist", async () => {
+  it("uses explicit organization membership for dual-role personnel and blocks the platform workspace", async () => {
     const query = vi.fn(() => Promise.resolve(clientResult));
     const mismatch = new PortalBusinessService({ portalService: { getState: () => envelope(state()) }, connections: [{ organizationId: "org-1", tenantId: "tenant-other", enabledOperations: ["customs.query"], customsClient: { query } }] });
     expect(mismatch.describe(context())).toMatchObject({ status: "blocked", reason_codes: ["business_connection_tenant_mismatch"] });
     const service = new PortalBusinessService({ portalService: { getState: () => envelope(state()) }, connections: [{ organizationId: "org-1", tenantId: "tenant-1", enabledOperations: [], customsClient: { query } }] });
     await expect(service.execute(context(), "customs.query", {}, "request-1")).resolves.toMatchObject({ status: "blocked", reason_codes: ["business_operation_not_enabled"] });
-    await expect(service.execute(context("reviewer"), "customs.query", {}, "request-1")).resolves.toMatchObject({ status: "blocked", reason_codes: ["business_personnel_session_required"] });
+    expect(service.describe(context("reviewer"))).toMatchObject({ status: "success", data: { organization_id: "org-1" } });
+    await expect(service.execute({ ...context("reviewer"), organizationId: null }, "customs.query", {}, "request-1")).resolves.toMatchObject({ status: "blocked", reason_codes: ["business_personnel_session_required"] });
     expect(query).not.toHaveBeenCalled();
   });
 

@@ -22,6 +22,9 @@ it("isolates tenants and application filters, paginates without duplication, bou
     await store.append(event(5, { created_at: new Date(now-31*86_400_000).toISOString() }));
     const service = new PortalCallLogService(store, fixture.service);
     const page = await service.query(context, { application_id: app.applicationId, limit: 1 });
+    const dualRole = { ...context, identity: { ...context.identity, platformRole: "operator" as const } };
+    expect((await service.query(dualRole, { application_id: app.applicationId, limit: 1 })).data.events).toHaveLength(1);
+    await expect(service.query({ ...dualRole, organizationId: null }, {})).rejects.toThrow("business_access_denied");
     expect(page.data.summary.total).toBe(2);
     expect(page.data.events.map(item => item.event_id)).toEqual(["call_1"]);
     const next = await service.query(context, { application_id: app.applicationId, limit: 1, cursor: page.data.next_cursor! });

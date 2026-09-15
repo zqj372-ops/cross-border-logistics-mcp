@@ -231,6 +231,7 @@ function closed(input: Record<string, unknown>, required: readonly string[], opt
   const allowed = new Set([...required, ...optional]); if (Object.keys(input).some((key) => !allowed.has(key)) || required.some((key) => !(key in input))) throw new PortalError("body_invalid");
 }
 function text(input: Record<string, unknown>, key: string): string { const value = input[key]; if (typeof value !== "string" || !value.trim() || value.length > 2000) throw new PortalError("body_invalid"); return value; }
+function nullableText(input: Record<string, unknown>, key: string): string | null { return input[key] === null ? null : text(input, key); }
 function timestamp(input:Record<string,unknown>,key:string):string{const value=text(input,key);if(!Number.isFinite(Date.parse(value)))throw new PortalError("body_invalid");return value;}
 function choice<const T extends readonly string[]>(input: Record<string, unknown>, key: string, allowed: T): T[number] { const value = text(input,key); if(!allowed.includes(value))throw new PortalError("body_invalid"); return value; }
 function integer(input: Record<string, unknown>, key: string): number { const value = input[key]; if (!Number.isSafeInteger(value) || Number(value) < 1) throw new PortalError("body_invalid"); return Number(value); }
@@ -459,7 +460,7 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
         if (!options.organizationBridge) throw new PortalError("organization_bridge_unavailable");
         json(response, 200, await options.organizationBridge.getOrganizationAdmission(ctx, decodeURIComponent(organizationMatch[1]!))); return true;
       }
-      if (path === `${API_PREFIX}/session/organization` && request.method === "POST") { idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["organization_id"]); const state = options.service.getState({ ...ctx, organizationId: null }); const selected = options.sessions.selectOrganization(current.sessionId, text(input, "organization_id"), stateMemberships(state)); json(response, 200, sessionBody(options, selected), options.sessions.cookieFor(selected)); return true; }
+      if (path === `${API_PREFIX}/session/organization` && request.method === "POST") { idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["organization_id"]); const state = options.service.getState({ ...ctx, organizationId: null }); const selected = options.sessions.selectOrganization(current.sessionId, nullableText(input, "organization_id"), stateMemberships(state)); json(response, 200, sessionBody(options, selected), options.sessions.cookieFor(selected)); return true; }
       const input = write ? await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES) : {};
       if (path.startsWith(`${API_PREFIX}/business-access/`)) {
         if (!options.businessAccessService) throw new PortalError("business_access_unavailable");

@@ -92,7 +92,7 @@ export class CaseService {
  private event(row:Row,message:string,visibility:Event['visibility'],label:string,actorId:string){this.store.db.prepare('INSERT INTO business_case_events VALUES(?,?,?,?,?,?,?,?,?)').run(randomUUID(),row.case_id,row.version,row.status,message,visibility,label,row.updated_at,actorId);}
  create(ctx:PortalContext,input:unknown,key:string){
   const scope=this.scope(ctx),draft=parse(caseInputSchema,input) as Draft;
-  if(ctx.identity.platformRole!==null)throw new PortalError('case_customer_required');
+  if(ctx.identity.platformRole!==null&&ctx.organizationId===null)throw new PortalError('case_customer_required');
   return this.mutate(scope,'create',key,draft,()=>{
    const daily=this.store.db.prepare('SELECT COUNT(*) AS n FROM business_cases WHERE owner_id=? AND created_at>=?').get(scope.user,new Date(Date.now()-86400000).toISOString()) as {n:number};
    if(daily.n>=50)throw new PortalError('case_daily_limit');
