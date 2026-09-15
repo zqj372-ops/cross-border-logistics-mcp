@@ -1,6 +1,6 @@
 # RFC: Quote document workflow v3
 
-Status: Proposed, revision R3. Mac review requested changes to R2. This revision defines contracts and storage design only; it does not authorize business implementation or merge.
+Status: Accepted for local implementation by Mac review on 2026-09-15. This acceptance covers the R3 architecture plus the final baseline interpretations in section 21; production deployment and merge remain separately gated.
 
 Date: 2026-09-15
 
@@ -19,6 +19,8 @@ This revision explicitly addresses the four P1 findings and the synchronized cor
 | Synchronized corrections | Fixes mode-specific version guards, expired-current history, incomplete-draft export, render-time rechecks, stale reason codes, legacy fee-item preservation and partial-total labeling. |
 
 The previous R1 and R2 text that allowed old payload renumbering, unguarded old writers or read-time migration is withdrawn. Neither revision is an accepted contract.
+
+The final interpretation section is normative where it narrows an earlier R3 sentence.
 
 ## 2. Problem and current evidence
 
@@ -1160,3 +1162,55 @@ This RFC remains proposed. It is not accepted until Mac confirms:
 - the console records view, template application rules and four-width PDF acceptance.
 
 No production deployment, real customer data, host security change or external write is part of this RFC.
+
+## 21. Final Mac baseline interpretation
+
+This section is the implementation baseline accepted on 2026-09-15. It narrows the R3 text where the two could be read differently.
+
+### 21.1 Upgrade ownership and rollback
+
+- Before the database version changes, all old writers and connections stop. The upgrade transaction obtains exclusive ownership and verifies that no legacy connection can still write.
+- `PRAGMA user_version=3` prevents a newly opened old process from using the database; it does not evict an already running writer. Deployment tests must prove the old connection is stopped before upgrade.
+- The default rollback is the guarded read-only compatibility mode. It opens the v3 database read-only, serves only allowed legacy projections and rejects all writes.
+- Restoring a pre-upgrade backup to another path is disaster recovery, not the default rollback. It can lose business progress made after upgrade. It requires a separately confirmed recovery point and impact review, keeps the original v3 database, and never enables two writable databases or automatic cross-database merging.
+
+### 21.2 Native pricing ownership
+
+V3 M1 does not allow a manual or template fee row in a `native_unlinked` or `linked` document.
+
+- Every priced row must come from the current server-side native prepare.
+- A client cannot add, remove, downgrade or hide a native row. `hiddenExcluded` cannot be used to remove a native charge from the native total.
+- A changed priced set requires a complete new native prepare and a server-signed replacement binding.
+- The native fee digest is computed over the complete ordered native row set, including row identity, source kind and display behavior. It must not be a filter that silently ignores an unexpected manual extra row.
+
+### 21.3 Permissions
+
+- Ordinary active members retain the existing permission to create, update and read their own manual drafts.
+- `owner` or `admin` is required for `approve`, `reject`, `config-save` and all replays of those actions.
+- Section 9.3 is not a rule that every save requires manager authority.
+- Linked actions use the intersection of the existing document permission and case permission.
+
+### 21.4 Revision readback and replay
+
+- One atomic transaction commits revision, current pointer, audit and idempotency together.
+- The write result must read back by the exact document id, version and revision id created by this request. A concurrent next revision is never returned as this request's result.
+- The current document pointer is returned through separate `current_version` and `current_revision_id` fields.
+- Replay checks current authorization first, then distinguishes an exact current success from a historical committed result. A historical result never claims to be current.
+
+### 21.5 Legacy unclaimed reads and write claiming
+
+- `legacy_unclaimed` may be returned by v3 get/list/review using an explicit projection. `revision_id` may be `null`, and `claim_state` must be explicit.
+- Review may sign the old version plus the complete legacy payload digest without writing a revision.
+- Only the first actual `update`, `approve` or `reject` imports the actual version n and appends n+1.
+- Only `create`, `update`, `reject` and `approve` append document revisions. `config-save` maintains a config version. `preview`, `review` and `export` do not increment document versions.
+
+### 21.6 Closed schemas and final gates
+
+- The final closed schemas use discriminated unions for requests and views, concrete reason-code enums, and no placeholder fields.
+- V1, v2 and legacy approval branches remain readable and retain their existing gates.
+- Manual and `native_unlinked` drafts may export draft PDF. `native_unlinked` export rechecks its native source. Linked draft PDF remains disabled with an explicit explanation.
+- Incomplete drafts do not render. Existing PDF limits remain: minimum and maximum byte length, `%PDF-` header, SHA-256, protected cache write and readback, and version/permission/source rechecks on every export.
+- Amounts are decimal strings. Missing amounts remain missing, not zero. Monetary subtotals for incomplete drafts are partial.
+- History returns only the selected cached bytes. An expired current revision may be read as history when permission remains and the result is explicitly historical, never current-usable.
+
+This section does not authorize production deployment, real customer data, external quote calls, email or merge.
