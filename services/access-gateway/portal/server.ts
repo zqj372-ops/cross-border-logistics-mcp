@@ -1,5 +1,6 @@
 import type {CustomsPackages} from '../../customs-native/packages';
 import type {DocumentService} from '../../quote-documents/service';
+import type {DocumentWorkflowService} from '../../quote-documents/workflow';
 import type { NativeFreightcomService } from './native-freightcom';
 import type { NativeAdminService } from './native-admin';
 import type { ChannelService } from "./channels";
@@ -39,6 +40,7 @@ export interface StartPortalServerOptions {
   readonly caseService?: CaseService;
   readonly channelService?: ChannelService;
   readonly documentService?: DocumentService;
+  readonly documentWorkflowService?: DocumentWorkflowService;
   readonly nativeAdmin?: NativeAdminService;
  readonly customsPackages?:CustomsPackages;
   readonly nativeFreightcom?: NativeFreightcomService;
@@ -125,6 +127,6 @@ export async function startPortalServer(options: StartPortalServerOptions): Prom
   const boundHost=`${host.includes(":")?`[${host}]`:host}:${address.port}`; const origin=configuredOrigin?.origin??`http://${boundHost}`;
   const publicUrl=configuredOrigin??new URL(origin);
   allowedHost=publicUrl.host;
-  portalHandler=createPortalHttpHandler({...(options.customsPackages?{customsPackages:options.customsPackages}:{}),...(options.documentService?{documentService:options.documentService}:{}), ...(options.nativeFreightcom?{nativeFreightcom:options.nativeFreightcom}:{}), ...(options.nativeAdmin?{nativeAdmin:options.nativeAdmin}:{}), ...(options.channelService ? {channelService: options.channelService} : {}),...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
+  portalHandler=createPortalHttpHandler({...(options.customsPackages?{customsPackages:options.customsPackages}:{}),...(options.documentService?{documentService:options.documentService}:{}),...(options.documentWorkflowService?{documentWorkflowService:options.documentWorkflowService}:{}), ...(options.nativeFreightcom?{nativeFreightcom:options.nativeFreightcom}:{}), ...(options.nativeAdmin?{nativeAdmin:options.nativeAdmin}:{}), ...(options.channelService ? {channelService: options.channelService} : {}),...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
   return {server,host,port:address.port,origin,close:()=>new Promise<void>((resolveClose,reject)=>server.close(error=>error?reject(error):resolveClose()))};
 }

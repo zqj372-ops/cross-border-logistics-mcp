@@ -13,7 +13,7 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  // New personnel routes must not silently become machine/API-Key capabilities.
  const personnel=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/quote-documents/')||path.startsWith('/console/api/v1/cases/')||path.startsWith('/console/api/v1/admin/customs-packages')||path.startsWith('/console/api/v1/admin/sailing-schedules')||path.startsWith('/console/api/v1/admin/terminal-efficiency')||path.startsWith('/console/api/v1/maritime/'));
  expect(Object.keys(paths).filter(path=>!personnel.includes(path))).toHaveLength(17);
- expect(personnel).toHaveLength(30);
+ expect(personnel).toHaveLength(31);
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
   for(const [method,operation] of Object.entries(methods)){

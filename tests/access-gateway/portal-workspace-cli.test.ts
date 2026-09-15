@@ -27,10 +27,10 @@ const linkedExample=(kind:string)=>{const found=linkedExamples.find(entry=>entry
 it('selects approved linked v2 documents by explicit version, preserves business envelopes and never writes partial PDFs',async()=>{
  const root=await mkdtemp(join(tmpdir(),'fc-linked-cli-')),filename=join(root,'session.json');
  const {randomUUID}=await import('node:crypto');await writeFile(filename,JSON.stringify({origin:'http://127.0.0.1:8908',session_token:randomUUID().replaceAll('-','')+'Ab',csrf_token:randomUUID().replaceAll('-','')+'Cd',expires_at:Date.now()+60000}),{mode:0o600});
- let output='',requests:{path:string;body:unknown}[]=[],next:unknown=null,nextStatus=200;
+ let output='',next:unknown=null,nextStatus=200;const requests:{path:string;body:unknown}[]=[];
  const io={env:{},stdout:(s:string)=>{output+=s;},stderr:(s:string)=>{output+=s;},fetch:((url:URL,init:RequestInit)=>{requests.push({path:String(url.pathname)+String(url.search),body:typeof init.body==='string'?JSON.parse(init.body):null});return Promise.resolve(new Response(JSON.stringify(next),{status:nextStatus,headers:{'content-type':'application/json'}}));}) as typeof fetch};
  const writeInput=async(name:string,value:unknown)=>{const path=join(root,name);await writeFile(path,JSON.stringify(value),{mode:0o600});return path;};
- const run=async(args:string[])=>{output='';requests=[];return runCli(['workspace',...args,'--session-file',filename],io);};
+ const run=async(args:string[])=>{output='';requests.length=0;return runCli(['workspace',...args,'--session-file',filename],io);};
  const exists=async(path:string)=>{try{await stat(path);return true;}catch{return false;}};
  try{
   output='';expect(await runCli(['workspace','schema','documents','v2','save'],io)).toBe(0);expect(output).toContain('inquiry-quote-link@2026-09-13.v1');expect(output).toContain('native_quote_v1');
@@ -80,5 +80,23 @@ it('selects approved linked v2 documents by explicit version, preserves business
   expect(await run(['documents','export','--input',exportRequest,'--file',wrongStatusFile])).not.toBe(0);
   expect(await exists(wrongStatusFile)).toBe(false);
   nextStatus=200;
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+it('selects the v3 personnel contract, validates its response and preserves manual-review exit codes',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'fc-workflow-v3-cli-')),filename=join(root,'session.json');
+ await writeFile(filename,JSON.stringify({origin:'http://127.0.0.1:8908',session_token:'a'.repeat(43),csrf_token:'b'.repeat(43),expires_at:Date.now()+60000}),{mode:0o600});
+ let output='',next:unknown=null,nextStatus=200;const requests:{path:string;body:unknown}[]=[];
+ const io={env:{},stdout:(s:string)=>{output+=s;},stderr:(s:string)=>{output+=s;},fetch:((url:URL,init:RequestInit)=>{requests.push({path:String(url.pathname)+String(url.search),body:typeof init.body==='string'?JSON.parse(init.body):null});return Promise.resolve(new Response(JSON.stringify(next),{status:nextStatus,headers:{'content-type':'application/json'}}));}) as typeof fetch};
+ try{
+  output='';expect(await runCli(['workspace','schema','documents','v3','list'],io)).toBe(0);expect(output).toContain('quote-documents-workflow@2026-09-15.v1');
+  const request={contract_version:'quote-documents-workflow@2026-09-15.v1',limit:20,cursor:null,filters:{state:'all',quote_no:null,customer_name:null}};
+  const requestFile=join(root,'v3-list.json');await writeFile(requestFile,JSON.stringify(request),{mode:0o600});
+  next={schema_version:'quote-documents@2026-09-15.v3',status:'success',data:{items:[],next_cursor:null},reason_codes:[]};nextStatus=200;
+  expect(await runCli(['workspace','documents','list','--session-file',filename,'--input',requestFile],io)).toBe(0);
+  expect(requests).toHaveLength(1);expect(requests[0]!.body).toEqual(request);
+  next={schema_version:'quote-documents@2026-09-15.v3',status:'manual_review',data:{replay:true,committed:true,current:false,historical:true,id:'00000000-0000-4000-8000-000000000001',version:1,revision_id:'00000000-0000-4000-8000-000000000002',current_version:2,current_revision_id:'00000000-0000-4000-8000-000000000003',current_state:'draft'},reason_codes:['document_replay_not_current']};nextStatus=200;
+  expect(await runCli(['workspace','documents','list','--session-file',filename,'--input',requestFile],io)).toBe(4);
+  expect(output).toContain('document_replay_not_current');
  }finally{await rm(root,{recursive:true,force:true});}
 });

@@ -4,6 +4,8 @@ import type {CustomsPackages} from '../../customs-native/packages';
 import {packageList} from '../../customs-native/package-contracts';
 import type { DocumentService } from '../../quote-documents/service';
 import { VERSION as DOCUMENT_VERSION, outputSchemas as documentOutputSchemas, INQUIRY_QUOTE_LINK_VERSION, V2_VERSION, linkedErrorEnvelopeSchema, linkedResponseSchemas } from '../../quote-documents/contracts';
+import type {DocumentWorkflowService} from '../../quote-documents/workflow';
+import {WORKFLOW_REQUEST_VERSION,WORKFLOW_RESPONSE_VERSION} from '../../quote-documents/workflow-contracts';
 import { calculate } from '../../quote-documents/engine';
 import type { NativeFreightcomService } from './native-freightcom';
 import type { NativeAdminService } from './native-admin';
@@ -61,6 +63,7 @@ export interface PortalHttpOptions {
   readonly nativeAdmin?: NativeAdminService;
  readonly customsPackages?:CustomsPackages;
   readonly documentService?: DocumentService;
+  readonly documentWorkflowService?: DocumentWorkflowService;
   readonly nativeFreightcom?: NativeFreightcomService;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
@@ -154,6 +157,72 @@ const LINKED_REASON_OUTCOMES: Record<string, { http: number; status: "needs_inpu
 function linkedDocumentRequest(action: string, input: unknown): boolean {
   if (action === "config-save" || action === "preview") return false;
   return typeof input === "object" && input !== null && (input as { contract_version?: unknown }).contract_version === INQUIRY_QUOTE_LINK_VERSION;
+}
+function workflowDocumentRequest(input:unknown):boolean{
+  return typeof input==='object'&&input!==null&&(input as {contract_version?:unknown}).contract_version===WORKFLOW_REQUEST_VERSION;
+}
+const WORKFLOW_REASON_OUTCOMES:Record<string,{http:number;status:'needs_input'|'manual_review'|'blocked'|'unavailable'}>={
+  document_input_invalid:{http:400,status:'needs_input'},
+  document_update_input_invalid:{http:400,status:'needs_input'},
+  document_contract_version_invalid:{http:400,status:'needs_input'},
+  document_incomplete:{http:200,status:'needs_input'},
+  document_preview_stale:{http:409,status:'blocked'},
+  document_template_missing:{http:409,status:'blocked'},
+  document_expired:{http:409,status:'blocked'},
+  version_conflict:{http:409,status:'blocked'},
+  document_state_not_editable:{http:409,status:'blocked'},
+  document_management_denied:{http:403,status:'blocked'},
+  document_organization_required:{http:403,status:'blocked'},
+  inquiry_quote_document_scope_required:{http:403,status:'blocked'},
+  document_not_found:{http:404,status:'blocked'},
+  idempotency_key_invalid:{http:400,status:'needs_input'},
+  idempotency_conflict:{http:409,status:'blocked'},
+  document_review_stale:{http:200,status:'manual_review'},
+  document_review_forgery:{http:403,status:'blocked'},
+  native_quote_rebind_required:{http:200,status:'manual_review'},
+  native_quote_source_changed:{http:200,status:'manual_review'},
+  native_quote_release_expired:{http:200,status:'manual_review'},
+  inquiry_quote_link_forgery:{http:403,status:'blocked'},
+  inquiry_quote_case_review_required:{http:200,status:'manual_review'},
+  document_export_mode_invalid:{http:409,status:'blocked'},
+  document_not_approved:{http:409,status:'blocked'},
+  document_rejected:{http:409,status:'blocked'},
+  inquiry_quote_history_bytes_missing:{http:503,status:'unavailable'},
+  document_renderer_unavailable:{http:503,status:'unavailable'},
+  document_pdf_invalid:{http:503,status:'unavailable'},
+  document_service_unavailable:{http:503,status:'unavailable'},
+};
+function workflowFailure(error:unknown):{http:number;body:Record<string,unknown>}{
+  const code=errorCode(error),mapped=WORKFLOW_REASON_OUTCOMES[code];
+  return mapped
+    ?{http:mapped.http,body:{schema_version:WORKFLOW_RESPONSE_VERSION,status:mapped.status,data:null,reason_codes:[code]}}
+    :{http:503,body:{schema_version:WORKFLOW_RESPONSE_VERSION,status:'unavailable',data:null,reason_codes:['document_service_unavailable']}};
+}
+async function handleWorkflowDocument(service:DocumentWorkflowService,ctx:PortalContext,action:string,input:unknown,key:()=>string):Promise<{http:number;body:Record<string,unknown>}>{
+  try{
+    let data:unknown;
+    switch(action){
+      case 'config-save':data=service.saveConfig(ctx,input,key());break;
+      case 'preview':data=service.preview(ctx,input);break;
+      case 'native-prepare':data=await service.prepareNative(ctx,input);break;
+      case 'save':data=service.save(ctx,input,key());break;
+      case 'get':data=service.get(ctx,input);break;
+      case 'list':data=service.list(ctx,input);break;
+      case 'review':data=service.review(ctx,input);break;
+      case 'approve':data=service.approve(ctx,input,key());break;
+      case 'reject':data=service.reject(ctx,input,key());break;
+      case 'export':data=await service.export(ctx,input);break;
+      case 'config':data=service.config(ctx);break;
+      default:throw new PortalError('document_input_invalid');
+    }
+    const historicalReplay=typeof data==='object'&&data!==null&&(data as {replay?:unknown;current?:unknown}).replay===true&&(data as {current?:unknown}).current===false;
+    const status=historicalReplay?'manual_review':typeof data==='object'&&data!==null&&'status' in data?(data as {status:string}).status==='needs_input'?'needs_input':'success':'success';
+    const reasonCodes=historicalReplay?['document_replay_not_current']:status==='needs_input'?['document_incomplete']:[];
+    const responseData=status==='needs_input'&&typeof data==='object'&&data!==null
+      ?{document_id:(data as {document_id?:unknown}).document_id,version:(data as {version?:unknown}).version,completeness:(data as {completeness?:unknown}).completeness,totals:(data as {totals?:unknown}).totals}
+      :data;
+    return {http:200,body:{schema_version:WORKFLOW_RESPONSE_VERSION,status,data:responseData,reason_codes:reasonCodes}};
+  }catch(error){return workflowFailure(error);}
 }
 const LINKED_UNAVAILABLE = Object.freeze({ schema_version: V2_VERSION, status: "unavailable", data: null, reason_codes: ["document_service_unavailable"] });
 function linkedDocumentFailure(action: string, error: unknown): { http: number; body: Record<string, unknown> } {
@@ -258,7 +327,7 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
 }
 function authenticatedResourcePath(path: string): boolean {
   if (/^\/console\/api\/v1\/maritime\/(sailing-schedules|terminal-efficiency)\/query$/u.test(path)) return true;
-  if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|approve|reject|export)$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|review|approve|reject|export)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/customs-packages(?:\/(import|publish|disable|browse))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/(customs-data|residential-rates|sailing-schedules|terminal-efficiency)(?:\/(save|preview|publish|disable|rollback))?$/u.test(path)) return true;
@@ -367,12 +436,25 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
         const result=maritimeResponseSchema(kind).parse(options.nativeAdmin.query(ctx,kind,await body(request,4096)));
         json(response,200,result,undefined,true);return true;
       }
-      const nativeDocumentMatch=/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|approve|reject|export)$/u.exec(path);
+      const nativeDocumentMatch=/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|review|approve|reject|export)$/u.exec(path);
       if(nativeDocumentMatch){
-        if(url.search)throw new PortalError('document_input_invalid');const action=nativeDocumentMatch[1]!;let data:unknown;
-        if(action==='config'&&request.method==='GET'){const service=options.documentService;if(!service)throw new PortalError('document_service_unavailable');data=service.config(ctx);}
+        const action=nativeDocumentMatch[1]!;let data:unknown;
+        if(action==='config'&&request.method==='GET'){
+          const workflow=url.searchParams.get('contract_version');
+          if(workflow!==null){
+            if(workflow!==WORKFLOW_REQUEST_VERSION||[...url.searchParams.keys()].length!==1)throw new PortalError('document_contract_version_invalid');
+            const service=options.documentWorkflowService;if(!service)throw new PortalError('document_service_unavailable');
+            const outcome=await handleWorkflowDocument(service,ctx,'config',{},()=>idempotency(request));json(response,outcome.http,outcome.body,undefined,true);return true;
+          }
+          if(url.search)throw new PortalError('document_input_invalid');
+          const service=options.documentService;if(!service)throw new PortalError('document_service_unavailable');data=service.config(ctx);
+        }
         else if(request.method==='POST'&&action!=='config'){
           const input=await body(request,131072);
+          if(workflowDocumentRequest(input)){
+            const service=options.documentWorkflowService,outcome=service?await handleWorkflowDocument(service,ctx,action,input,()=>idempotency(request)):workflowFailure(new PortalError('document_service_unavailable'));
+            json(response,outcome.http,outcome.body,undefined,true);return true;
+          }
           if(linkedDocumentRequest(action,input)){
             const service=options.documentService,outcome=service?await handleLinkedDocument(service,ctx,action,input,()=>idempotency(request)):linkedDocumentFailure(action,new PortalError('document_service_unavailable'));
             json(response,outcome.http,outcome.body,undefined,true);return true;

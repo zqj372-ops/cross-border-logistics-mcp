@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "quote-documents-workflow@2026-09-15.v1"
+    }
+  },
+  "required": [
+    "contract_version"
+  ],
+  "additionalProperties": false
+}

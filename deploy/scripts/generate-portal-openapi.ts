@@ -2,6 +2,7 @@ import {maritimeSaveSchema,maritimeQuerySchema,maritimeResponseSchema} from '../
 import {nativeResponseSchema,nativeDataSchema,nativePublishSchema,nativeDisableSchema,nativeRollbackSchema} from '../../services/access-gateway/portal/native-admin-contracts';
 import {packageSchemas,packageList} from '../../services/customs-native/package-contracts';
 import {quoteDocumentSchemas,outputSchemas,responseSchema as documentResponseSchema} from '../../services/quote-documents/contracts';
+import {workflowRequestSchemas,workflowOutputSchemas,workflowErrorEnvelopeSchema,WORKFLOW_REQUEST_VERSION} from '../../services/quote-documents/workflow-contracts';
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,6 +30,12 @@ export function generatePortalOpenApi(): ObjectValue {
     const path=resolve("schemas/admin-control/quote-documents",file);
     inputs.push({name,path,schema:JSON.parse(readFileSync(path,"utf8")) as ObjectValue});linkedSchemaNames[base]=name;
   }
+  const workflowSchemaNames:Record<string,string>={};
+  for(const [suffix,schema] of [...Object.entries(workflowRequestSchemas).map(([key,value])=>[key+'-v3-request',value] as const),...Object.entries(workflowOutputSchemas).map(([key,value])=>[key+'-v3-output',value] as const),['workflow-error-v3-response',workflowErrorEnvelopeSchema] as const]){
+    const name=suffix.startsWith('workflow-error')?'WorkflowErrorV3Response':'Workflow'+suffix.split('-').map(part=>part[0]!.toUpperCase()+part.slice(1)).join('');
+    const json=z.toJSONSchema(schema,{target:'draft-2020-12'});
+    inputs.push({name,path:resolve('schemas/admin-control/quote-documents',suffix+'.schema.json'),schema:json});workflowSchemaNames[suffix]=name;
+  }
   const agentSchemaPath=resolve("schemas/agent-context-envelope.schema.json");
   const agentSchema=JSON.parse(readFileSync(agentSchemaPath,"utf8")) as ObjectValue;
   inputs.push({name:"AgentContextEnvelope",path:agentSchemaPath,schema:agentSchema});
@@ -55,6 +62,7 @@ export function generatePortalOpenApi(): ObjectValue {
   schemas.PortalError={type:"object",additionalProperties:false,required:["schema_version","status","data","reason_codes","request_id"],properties:{schema_version:{const:"portal@2026-09-05.v1"},status:{enum:["needs_input","blocked","unavailable"]},data:{type:"null"},reason_codes:{type:"array",items:{type:"string"}},request_id:{type:"string"}}};
   schemas.T0RestError={type:"object",additionalProperties:false,required:["schema_version","status","data","reason_codes"],properties:{schema_version:{const:"portal-t0-rest@2026-09-05.v1"},status:{const:"blocked"},data:{type:"null"},reason_codes:{type:"array",items:{type:"string"}}}};
   const ref=(name:string)=>({$ref:`#/components/schemas/${name}`});
+  const variants=(value:unknown):unknown[]=>Array.isArray(value)?Array.from(value as unknown[]):[];
   const paths:Record<string,unknown>={};
   const response=(schema:unknown)=>({description:"操作结果；业务状态及来源版本以响应为准。",content:{"application/json":{schema}}});
   const post=(path:string,id:string,summary:string,request:unknown,result:unknown,security:string|readonly string[],description:string)=>{
@@ -91,6 +99,30 @@ export function generatePortalOpenApi(): ObjectValue {
     const schema=action==='config'?null:quoteDocumentSchemas[(action==='export'?'get':action) as keyof typeof quoteDocumentSchemas];
     const linkedInput=linkedSchemaNames[action+'-v2'],linkedResult=linkedSchemaNames[action+'-v2-response'];
     paths['/console/api/v1/quote-documents/'+action]={[action==='config'?'get':'post']:{operationId:'quoteDocuments_'+action.replace('-','_'),summary:'人员报价单 '+action,security:[{PortalSession:[]}],parameters:action==='config'?[]:[{name:'X-CSRF-Token',in:'header',required:true,schema:{type:'string'}},...(['save','config-save','approve','reject'].includes(action)?[{name:'Idempotency-Key',in:'header',required:true,schema:{type:'string',minLength:16,maxLength:128}}]:[])],...(schema?{requestBody:{required:true,content:{'application/json':{schema:{description:linkedInput?'省略 contract_version 时按 v1 报价单输入校验；携带 inquiry-quote-link@2026-09-13.v1 时按已批准 v2 输入校验，未知版本与额外字段拒绝。':'v1 报价单输入。',oneOf:linkedInput?[z.toJSONSchema(schema,{target:'draft-2020-12'}),ref(linkedInput)]:[z.toJSONSchema(schema,{target:'draft-2020-12'})]}}}}}:{}),responses:{'200':response({description:linkedResult?'v1 请求返回 quote-documents@2026-09-08.v1；已识别 v2 请求返回 quote-documents@2026-09-13.v2（success 或 manual_review 业务结果，replay 保留 data）。':'v1 报价单响应。',oneOf:linkedResult?[z.toJSONSchema(documentResponseSchema(action),{target:'draft-2020-12'}),ref(linkedResult)]:[z.toJSONSchema(documentResponseSchema(action),{target:'draft-2020-12'})]}),'400':response(linkedResult?{description:'无法识别版本时的公共 Portal 前置错误；已识别 v2 的 needs_input 业务信封使用 LinkedErrorV2Response。',oneOf:[ref('PortalError'),ref('LinkedErrorV2Response')]}:ref('PortalError')),'401':response(ref('PortalError')),'403':response(linkedResult?{description:'公共 Portal 前置错误（会话/CSRF/权限）或已识别 v2 的 403 blocked（伪造预览、缺少企业上下文、文档管理权限）。',oneOf:[ref('PortalError'),ref('LinkedErrorV2Response')]}:ref('PortalError')),'404':response(linkedResult?{description:'记录或关联询价不可见/不存在（404 blocked，document_not_found）。',oneOf:[ref('PortalError'),ref('LinkedErrorV2Response')]}:ref('PortalError')),'409':response(linkedResult?{description:'v1 请求触及 linked 记录（document_contract_version_required）、询价已终止、幂等冲突或版本冲突（409 blocked）。',oneOf:[ref('PortalError'),ref('LinkedErrorV2Response')]}:ref('PortalError')),'503':response(linkedResult?{description:'依赖不可用：公共 Portal 前置错误，或已识别 v2 的 unavailable（cases_unavailable、inquiry_case_unavailable、document_service_unavailable、document_renderer_unavailable、document_pdf_invalid）。',oneOf:[ref('PortalError'),ref('LinkedErrorV2Response')]}:ref('PortalError'))}}};
+  }
+  for(const action of ['config','config-save','preview','native-prepare','save','list','get','review','approve','reject','export'] as const){
+    const url='/console/api/v1/quote-documents/'+action,method=action==='config'?'get':'post',requestName=workflowSchemaNames[action+'-v3-request'],resultName=workflowSchemaNames[action+'-v3-output'];
+    if(!requestName||!resultName)throw new Error(`Missing workflow OpenAPI schema for ${action}`);
+    if(action==='review'){
+      paths[url]={post:{operationId:'quoteDocuments_review',summary:'人员报价单 review',security:[{PortalSession:[]}],parameters:[{name:'X-CSRF-Token',in:'header',required:true,schema:{type:'string'}}],requestBody:{required:true,content:{'application/json':{schema:ref(requestName)}}},responses:{'200':response(ref(resultName)),'400':response(ref('WorkflowErrorV3Response')),'401':response(ref('PortalError')),'403':response({oneOf:[ref('PortalError'),ref('WorkflowErrorV3Response')]}),'409':response({oneOf:[ref('PortalError'),ref('WorkflowErrorV3Response')]}),'503':response({oneOf:[ref('PortalError'),ref('WorkflowErrorV3Response')]})}}};
+      continue;
+    }
+    const entry=paths[url] as Record<string,ObjectValue>|undefined,operation=entry?.[method];
+    if(!operation)throw new Error(`Missing legacy OpenAPI operation for ${action}`);
+    if(action==='config'){
+      const parameters=operation.parameters as ObjectValue[];parameters.push({name:'contract_version',in:'query',required:false,schema:{const:WORKFLOW_REQUEST_VERSION}});
+      const result200=((operation.responses as Record<string,unknown>)['200'] as ObjectValue),content=(result200.content as ObjectValue)['application/json'] as ObjectValue,schema=content.schema as ObjectValue;
+      schema.oneOf=[...variants(schema.oneOf),ref(resultName)];
+      continue;
+    }
+    const requestBody=operation.requestBody as ObjectValue|undefined;
+    if(requestBody){const content=(requestBody.content as ObjectValue)['application/json'] as ObjectValue,schema=content.schema as ObjectValue;schema.oneOf=[...variants(schema.oneOf),ref(requestName)];}
+    const result200=((operation.responses as Record<string,unknown>)['200'] as ObjectValue),content=(result200.content as ObjectValue)['application/json'] as ObjectValue,schema=content.schema as ObjectValue;
+    schema.oneOf=[...variants(schema.oneOf),ref(resultName)];
+    for(const status of ['400','403','409','503'] as const){
+      const errorResponse=((operation.responses as Record<string,unknown>)[status] as ObjectValue),errorContent=(errorResponse.content as ObjectValue)['application/json'] as ObjectValue,errorSchema=errorContent.schema as ObjectValue;
+      errorSchema.oneOf=[...variants(errorSchema.oneOf),ref('WorkflowErrorV3Response')];
+    }
   }
   paths["/console/api/v1/cases/{case_id}"]={get:{operationId:"cases_get",summary:"人员读取单条询价",description:"省略 contract_version 返回 portal-cases@2026-09-07.v1；仅接受唯一的 contract_version=inquiry-quote-link@2026-09-13.v1，返回 portal-cases@2026-09-13.v2（含 review_context）；重复或未知取值拒绝。",security:[{PortalSession:[]}],parameters:[{name:"case_id",in:"path",required:true,schema:{type:"string",format:"uuid"}},{name:"contract_version",in:"query",required:false,schema:{const:"inquiry-quote-link@2026-09-13.v1"}}],responses:{"200":response({oneOf:[ref("AccessPortalCasesResponse"),ref("AccessPortalCasesResponseV2")]}),"400":response(ref("PortalError")),"401":response(ref("PortalError")),"403":response(ref("PortalError")),"404":response(ref("PortalError")),"503":response(ref("PortalError"))}}};
   for(const action of ['list','import','publish','disable','browse'] as const){const read=action==='list';paths['/console/api/v1/admin/customs-packages'+(read?'':'/'+action)]={[read?'get':'post']:{operationId:'customsPackages_'+action,summary:'完整关务数据包 '+action,security:[{PortalSession:[]}],parameters:read?[]:[{name:'X-CSRF-Token',in:'header',required:true,schema:{type:'string'}},...(action==='browse'?[]:[{name:'Idempotency-Key',in:'header',required:true,schema:{type:'string'}}])],...(read?{}:{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(packageSchemas[action],{target:'draft-2020-12'})}}}}),responses:{'200':response(z.toJSONSchema(z.object({schema_version:z.literal('native-customs-packages@2026-09-08.v1'),status:z.literal('success'),data:action==='browse'?packageSchemas.browse_output:packageList,reason_codes:z.array(z.string()).length(0)}).strict(),{target:'draft-2020-12'})),'403':response(ref('PortalError'))}}};}
