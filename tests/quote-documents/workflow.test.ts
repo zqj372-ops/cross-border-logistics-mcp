@@ -1,4 +1,6 @@
 import {afterEach,describe,expect,it} from 'vitest';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -309,12 +311,14 @@ describe('quote workflow v3',()=>{
     expect(()=>revoked.service.reject(revoked.ctx,reject,'workflow-replay-reject-02')).toThrow('document_not_found');
   });
 
-  it('does not upgrade on read and requires explicit ownership plus guarded read-only rollback',()=>{
+  it('does not upgrade on read and requires explicit ownership plus guarded read-only rollback',async()=>{
     const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-owner-'));dirs.push(dir);
     const documentStore=new DocumentStore(join(dir,'documents.sqlite')),portal={getState:(ctx:PortalContext)=>({data:{current_organization:{organizationId:ctx.organizationId,status:'active'},memberships:[{userId:ctx.identity.userId,organizationId:'org',status:'active',role:'owner'}]}})} as unknown as Pick<PortalService,'getState'>;
     const legacyService=new DocumentService(documentStore,portal),store=new DocumentWorkflowStore(documentStore),service=new DocumentWorkflowService(store,legacyService,portal);
     const ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'},id=randomUUID();
-    documentStore.db.prepare('INSERT INTO quote_documents VALUES(?,?,?,?)').run(id,'org','owner',JSON.stringify({id,version:2,state:'draft',input:completeDraft(),template,template_version:1,created_at:'2026-09-15T00:00:00.000Z',owner_id:'owner',approval:null}));
+    documentStore.db.prepare('INSERT INTO quote_documents VALUES(?,?,?,?)').run(id,'org','owner',JSON.stringify({id,version:3,state:'draft',input:completeDraft(),template,template_version:1,created_at:'2026-09-15T00:00:00.000Z',owner_id:'owner',approval:null}));
+    const legacyPdf=Buffer.from('%PDF-1.7\n'+'.'.repeat(120));
+    documentStore.db.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(id,2,createHash('sha256').update(legacyPdf).digest('hex'),legacyPdf);
     expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
     expect(service.get(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id}).claim_state).toBe('legacy_unclaimed');
     expect(service.list(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,limit:10,cursor:null,filters:{state:'all',quote_no:null,customer_name:null}}).items).toHaveLength(1);
@@ -322,14 +326,112 @@ describe('quote workflow v3',()=>{
     const config={contract_version:WORKFLOW_REQUEST_VERSION,expected_version:0,input:{...template,standard_fee_template_v1:{template_id:'freightclaw-standard-v1',template_version:1,items:[]}},confirmed:true} as const;
     expect(()=>service.saveConfig(ctx,config,'workflow-upgrade-owner-01')).toThrow('document_v3_upgrade_ownership_required');
     expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
-    const authorized=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),legacyService,portal);
-    authorized.saveConfig(ctx,config,'workflow-upgrade-owner-02');
-    const claimed=authorized.save(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-upgrade-owner-03');
+    const legacyWriter=new DocumentStore(join(dir,'documents.sqlite'));
+    const blocked=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),legacyService,portal);
+    expect(()=>blocked.saveConfig(ctx,config,'workflow-upgrade-owner-02')).toThrow('document_v3_upgrade_old_writer_open');
+    legacyWriter.close();
+    const authorized=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),legacyService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
+    authorized.saveConfig(ctx,config,'workflow-upgrade-owner-03');
+    const claimed=authorized.save(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-upgrade-owner-04');
+    await authorized.export(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:claimed.id,mode:'draft',expected_version:1});
+    const claimedUpdated=authorized.save(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'update',document_kind:'manual',id:claimed.id,expected_version:1,input:{...completeDraft(),quote_no:'CLAIMED-HISTORY'},template_selection:{mode:'retain'},save_intent:'save_draft'},'workflow-upgrade-owner-05');
     expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(3);
     documentStore.close();
     const reopened=new DocumentStore(join(dir,'documents.sqlite')),readOnly=new DocumentWorkflowService(DocumentWorkflowStore.openReadOnly(reopened),new DocumentService(reopened,portal),portal);
-    expect(readOnly.get(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:claimed.id})).toMatchObject({id:claimed.id,claim_state:'claimed_v3'});
-    expect(()=>readOnly.saveConfig(ctx,{...config,expected_version:1},'workflow-upgrade-owner-04')).toThrow('document_v3_rollback_read_only');
+    expect(readOnly.get(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:claimed.id})).toMatchObject({id:claimed.id,version:claimedUpdated.version,claim_state:'claimed_v3'});
+    expect(await readOnly.export(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:claimed.id,mode:'history',target_version:1,expected_current_version:2})).toMatchObject({historical:true,version:1});
+    expect(await readOnly.export(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id,mode:'history',target_version:2,expected_current_version:3})).toMatchObject({historical:true,version:2});
+    expect(()=>readOnly.saveConfig(ctx,{...config,expected_version:1},'workflow-upgrade-owner-06')).toThrow('document_v3_rollback_read_only');
     reopened.close();
+  });
+
+  it('fails the upgrade while a separate legacy process still holds the database',async()=>{
+    const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-process-'));dirs.push(dir);
+    const path=join(dir,'documents.sqlite'),documentStore=new DocumentStore(path),portal={getState:(ctx:PortalContext)=>({data:{current_organization:{organizationId:ctx.organizationId,status:'active'},memberships:[{userId:ctx.identity.userId,organizationId:'org',status:'active',role:'owner'}]}})} as unknown as Pick<PortalService,'getState'>,legacyService=new DocumentService(documentStore,portal),ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'};
+    const child=spawn(process.execPath,['--input-type=module','-e',"import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('PRAGMA journal_mode=WAL;');console.log('ready');setInterval(()=>{},1000);",path],{stdio:['ignore','pipe','inherit']});
+    try{
+      await new Promise<void>((resolve,reject)=>{let output='';child.stdout.on('data',chunk=>{output+=String(chunk);if(output.includes('ready'))resolve();});child.once('error',reject);child.once('exit',code=>{if(!output.includes('ready'))reject(new Error(`legacy writer exited ${code}`));});});
+      const service=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),legacyService,portal);
+      expect(()=>service.saveConfig(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,expected_version:0,input:{...template,standard_fee_template_v1:{template_id:'freightclaw-standard-v1',template_version:1,items:[]}},confirmed:true},'workflow-upgrade-process-01')).toThrow('document_v3_upgrade_old_writer_open');
+      expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    }finally{
+      child.kill('SIGTERM');
+      await once(child,'close');
+      documentStore.close();
+    }
+  });
+
+  it('preserves v3-only configuration when a legacy config-save updates the enterprise template',()=>{
+    const f=setup(),before=f.service.config(f.ctx);
+    expect(before.standard_fee_template_v1).not.toBeNull();
+    f.legacyService.saveConfig(f.ctx,{expected_version:before.version,input:{...template,company_name:'Updated company'},confirmed:true},'workflow-legacy-config-01');
+    const after=f.service.config(f.ctx);
+    expect(after).toMatchObject({version:before.version+1,standard_fee_template_v1:before.standard_fee_template_v1});
+    expect(after.input).toMatchObject({company_name:'Updated company'});
+  });
+
+  it('keeps historical list reads available when native pricing is no longer current',async()=>{
+    const f=nativeSetup(),prepared=await f.prepare();
+    f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'native_unlinked',input:prepared.input,template_selection:{mode:'current'},native_quote_v1:prepared.native_quote_v1,preview_hash:prepared.preview_hash,preview_expires_at:prepared.preview_expires_at,save_intent:'save_draft'},'workflow-list-native-stale-01');
+    f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:{...completeDraft(),quote_no:'MANUAL-STALE-LIST'},template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-list-native-stale-02');
+    f.disable();
+    const all=f.service.list(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,limit:10,cursor:null,filters:{state:'all',quote_no:null,customer_name:null}});
+    expect(all.items).toHaveLength(2);
+    const filtered=f.service.list(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,limit:10,cursor:null,filters:{state:'all',quote_no:'MANUAL-STALE',customer_name:null}});
+    expect(filtered.items).toHaveLength(1);
+  });
+
+  it('rejects native date tampering before persistence or review',async()=>{
+    const f=nativeSetup(),prepared=await f.prepare(),tampered={...prepared.input,valid_until:'2099-12-31'};
+    expect(()=>f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'native_unlinked',input:tampered,template_selection:{mode:'current'},native_quote_v1:prepared.native_quote_v1,preview_hash:prepared.preview_hash,preview_expires_at:prepared.preview_expires_at,save_intent:'save_draft'},'workflow-native-validity-01')).toThrow('native_quote_validity_invalid');
+    const saved=f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'native_unlinked',input:prepared.input,template_selection:{mode:'current'},native_quote_v1:prepared.native_quote_v1,preview_hash:prepared.preview_hash,preview_expires_at:prepared.preview_expires_at,save_intent:'save_draft'},'workflow-native-validity-02');
+    expect(()=>f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'update',document_kind:'native_unlinked',id:saved.id,expected_version:1,input:tampered,template_selection:{mode:'retain'},binding_update:{mode:'retain'},save_intent:'save_draft'},'workflow-native-validity-03')).toThrow('native_quote_validity_invalid');
+  });
+
+  it('allows an authorized manager to rebind the immutable owner and keeps reviews actor-scoped',async()=>{
+    const f=nativeSetup(),prepared=await f.prepare();
+    const saved=f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'native_unlinked',input:prepared.input,template_selection:{mode:'current'},native_quote_v1:prepared.native_quote_v1,preview_hash:prepared.preview_hash,preview_expires_at:prepared.preview_expires_at,save_intent:'save_draft'},'workflow-admin-rebind-01');
+    const admin=f.ctxFor('admin-user');
+    const adminPrepared=await f.service.prepareNative(admin,{contract_version:WORKFLOW_REQUEST_VERSION,document_kind:'native_unlinked',request:quoteRequest,customer:f.customer});
+    const rebound=f.service.save(admin,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'update',document_kind:'native_unlinked',id:saved.id,expected_version:1,input:adminPrepared.input,template_selection:{mode:'retain'},binding_update:{mode:'replace',native_quote_v1:adminPrepared.native_quote_v1,preview_hash:adminPrepared.preview_hash,preview_expires_at:adminPrepared.preview_expires_at},save_intent:'save_draft'},'workflow-admin-rebind-02');
+    expect(rebound).toMatchObject({id:saved.id,owner_id:'owner',version:2});
+    const ownerReview=f.service.review(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2});
+    if(ownerReview.status!=='success')throw new Error('owner review unexpectedly requires input');
+    expect(()=>f.service.approve(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2,review_hash:ownerReview.review_hash,evidence_ref:'review:actor',evidence_version:'1',review_notes:'核验',confirmation:'human_verified_price_and_source'},'workflow-admin-rebind-03')).toThrow('document_review_stale');
+    const adminReview=f.service.review(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2});
+    if(adminReview.status!=='success')throw new Error('admin review unexpectedly requires input');
+    expect(f.service.approve(admin,{contract_version:WORKFLOW_REQUEST_VERSION,id:saved.id,expected_version:2,review_hash:adminReview.review_hash,evidence_ref:'review:actor',evidence_version:'1',review_notes:'核验',confirmation:'human_verified_price_and_source'},'workflow-admin-rebind-04')).toMatchObject({owner_id:'owner',state:'approved'});
+  });
+
+  it('revalidates membership after rendering and never caches unauthorized bytes',async()=>{
+    const f=setup(),draft=f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-render-revoke-01');
+    const revoking=new DocumentWorkflowService(f.store,f.legacyService,f.portal,()=>{f.revoke('owner');return Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120)));});
+    await expect(revoking.export(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,mode:'draft',expected_version:1})).rejects.toThrow('document_not_found');
+    expect((f.legacyStore.db.prepare('SELECT COUNT(*) AS n FROM document_pdfs').get() as {n:number}).n).toBe(0);
+  });
+
+  it('returns the cache winner bytes and digest when concurrent renderers race',async()=>{
+    const f=setup(),draft=f.service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-cache-race-01');
+    const bytesA=Buffer.from('%PDF-1.7\nA'+'.'.repeat(120)),bytesB=Buffer.from('%PDF-1.7\nB'+'.'.repeat(120));
+    const serviceA=new DocumentWorkflowService(f.store,f.legacyService,f.portal,()=>Promise.resolve(bytesA));
+    const serviceB=new DocumentWorkflowService(f.store,f.legacyService,f.portal,async()=>{await serviceA.export(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,mode:'draft',expected_version:1});return bytesB;});
+    const result=await serviceB.export(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,mode:'draft',expected_version:1}),decoded=Buffer.from(result.content_base64,'base64');
+    expect(createHash('sha256').update(decoded).digest('hex')).toBe(result.sha256);
+    expect(decoded).toEqual(bytesA);
+    expect(f.legacyStore.db.prepare('SELECT COUNT(*) AS n FROM document_pdfs').get()).toEqual({n:1});
+  });
+
+  it('uses draft and formal watermarks consistently and rejects draft mode for approved rows',async()=>{
+    const f=setup();let rendered='';
+    const service=new DocumentWorkflowService(f.store,f.legacyService,f.portal,html=>{rendered=html;return Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120)));});
+    const draft=service.save(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-watermark-01');
+    await service.export(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,mode:'draft',expected_version:1});
+    expect(rendered).toContain('DRAFT - NOT A FORMAL QUOTE');
+    const review=service.review(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,expected_version:1});
+    if(review.status!=='success')throw new Error('review unexpectedly requires input');
+    const approved=service.approve(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,expected_version:1,review_hash:review.review_hash,evidence_ref:'review:watermark',evidence_version:'1',review_notes:'核验',confirmation:'human_verified_price_and_source'},'workflow-watermark-02');
+    await expect(service.export(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,mode:'draft',expected_version:approved.version})).rejects.toThrow('document_export_mode_invalid');
+    await service.export(f.ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:draft.id,mode:'formal',expected_version:approved.version});
+    expect(rendered).not.toContain('DRAFT - NOT A FORMAL QUOTE');
   });
 });

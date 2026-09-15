@@ -389,6 +389,8 @@ export const workflowReasonCodeSchema=z.enum([
   'document_expired',
   'document_v3_rollback_read_only',
   'document_v3_upgrade_ownership_required',
+  'document_v3_upgrade_old_writer_open',
+  'document_v3_upgrade_ownership_unverified',
   'version_conflict',
   'document_state_not_editable',
   'document_management_denied',
@@ -402,6 +404,7 @@ export const workflowReasonCodeSchema=z.enum([
   'native_quote_rebind_required',
   'native_quote_source_changed',
   'native_quote_release_expired',
+  'native_quote_validity_invalid',
   'inquiry_quote_link_forgery',
   'inquiry_quote_case_review_required',
   'document_export_mode_invalid',
@@ -411,6 +414,7 @@ export const workflowReasonCodeSchema=z.enum([
   'document_renderer_unavailable',
   'document_pdf_invalid',
   'document_service_unavailable',
+  'document_readback_failed',
   'document_replay_not_current',
 ]);
 

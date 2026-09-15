@@ -171,6 +171,8 @@ const WORKFLOW_REASON_OUTCOMES:Record<string,{http:number;status:'needs_input'|'
   document_expired:{http:409,status:'blocked'},
   document_v3_rollback_read_only:{http:409,status:'blocked'},
   document_v3_upgrade_ownership_required:{http:409,status:'blocked'},
+  document_v3_upgrade_old_writer_open:{http:409,status:'blocked'},
+  document_v3_upgrade_ownership_unverified:{http:409,status:'blocked'},
   version_conflict:{http:409,status:'blocked'},
   document_state_not_editable:{http:409,status:'blocked'},
   document_management_denied:{http:403,status:'blocked'},
@@ -184,6 +186,7 @@ const WORKFLOW_REASON_OUTCOMES:Record<string,{http:number;status:'needs_input'|'
   native_quote_rebind_required:{http:200,status:'manual_review'},
   native_quote_source_changed:{http:200,status:'manual_review'},
   native_quote_release_expired:{http:200,status:'manual_review'},
+  native_quote_validity_invalid:{http:200,status:'manual_review'},
   inquiry_quote_link_forgery:{http:403,status:'blocked'},
   inquiry_quote_case_review_required:{http:200,status:'manual_review'},
   document_export_mode_invalid:{http:409,status:'blocked'},
@@ -193,6 +196,7 @@ const WORKFLOW_REASON_OUTCOMES:Record<string,{http:number;status:'needs_input'|'
   document_renderer_unavailable:{http:503,status:'unavailable'},
   document_pdf_invalid:{http:503,status:'unavailable'},
   document_service_unavailable:{http:503,status:'unavailable'},
+  document_readback_failed:{http:503,status:'unavailable'},
 };
 function workflowFailure(error:unknown):{http:number;body:Record<string,unknown>}{
   const code=errorCode(error),mapped=WORKFLOW_REASON_OUTCOMES[code];

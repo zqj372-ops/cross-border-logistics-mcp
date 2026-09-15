@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdirSync,readFileSync,statSync} from 'node:fs';
+import {mkdirSync,readFileSync,statSync,writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {loginFixture} from './fixture-login.mjs';
@@ -80,6 +80,16 @@ try{
   const approved=await (await approvalWait).json();
   assert.equal(approved.data.state,'approved');
   assert.equal(approved.data.version,3);
+  const session=await page.evaluate(()=>fetch('/console/api/v1/session').then(response=>response.json()));
+  const cookie=(await page.context().cookies()).find(value=>value.name==='fc_portal_session');
+  assert.ok(cookie);
+  const sessionFile=resolve(out,'quote-workflow-v3-cli-session.json'),getInput=resolve(out,'quote-workflow-v3-cli-get.json');
+  writeFileSync(sessionFile,JSON.stringify({origin:base,session_token:cookie.value,csrf_token:session.csrf_token,expires_at:Date.now()+60000}),{mode:0o600});
+  writeFileSync(getInput,JSON.stringify({contract_version:'quote-documents-workflow@2026-09-15.v1',id:incomplete.data.id}),{mode:0o600});
+  const cliRead=JSON.parse(execFileSync(process.execPath,[resolve('dist/cli/bin/freightclaw.mjs'),'workspace','documents','get','--session-file',sessionFile,'--endpoint',base,'--input',getInput],{encoding:'utf8'}));
+  assert.equal(cliRead.schema_version,'quote-documents@2026-09-15.v3');
+  assert.equal(cliRead.data.id,incomplete.data.id);
+  assert.equal(cliRead.data.version,approved.data.version);
   for(const width of [1440,1280,390,320])await shot(`quote-workflow-v3-${width}`,width);
   await page.setViewportSize({width:390,height:1000});
   const exportResponsePromise=page.waitForResponse(response=>response.url().endsWith('/quote-documents/export'));

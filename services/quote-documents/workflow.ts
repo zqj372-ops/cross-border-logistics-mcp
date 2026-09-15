@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import {readdirSync,realpathSync} from 'node:fs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
@@ -41,6 +42,22 @@ const sortValue=(value:unknown):unknown=>{
 const canonicalHash=(value:unknown)=>hash(sortValue(value));
 const safeText=(value:unknown)=>typeof value==='string'?value:'';
 const today=()=>new Date().toISOString().slice(0,10);
+function assertNoExternalSqliteHandles(path:string):void{
+  if(process.platform!=='linux')throw new PortalError('document_v3_upgrade_ownership_unverified');
+  let pids:string[];
+  try{pids=readdirSync('/proc');}catch{throw new PortalError('document_v3_upgrade_ownership_unverified');}
+  const targets=new Set([path,`${path}-wal`,`${path}-shm`].map(value=>{try{return realpathSync(value);}catch{return value;}}));
+  for(const pid of pids){
+    if(!/^[0-9]+$/u.test(pid)||Number(pid)===process.pid)continue;
+    let fds:string[];
+    try{fds=readdirSync(`/proc/${pid}/fd`);}catch{continue;}
+    for(const fd of fds){
+      let target:string;
+      try{target=realpathSync(`/proc/${pid}/fd/${fd}`);}catch{continue;}
+      if(targets.has(target))throw new PortalError('document_v3_upgrade_old_writer_open');
+    }
+  }
+}
 
 export const standardFeeTemplate={
   schema_version:FEE_TEMPLATE_VERSION,
@@ -288,10 +305,18 @@ export class DocumentWorkflowStore{
     }
   }
   static openReadOnly(store:DocumentStore):DocumentWorkflowStore{return new DocumentWorkflowStore(store,{readOnly:true});}
+  private ensureCredentialTable(){this.db.exec('CREATE TABLE IF NOT EXISTS document_native_prepare_credentials(binding_hash TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,document_kind TEXT NOT NULL,case_ref TEXT,binding_digest TEXT NOT NULL,created_at TEXT NOT NULL);');}
+  rememberPrepareCredential(input:{bindingHash:string;org:string;actor:string;documentKind:StoredPayload['document_kind'];caseRef:string|null;bindingDigest:string}){
+    this.ensureWritable();
+    this.db.prepare('INSERT INTO document_native_prepare_credentials VALUES(?,?,?,?,?,?,?) ON CONFLICT(binding_hash) DO UPDATE SET org=excluded.org,actor=excluded.actor,document_kind=excluded.document_kind,case_ref=excluded.case_ref,binding_digest=excluded.binding_digest,created_at=excluded.created_at').run(input.bindingHash,input.org,input.actor,input.documentKind,input.caseRef,input.bindingDigest,new Date().toISOString());
+  }
+  nativePrepareCredential(bindingHash:string){if(!this.schemaReady||!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_native_prepare_credentials'").get())return null;return this.db.prepare('SELECT org,actor,document_kind,case_ref,binding_digest FROM document_native_prepare_credentials WHERE binding_hash=?').get(bindingHash) as {org:string;actor:string;document_kind:StoredPayload['document_kind'];case_ref:string|null;binding_digest:string}|undefined??null;}
   private upgrade():void{
-    if(this.schemaReady)return;
+    if(this.schemaReady){this.ensureCredentialTable();return;}
     if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');
     if(!this.oldWritersStopped)throw new PortalError('document_v3_upgrade_ownership_required');
+    try{this.store.assertExclusiveOwnership();}catch{throw new PortalError('document_v3_upgrade_old_writer_open');}
+    assertNoExternalSqliteHandles(this.store.path);
     const db=this.db;
     db.exec('BEGIN EXCLUSIVE');
     try{
@@ -308,6 +333,7 @@ export class DocumentWorkflowStore{
 CREATE TABLE IF NOT EXISTS document_revisions(revision_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,org TEXT NOT NULL,owner TEXT NOT NULL,version INTEGER NOT NULL,state TEXT NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL,input_digest TEXT NOT NULL,template_digest TEXT NOT NULL,source_revision_id TEXT,review_hash TEXT,rejection_reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(document_id,version));
 CREATE TABLE IF NOT EXISTS document_current_revisions(document_id TEXT PRIMARY KEY,org TEXT NOT NULL,owner TEXT NOT NULL,revision_id TEXT NOT NULL UNIQUE,version INTEGER NOT NULL,schema_version INTEGER NOT NULL,projection_digest TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS document_revision_events(audit_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,revision_id TEXT NOT NULL,version INTEGER NOT NULL,action TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_native_prepare_credentials(binding_hash TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,document_kind TEXT NOT NULL,case_ref TEXT,binding_digest TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS document_revisions_document ON document_revisions(document_id,version DESC);
 CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(org,updated_at DESC);`);
       db.prepare('INSERT INTO document_store_metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','3');
@@ -324,7 +350,7 @@ CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(or
 
 export class DocumentWorkflowService{
   private readonly secret;
-  private readonly reviews=new Map<string,{id:string;version:number;revision_id:string|null;content_digest:string;expires:number}>();
+  private readonly reviews=new Map<string,{id:string;version:number;revision_id:string|null;content_digest:string;expires:number;actor:string}>();
   constructor(readonly store:DocumentWorkflowStore,private readonly legacy:DocumentService,private readonly portal:Pick<PortalService,'getState'>,private readonly renderer:(html:string)=>Promise<Buffer>=renderPdf){this.secret=store.signingSecret;}
 
   private scope(ctx:PortalContext,manage=false):Scope{
@@ -353,7 +379,12 @@ export class DocumentWorkflowService{
     const caseRef=payload.inquiry_case_link_v1?.case_ref??null;
     if(caseRef!==null&&payload.document_kind!=='linked')throw new PortalError('inquiry_quote_link_forgery');
     if(binding.source_refs_digest!==canonicalHash(binding.source_refs)||binding.request_hash!==hash(binding.request)||binding.document_fee_digest!==nativeFeeDigest(payload.input.fee_items))throw new PortalError('inquiry_quote_link_forgery');
-    if(binding.binding_hash!==this.expectedBindingHash(scope,ownerId,payload.document_kind,caseRef,binding))throw new PortalError('inquiry_quote_link_forgery');
+    const ownerProof=this.expectedBindingHash(scope,ownerId,payload.document_kind,caseRef,binding);
+    const actorProof=this.expectedBindingHash(scope,scope.user,payload.document_kind,caseRef,binding);
+    if(binding.binding_hash!==ownerProof&&binding.binding_hash!==actorProof){
+      const credential=this.store.nativePrepareCredential(binding.binding_hash);
+      if(!credential||credential.org!==scope.org||credential.document_kind!==payload.document_kind||credential.case_ref!==caseRef||credential.binding_digest!==canonicalHash(nativeBindingPayload(binding)))throw new PortalError('inquiry_quote_link_forgery');
+    }
   }
   private assertNativeRows(input:DraftDocument){
     if(input.fee_items.some(fee=>fee.source_kind!=='native'))throw new PortalError('native_quote_rebind_required');
@@ -391,7 +422,7 @@ export class DocumentWorkflowService{
     this.assertContextLinked(ctx,payload,manage);
     if(payload.native_quote_v1){
       this.assertSignedNativeForRead(ctx,payload);
-      this.legacy.assertNativeCurrent(ctx,payload.native_quote_v1,payload.document_kind==='linked');
+      this.legacy.assertNativeCurrent(ctx,payload.native_quote_v1,payload.document_kind==='linked',payload.input);
     }
     if(requireValidity)this.assertValidity(payload.input);
     return payload;
@@ -512,6 +543,7 @@ export class DocumentWorkflowService{
     const caseRef=data.document_kind==='linked'?data.case_ref:null;
     const bindingHash=hash([this.secret,scope.org,scope.user,data.document_kind,caseRef,withoutHash]);
     const nativeQuote={...withoutHash,binding_hash:bindingHash};
+    this.store.rememberPrepareCredential({bindingHash,org:scope.org,actor:scope.user,documentKind:data.document_kind,caseRef,bindingDigest:canonicalHash(withoutHash)});
     const link=data.document_kind==='linked'?prepared.inquiry_case_link_v1??null:null;
     const previewExpiresAt=Date.now()+600000;
     return {document_kind:data.document_kind,input:draftInput,template_version:prepared.template_version,native_quote_v1:nativeQuote,inquiry_case_link_v1:link,preview_hash:this.previewHash(scope,data.document_kind,caseRef,bindingHash,previewExpiresAt),preview_expires_at:previewExpiresAt,totals:totalsOf(draftInput)};
@@ -544,39 +576,59 @@ export class DocumentWorkflowService{
       this.assertPayloadGates(ctx,current,action==='save'||action==='approve'||action==='reject',action==='approve'||action==='reject');
       return true;
     }catch(error){
-      if(error instanceof PortalError&&['native_quote_source_changed','native_quote_release_expired','document_expired','inquiry_quote_case_closed','inquiry_quote_case_review_required'].includes(error.code))return false;
+      if(error instanceof PortalError&&['native_quote_source_changed','native_quote_release_expired','native_quote_validity_invalid','document_expired','inquiry_quote_case_closed','inquiry_quote_case_review_required'].includes(error.code))return false;
       throw error;
     }
   }
   private historicalReplay(current:StoredPayload,committed:{version:number;revision_id?:unknown}){
     return {replay:true as const,committed:true as const,current:false as const,historical:true as const,valid_now:false as const,id:current.id,version:committed.version,revision_id:typeof committed.revision_id==='string'?committed.revision_id:null,current_version:current.version,current_revision_id:current.revision_id??null,current_state:current.state};
   }
+  private readbackResult(scope:Scope,action:string,result:unknown):unknown{
+    if(action==='config-save'){const config=this.configFromScope(scope),expected=(result as {version?:unknown}).version;if(typeof expected!=='number'||config.version!==expected)throw new PortalError('document_readback_failed');return config;}
+    const candidate=result as {id?:unknown;version?:unknown;revision_id?:unknown};
+    if(typeof candidate.id==='string'&&typeof candidate.version==='number'&&typeof candidate.revision_id==='string'){
+      const row=this.store.store.db.prepare('SELECT payload FROM document_revisions WHERE revision_id=? AND document_id=? AND org=? AND version=?').get(candidate.revision_id,candidate.id,scope.org,candidate.version) as {payload:string}|undefined;
+      if(!row)throw new PortalError('document_readback_failed');
+      const payload=JSON.parse(row.payload) as StoredPayload;
+      if(payload.revision_id!==candidate.revision_id||payload.version!==candidate.version||payload.org!==scope.org)throw new PortalError('document_readback_failed');
+      return this.view(payload);
+    }
+    return result;
+  }
+  private configFromScope(scope:Scope){const config=this.configRaw(scope);return {...config,standard_fee_template_v1:config.input?.standard_fee_template_v1??null,catalog:standardFeeTemplate};}
   private idempotent<T>(ctx:PortalContext,scope:Scope,action:string,target:string,key:string,input:unknown,fn:()=>T):T{
     if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
     this.store.ensureWritable();
     const partition=JSON.stringify(['v3',scope.org,scope.user,action,target]),digest=canonicalHash(input),db=this.store.store.db;
     db.exec('BEGIN IMMEDIATE');
+    let committed=false;
     try{
       const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
       if(old){
         if(old.digest!==digest)throw new PortalError('idempotency_conflict');
-        const committed=JSON.parse(old.result) as T;
-        const candidate=committed as unknown as {id?:unknown;version?:unknown;revision_id?:unknown;state?:unknown};
+        const persisted=JSON.parse(old.result) as T;
+        const candidate=persisted as unknown as {id?:unknown;version?:unknown;revision_id?:unknown;state?:unknown};
         if(typeof candidate.id==='string'&&typeof candidate.version==='number'){
           const current=this.read(scope,candidate.id);
           this.assertContextLinked(ctx,current,action==='save'||action==='approve'||action==='reject');
           if(current.version!==candidate.version||current.state!==candidate.state||!this.replayAvailable(ctx,scope,action,current)){
             db.exec('COMMIT');
+            committed=true;
             return this.historicalReplay(current,candidate as {version:number;revision_id?:unknown}) as T;
           }
         }
-        db.exec('COMMIT');return committed;
+        db.exec('COMMIT');committed=true;return JSON.parse(old.result) as T;
       }
       const result=fn();
       db.prepare('INSERT INTO document_idempotency VALUES(?,?,?,?)').run(partition,key,digest,JSON.stringify(result));
       db.exec('COMMIT');
-      return result;
-    }catch(error){db.exec('ROLLBACK');throw error;}
+      committed=true;
+      return this.readbackResult(scope,action,result) as T;
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');
+      throw error;
+    }
   }
   save(ctx:PortalContext,input:unknown,key:string){
     const scope=this.scope(ctx),data=parse(saveWorkflowSchema,input);
@@ -625,8 +677,9 @@ export class DocumentWorkflowService{
           this.assertSignedPreview(scope,data.document_kind,caseRef,bindingUpdate.native_quote_v1.binding_hash,bindingUpdate.preview_hash,bindingUpdate.preview_expires_at);
           this.assertPayloadGates(ctx,candidate,data.document_kind==='linked');
         }else{
-          this.assertSignedNativeForRead(ctx,current);
-          this.assertPayloadGates(ctx,current,data.document_kind==='linked');
+          const candidate:StoredPayload={...current,input:data.input};
+          this.assertSignedNativeForRead(ctx,candidate);
+          this.assertPayloadGates(ctx,candidate,data.document_kind==='linked');
         }
       }else{
         if(data.document_kind!=='manual'||bindingUpdate.mode!=='retain')throw new PortalError('document_input_invalid');
@@ -646,10 +699,10 @@ export class DocumentWorkflowService{
     const scope=this.scope(ctx),data=parse(listWorkflowSchema,input);
     const items:WorkflowDocumentView[]=[];
     const claimed=this.store.isV3()?this.store.store.db.prepare('SELECT document_id FROM document_current_revisions WHERE org=? AND (?=1 OR owner=?) ORDER BY updated_at DESC').all(scope.org,scope.manager?1:0,scope.user) as Array<{document_id:string}>:[];
-    for(const row of claimed){const item=this.readClaimed(scope,row.document_id)!;try{this.assertPayloadGates(ctx,item,false);items.push(this.view(item));}catch(error){if(error instanceof PortalError&&error.code==='document_not_found')continue;throw error;}}
+    for(const row of claimed){const item=this.readClaimed(scope,row.document_id)!;try{this.assertContextLinked(ctx,item,false);items.push(this.view(item));}catch(error){if(error instanceof PortalError&&error.code==='document_not_found')continue;throw error;}}
     const unclaimed=this.store.isV3()?'id NOT IN (SELECT document_id FROM document_current_revisions)':'1=1';
     const legacy=this.store.store.db.prepare(`SELECT id FROM quote_documents WHERE org=? AND (?=1 OR owner=?) AND ${unclaimed} ORDER BY rowid DESC`).all(scope.org,scope.manager?1:0,scope.user) as Array<{id:string}>;
-    for(const row of legacy){const item=this.readLegacy(scope,row.id);try{this.assertPayloadGates(ctx,item,false);items.push(this.view(item,'legacy_unclaimed'));}catch(error){if(error instanceof PortalError&&error.code==='document_not_found')continue;throw error;}}
+    for(const row of legacy){const item=this.readLegacy(scope,row.id);try{this.assertContextLinked(ctx,item,false);items.push(this.view(item,'legacy_unclaimed'));}catch(error){if(error instanceof PortalError&&error.code==='document_not_found')continue;throw error;}}
     const filterDigest=canonicalHash(data.filters),cursor=data.cursor?decodeCursor(data.cursor):null;
     if(cursor&&cursor.filter_digest!==filterDigest)throw new PortalError('document_input_invalid');
     const visible=items.filter(item=>(data.filters.state==='all'||item.state===data.filters.state)&&(data.filters.quote_no===null||item.quote_no?.includes(data.filters.quote_no))&&(data.filters.customer_name===null||item.customer_name?.includes(data.filters.customer_name))).sort((left,right)=>left.updated_at===right.updated_at?right.id.localeCompare(left.id):right.updated_at.localeCompare(left.updated_at));
@@ -663,11 +716,11 @@ export class DocumentWorkflowService{
     if(!completeness.complete)return {kind:'needs_input' as const,document_id:payload.id,version:payload.version,completeness,totals};
     const expires=Date.now()+600000,digest=this.contentDigest(payload);
     const reviewHash=hash([this.secret,scope.org,scope.user,payload.id,payload.version,payload.revision_id,digest,expires]);
-    this.reviews.set(reviewHash,{id:payload.id,version:payload.version,revision_id:payload.revision_id??null,content_digest:digest,expires});
+    this.reviews.set(reviewHash,{id:payload.id,version:payload.version,revision_id:payload.revision_id??null,content_digest:digest,expires,actor:scope.user});
     return {kind:'success' as const,data:{document_id:payload.id,revision_id:payload.revision_id??null,reviewed_version:payload.version,state:payload.state,input:payload.input,completeness,totals,warnings:totals.warnings,blockers:[],requirements:{complete:true,case_current:true,native_source_current:true,validity_ok:true},can_approve:true,available_export_modes:payload.document_kind==='linked'?[]:['draft'],review_hash:reviewHash,review_expires_at:expires}};
   }
   review(ctx:PortalContext,input:unknown){const scope=this.scope(ctx),data=parse(reviewWorkflowSchema,input),payload=this.read(scope,data.id);if(payload.version!==data.expected_version)throw new PortalError('version_conflict');if(payload.state!=='draft')throw new PortalError('document_state_not_editable');const result=this.reviewPayload(scope,payload);if(result.kind==='needs_input')return {status:'needs_input' as const,...result};this.assertPayloadGates(ctx,payload,true,true);return {status:'success' as const,...result.data};}
-  approve(ctx:PortalContext,input:unknown,key:string){const scope=this.scope(ctx,true),data=parse(approveWorkflowSchema,input);return this.idempotent(ctx,scope,'approve',data.id,key,data,()=>{const current=this.read(scope,data.id);if(current.version!==data.expected_version)throw new PortalError('version_conflict');if(current.state!=='draft')throw new PortalError('version_conflict');this.assertPayloadGates(ctx,current,true,true);const review=this.reviews.get(data.review_hash);if(!review||review.id!==current.id||review.version!==current.version||review.expires<Date.now()||review.content_digest!==this.contentDigest(current))throw new PortalError('document_review_stale');const claimed=current.revision_id?current:this.claimIfNeeded(scope,current).payload;if(review.revision_id!==null&&review.revision_id!==claimed.revision_id)throw new PortalError('document_review_stale');const sourceDigest=this.contentDigest(claimed),stored=this.append(scope,claimed,{state:'approved',approval:{...data,source_revision_id:claimed.revision_id,source_version:claimed.version,source_content_digest:sourceDigest,approved_revision_id:'',approved_version:claimed.version+1,review_expires_at:review.expires,actor:scope.user,at:new Date().toISOString()},approval_provenance:null},'approve',claimed.revision_id,data.review_hash);return this.view(stored);});}
+  approve(ctx:PortalContext,input:unknown,key:string){const scope=this.scope(ctx,true),data=parse(approveWorkflowSchema,input);return this.idempotent(ctx,scope,'approve',data.id,key,data,()=>{const current=this.read(scope,data.id);if(current.version!==data.expected_version)throw new PortalError('version_conflict');if(current.state!=='draft')throw new PortalError('version_conflict');this.assertPayloadGates(ctx,current,true,true);const review=this.reviews.get(data.review_hash);if(!review||review.actor!==scope.user||review.id!==current.id||review.version!==current.version||review.expires<Date.now()||review.content_digest!==this.contentDigest(current))throw new PortalError('document_review_stale');const claimed=current.revision_id?current:this.claimIfNeeded(scope,current).payload;if(review.revision_id!==null&&review.revision_id!==claimed.revision_id)throw new PortalError('document_review_stale');const sourceDigest=this.contentDigest(claimed),stored=this.append(scope,claimed,{state:'approved',approval:{...data,source_revision_id:claimed.revision_id,source_version:claimed.version,source_content_digest:sourceDigest,approved_revision_id:'',approved_version:claimed.version+1,review_expires_at:review.expires,actor:scope.user,at:new Date().toISOString()},approval_provenance:null},'approve',claimed.revision_id,data.review_hash);return this.view(stored);});}
   reject(ctx:PortalContext,input:unknown,key:string){const scope=this.scope(ctx,true),data=parse(rejectWorkflowSchema,input);return this.idempotent(ctx,scope,'reject',data.id,key,data,()=>{const current=this.read(scope,data.id);if(current.version!==data.expected_version||current.state!=='draft')throw new PortalError('version_conflict');this.assertPayloadGates(ctx,current,true);const claimed=current.revision_id?current:this.claimIfNeeded(scope,current).payload,stored=this.append(scope,claimed,{state:'rejected',rejection:{reason:data.reason,actor:scope.user,at:new Date().toISOString()}},'reject',claimed.revision_id);return this.view(stored);});}
   private validatePdf(cached:{sha256:string;bytes:Uint8Array}|undefined):Buffer{
     if(!cached)throw new PortalError('inquiry_quote_history_bytes_missing');
@@ -687,10 +740,9 @@ export class DocumentWorkflowService{
     return true;
   }
   private isHistoricalOnlyReason(error:unknown){
-    return error instanceof PortalError&&['document_expired','native_quote_release_expired','native_quote_source_changed','inquiry_quote_case_closed','inquiry_quote_case_review_required','document_review_stale','document_not_approved'].includes(error.code);
+    return error instanceof PortalError&&['document_expired','native_quote_release_expired','native_quote_source_changed','native_quote_validity_invalid','inquiry_quote_case_closed','inquiry_quote_case_review_required','document_review_stale','document_not_approved'].includes(error.code);
   }
   async export(ctx:PortalContext,input:unknown){
-    this.store.ensureWritable();
     const scope=this.scope(ctx),data=parse(exportWorkflowSchema,input),current=this.read(scope,data.id);
     if(data.mode==='history'){
       if(current.version!==data.expected_current_version)throw new PortalError('version_conflict');
@@ -707,6 +759,7 @@ export class DocumentWorkflowService{
     }
     if(current.version!==data.expected_version)throw new PortalError('version_conflict');
     if(current.document_kind==='linked'&&data.mode==='draft')throw new PortalError('document_export_mode_invalid');
+    if(data.mode==='draft'&&current.state==='approved')throw new PortalError('document_export_mode_invalid');
     if(data.mode==='draft'&&!completenessOf(current.input).complete)throw new PortalError('document_incomplete');
     if(data.mode==='formal'){
       if(current.state!=='approved')throw new PortalError('document_not_approved');
@@ -715,18 +768,21 @@ export class DocumentWorkflowService{
     this.assertPayloadGates(ctx,current,current.document_kind==='linked',data.mode==='formal');
     const cached=this.store.store.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=?').get(data.id,current.version) as {sha256:string;bytes:Uint8Array}|undefined;
     if(cached)return this.exportView(current,current.version,current.revision_id,data.id,cached.sha256,this.validatePdf(cached),data.mode==='draft',false,current.version);
-    const html=renderHtml(renderDocument(current.input),current.template as never,current.state==='approved');
+    this.store.ensureWritable();
+    const html=renderHtml(renderDocument(current.input),current.template as never,data.mode==='formal');
     let bytes:Buffer;
     try{bytes=await this.renderer(html);}catch{throw new PortalError('document_renderer_unavailable');}
-    const latest=this.read(scope,data.id);
+    const latestScope=this.scope(ctx,current.document_kind==='linked'),latest=this.read(latestScope,data.id);
     if(latest.version!==current.version||latest.revision_id!==current.revision_id)throw new PortalError('version_conflict');
     this.assertPayloadGates(ctx,latest,latest.document_kind==='linked',data.mode==='formal');
     if(data.mode==='formal')this.assertApprovalPayload(latest);
+    if(data.mode==='draft'&&latest.state==='approved')throw new PortalError('document_export_mode_invalid');
     if(bytes.length<100||bytes.length>8388608||bytes.subarray(0,5).toString()!=='%PDF-')throw new PortalError('document_pdf_invalid');
     const sha256=createHash('sha256').update(bytes).digest('hex');
     this.store.store.db.prepare('INSERT OR IGNORE INTO document_pdfs VALUES(?,?,?,?)').run(current.id,current.version,sha256,bytes);
     const readback=this.store.store.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=?').get(current.id,current.version) as {sha256:string;bytes:Uint8Array}|undefined;
-    return this.exportView(latest,current.version,current.revision_id,data.id,sha256,this.validatePdf(readback),data.mode==='draft',false,current.version);
+    if(!readback)throw new PortalError('document_readback_failed');
+    return this.exportView(latest,current.version,current.revision_id,data.id,readback.sha256,this.validatePdf(readback),data.mode==='draft',false,current.version);
   }
   private readVersion(scope:Scope,id:string,version:number):StoredPayload|null{const row=this.store.store.db.prepare('SELECT payload FROM document_revisions WHERE document_id=? AND org=? AND version=?').get(id,scope.org,version) as {payload:string}|undefined;if(row)return JSON.parse(row.payload) as StoredPayload;const legacy=this.readLegacy(scope,id);if(legacy.version===version)return legacy;return null;}
   private exportView(payload:StoredPayload|null,version:number,revisionId:string|null,id:string,sha256:string,bytes:Buffer,draft:boolean,historical:boolean,currentVersion:number){return {id,version,revision_id:revisionId,current_version:currentVersion,mode:historical?'history':draft?'draft':'formal',draft,historical,valid_now:!historical,target_version:version,filename:`quotation-${id}-v${version}.pdf`,sha256,byte_length:bytes.length,content_base64:bytes.toString('base64'),totals:payload?totalsOf(payload.input):null};}
