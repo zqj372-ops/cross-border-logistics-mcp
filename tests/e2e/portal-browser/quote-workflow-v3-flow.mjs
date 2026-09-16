@@ -1,0 +1,145 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {mkdirSync,readFileSync,statSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {loginFixture} from './fixture-login.mjs';
+
+const base=process.env.PORTAL_BASE_URL,out=process.env.PORTAL_ARTIFACTS;
+assert.equal(new URL(base).hostname,'127.0.0.1');assert.ok(out);mkdirSync(out,{recursive:true});
+const {chromium}=await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
+const browser=await chromium.launch({headless:true,chromiumSandbox:true,executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH});
+const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],expectedUnavailable=[];
+page.on('pageerror',error=>errors.push(error.message));
+page.on('console',message=>{if(message.type()==='error'){const text=message.text()+' @ '+message.location().url;if(message.location().url.endsWith('/console/api/v1/public/customs/quota')&&message.text().includes('503'))expectedUnavailable.push(text);else errors.push(text);}});
+const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
+async function shot(name,width){
+  await page.setViewportSize({width,height:1000});
+  await page.evaluate(async()=>{await document.fonts.ready;window.scrollTo(0,0);});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${width}px horizontal overflow`);
+  await page.screenshot({path:resolve(out,name+'.png'),fullPage:true});
+}
+async function assertFeeKeyboardFocus(width){
+  await page.setViewportSize({width,height:1000});
+  await page.locator('[data-fee="0"] [name="unit_price"]').focus();
+  await page.keyboard.press('Tab');
+  const focused=await page.evaluate(()=>{
+    const element=document.activeElement;
+    if(!(element instanceof globalThis.HTMLElement))return null;
+    const style=globalThis.getComputedStyle(element);
+    return {name:element.getAttribute('name'),focusVisible:element.matches(':focus-visible'),outlineStyle:style.outlineStyle,outlineWidth:style.outlineWidth};
+  });
+  assert.equal(focused?.name,'currency',`${width}px fee Tab order`);
+  assert.equal(focused?.focusVisible,true,`${width}px visible keyboard focus`);
+  assert.notEqual(focused?.outlineStyle,'none',`${width}px focus outline style`);
+  assert.notEqual(focused?.outlineWidth,'0px',`${width}px focus outline width`);
+}
+try{
+  await page.goto(base+'/console/#quote-documents');
+  await page.getByRole('heading',{name:'欢迎回来',exact:true}).waitFor();
+  await loginFixture(page,base,'企业负责人 owner@example.test');
+  await page.getByRole('link',{name:'企业模板',exact:true}).click();
+  for(const [name,value]of Object.entries({company_name:'Synthetic Workflow Logistics',company_address:'Loopback fixture only',company_email:'workflow@example.test',company_phone:'',terms:'Synthetic acceptance terms.'})){await page.locator(`[name="${name}"]`).fill(value);assert.equal(await page.locator(`[name="${name}"]`).inputValue(),value);}
+  const configSaved=page.waitForResponse(response=>response.url().endsWith('/quote-documents/config-save'));
+  await page.getByRole('button',{name:'保存企业模板',exact:true}).click();
+  const configResponse=await configSaved;
+  if(configResponse.status()!==200)throw new Error('config save failed: '+JSON.stringify({body:await configResponse.json(),request:configResponse.request().postDataJSON(),hash:await page.evaluate(()=>location.hash)}));
+  await page.getByText('企业模板已保存并读回。',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'制作报价单',exact:true}).click();
+  await page.locator('[name="quote_no"]').fill('QA-WORKFLOW-V3-001');
+  await page.locator('[name="customer_name"]').fill('Synthetic Browser Customer');
+  await page.locator('[name="quote_date"]').fill('2026-09-15');
+  await page.locator('[name="valid_until"]').fill('2099-12-31');
+  await page.locator('[data-fee="0"] [name="name"]').fill('Base freight');
+  await page.locator('[data-fee="0"] [name="quantity"]').fill('2');
+  await page.locator('[data-fee="0"] [name="unit"]').fill('shipment');
+  await page.locator('[data-fee="0"] [name="currency"]').selectOption('USD');
+  await page.locator('[data-fee="0"] summary').click();
+  await page.locator('[data-fee="0"] [name="group"]').selectOption('B');
+  await page.locator('[data-fee="0"] [name="display"]').selectOption('detail');
+  const incompleteSave=page.waitForResponse(response=>response.url().endsWith('/quote-documents/save'));
+  await page.getByRole('button',{name:'保存草稿',exact:true}).click();
+  const incomplete=await (await incompleteSave).json();
+  assert.equal(incomplete.status,'success',JSON.stringify(incomplete));
+  assert.equal(incomplete.data.input.fee_items[0].unit_price,null);
+  assert.equal(incomplete.data.completeness.complete,false);
+  await page.locator('[name="unit_price"]').fill('125.15');
+  await page.getByRole('button',{name:'添加费用',exact:true}).click();
+  await page.locator('[data-fee="1"] [name="name"]').fill('Hidden excluded verification');
+  await page.locator('[data-fee="1"] [name="quantity"]').fill('1');
+  await page.locator('[data-fee="1"] [name="unit"]').fill('shipment');
+  await page.locator('[data-fee="1"] [name="unit_price"]').fill('999');
+  await page.locator('[data-fee="1"] [name="currency"]').selectOption('USD');
+  await page.locator('[data-fee="1"] summary').click();
+  await page.locator('[data-fee="1"] [name="group"]').selectOption('C');
+  await page.locator('[data-fee="1"] [name="display"]').selectOption('hiddenExcluded');
+  const updateWait=page.waitForResponse(response=>response.url().endsWith('/quote-documents/save'));
+  await page.getByRole('button',{name:'保存草稿',exact:true}).click();
+  const updated=await (await updateWait).json();
+  assert.equal(updated.data.id,incomplete.data.id,'same document id must continue the draft');
+  assert.equal(updated.data.version,2);
+  assert.equal(updated.data.completeness.complete,true);
+  for(const width of [1440,1280,390,320])await assertFeeKeyboardFocus(width);
+  await page.getByRole('button',{name:/核对/}).click();
+  await page.getByRole('heading',{name:'核对报价',exact:true}).waitFor();
+  await page.locator('[name="evidence_ref"]').fill('manual:browser-v3');
+  await page.locator('[name="evidence_version"]').fill('1');
+  await page.locator('[name="review_notes"]').fill('Synthetic browser review.');
+  await page.locator('[name="confirmed"]').check();
+  const approvalWait=page.waitForResponse(response=>response.url().endsWith('/quote-documents/approve'));
+  await page.getByRole('button',{name:'确认人工核对',exact:true}).click();
+  const approved=await (await approvalWait).json();
+  assert.equal(approved.data.state,'approved');
+  assert.equal(approved.data.version,3);
+  await page.getByRole('button',{name:'导出正式 PDF',exact:true}).waitFor();
+  assert.equal(await page.locator('[name="quote_no"]').isDisabled(),true);
+  const session=await page.evaluate(()=>fetch('/console/api/v1/session').then(response=>response.json()));
+  const cookie=(await page.context().cookies()).find(value=>value.name==='fc_portal_session');
+  assert.ok(cookie);
+  const sessionFile=resolve(out,'quote-workflow-v3-cli-session.json'),getInput=resolve(out,'quote-workflow-v3-cli-get.json');
+  writeFileSync(sessionFile,JSON.stringify({origin:base,session_token:cookie.value,csrf_token:session.csrf_token,expires_at:Date.now()+60000}),{mode:0o600});
+  writeFileSync(getInput,JSON.stringify({contract_version:'quote-documents-workflow@2026-09-15.v1',id:incomplete.data.id}),{mode:0o600});
+  const cliRead=JSON.parse(execFileSync(process.execPath,[resolve('dist/cli/bin/freightclaw.mjs'),'workspace','documents','get','--session-file',sessionFile,'--endpoint',base,'--input',getInput],{encoding:'utf8'}));
+  assert.equal(cliRead.schema_version,'quote-documents@2026-09-15.v3');
+  assert.equal(cliRead.data.id,incomplete.data.id);
+  assert.equal(cliRead.data.version,approved.data.version);
+  for(const width of [1440,1280,390,320])await shot(`quote-workflow-v3-${width}`,width);
+  await page.setViewportSize({width:390,height:1000});
+  const exportResponsePromise=page.waitForResponse(response=>response.url().endsWith('/quote-documents/export'));
+  const downloadPromise=page.waitForEvent('download');
+  await page.getByRole('button',{name:'导出正式 PDF',exact:true}).click();
+  const exportResponse=await exportResponsePromise,exportBody=await exportResponse.json();
+  if(exportResponse.status()!==200||exportBody.status!=='success'){downloadPromise.catch(()=>{});throw new Error('formal export failed: '+JSON.stringify(exportBody));}
+  const download=await downloadPromise,path=await download.path();
+  assert.ok(path);
+  const bytes=readFileSync(path);
+  assert.equal(bytes.subarray(0,5).toString(),'%PDF-');
+  assert.equal(sha256(bytes).length,64);
+  const pdfPath=resolve(out,'quote-workflow-v3-formal.pdf');
+  await download.saveAs(pdfPath);
+  assert.ok(statSync(pdfPath).size>100);
+  const text=execFileSync('pdftotext',[pdfPath,'-'],{encoding:'utf8'});
+  assert.match(text,/QA-WORKFLOW-V3-001/u);
+  assert.match(text,/Synthetic Browser Customer/u);
+  assert.match(text,/250\.30/u);
+  assert.doesNotMatch(text,/Hidden excluded verification/u);
+  assert.doesNotMatch(text,/DRAFT - NOT A FORMAL QUOTE/u);
+  const listResponsePromise=page.waitForResponse(response=>response.url().endsWith('/quote-documents/list'));
+  await page.getByRole('button',{name:'报价记录',exact:true}).click();
+  const listResponse=await listResponsePromise,listBody=await listResponse.json();
+  const listed=listBody.data?.items?.find(item=>item.id===incomplete.data.id);
+  if(listResponse.status()!==200||listed?.quote_no!=='QA-WORKFLOW-V3-001')throw new Error('record list failed: '+JSON.stringify(listBody));
+  const row=page.locator(`[data-action="qdoc-open"][data-id="${incomplete.data.id}"]`);
+  try{await row.waitFor({timeout:5000});}catch{
+    const diagnostic={hash:await page.evaluate(()=>location.hash),content:(await page.locator('#content').innerText().catch(()=>'')).slice(0,1200),list:listBody};
+    await page.screenshot({path:resolve(out,'quote-workflow-record-list-failure.png'),fullPage:true});
+    throw new Error('record row not rendered: '+JSON.stringify(diagnostic));
+  }
+  await row.click();
+  await page.getByText('已读回服务器版本',{exact:false}).waitFor();
+  assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({document_id:incomplete.data.id,web:{id:incomplete.data.id,version:approved.data.version,state:approved.data.state},cli:{id:cliRead.data.id,revision_id:cliRead.data.revision_id,version:cliRead.data.version,state:cliRead.data.state},versions:[1,2,3],pdf:pdfPath,screenshots:[1440,1280,390,320].map(width=>resolve(out,`quote-workflow-v3-${width}.png`)),errors,expected_unavailable:expectedUnavailable}));
+}finally{
+  await browser.close();
+}

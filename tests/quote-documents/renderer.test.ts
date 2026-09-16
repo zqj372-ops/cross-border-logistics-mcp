@@ -5,12 +5,13 @@ import {expect,it} from 'vitest';
 import {renderPdf} from '../../services/quote-documents/renderer';
 
 it('isolates browser HOME and XDG paths for every render without disabling the sandbox',async()=>{
- const root=await mkdtemp(join(tmpdir(),'quote-renderer-test-')),workspace=join(root,'workspace'),binary=join(root,'fake-browser.mjs'),previousCwd=process.cwd(),previousBrowser=process.env.PORTAL_PDF_BROWSER_EXECUTABLE,previousCapture=process.env.RENDERER_CAPTURE_PATH;
+ const root=await mkdtemp(join(tmpdir(),'quote-renderer-test-')),workspace=join(root,'workspace'),binary=join(root,'fake-browser.mjs'),previousCwd=process.cwd(),previousBrowser=process.env.PORTAL_PDF_BROWSER_EXECUTABLE,previousCapture=process.env.RENDERER_CAPTURE_PATH,previousFixtureModule=process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE;
  try{
   await mkdir(join(workspace,'dist/services/quote-documents/fonts'),{recursive:true});
   await writeFile(join(workspace,'dist/services/quote-documents/fonts/fonts.css'),'');
   await writeFile(binary,`#!${process.execPath}\nimport {existsSync,writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2),output=args.find(value=>value.startsWith('--print-to-pdf='))?.slice('--print-to-pdf='.length);\nif(!output||!process.env.RENDERER_CAPTURE_PATH)process.exit(2);\nwriteFileSync(process.env.RENDERER_CAPTURE_PATH,JSON.stringify({home:process.env.HOME,homeExists:existsSync(process.env.HOME),xdgConfig:process.env.XDG_CONFIG_HOME,xdgCache:process.env.XDG_CACHE_HOME,args}));\nwriteFileSync(output,Buffer.from('%PDF-1.7\\n'+'.'.repeat(120)));\n`);
   await chmod(binary,0o700);process.chdir(workspace);process.env.PORTAL_PDF_BROWSER_EXECUTABLE=binary;
+  process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE=join(root,'must-not-load-outside-fixtures.mjs');
   const invoke=async(name:string)=>{const capture=join(root,`${name}.json`);process.env.RENDERER_CAPTURE_PATH=capture;const pdf=await renderPdf('<!doctype html><style></style><p>fixture</p>');return {pdf,environment:JSON.parse(await readFile(capture,'utf8')) as {home:string;homeExists:boolean;xdgConfig:string;xdgCache:string;args:string[]}};};
   const first=await invoke('first'),second=await invoke('second');
   for(const result of [first,second]){
@@ -27,6 +28,26 @@ it('isolates browser HOME and XDG paths for every render without disabling the s
   process.chdir(previousCwd);
   if(previousBrowser===undefined)delete process.env.PORTAL_PDF_BROWSER_EXECUTABLE;else process.env.PORTAL_PDF_BROWSER_EXECUTABLE=previousBrowser;
   if(previousCapture===undefined)delete process.env.RENDERER_CAPTURE_PATH;else process.env.RENDERER_CAPTURE_PATH=previousCapture;
+  if(previousFixtureModule===undefined)delete process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE;else process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE=previousFixtureModule;
+  await rm(root,{recursive:true,force:true});
+ }
+});
+
+it('uses the fixture-only Playwright renderer with the browser sandbox enabled',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'quote-renderer-playwright-test-')),workspace=join(root,'workspace'),binary=join(root,'fake-browser'),modulePath=join(root,'fake-playwright.mjs'),capture=join(root,'capture.json'),previousCwd=process.cwd(),previousBrowser=process.env.PORTAL_PDF_BROWSER_EXECUTABLE,previousFixtureModule=process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE;
+ try{
+  await mkdir(join(workspace,'dist/services/quote-documents/fonts'),{recursive:true});
+  await writeFile(join(workspace,'dist/services/quote-documents/fonts/fonts.css'),'');
+  await writeFile(binary,'fixture browser placeholder',{mode:0o700});
+  await writeFile(modulePath,`import {writeFileSync} from 'node:fs';\nexport const chromium={launch:async options=>{writeFileSync(${JSON.stringify(capture)},JSON.stringify(options));return {newPage:async()=>({setContent:async()=>{},pdf:async()=>Buffer.from('%PDF-1.7\\n'+'.'.repeat(120))}),close:async()=>{}};}};\n`);
+  process.chdir(workspace);process.env.PORTAL_PDF_BROWSER_EXECUTABLE=binary;process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE=modulePath;process.argv.push('--fixtures');
+  const pdf=await renderPdf('<!doctype html><style></style><p>fixture</p>');
+  expect(pdf.subarray(0,5).toString()).toBe('%PDF-');
+  expect(JSON.parse(await readFile(capture,'utf8'))).toMatchObject({headless:true,chromiumSandbox:true,executablePath:binary});
+ }finally{
+  process.argv.splice(-1,1);process.chdir(previousCwd);
+  if(previousBrowser===undefined)delete process.env.PORTAL_PDF_BROWSER_EXECUTABLE;else process.env.PORTAL_PDF_BROWSER_EXECUTABLE=previousBrowser;
+  if(previousFixtureModule===undefined)delete process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE;else process.env.PORTAL_FIXTURE_PDF_PLAYWRIGHT_MODULE=previousFixtureModule;
   await rm(root,{recursive:true,force:true});
  }
 });

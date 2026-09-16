@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "input": {
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "standard_fee_template_v1": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "template_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{2,63}$"
+            },
+            "template_version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "items": {
+              "maxItems": 60,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item_key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{2,63}$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "unit_suggestion": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "quantity_suggestion": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "display": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "detail",
+                          "hiddenIncluded",
+                          "hiddenExcluded",
+                          "merged"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "item_key",
+                  "name",
+                  "description",
+                  "unit_suggestion",
+                  "quantity_suggestion",
+                  "display"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "template_id",
+            "template_version",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "catalog": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "quote-fee-template@2026-09-15.v1"
+        },
+        "template_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{2,63}$"
+        },
+        "template_version": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "source": {
+          "type": "string",
+          "const": "platform"
+        },
+        "groups": {
+          "minItems": 3,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 50
+              },
+              "items": {
+                "maxItems": 60,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "item_key": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "unit_suggestion": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 20
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quantity_suggestion": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "display": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "detail",
+                            "hiddenIncluded",
+                            "hiddenExcluded",
+                            "merged"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "item_key",
+                    "name",
+                    "description",
+                    "unit_suggestion",
+                    "quantity_suggestion",
+                    "display"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "group",
+              "label",
+              "items"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "template_id",
+        "template_version",
+        "source",
+        "groups"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "input",
+    "standard_fee_template_v1",
+    "catalog"
+  ],
+  "additionalProperties": false
+}

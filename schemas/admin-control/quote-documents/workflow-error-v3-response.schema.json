@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "quote-documents@2026-09-15.v3"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "needs_input",
+        "manual_review",
+        "blocked",
+        "unavailable"
+      ]
+    },
+    "data": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "document_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "completeness": {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "type": "boolean"
+                },
+                "missing_fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "blocking_reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "can_review": {
+                  "type": "boolean"
+                },
+                "partial": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "complete",
+                "missing_fields",
+                "blocking_reasons",
+                "can_review",
+                "partial"
+              ],
+              "additionalProperties": false
+            },
+            "totals": {
+              "type": "object",
+              "properties": {
+                "partial": {
+                  "type": "boolean"
+                },
+                "complete": {
+                  "type": "boolean"
+                },
+                "rows": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "source_kind": {
+                        "type": "string",
+                        "enum": [
+                          "manual",
+                          "template",
+                          "native"
+                        ]
+                      },
+                      "template_ref": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "template_id": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9-]{2,63}$"
+                              },
+                              "template_version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "item_key": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{2,63}$"
+                              }
+                            },
+                            "required": [
+                              "template_id",
+                              "template_version",
+                              "item_key"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "group": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "A",
+                              "B",
+                              "C"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "quantity": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 20
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit_price": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9][0-9]{0,9})(?:\\.[0-9]{1,6})?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "currency": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "USD",
+                              "CAD",
+                              "CNY"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "display": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "detail",
+                              "hiddenIncluded",
+                              "hiddenExcluded",
+                              "merged"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "merge_name": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "note": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "amount": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "source_kind",
+                      "template_ref",
+                      "name",
+                      "description",
+                      "group",
+                      "quantity",
+                      "unit",
+                      "unit_price",
+                      "currency",
+                      "display",
+                      "merge_name",
+                      "note",
+                      "amount"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "by_currency": {
+                  "type": "object",
+                  "properties": {
+                    "USD": {
+                      "type": "string"
+                    },
+                    "CAD": {
+                      "type": "string"
+                    },
+                    "CNY": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "USD",
+                    "CAD",
+                    "CNY"
+                  ],
+                  "additionalProperties": false
+                },
+                "total_cny": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "total_usd": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "calculation_version": {
+                  "type": "string",
+                  "const": "quote-documents-decimal-v1"
+                }
+              },
+              "required": [
+                "partial",
+                "complete",
+                "rows",
+                "by_currency",
+                "total_cny",
+                "total_usd",
+                "warnings",
+                "calculation_version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "document_id",
+            "version",
+            "completeness",
+            "totals"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "replay": {
+              "type": "boolean",
+              "const": true
+            },
+            "committed": {
+              "type": "boolean",
+              "const": true
+            },
+            "current": {
+              "type": "boolean",
+              "const": false
+            },
+            "historical": {
+              "type": "boolean",
+              "const": true
+            },
+            "valid_now": {
+              "type": "boolean",
+              "const": false
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "revision_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "current_version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "current_revision_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "current_state": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "approved",
+                "rejected"
+              ]
+            }
+          },
+          "required": [
+            "replay",
+            "committed",
+            "current",
+            "historical",
+            "valid_now",
+            "id",
+            "version",
+            "revision_id",
+            "current_version",
+            "current_revision_id",
+            "current_state"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "reason_codes": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "document_input_invalid",
+          "document_update_input_invalid",
+          "document_contract_version_invalid",
+          "document_incomplete",
+          "document_preview_stale",
+          "document_template_missing",
+          "document_expired",
+          "document_v3_rollback_read_only",
+          "document_v3_upgrade_ownership_required",
+          "document_v3_upgrade_old_writer_open",
+          "document_v3_upgrade_ownership_unverified",
+          "version_conflict",
+          "document_state_not_editable",
+          "document_management_denied",
+          "document_organization_required",
+          "inquiry_quote_document_scope_required",
+          "document_not_found",
+          "idempotency_key_invalid",
+          "idempotency_conflict",
+          "document_review_stale",
+          "document_review_forgery",
+          "native_quote_rebind_required",
+          "native_quote_source_changed",
+          "native_quote_release_expired",
+          "native_quote_validity_invalid",
+          "inquiry_quote_link_forgery",
+          "inquiry_quote_case_review_required",
+          "document_export_mode_invalid",
+          "document_not_approved",
+          "document_rejected",
+          "inquiry_quote_history_bytes_missing",
+          "document_renderer_unavailable",
+          "document_pdf_invalid",
+          "document_service_unavailable",
+          "document_readback_failed",
+          "document_replay_not_current"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "data",
+    "reason_codes"
+  ],
+  "additionalProperties": false
+}
