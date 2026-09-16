@@ -9,7 +9,7 @@
 需要 Node.js 22.13 或更新版本。[官网 CLI 页面](https://www.freightclaw.net/console/#cli) 提供安装包、校验文件和输入示例。当前通过官网托管的 npm 包交付，尚未发布到公共 npm registry。
 
 ```sh
-npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.1.0.tgz
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.002.tgz
 freightclaw --version
 freightclaw commands
 freightclaw status
@@ -87,7 +87,7 @@ npm pack ./dist/cli
 
 ## 后台人员操作（本地开发版）
 
-渠道与仓库、询价管理、原生报价及发布配置使用 `workspace` 命令，与网页调用同一 API。使用浏览器核对代码后签发的独立 CLI 会话，不复用浏览器 Cookie，不提升应用 Key 权限。官网 v0.1.0 安装包尚未包含该扩展；本地从当前源码构建。
+渠道与仓库、询价管理、原生报价及发布配置使用 `workspace` 命令，与网页调用同一 API。使用浏览器核对代码后签发的独立 CLI 会话，不复用浏览器 Cookie，不提升应用 Key 权限。当前 `0.002` 安装包包含该扩展。
 
 完整登录、输入、命令与范围说明：[管理 CLI 使用说明](../../apps/console/workspace-cli.md)。`workspace commands` 当前返回 74 个具名操作，另有登录、退出、帮助与 Schema 命令。命令目录是当前版本的支持范围，不代表所有网页操作都有 CLI 入口。
 

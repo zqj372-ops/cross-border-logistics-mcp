@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 
+import { FREIGHTCLAW_VERSION } from "../version";
 import { withRequestCredential } from "./request-credential";
 import {
   AuthenticationError,
@@ -840,7 +841,7 @@ export function createMcpHttpHandler(options: McpHttpOptions): McpHttpHandler {
       },
     });
     const server = new McpServer(
-      { name: "cross-border-logistics-mcp", version: "0.1.0" },
+      { name: "cross-border-logistics-mcp", version: FREIGHTCLAW_VERSION },
       { instructions: SERVER_INSTRUCTIONS },
     );
     const requestIdForCall = () => `req_${randomUUID()}`;

@@ -1,6 +1,6 @@
 # FreightClaw CLI 图文使用指南
 
-版本：`0.1.0`。截图采集：2026-09-07（UTC+8）。CLI 沿用现有账号和统一应用 Key，直接调用 FreightClaw REST API，适合本机脚本、CI 和 Agent。
+当前版本：`0.002`。截图采集于历史版本 `0.1.0`（2026-09-07 UTC+8），用于说明操作路径；命令结构不变，版本输出以当前安装包为准。CLI 沿用现有账号和统一应用 Key，直接调用 FreightClaw REST API，适合本机脚本、CI 和 Agent。
 
 本文按“安装 → 查看命令 → 检查连接 → 准备输入 → 处理结果”说明。图片来自实际 CLI 运行输出的浏览器排版截图；右侧为操作注释。线上匿名检查与本机合成演示分别标明，原始输出保存在 [采集记录](assets/freightclaw-cli/capture-record.json)。
 
@@ -9,7 +9,7 @@
 需要 Node.js 22.13 或更新版本。[官网 CLI 页面](https://www.freightclaw.net/console/#cli) 提供安装包、校验文件和可下载的输入示例。目前使用官网托管的 npm 安装包交付，尚未发布到公共 npm registry：
 
 ```sh
-npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.1.0.tgz
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.002.tgz
 freightclaw --version
 freightclaw --help
 ```
@@ -22,10 +22,10 @@ freightclaw --help
 npm ci
 npm run build:cli
 npm pack ./dist/cli
-npm install --global ./freightclaw-cli-0.1.0.tgz
+npm install --global ./freightclaw-cli-0.002.tgz
 ```
 
-看到版本号 `0.1.0` 表示命令能够启动。下图展示实际版本输出及帮助中的命令目录节选。
+看到版本号 `0.002` 表示当前命令能够启动。下图展示历史版本的版本输出及帮助中的命令目录节选。
 
 ![FreightClaw CLI 版本及九条接口命令总览](assets/freightclaw-cli/01-commands.jpg)
 

@@ -66,7 +66,7 @@ Freightcom 是外部承运商 API。后台保存的正式凭证按企业隔离�
 
 ## CLI
 
-使用当前分支构建的 CLI；线上 0.1.0 下载包尚未更新为本次工作台功能。生产配置与网页部署后才可从生产地址使用新操作。CLI 通过浏览器确认获得独立人员会话；现有查询 API Key 不增加后台管理权限。
+使用当前产品版本 `0.002` 构建的 CLI；生产配置与网页部署完成后再从生产地址使用新操作。CLI 通过浏览器确认获得独立人员会话；现有查询 API Key 不增加后台管理权限。
 
 ```sh
 freightclaw workspace login start --endpoint http://127.0.0.1:8907 --session-file /private/path/fc-session.json
