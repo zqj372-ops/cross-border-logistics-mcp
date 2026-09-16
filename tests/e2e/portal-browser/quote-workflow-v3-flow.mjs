@@ -20,6 +20,21 @@ async function shot(name,width){
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${width}px horizontal overflow`);
   await page.screenshot({path:resolve(out,name+'.png'),fullPage:true});
 }
+async function assertFeeKeyboardFocus(width){
+  await page.setViewportSize({width,height:1000});
+  await page.locator('[data-fee="0"] [name="unit_price"]').focus();
+  await page.keyboard.press('Tab');
+  const focused=await page.evaluate(()=>{
+    const element=document.activeElement;
+    if(!(element instanceof globalThis.HTMLElement))return null;
+    const style=globalThis.getComputedStyle(element);
+    return {name:element.getAttribute('name'),focusVisible:element.matches(':focus-visible'),outlineStyle:style.outlineStyle,outlineWidth:style.outlineWidth};
+  });
+  assert.equal(focused?.name,'currency',`${width}px fee Tab order`);
+  assert.equal(focused?.focusVisible,true,`${width}px visible keyboard focus`);
+  assert.notEqual(focused?.outlineStyle,'none',`${width}px focus outline style`);
+  assert.notEqual(focused?.outlineWidth,'0px',`${width}px focus outline width`);
+}
 try{
   await page.goto(base+'/console/#quote-documents');
   await page.getByRole('heading',{name:'欢迎回来',exact:true}).waitFor();
@@ -65,10 +80,7 @@ try{
   assert.equal(updated.data.id,incomplete.data.id,'same document id must continue the draft');
   assert.equal(updated.data.version,2);
   assert.equal(updated.data.completeness.complete,true);
-  await page.setViewportSize({width:390,height:1000});
-  await page.locator('[data-fee="0"] [name="unit_price"]').focus();
-  await page.keyboard.press('Tab');
-  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('name')),'currency');
+  for(const width of [1440,1280,390,320])await assertFeeKeyboardFocus(width);
   await page.getByRole('button',{name:/核对/}).click();
   await page.getByRole('heading',{name:'核对报价',exact:true}).waitFor();
   await page.locator('[name="evidence_ref"]').fill('manual:browser-v3');
@@ -80,6 +92,8 @@ try{
   const approved=await (await approvalWait).json();
   assert.equal(approved.data.state,'approved');
   assert.equal(approved.data.version,3);
+  await page.getByRole('button',{name:'导出正式 PDF',exact:true}).waitFor();
+  assert.equal(await page.locator('[name="quote_no"]').isDisabled(),true);
   const session=await page.evaluate(()=>fetch('/console/api/v1/session').then(response=>response.json()));
   const cookie=(await page.context().cookies()).find(value=>value.name==='fc_portal_session');
   assert.ok(cookie);
@@ -125,7 +139,7 @@ try{
   await row.click();
   await page.getByText('已读回服务器版本',{exact:false}).waitFor();
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({document_id:incomplete.data.id,versions:[1,2,3],pdf:pdfPath,screenshots:[1440,1280,390,320].map(width=>resolve(out,`quote-workflow-v3-${width}.png`)),errors,expected_unavailable:expectedUnavailable}));
+  console.log(JSON.stringify({document_id:incomplete.data.id,web:{id:incomplete.data.id,version:approved.data.version,state:approved.data.state},cli:{id:cliRead.data.id,revision_id:cliRead.data.revision_id,version:cliRead.data.version,state:cliRead.data.state},versions:[1,2,3],pdf:pdfPath,screenshots:[1440,1280,390,320].map(width=>resolve(out,`quote-workflow-v3-${width}.png`)),errors,expected_unavailable:expectedUnavailable}));
 }finally{
   await browser.close();
 }

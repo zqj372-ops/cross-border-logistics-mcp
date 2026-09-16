@@ -28,7 +28,7 @@ it('keeps linked case identity immutable, rechecks customer supplements and expo
   const caseService=new CaseService(caseStore,portal);
   const caseAccess={readForQuoteView:(ctx:PortalContext,caseRef:string)=>caseService.readForQuoteView(ctx,caseRef),readForQuoteLink:(ctx:PortalContext,caseRef:string)=>caseService.readForQuoteLink(ctx,caseRef)};
   const documentService=new DocumentService(documentStore,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))),{business,current:()=>release},caseAccess);
-  const workflow=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),documentService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
+  const workflow=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,ownershipMode:'fresh-fixture'}),documentService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
   const ctx:PortalContext={identity:{userId:owner,email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:organization};
   workflow.saveConfig(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,expected_version:0,input:{...template,standard_fee_template_v1:{template_id:'freightclaw-standard-v1',template_version:1,items:[]}},confirmed:true},'workflow-linked-config-01');
   const createdCase=caseService.create(ctx,{...createDraft(),services:['ocean'],transportMode:'fcl',origin:'Shanghai',destination:'Toronto M5X 1A9',product:'Synthetic linked cargo',containerType:'40HQ',containerCount:'1',contactName:'Synthetic owner',email:'contact@example.test',consent:true},'workflow-linked-case-01');

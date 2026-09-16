@@ -22,7 +22,7 @@ it('serves the v3 save-review-approve-export chain and blocks legacy v1 access a
   const documentStore=new DocumentStore(join(root,'documents.sqlite'));
   const portal={getState:(context:PortalContext)=>({data:{current_organization:context.organizationId?{organizationId:organization,status:'active'}:null,memberships:[{organizationId:organization,userId:context.identity.userId,status:'active',role:'owner'}]}})} as never;
   const documentService=new DocumentService(documentStore,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
-  const workflow=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),documentService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
+  const workflow=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,ownershipMode:'fresh-fixture'}),documentService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
   const server=createServer((request,response)=>{void handler.handle(request,response);});
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;

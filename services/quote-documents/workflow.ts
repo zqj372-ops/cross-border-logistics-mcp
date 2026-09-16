@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import {readdirSync,realpathSync} from 'node:fs';
+import {readdirSync,statSync} from 'node:fs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
@@ -42,19 +42,41 @@ const sortValue=(value:unknown):unknown=>{
 const canonicalHash=(value:unknown)=>hash(sortValue(value));
 const safeText=(value:unknown)=>typeof value==='string'?value:'';
 const today=()=>new Date().toISOString().slice(0,10);
-function assertNoExternalSqliteHandles(path:string):void{
+// Compare inode identities and fail closed when an existing process cannot be inspected.
+export function assertNoExternalSqliteHandles(path:string,options:{procRoot?:string;currentPid?:number;onlyPids?:ReadonlySet<number>}={}):void{
   if(process.platform!=='linux')throw new PortalError('document_v3_upgrade_ownership_unverified');
+  const procRoot=options.procRoot??'/proc',currentPid=options.currentPid??process.pid;
+  const errorCode=(error:unknown)=>error!==null&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:null;
+  const identities=(candidate:string):Array<{dev:bigint;ino:bigint}>=>{
+    try{
+      const stat=statSync(candidate,{bigint:true});
+      return [{dev:stat.dev,ino:stat.ino}];
+    }catch(error){
+      if(errorCode(error)==='ENOENT')return [];
+      throw new PortalError('document_v3_upgrade_ownership_unverified');
+    }
+  };
+  const processExists=(pid:string):boolean=>{
+    try{
+      statSync(`${procRoot}/${pid}`);
+      return true;
+    }catch(error){
+      if(errorCode(error)==='ENOENT')return false;
+      throw new PortalError('document_v3_upgrade_ownership_unverified');
+    }
+  };
+  const targets=[path,`${path}-wal`,`${path}-shm`].flatMap(identities);
   let pids:string[];
-  try{pids=readdirSync('/proc');}catch{throw new PortalError('document_v3_upgrade_ownership_unverified');}
-  const targets=new Set([path,`${path}-wal`,`${path}-shm`].map(value=>{try{return realpathSync(value);}catch{return value;}}));
+  try{pids=readdirSync(procRoot);}catch{throw new PortalError('document_v3_upgrade_ownership_unverified');}
   for(const pid of pids){
-    if(!/^[0-9]+$/u.test(pid)||Number(pid)===process.pid)continue;
+    const numericPid=Number(pid);
+    if(!/^[0-9]+$/u.test(pid)||numericPid===currentPid||(options.onlyPids&&!options.onlyPids.has(numericPid)))continue;
     let fds:string[];
-    try{fds=readdirSync(`/proc/${pid}/fd`);}catch{continue;}
+    try{fds=readdirSync(`${procRoot}/${pid}/fd`);}catch(error){if(errorCode(error)==='ENOENT'||!processExists(pid))continue;throw new PortalError('document_v3_upgrade_ownership_unverified');}
     for(const fd of fds){
-      let target:string;
-      try{target=realpathSync(`/proc/${pid}/fd/${fd}`);}catch{continue;}
-      if(targets.has(target))throw new PortalError('document_v3_upgrade_old_writer_open');
+      let identity:{dev:bigint;ino:bigint};
+      try{const stat=statSync(`${procRoot}/${pid}/fd/${fd}`,{bigint:true});identity={dev:stat.dev,ino:stat.ino};}catch(error){if(errorCode(error)==='ENOENT')continue;throw new PortalError('document_v3_upgrade_ownership_unverified');}
+      if(targets.some(target=>target.dev===identity.dev&&target.ino===identity.ino))throw new PortalError('document_v3_upgrade_old_writer_open');
     }
   }
 }
@@ -278,16 +300,20 @@ function renderDocument(input:DraftDocument){
 }
 
 /** oldWritersStopped is an explicit deployment attestation, not a probing inference. */
-export interface DocumentWorkflowStoreOptions{readonly oldWritersStopped?:boolean;readonly readOnly?:boolean}
+export interface DocumentWorkflowStoreOptions{readonly oldWritersStopped?:boolean;readonly readOnly?:boolean;readonly ownershipMode?:'existing-database'|'fresh-fixture';readonly externalHandleProbe?:(path:string)=>void}
 export class DocumentWorkflowStore{
   readonly db;
   readonly signingSecret:string;
   private schemaReady=false;
   private readonly oldWritersStopped:boolean;
+  private readonly ownershipMode:'existing-database'|'fresh-fixture';
+  private readonly externalHandleProbe:(path:string)=>void;
   readonly readOnly:boolean;
   constructor(readonly store:DocumentStore,options:DocumentWorkflowStoreOptions={}){
     this.db=store.db;
     this.oldWritersStopped=options.oldWritersStopped===true;
+    this.ownershipMode=options.ownershipMode??'existing-database';
+    this.externalHandleProbe=options.externalHandleProbe??assertNoExternalSqliteHandles;
     this.readOnly=options.readOnly===true;
     const db=this.db;
     const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
@@ -316,7 +342,12 @@ export class DocumentWorkflowStore{
     if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');
     if(!this.oldWritersStopped)throw new PortalError('document_v3_upgrade_ownership_required');
     try{this.store.assertExclusiveOwnership();}catch{throw new PortalError('document_v3_upgrade_old_writer_open');}
-    assertNoExternalSqliteHandles(this.store.path);
+    if(this.ownershipMode==='fresh-fixture'){
+      const existingTables=['document_configs','quote_documents','document_idempotency','document_audit','document_pdfs'];
+      if(existingTables.some(table=>this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()))throw new PortalError('document_v3_upgrade_ownership_unverified');
+    }else{
+      this.externalHandleProbe(this.store.path);
+    }
     const db=this.db;
     db.exec('BEGIN EXCLUSIVE');
     try{
