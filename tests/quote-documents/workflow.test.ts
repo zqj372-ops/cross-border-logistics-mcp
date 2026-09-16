@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {DocumentStore,DocumentService} from '../../services/quote-documents/service';
-import {openPortalProductionDatabase} from '../../services/access-gateway/portal/production-persistence';
+import {closePortalProductionDatabase,openPortalProductionDatabase} from '../../services/access-gateway/portal/production-persistence';
 import {DocumentWorkflowStore,DocumentWorkflowService,assertNoExternalSqliteHandles,nativeFeeDigest} from '../../services/quote-documents/workflow';
 import {DRAFT_VERSION,WORKFLOW_REQUEST_VERSION,workflowDocumentViewSchema,type DraftDocument,type DraftFee} from '../../services/quote-documents/workflow-contracts';
 import {createNativeQuoteClient,type QuoteRelease} from '../../services/quote-native/client';
@@ -18,7 +18,6 @@ import {template} from './fixtures';
 
 const dirs:string[]=[];
 afterEach(()=>dirs.splice(0).forEach(dir=>rmSync(dir,{recursive:true,force:true})));
-const fixtureProbe=(procRoot:string)=>(path:string)=>assertNoExternalSqliteHandles(path,{procRoot});
 
 function setup(role:'owner'|'admin'|'sales'='owner',native?:ConstructorParameters<typeof DocumentService>[3]){
   const dir=mkdtempSync(join(tmpdir(),'quote-workflow-test-'));
@@ -74,8 +73,7 @@ function setupLegacy(options:{version:number;state:'draft'|'rejected'}){
     expect(()=>openPortalProductionDatabase(join(f.dir,'documents.sqlite'),'freightclaw-quote-documents',2)).toThrow('portal_database_version_unsupported');
   });
 
-  it('fails closed when an existing process file descriptor table cannot be inspected',()=>{
-    if(process.platform!=='linux'||process.getuid?.()===0)return;
+  it.skipIf(process.platform!=='linux'||process.getuid?.()===0)('fails closed when an existing process file descriptor table cannot be inspected',()=>{
     const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-proc-'));dirs.push(dir);
     const database=join(dir,'documents.sqlite'),procRoot=join(dir,'proc'),fdDir=join(procRoot,'42','fd');
     writeFileSync(database,'sqlite');
@@ -354,8 +352,7 @@ describe('quote workflow v3',()=>{
     const blocked=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true}),legacyService,portal);
     expect(()=>blocked.saveConfig(ctx,config,'workflow-upgrade-owner-02')).toThrow('document_v3_upgrade_old_writer_open');
     legacyWriter.close();
-    const fixtureProcRoot=join(dir,'authorized-proc');mkdirSync(fixtureProcRoot);
-    const authorized=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,externalHandleProbe:fixtureProbe(fixtureProcRoot)}),legacyService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
+    const authorized=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,externalHandleProbe:()=>{}}),legacyService,portal,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))));
     authorized.saveConfig(ctx,config,'workflow-upgrade-owner-03');
     const claimed=authorized.save(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,operation:'create',document_kind:'manual',input:completeDraft(),template_selection:{mode:'current'},save_intent:'save_draft'},'workflow-upgrade-owner-04');
     await authorized.export(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id:claimed.id,mode:'draft',expected_version:1});
@@ -370,7 +367,7 @@ describe('quote workflow v3',()=>{
     reopened.close();
   });
 
-  it('fails the upgrade while a separate legacy process still holds the database',async()=>{
+  it.skipIf(process.platform!=='linux')('fails the upgrade while a separate legacy process still holds the database',async()=>{
     const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-process-'));dirs.push(dir);
     const path=join(dir,'documents.sqlite'),alias=join(dir,'documents-link.sqlite'),documentStore=new DocumentStore(path),portal={getState:(ctx:PortalContext)=>({data:{current_organization:{organizationId:ctx.organizationId,status:'active'},memberships:[{userId:ctx.identity.userId,organizationId:'org',status:'active',role:'owner'}]}})} as unknown as Pick<PortalService,'getState'>,legacyService=new DocumentService(documentStore,portal),ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'};
     linkSync(path,alias);
@@ -387,6 +384,57 @@ describe('quote workflow v3',()=>{
       await once(child,'close');
       documentStore.close();
     }
+  });
+
+  it('fails the upgrade while a same-process native connection still holds the database',()=>{
+    const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-same-process-'));dirs.push(dir);
+    const path=join(dir,'documents.sqlite'),documentStore=new DocumentStore(path),portal={getState:(ctx:PortalContext)=>({data:{current_organization:{organizationId:ctx.organizationId,status:'active'},memberships:[{userId:ctx.identity.userId,organizationId:'org',status:'active',role:'owner'}]}})} as unknown as Pick<PortalService,'getState'>,legacyService=new DocumentService(documentStore,portal),ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'};
+    const oldConnection=openPortalProductionDatabase(path,'freightclaw-quote-documents',2);
+    try{
+      const service=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,externalHandleProbe:()=>{}}),legacyService,portal);
+      expect(()=>service.saveConfig(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,expected_version:0,input:{...template,standard_fee_template_v1:{template_id:'freightclaw-standard-v1',template_version:1,items:[]}},confirmed:true},'workflow-upgrade-same-process-01')).toThrow('document_v3_upgrade_old_writer_open');
+      expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    }finally{
+      closePortalProductionDatabase(path,oldConnection);
+      documentStore.close();
+    }
+  });
+
+  it('rejects a same-inode path alias before opening a second SQLite connection',()=>{
+    const dir=mkdtempSync(join(tmpdir(),'workflow-upgrade-alias-'));dirs.push(dir);
+    const path=join(dir,'documents.sqlite'),alias=join(dir,'documents-link.sqlite'),documentStore=new DocumentStore(path);
+    linkSync(path,alias);
+    try{
+      expect(()=>openPortalProductionDatabase(alias,'freightclaw-quote-documents',2)).toThrow('portal_database_path_alias_in_use');
+      expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    }finally{
+      documentStore.close();
+    }
+  });
+
+  it('reads history bytes from an unclaimed v2 database without creating v3 revision tables',async()=>{
+    const dir=mkdtempSync(join(tmpdir(),'workflow-v2-history-'));dirs.push(dir);
+    const path=join(dir,'documents.sqlite'),documentStore=new DocumentStore(path),portal={getState:(ctx:PortalContext)=>({data:{current_organization:{organizationId:ctx.organizationId,status:'active'},memberships:[{userId:ctx.identity.userId,organizationId:'org',status:'active',role:'owner'}]}})} as unknown as Pick<PortalService,'getState'>,legacyService=new DocumentService(documentStore,portal),ctx:PortalContext={identity:{userId:'owner',email:'owner@example.test',emailVerified:true,displayName:'Owner',platformRole:null},organizationId:'org'},id=randomUUID(),pdf=Buffer.from('%PDF-1.7\n'+'.'.repeat(120));
+    documentStore.db.prepare('INSERT INTO quote_documents VALUES(?,?,?,?)').run(id,'org','owner',JSON.stringify({id,version:4,state:'draft',input:completeDraft(),template,template_version:1,created_at:'2026-09-15T00:00:00.000Z',owner_id:'owner',approval:null}));
+    documentStore.db.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(id,2,createHash('sha256').update(pdf).digest('hex'),pdf);
+    const service=new DocumentWorkflowService(new DocumentWorkflowStore(documentStore),legacyService,portal);
+    const history=await service.export(ctx,{contract_version:WORKFLOW_REQUEST_VERSION,id,mode:'history',target_version:2,expected_current_version:4});
+    expect(history).toMatchObject({id,version:2,revision_id:null,historical:true,valid_now:false});
+    expect(Buffer.from(history.content_base64,'base64')).toEqual(pdf);
+    expect((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2);
+    expect(documentStore.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_revisions'").get()).toBeUndefined();
+    documentStore.close();
+  });
+
+  it('fails closed when committed content does not match its persisted readback digests',()=>{
+    const f=setup();
+    f.store.store.db.exec("CREATE TRIGGER workflow_readback_tamper AFTER INSERT ON document_idempotency BEGIN UPDATE document_revisions SET payload=json_set(payload,'$.input.quote_no','MISMATCHED-READBACK'); END;");
+    const input={contract_version:WORKFLOW_REQUEST_VERSION,operation:'create' as const,document_kind:'manual' as const,input:completeDraft(),template_selection:{mode:'current' as const},save_intent:'save_draft' as const};
+    expect(()=>f.service.save(f.ctx,input,'workflow-readback-tamper-01')).toThrow('document_readback_failed');
+    const replay=f.service.save(f.ctx,input,'workflow-readback-tamper-01') as {id:string;version:number;input:{quote_no:string}};
+    expect(replay).toMatchObject({version:1,input:{quote_no:'Q-1'}});
+    expect(replay.id).toBeTypeOf('string');
+    expect(f.store.store.db.prepare('SELECT COUNT(*) AS n FROM document_revisions').get()).toEqual({n:1});
   });
 
   it('preserves v3-only configuration when a legacy config-save updates the enterprise template',()=>{

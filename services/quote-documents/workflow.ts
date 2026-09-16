@@ -618,10 +618,10 @@ export class DocumentWorkflowService{
     if(action==='config-save'){const config=this.configFromScope(scope),expected=(result as {version?:unknown}).version;if(typeof expected!=='number'||config.version!==expected)throw new PortalError('document_readback_failed');return config;}
     const candidate=result as {id?:unknown;version?:unknown;revision_id?:unknown};
     if(typeof candidate.id==='string'&&typeof candidate.version==='number'&&typeof candidate.revision_id==='string'){
-      const row=this.store.store.db.prepare('SELECT payload FROM document_revisions WHERE revision_id=? AND document_id=? AND org=? AND version=?').get(candidate.revision_id,candidate.id,scope.org,candidate.version) as {payload:string}|undefined;
+      const row=this.store.store.db.prepare('SELECT payload,input_digest,template_digest FROM document_revisions WHERE revision_id=? AND document_id=? AND org=? AND version=?').get(candidate.revision_id,candidate.id,scope.org,candidate.version) as {payload:string;input_digest:string;template_digest:string}|undefined;
       if(!row)throw new PortalError('document_readback_failed');
       const payload=JSON.parse(row.payload) as StoredPayload;
-      if(payload.revision_id!==candidate.revision_id||payload.version!==candidate.version||payload.org!==scope.org)throw new PortalError('document_readback_failed');
+      if(payload.revision_id!==candidate.revision_id||payload.version!==candidate.version||payload.org!==scope.org||row.input_digest!==canonicalHash(payload.input)||row.template_digest!==canonicalHash(payload.template))throw new PortalError('document_readback_failed');
       return this.view(payload);
     }
     return result;
@@ -815,6 +815,6 @@ export class DocumentWorkflowService{
     if(!readback)throw new PortalError('document_readback_failed');
     return this.exportView(latest,current.version,current.revision_id,data.id,readback.sha256,this.validatePdf(readback),data.mode==='draft',false,current.version);
   }
-  private readVersion(scope:Scope,id:string,version:number):StoredPayload|null{const row=this.store.store.db.prepare('SELECT payload FROM document_revisions WHERE document_id=? AND org=? AND version=?').get(id,scope.org,version) as {payload:string}|undefined;if(row)return JSON.parse(row.payload) as StoredPayload;const legacy=this.readLegacy(scope,id);if(legacy.version===version)return legacy;return null;}
+  private readVersion(scope:Scope,id:string,version:number):StoredPayload|null{if(this.store.isV3()){const row=this.store.store.db.prepare('SELECT payload FROM document_revisions WHERE document_id=? AND org=? AND version=?').get(id,scope.org,version) as {payload:string}|undefined;if(row)return JSON.parse(row.payload) as StoredPayload;}const legacy=this.readLegacy(scope,id);if(legacy.version===version)return legacy;return null;}
   private exportView(payload:StoredPayload|null,version:number,revisionId:string|null,id:string,sha256:string,bytes:Buffer,draft:boolean,historical:boolean,currentVersion:number){return {id,version,revision_id:revisionId,current_version:currentVersion,mode:historical?'history':draft?'draft':'formal',draft,historical,valid_now:!historical,target_version:version,filename:`quotation-${id}-v${version}.pdf`,sha256,byte_length:bytes.length,content_base64:bytes.toString('base64'),totals:payload?totalsOf(payload.input):null};}
 }

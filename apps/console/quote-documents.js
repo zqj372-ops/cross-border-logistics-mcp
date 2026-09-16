@@ -103,7 +103,7 @@ export function createQuoteDocuments({api,mutate,model,esc,head,icon,rerender,ca
   const locked=current&&current.state==='approved';
   const info=`${field('报价单号 *','quote_no',data.quote_no)}${field('客户名称 *','customer_name',data.customer_name)}${field('报价日期 *','quote_date',data.quote_date,'date')}${field('有效期至 *','valid_until',data.valid_until,'date')}${field('起运地','origin',data.origin)}${field('目的地','destination',data.destination)}<details class="qdoc-details"><summary>运输单号、汇率与备注</summary><div class="qdoc-fields">${field('线路','route_name',data.route_name)}${field('单号','job_no',data.job_no)}${field('SO 号','so_no',data.so_no)}${field('柜号','container_no',data.container_no)}${field('1 USD = 多少 CNY','USD',data.exchange_rates.USD)}${field('1 CAD = 多少 CNY','CAD',data.exchange_rates.CAD)}${area('备注','remark',data.remark)}</div></details>`;
   return `<div class="qdoc-workbench"><form data-form="qdoc-editor"><fieldset ${locked?'disabled':''}><section class="qdoc-section"><div class="qdoc-section-head"><h2>客户与运输</h2>${current?`<span>${esc(current.claim_state)} · v${current.version}</span>`:''}</div><div class="qdoc-fields" data-qdoc-info>${info}</div></section>${templatePicker()}<section class="qdoc-section"><div class="qdoc-section-head"><h2>费用明细</h2><span>${data.fee_items.length}/60 行</span></div><p>缺失单价显示“待填写”，不会自动补 0。合计按币种展示，缺汇率时不做折算。</p>${feeRows(data.fee_items)}${button('添加费用','add')}</section></fieldset></form>
-  <div class="qdoc-actionbar"><span>${dirty?'有未保存修改':'已读回服务器版本'}</span>${locked?button('导出正式 PDF','export-formal',true)+button('复制为新报价单','copy'):`${button('保存草稿','save')}${button('导出草稿 PDF','export-draft')}${current?button('继续编辑并重新核对','review',true):button('核对报价','review',true)}`}</div></div>`;
+  <div class="qdoc-actionbar"><span>${dirty?'有未保存修改':'已读回服务器版本'}</span>${locked?button('导出正式 PDF','export-formal',true)+button('复制为新报价单','copy',false,current.id):`${button('保存草稿','save')}${button('导出草稿 PDF','export-draft')}${current?button('继续编辑并重新核对','review',true):button('核对报价','review',true)}`}</div></div>`;
  }
 
  function recordsPage(){
@@ -157,22 +157,27 @@ export function createQuoteDocuments({api,mutate,model,esc,head,icon,rerender,ca
   nativePrepared=response.data;draft=structuredClone(nativePrepared.input);dirty=true;
  }
 
- async function saveDraft(e){
-  capture();
-  const body=current?{operation:'update',document_kind:current.document_kind,id:current.id,expected_version:current.version,input:draft,template_selection:{mode:'retain'},save_intent:'save_draft'}: nativePrepared?{operation:'create',document_kind:nativePrepared.document_kind,input:draft,template_selection:{mode:'current'},native_quote_v1:nativePrepared.native_quote_v1,...(nativePrepared.inquiry_case_link_v1?{inquiry_case_link_v1:nativePrepared.inquiry_case_link_v1}:{}),preview_hash:nativePrepared.preview_hash,preview_expires_at:nativePrepared.preview_expires_at,save_intent:'save_draft'}:{operation:'create',document_kind:'manual',input:draft,template_selection:{mode:'current'},save_intent:'save_draft'};
-  if(current?.native_quote_v1)body.binding_update={mode:'retain'};
+ async function saveDraft(e,usePreparedInput=false){
+  if(!usePreparedInput)capture();
+  if(!current&&nativeSeed&&!nativePrepared){await prepareNativeIfNeeded(e);if(e!==epoch)return false;if(!nativePrepared){message='原生报价准备失败。';return false;}usePreparedInput=true;}
+  const input=usePreparedInput&&nativePrepared?nativePrepared.input:draft;
+  const body=current?{operation:'update',document_kind:current.document_kind,id:current.id,expected_version:current.version,input,template_selection:{mode:'retain'},save_intent:'save_draft'}: nativePrepared?{operation:'create',document_kind:nativePrepared.document_kind,input,template_selection:{mode:'current'},native_quote_v1:nativePrepared.native_quote_v1,...(nativePrepared.inquiry_case_link_v1?{inquiry_case_link_v1:nativePrepared.inquiry_case_link_v1}:{}),preview_hash:nativePrepared.preview_hash,preview_expires_at:nativePrepared.preview_expires_at,save_intent:'save_draft'}:{operation:'create',document_kind:'manual',input,template_selection:{mode:'current'},save_intent:'save_draft'};
+  if(current?.native_quote_v1)body.binding_update=nativePrepared?{mode:'replace',native_quote_v1:nativePrepared.native_quote_v1,...(nativePrepared.inquiry_case_link_v1?{inquiry_case_link_v1:nativePrepared.inquiry_case_link_v1}:{}),preview_hash:nativePrepared.preview_hash,preview_expires_at:nativePrepared.preview_expires_at}:{mode:'retain'};
   const response=await submit('save',body);if(e!==epoch)return;
-  if(response.status!=='success'){message=reason({'code':response.reason_codes?.[0]});return;}
+  if(response.status!=='success'){
+   const code=response.reason_codes?.[0];
+   if(current?.native_quote_v1&&!nativePrepared&&code==='native_quote_rebind_required'){await prepareNativeIfNeeded(e);if(e!==epoch)return false;if(nativePrepared)return saveDraft(e,true);}
+   message=reason({'code':code});return false;
+  }
   const value=response.data;
   if(value.replay){replayNotice='幂等重放命中历史提交，它不是当前版本。';current=await request('get',{id:value.id}).then(result=>result.data);}
   else{current=value;draft=structuredClone(value.input);}
   dirty=false;review=null;mode='editor';message=`草稿已保存：v${current.version} · ${current.updated_at}`;
+  return true;
  }
 
  async function reviewDraft(e){
   if(dirty||!current){await saveDraft(e);if(dirty||!current)return;}
-  await prepareNativeIfNeeded(e);if(e!==epoch)return;
-  if(dirty||nativePrepared){await saveDraft(e);if(dirty||!current)return;}
   const response=await request('review',{id:current.id,expected_version:current.version});if(e!==epoch)return;
   if(response.status==='success'){review=response.data;mode='review';message='已生成当前版本核对结果。';}
   else{message='草稿尚不完整：'+((response.data?.completeness?.missing_fields)||response.reason_codes||[]).join('、');}
@@ -202,7 +207,7 @@ export function createQuoteDocuments({api,mutate,model,esc,head,icon,rerender,ca
    else if(kind==='records'){if(mode==='editor'&&!leaveGuard())return true;mode='records';await refreshList(e);}
    else if(kind==='filter'){filters={state:document.querySelector('[data-qdoc-filter="state"]')?.value||'all',quote_no:document.querySelector('[data-qdoc-filter="quote_no"]')?.value.trim()||'',customer_name:document.querySelector('[data-qdoc-filter="customer_name"]')?.value.trim()||''};await refreshList(e);}
    else if(kind==='open'){const id=buttonElement.dataset.id;if(current?.id!==id&&!leaveGuard())return true;const response=await request('get',{id});if(response.status!=='success')throw Object.assign(new Error(response.reason_codes?.[0]),{code:response.reason_codes?.[0]});current=response.data;draft=structuredClone(current.input);nativeSeed=current.native_quote_v1?{request:structuredClone(current.native_quote_v1.request),link:current.inquiry_case_link_v1||null}:null;nativePrepared=null;review=null;mode='editor';dirty=false;}
-   else if(kind==='copy'){if(!leaveGuard())return true;let source=current;const requested=buttonElement.dataset.id;if(!source||source.id!==requested){const response=await request('get',{id:requested});if(response.status!=='success')throw Object.assign(new Error(response.reason_codes?.[0]),{code:response.reason_codes?.[0]});source=response.data;}current=null;draft=structuredClone(source.input);draft.quote_no=null;review=null;nativePrepared=null;if(source.native_quote_v1){nativeSeed={request:structuredClone(source.native_quote_v1.request),link:source.inquiry_case_link_v1||null};draft.fee_items=[];dirty=false;message='已复制报价信息；重新核对时将按当前来源重新生成不可改价费用。';}else{draft.fee_items.forEach(fee=>{fee.id=crypto.randomUUID();fee.template_ref=null;});nativeSeed=null;dirty=true;message='已复制为新的报价单，需重新核对。';}mode='editor';}
+   else if(kind==='copy'){if(!leaveGuard())return true;let source=current;const requested=buttonElement.dataset.id||source?.id||'';if(!source||source.id!==requested){if(!requested)throw new Error('document_input_invalid');const response=await request('get',{id:requested});if(response.status!=='success')throw Object.assign(new Error(response.reason_codes?.[0]),{code:response.reason_codes?.[0]});source=response.data;}current=null;draft=structuredClone(source.input);draft.quote_no=null;review=null;nativePrepared=null;if(source.native_quote_v1){nativeSeed={request:structuredClone(source.native_quote_v1.request),link:source.inquiry_case_link_v1||null};draft.fee_items=[];dirty=false;message='已复制报价信息；重新核对时将按当前来源重新生成不可改价费用。';}else{draft.fee_items.forEach(fee=>{fee.id=crypto.randomUUID();if(fee.source_kind!=='template')fee.template_ref=null;});nativeSeed=null;dirty=true;message='已复制为新的报价单，需重新核对。';}mode='editor';}
    else if(kind==='back-edit'){mode='editor';}
    else if(kind==='config-save'){const form=document.querySelector('form[data-form="qdoc-template"]');if(!form)throw new Error('模板表单不可用。');await formSubmit(form);}
    else if(kind==='approve'){if(!canConfigure())throw new Error('需要当前企业负责人或管理员权限。');const form=document.querySelector('form[data-form="qdoc-approval"]');if(!form.dataset.pending) {form.dataset.pending='1';form.scrollIntoView({block:'center'});message='填写来源依据并勾选确认后提交。';}}
@@ -230,6 +235,6 @@ export function createQuoteDocuments({api,mutate,model,esc,head,icon,rerender,ca
 
  function input(event){if(!event.target.closest('form[data-form="qdoc-editor"]')&&!event.target.closest('form[data-form="qdoc-template"]'))return false;capture();dirty=true;return true;}
  function change(event){if(event.target.matches('[data-qdoc-template-key]')){const key=event.target.getAttribute('data-qdoc-template-key');if(event.target.checked)selectedTemplateKeys.add(key);else selectedTemplateKeys.delete(key);return true;}return false;}
- function fromQuote(result,input,link){sync();reset();nativeSeed={request:structuredClone(input),link:link||null};const value=result?.data||{};draft=blankDraft();draft.origin=value.origin||null;draft.destination=[value.city,value.province,value.postal_code].filter(Boolean).join(' ')||null;draft.valid_until=value.match_trace?.valid_until||null;draft.remark='询价试算，仅作核对依据。';dirty=true;mode='editor';location.hash='quote-documents';}
+ function fromQuote(result,input,link){const next=context();if(next!==scope){reset();scope=next;}else{epoch++;loading=false;busy=false;}current=null;nativeSeed={request:structuredClone(input),link:link||null};nativePrepared=null;review=null;selectedTemplateKeys.clear();replayNotice=null;message='';const value=result?.data||{};draft=blankDraft();draft.origin=value.origin||null;draft.destination=[value.city,value.province,value.postal_code].filter(Boolean).join(' ')||null;draft.valid_until=value.match_trace?.valid_until||null;draft.remark='询价试算，仅作核对依据。';dirty=true;mode='editor';location.hash='quote-documents';}
  return {page,action,submit:formSubmit,input,change,reset,fromQuote,isDirty:()=>dirty};
 }

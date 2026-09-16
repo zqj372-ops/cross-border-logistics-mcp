@@ -3,7 +3,7 @@ import type {QuoteRelease} from '../quote-native/client';
 import {zoneDataSchema,sourceRefSchema} from '../access-gateway/portal/business/quote-client';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import type {z} from 'zod';
-import {openPortalProductionDatabase,securePortalDatabaseFiles} from '../access-gateway/portal/production-persistence';
+import {assertExclusivePortalDatabaseOwnership,closePortalProductionDatabase,openPortalProductionDatabase,securePortalDatabaseFiles} from '../access-gateway/portal/production-persistence';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
 import {configSaveSchema,previewSchema,saveSchema,saveLinkedSchema,approveSchema,approveLinkedSchema,idSchema,getLinkedSchema,listSchema,listLinkedSchema,nativePrepareSchema,nativePrepareLinkedSchema,nativeQuoteBindingSchema,rejectSchema,rejectLinkedSchema,exportLinkedSchema,type QuoteTemplate,type QuoteDocument} from './contracts';
@@ -30,8 +30,8 @@ export class DocumentStore{
  CREATE TABLE IF NOT EXISTS document_audit(id TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS document_pdfs(id TEXT NOT NULL,version INTEGER NOT NULL,sha256 TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(id,version));${version<2?'PRAGMA user_version=2;':''}`);const stores=DocumentStore.openStores.get(path)??new Set<DocumentStore>();stores.add(this);DocumentStore.openStores.set(path,stores);securePortalDatabaseFiles(path);}
  health(){try{this.db.prepare('SELECT id FROM quote_documents LIMIT 1').get();return true;}catch{return false;}}
- assertExclusiveOwnership(){if((DocumentStore.openStores.get(this.path)?.size??0)!==1)throw new Error('document_store_ownership_conflict');}
- close(){this.db.close();const stores=DocumentStore.openStores.get(this.path);stores?.delete(this);if(stores?.size===0)DocumentStore.openStores.delete(this.path);securePortalDatabaseFiles(this.path);}
+ assertExclusiveOwnership(){if((DocumentStore.openStores.get(this.path)?.size??0)!==1)throw new Error('document_store_ownership_conflict');assertExclusivePortalDatabaseOwnership(this.path,this.db);}
+ close(){closePortalProductionDatabase(this.path,this.db);const stores=DocumentStore.openStores.get(this.path);stores?.delete(this);if(stores?.size===0)DocumentStore.openStores.delete(this.path);securePortalDatabaseFiles(this.path);}
 }
 export class DocumentService{
  private secret=randomBytes(32).toString('hex');
