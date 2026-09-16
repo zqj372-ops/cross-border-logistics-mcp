@@ -36,4 +36,4 @@ for (const dependency of dependencies) {
   notices.push(`${dependency} ${pkg.version}\n${await readFile(resolve(folder, dependency === "require-from-string" ? "license" : "LICENSE"), "utf8")}`);
 }
 await writeFile(resolve(output, "THIRD-PARTY-NOTICES.txt"), notices.join("\n\n"));
-console.log(JSON.stringify({ package: metadata.name, version: metadata.version, directory: output }));
+console.log(JSON.stringify({ package: metadata.name, version: metadata.version, releaseVersion: metadata.freightclawVersion, directory: output }));

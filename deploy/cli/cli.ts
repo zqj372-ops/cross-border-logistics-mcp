@@ -3,7 +3,7 @@ import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import type { Readable } from "node:stream";
 import { parseArgs } from "node:util";
-import metadata from "./package.json";
+import { FREIGHTCLAW_VERSION } from "../../src/logistics_mcp/version";
 import { commands, inputSchema, validateInput, validateResponse } from "./contracts";
 import type { Command } from "./contracts";
 
@@ -20,7 +20,7 @@ export interface CliIO {
   stderr?: (value: string) => void;
   fetch?: typeof fetch;
 }
-const help = `FreightClaw CLI ${metadata.version}
+const help = `FreightClaw CLI ${FREIGHTCLAW_VERSION}
 
 用法：freightclaw <命令> [选项]
 
@@ -170,9 +170,9 @@ export async function runCli(args: string[], io: CliIO = {}): Promise<number> {
     const { values, positionals } = parsed; compact = values.json === true;
     const output = (value: unknown) => stdout(JSON.stringify(value, null, compact ? undefined : 2) + "\n");
     if (values.help || args.length === 0) { stdout(help); return 0; }
-    if (values.version) { stdout(metadata.version + "\n"); return 0; }
+    if (values.version) { stdout(FREIGHTCLAW_VERSION + "\n"); return 0; }
     const label = positionals.join(" ");
-    if (label === "commands") { output({ cli_version: metadata.version, availability: "not_checked", commands: commands.map(({ name, description, path }) => ({ command: name, description, path })) }); return 0; }
+    if (label === "commands") { output({ cli_version: FREIGHTCLAW_VERSION, availability: "not_checked", commands: commands.map(({ name, description, path }) => ({ command: name, description, path })) }); return 0; }
     if (positionals[0] === "schema") {
       const command = commands.find(item => item.name === positionals.slice(1).join(" "));
       if (!command) throw new CliError("command_unknown", 2, "未知命令；使用 commands 查看支持范围。");
@@ -200,7 +200,7 @@ export async function runCli(args: string[], io: CliIO = {}): Promise<number> {
     try {
       const response = await (io.fetch ?? fetch)(new URL(command?.path ?? "/console/readyz", base), {
         method: command ? "POST" : "GET", redirect: "error", credentials: "omit", signal: controller.signal,
-        headers: { accept: "application/json", "user-agent": `FreightClaw-CLI/${metadata.version}`, ...(key ? { authorization: `ApiKey ${key}`, "content-type": "application/json" } : {}) },
+        headers: { accept: "application/json", "user-agent": `FreightClaw-CLI/${FREIGHTCLAW_VERSION}`, ...(key ? { authorization: `ApiKey ${key}`, "content-type": "application/json" } : {}) },
         ...(body === undefined ? {} : { body }),
       });
       const text = await readResponse(response);
