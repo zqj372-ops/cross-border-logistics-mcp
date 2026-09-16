@@ -426,14 +426,37 @@ describe('quote workflow v3',()=>{
     documentStore.close();
   });
 
-  it('fails closed when committed content does not match its persisted readback digests',()=>{
+  it('retries a transient post-commit readback failure without writing another revision',()=>{
+    const f=setup();
+    const internals=f.service as unknown as {readbackResult:(...args:unknown[])=>unknown};
+    const original=internals.readbackResult;
+    let failOnce=true;
+    internals.readbackResult=function(this:unknown,...args:unknown[]){
+      if(failOnce){failOnce=false;throw new Error('transient_readback');}
+      return original.apply(this,args);
+    };
+    const input={contract_version:WORKFLOW_REQUEST_VERSION,operation:'create' as const,document_kind:'manual' as const,input:completeDraft(),template_selection:{mode:'current' as const},save_intent:'save_draft' as const};
+    expect(()=>f.service.save(f.ctx,input,'workflow-readback-transient-01')).toThrow('document_readback_failed');
+    const replay=f.service.save(f.ctx,input,'workflow-readback-transient-01');
+    expect(replay).toMatchObject({version:1,input:{quote_no:'Q-1'},claim_state:'claimed_v3'});
+    expect(f.store.store.db.prepare('SELECT COUNT(*) AS n FROM document_revisions').get()).toEqual({n:1});
+  });
+
+  it('keeps failing a persistently mismatched committed revision on the same-key retry',()=>{
     const f=setup();
     f.store.store.db.exec("CREATE TRIGGER workflow_readback_tamper AFTER INSERT ON document_idempotency BEGIN UPDATE document_revisions SET payload=json_set(payload,'$.input.quote_no','MISMATCHED-READBACK'); END;");
     const input={contract_version:WORKFLOW_REQUEST_VERSION,operation:'create' as const,document_kind:'manual' as const,input:completeDraft(),template_selection:{mode:'current' as const},save_intent:'save_draft' as const};
     expect(()=>f.service.save(f.ctx,input,'workflow-readback-tamper-01')).toThrow('document_readback_failed');
-    const replay=f.service.save(f.ctx,input,'workflow-readback-tamper-01') as {id:string;version:number;input:{quote_no:string}};
-    expect(replay).toMatchObject({version:1,input:{quote_no:'Q-1'}});
-    expect(replay.id).toBeTypeOf('string');
+    expect(()=>f.service.save(f.ctx,input,'workflow-readback-tamper-01')).toThrow('document_readback_failed');
+    expect(f.store.store.db.prepare('SELECT COUNT(*) AS n FROM document_revisions').get()).toEqual({n:1});
+  });
+
+  it('fails closed when the persisted payload state differs from the committed result',()=>{
+    const f=setup();
+    f.store.store.db.exec("CREATE TRIGGER workflow_readback_state AFTER INSERT ON document_idempotency BEGIN UPDATE document_revisions SET payload=json_set(payload,'$.state','approved'); END;");
+    const input={contract_version:WORKFLOW_REQUEST_VERSION,operation:'create' as const,document_kind:'manual' as const,input:completeDraft(),template_selection:{mode:'current' as const},save_intent:'save_draft' as const};
+    expect(()=>f.service.save(f.ctx,input,'workflow-readback-state-01')).toThrow('document_readback_failed');
+    expect(f.store.store.db.prepare('SELECT state FROM document_revisions').get()).toEqual({state:'draft'});
     expect(f.store.store.db.prepare('SELECT COUNT(*) AS n FROM document_revisions').get()).toEqual({n:1});
   });
 

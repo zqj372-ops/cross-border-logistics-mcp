@@ -172,6 +172,7 @@ export function createQuoteDocuments({api,mutate,model,esc,head,icon,rerender,ca
   const value=response.data;
   if(value.replay){replayNotice='幂等重放命中历史提交，它不是当前版本。';current=await request('get',{id:value.id}).then(result=>result.data);}
   else{current=value;draft=structuredClone(value.input);}
+  nativePrepared=null;
   dirty=false;review=null;mode='editor';message=`草稿已保存：v${current.version} · ${current.updated_at}`;
   return true;
  }

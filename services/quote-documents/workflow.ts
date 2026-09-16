@@ -614,17 +614,61 @@ export class DocumentWorkflowService{
   private historicalReplay(current:StoredPayload,committed:{version:number;revision_id?:unknown}){
     return {replay:true as const,committed:true as const,current:false as const,historical:true as const,valid_now:false as const,id:current.id,version:committed.version,revision_id:typeof committed.revision_id==='string'?committed.revision_id:null,current_version:current.version,current_revision_id:current.revision_id??null,current_state:current.state};
   }
-  private readbackResult(scope:Scope,action:string,result:unknown):unknown{
-    if(action==='config-save'){const config=this.configFromScope(scope),expected=(result as {version?:unknown}).version;if(typeof expected!=='number'||config.version!==expected)throw new PortalError('document_readback_failed');return config;}
-    const candidate=result as {id?:unknown;version?:unknown;revision_id?:unknown};
-    if(typeof candidate.id==='string'&&typeof candidate.version==='number'&&typeof candidate.revision_id==='string'){
-      const row=this.store.store.db.prepare('SELECT payload,input_digest,template_digest FROM document_revisions WHERE revision_id=? AND document_id=? AND org=? AND version=?').get(candidate.revision_id,candidate.id,scope.org,candidate.version) as {payload:string;input_digest:string;template_digest:string}|undefined;
-      if(!row)throw new PortalError('document_readback_failed');
-      const payload=JSON.parse(row.payload) as StoredPayload;
-      if(payload.revision_id!==candidate.revision_id||payload.version!==candidate.version||payload.org!==scope.org||row.input_digest!==canonicalHash(payload.input)||row.template_digest!==canonicalHash(payload.template))throw new PortalError('document_readback_failed');
-      return this.view(payload);
+  private readbackResult(ctx:PortalContext,scope:Scope,action:string,result:unknown):unknown{
+    if(action==='config-save'){
+      const config=this.configFromScope(scope);
+      if(canonicalHash(config)!==canonicalHash(result))throw new PortalError('document_readback_failed');
+      return config;
     }
-    return result;
+    const candidate=result as Partial<WorkflowDocumentView>;
+    if(typeof candidate.id!=='string'||typeof candidate.version!=='number'||typeof candidate.revision_id!=='string')throw new PortalError('document_readback_failed');
+    const row=this.store.store.db.prepare('SELECT * FROM document_revisions WHERE revision_id=? AND document_id=? AND org=? AND version=?').get(candidate.revision_id,candidate.id,scope.org,candidate.version) as RevisionRow|undefined;
+    if(!row)throw new PortalError('document_readback_failed');
+    let payload:StoredPayload;
+    let expected:WorkflowDocumentView;
+    try{
+      payload=JSON.parse(row.payload) as StoredPayload;
+      expected=this.view(payload);
+    }catch{
+      throw new PortalError('document_readback_failed');
+    }
+    const approval=payload.approval;
+    const prior=row.version>1?this.store.store.db.prepare('SELECT revision_id FROM document_revisions WHERE document_id=? AND org=? AND version=?').get(row.document_id,scope.org,row.version-1) as {revision_id:string}|undefined:undefined;
+    const approvalSource=action==='approve'&&typeof approval?.source_revision_id==='string'?approval.source_revision_id:null;
+    const expectedSource=action==='approve'?approvalSource:row.version>1?prior?.revision_id??null:null;
+    const approvalReviewHash=action==='approve'&&typeof approval?.review_hash==='string'?approval.review_hash:null;
+    const expectedRejection=action==='reject'?payload.rejection?.reason??null:null;
+    const invalidSource=action==='approve'?(!approvalSource||!approvalReviewHash||prior?.revision_id!==approvalSource):action!=='create'&&row.version>1&&!prior;
+    if(
+      invalidSource||
+      row.document_id!==payload.id||
+      row.revision_id!==payload.revision_id||
+      row.org!==payload.org||row.org!==scope.org||
+      row.owner!==payload.owner_id||
+      row.version!==payload.version||
+      row.state!==payload.state||
+      row.schema_version!==3||
+      row.created_by!==scope.user||
+      row.input_digest!==canonicalHash(payload.input)||
+      row.template_digest!==canonicalHash(payload.template)||
+      row.source_revision_id!==expectedSource||
+      row.review_hash!==approvalReviewHash||
+      row.rejection_reason!==expectedRejection||
+      candidate.id!==row.document_id||
+      candidate.revision_id!==row.revision_id||
+      candidate.version!==row.version||
+      candidate.organization_id!==row.org||
+      candidate.owner_id!==row.owner||
+      candidate.state!==row.state||
+      candidate.document_kind!==payload.document_kind||
+      canonicalHash(candidate)!==canonicalHash(expected)
+    )throw new PortalError('document_readback_failed');
+    if(payload.owner_id!==scope.user&&!scope.manager)throw new PortalError('document_not_found');
+    this.assertContextLinked(ctx,payload,action==='save'||action==='approve'||action==='reject');
+    if(action==='approve'){
+      try{this.assertApprovalPayload(payload);}catch{throw new PortalError('document_readback_failed');}
+    }
+    return expected;
   }
   private configFromScope(scope:Scope){const config=this.configRaw(scope);return {...config,standard_fee_template_v1:config.input?.standard_fee_template_v1??null,catalog:standardFeeTemplate};}
   private idempotent<T>(ctx:PortalContext,scope:Scope,action:string,target:string,key:string,input:unknown,fn:()=>T):T{
@@ -639,22 +683,29 @@ export class DocumentWorkflowService{
         if(old.digest!==digest)throw new PortalError('idempotency_conflict');
         const persisted=JSON.parse(old.result) as T;
         const candidate=persisted as unknown as {id?:unknown;version?:unknown;revision_id?:unknown;state?:unknown};
+        const currentScope=this.scope(ctx,action==='config-save'||action==='approve'||action==='reject');
         if(typeof candidate.id==='string'&&typeof candidate.version==='number'){
-          const current=this.read(scope,candidate.id);
+          const committedResult=this.readbackResult(ctx,currentScope,action,persisted) as WorkflowDocumentView;
+          const current=this.read(currentScope,candidate.id);
           this.assertContextLinked(ctx,current,action==='save'||action==='approve'||action==='reject');
-          if(current.version!==candidate.version||current.state!==candidate.state||!this.replayAvailable(ctx,scope,action,current)){
+          if(current.version!==committedResult.version||current.state!==committedResult.state||current.revision_id!==committedResult.revision_id||!this.replayAvailable(ctx,currentScope,action,current)){
             db.exec('COMMIT');
             committed=true;
-            return this.historicalReplay(current,candidate as {version:number;revision_id?:unknown}) as T;
+            return this.historicalReplay(current,committedResult) as T;
           }
+          db.exec('COMMIT');
+          committed=true;
+          return committedResult as T;
         }
-        db.exec('COMMIT');committed=true;return JSON.parse(old.result) as T;
+        db.exec('COMMIT');
+        committed=true;
+        return this.readbackResult(ctx,currentScope,action,persisted) as T;
       }
       const result=fn();
       db.prepare('INSERT INTO document_idempotency VALUES(?,?,?,?)').run(partition,key,digest,JSON.stringify(result));
       db.exec('COMMIT');
       committed=true;
-      return this.readbackResult(scope,action,result) as T;
+      return this.readbackResult(ctx,scope,action,result) as T;
     }catch(error){
       if(!committed)db.exec('ROLLBACK');
       if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');

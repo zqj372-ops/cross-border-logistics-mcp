@@ -173,6 +173,39 @@ try{
   }
 
   {
+    const base=nativeView('native-direct');
+    const prepared={document_kind:'native_unlinked',input:{...base.input,quote_no:'NATIVE-NEW',fee_items:[{...base.input.fee_items[0],id:'direct-fee'}]},native_quote_v1:base.native_quote_v1,preview_hash:'4'.repeat(64),preview_expires_at:Date.now()+600000};
+    const created={...base,version:1,state:'draft',input:prepared.input,native_quote_v1:prepared.native_quote_v1};
+    const editedInput={...prepared.input,quote_no:'NATIVE-EDITED'};
+    const edited={...created,version:2,revision_id:'revision-native-direct-v2',input:editedInput};
+    const page=await installPage({
+      config,
+      getDocs:{},
+      nativePrepared:prepared,
+      reviewResponse:{status:'success',data:{}},
+      saveResponses:[{status:'success',data:created},{status:'success',data:edited}],
+    });
+    const result=await page.evaluate(async()=>{
+      const quote={data:{origin:'CA TOR',city:'Vancouver',province:'BC',postal_code:'V5K 0A1',match_trace:{valid_until:'2099-12-31'}}};
+      window.__h.controller.fromQuote(quote,{request:'native'},null);
+      window.__h.render();
+      await window.__h.controller.action(window.__h.button('save'));
+      const quoteNo=document.querySelector('[name="quote_no"]');quoteNo.value='NATIVE-EDITED';window.__h.controller.input({target:quoteNo});
+      await window.__h.controller.action(window.__h.button('save'));
+      const saves=window.__h.requests.filter(request=>request.kind==='mutate'&&request.path.endsWith('/save'));
+      return {saves,prepareCount:window.__h.requests.filter(request=>request.path.endsWith('/native-prepare')).length};
+    });
+    assert.equal(result.saves.length,2);
+    assert.equal(result.saves[0].body.operation,'create');
+    assert.equal(result.saves[1].body.operation,'update');
+    assert.equal(result.saves[1].body.expected_version,1);
+    assert.equal(result.saves[1].body.binding_update.mode,'retain');
+    assert.equal(Object.hasOwn(result.saves[1].body,'preview_expires_at'),false);
+    assert.equal(result.prepareCount,1);
+    await page.close();
+  }
+
+  {
     const source=manualView();
     const page=await installPage({config,getDocs:{[source.id]:source},nativePrepared:null,reviewResponse:{status:'success',data:{}},saveResponses:[{status:'success',data:{...source,id:'copied-doc',state:'draft',quote_no:null}}]});
     const result=await page.evaluate(async()=>{
@@ -221,7 +254,7 @@ try{
     await page.close();
   }
 
-  console.log(JSON.stringify({checks:['fromQuote_same_org_state','new_native_prepares_before_save','existing_native_review_does_not_reprepare','native_rebind_uses_replace','editor_copy_uses_current_id','template_copy_preserves_ref','list_copy_native_prepares_before_save']}));
+  console.log(JSON.stringify({checks:['fromQuote_same_org_state','new_native_prepares_before_save','existing_native_review_does_not_reprepare','native_rebind_uses_replace','direct_edit_after_create_retains_binding','editor_copy_uses_current_id','template_copy_preserves_ref','list_copy_native_prepares_before_save']}));
 }finally{
   await browser.close();
 }
