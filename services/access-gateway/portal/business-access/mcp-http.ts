@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
-import { BUSINESS_MCP_TOOLS } from "../../../../src/logistics_mcp/platform/application-tools";
+import { BUSINESS_MCP_TOOLS, SCHEDULE_MCP_TOOLS } from "../../../../src/logistics_mcp/platform/application-tools";
 import { BusinessAccessError } from "./contracts";
 import type { ApplicationMcpAccessService } from "./mcp";
 import { assertBusinessMachineExecutionResult, assertMachineBoundary, readMachineAuth, readMachineBody, sendMachineResponse, validateBusinessMachineInput, type BusinessMachineHttpOptions } from "./http";
@@ -13,10 +13,12 @@ export function createApplicationMcpHttpHandler(options: BusinessMachineHttpOpti
   const digest = (value: string) => createHash("sha256").update(value).digest();
   return { handle(req: IncomingMessage, res: ServerResponse): boolean {
     const path = (req.url ?? "").split("?", 1)[0]!;
-    const health=path==="/access/v2/application/mcp/provider/health";
+    const businessHealth=path==="/access/v2/application/mcp/provider/health";
+    const scheduleHealth=path==="/access/v2/application/schedule/provider/health";
+    const health=businessHealth||scheduleHealth;
     const exchange = path === "/access/v2/application/mcp/token/exchange";
     const authority = path === "/access/v2/application/mcp/token/authority";
-    const operation = BUSINESS_MCP_TOOLS.find(tool => path === `/access/v2/application/mcp/tools/${tool}`);
+    const operation = [...BUSINESS_MCP_TOOLS,...SCHEDULE_MCP_TOOLS].find(tool => path === `/access/v2/application/mcp/tools/${tool}`);
     if (!health && !exchange && !authority && !operation) return false;
     void (async () => {
       try {
@@ -26,7 +28,9 @@ export function createApplicationMcpHttpHandler(options: BusinessMachineHttpOpti
           const count=req.rawHeaders.filter((name,index)=>index%2===0&&name.toLowerCase()==="x-freightclaw-runtime-token").length,value=req.headers["x-freightclaw-runtime-token"];
           if(count!==1||typeof value!=="string"||!timingSafeEqual(digest(value),digest(options.runtimeSecret)))throw new BusinessAccessError("business_provider_authentication_failed");
           if(!await options.providerHealth?.())throw new BusinessAccessError("business_provider_unavailable");
-          sendMachineResponse(res,200,{schema_version:"business-provider-health@2026-09-06.v1",ready:true,contract_version:"business-mcp-result@2026-09-06.v1",operations:BUSINESS_MCP_TOOLS});return;
+          sendMachineResponse(res,200,businessHealth
+            ?{schema_version:"business-provider-health@2026-09-06.v1",ready:true,contract_version:"business-mcp-result@2026-09-06.v1",operations:BUSINESS_MCP_TOOLS}
+            :{schema_version:"schedule-provider-health@2026-09-18.v1",ready:true,contract_version:"oceo-schedule-live@2026-09-18.v1",operations:SCHEDULE_MCP_TOOLS});return;
         }
         if (req.method !== "POST" || req.url !== path) throw new BusinessAccessError("business_request_denied");
         const credential = readMachineAuth(req, exchange ? "ApiKey" : "Bearer");

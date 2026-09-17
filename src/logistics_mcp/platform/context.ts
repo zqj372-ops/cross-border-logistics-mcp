@@ -35,7 +35,7 @@ const authClaimsSchema = z
     client_id: identifierSchema,
     session_id: identifierSchema,
     expires_at: z.number().int().positive(),
-    mcp_profile: z.literal("business-v1").optional(),
+    mcp_profile: z.enum(["business-v1", "schedule-live-v1"]).optional(),
   })
   .strict();
 
@@ -50,7 +50,7 @@ export interface ExecutionContext {
   readonly clientId: string;
   readonly sessionId: string;
   readonly expiresAt: number;
-  readonly profile?: "business-v1";
+  readonly profile?: "business-v1" | "schedule-live-v1";
 }
 
 const trustedExecutionContexts = new WeakSet<object>();

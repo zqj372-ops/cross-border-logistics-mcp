@@ -159,10 +159,10 @@ export function createProductionTokenVerifier(
         if (applicationAuthority === undefined || options.applicationAuthorityUrl === undefined) {
           throw new Error("Application token authority is required for bkey credentials.");
         }
-        const businessProfile = claims.mcp_profile === "business-v1";
-        const authorityVersion = businessProfile ? "application-mcp-authority@2026-09-06.v1" : "application-authority@2026-09-06.v1";
+        const mcpProfile = claims.mcp_profile === "business-v1" || claims.mcp_profile === "schedule-live-v1";
+        const authorityVersion = mcpProfile ? "application-mcp-authority@2026-09-06.v1" : "application-authority@2026-09-06.v1";
         const result = await applicationAuthority.post(
-          businessProfile ? new URL("/access/v2/application/mcp/token/authority", options.applicationAuthorityUrl).href : options.applicationAuthorityUrl,
+          mcpProfile ? new URL("/access/v2/application/mcp/token/authority", options.applicationAuthorityUrl).href : options.applicationAuthorityUrl,
           { schema_version: authorityVersion },
           { authorization: `Bearer ${token}` },
         );

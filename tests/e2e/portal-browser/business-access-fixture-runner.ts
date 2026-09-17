@@ -122,7 +122,7 @@ const businessService = new PortalBusinessService({
 const businessFixture = await createBusinessAccessFixture({
   databasePath: join(directory, "business-access.sqlite"),
   portalService: portalRuntime.service,
-  operationAuthority: { isAvailable: (tenantId, operation) => businessService.isAvailable(tenantId, operation) },
+  operationAuthority: { isAvailable: (tenantId, operation) => businessService.isAvailable(tenantId, operation as never) },
   tenantClientAuthority: { requireActive: (tenantId, clientId) => portalRuntime.requireActiveTenantClient(tenantId, clientId) },
   credentialPepper: randomBytes(32),
 });
@@ -132,7 +132,7 @@ const allowedOrigins: string[] = [];
 const businessMachineHandler = createBusinessMachineHttpHandler({
   mode: "fixtures",
   service: businessFixture.service,
-  executor: { execute: (request) => businessService.executeMachine(request) },
+  executor: { execute: (request) => businessService.executeMachine(request as never) },
   allowedHosts,
   allowedOrigins,
   trustedProxyAddresses: [],

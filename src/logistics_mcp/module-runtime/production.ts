@@ -16,9 +16,9 @@ export const T0_PRODUCTION_PROFILES = Object.freeze([
 
 export type T0ProductionProfile = (typeof T0_PRODUCTION_PROFILES)[number];
 
-export type ProductionRuntimeProfile = T0ProductionProfile | "business-v1";
+export type ProductionRuntimeProfile = T0ProductionProfile | "business-v1" | "schedule-live-v1";
 export function parseProductionRuntimeProfile(value: unknown): ProductionRuntimeProfile {
-  return value === "business-v1" ? value : parseT0ProductionProfile(value);
+  return value === "business-v1" || value === "schedule-live-v1" ? value : parseT0ProductionProfile(value);
 }
 
 export const T0_PRODUCTION_MODULE_IDS = Object.freeze([
@@ -386,8 +386,8 @@ export const T0_MODULE_DESCRIPTORS: readonly ModuleDescriptor[] = Object.freeze(
     })]),
     required_capabilities: Object.freeze([]),
     optional_capabilities: Object.freeze([]),
-    artifact_digest: "sha256:d5e845ed99888664741ada56209251b536e4057fb928583e59b3505c8f987593",
-    manifest_digest: "sha256:8d1c2b0fb1f4253b95d13d0cf04990072fcd66f5f20abb190a6ceeefa7164e0c",
+    artifact_digest: "sha256:d1c017c623bf022acc696b4cb67ed32b5e23509c6080082e06db196544038aaa",
+    manifest_digest: "sha256:9cf80735a460b044d5886be6608e1d3df445305122c827d0658ba87454d129ac",
   }),
 ]);
 

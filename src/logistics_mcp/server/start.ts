@@ -2,6 +2,7 @@ import { PostgresCallLogStore } from "../../../services/access-gateway/portal/po
 import { postgresConfigurationFromEnvironment } from "../../../services/access-gateway/postgres-store";
 import { SqliteCallLogStore, withCallLogAudit } from "../../../services/access-gateway/portal/call-log";
 import { loadManagedBusinessProvider } from "./managed-business-provider";
+import { loadManagedScheduleProvider } from "./schedule-provider";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -1531,6 +1532,7 @@ async function makeComposition(wiring: CompositionWiring = {}): Promise<GatewayC
     dataMode: "production",
     profile,
     ...(profile === "business-v1" ? { businessProvider: await loadManagedBusinessProvider(process.env) } : {}),
+    ...(profile === "schedule-live-v1" ? { scheduleProvider: await loadManagedScheduleProvider(process.env) } : {}),
     ...common,
     ...(store === undefined
       ? {}

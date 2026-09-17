@@ -3,7 +3,14 @@ import {
   ForbiddenError,
 } from "./contract-errors";
 import type { ActorRole, ExecutionContext } from "./context";
-import { APPLICATION_MCP_TOOLS, isApplicationMcpIdentity, type BusinessMcpTool } from "./application-tools";
+import {
+  APPLICATION_MCP_TOOLS,
+  isApplicationMcpIdentity,
+  isScheduleMcpIdentity,
+  SCHEDULE_MCP_TOOLS,
+  type BusinessMcpTool,
+  type ScheduleMcpTool,
+} from "./application-tools";
 
 export { CrossTenantAccessError, ForbiddenError } from "./contract-errors";
 
@@ -22,7 +29,7 @@ export const phaseOneToolNames = Object.freeze([
 export type PhaseOneToolName = (typeof phaseOneToolNames)[number];
 export const agentContextToolName = "system.agent_context.get" as const;
 export const freightcomLtlToolName = "quote.freightcom_ltl.preview" as const;
-type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName | BusinessMcpTool;
+type KnownToolName = PhaseOneToolName | typeof agentContextToolName | typeof freightcomLtlToolName | BusinessMcpTool | ScheduleMcpTool;
 
 export const tenantApiKeyToolNames = Object.freeze([
   "cargo.calculate",
@@ -104,6 +111,9 @@ const toolPolicies: Readonly<Record<KnownToolName, ToolPolicy>> = Object.freeze(
   "container.plan_summary": freezePolicy("container:calculate", "read", readRoles),
   "quote.canada_final_mile.calculate": freezePolicy("quote:calculate", "read", readRoles),
   [freightcomLtlToolName]: freezePolicy("quote:calculate", "read", readRoles),
+  "maritime.schedule.carriers": freezePolicy("maritime:schedule_read", "read", readRoles),
+  "maritime.schedule.locations": freezePolicy("maritime:schedule_read", "read", readRoles),
+  "maritime.schedule.search": freezePolicy("maritime:schedule_read", "read", readRoles),
   "customs.ca.search": freezePolicy("tariff:read", "read", readRoles),
   "customs.ca.estimate": freezePolicy("tariff:estimate", "read", readRoles),
   "quote.save_draft": freezePolicy("quote:draft_write", "write", draftRoles),
@@ -124,7 +134,13 @@ function usesExactToolEntitlements(context: ExecutionContext): boolean {
 }
 
 function hasExactToolEntitlement(context: ExecutionContext, toolName: string): boolean {
-  return (context.profile === "business-v1" ? (APPLICATION_MCP_TOOLS as readonly string[]).includes(toolName) : tenantApiKeyToolNameSet.has(toolName))
+  const allowed =
+    context.profile === "business-v1"
+      ? (APPLICATION_MCP_TOOLS as readonly string[])
+      : context.profile === "schedule-live-v1"
+        ? (SCHEDULE_MCP_TOOLS as readonly string[])
+        : null;
+  return (allowed === null ? tenantApiKeyToolNameSet.has(toolName) : allowed.includes(toolName))
     && context.scopes.includes(`tool:${toolName}`);
 }
 
@@ -152,6 +168,15 @@ function assertT0ServiceScopeBoundary(context: ExecutionContext): void {
   // requires every incoming identity to be an exact T0 service identity.
   if (context.role !== "service" || !usesExactToolEntitlements(context)) return;
   if (context.profile === "business-v1" && isApplicationMcpIdentity(context)) return;
+  if (context.profile === "schedule-live-v1") {
+    const schedule = isScheduleMcpIdentity({
+      role: context.role,
+      roles: context.roles,
+      scopes: context.scopes,
+      profile: context.profile,
+    });
+    if (schedule) return;
+  }
   if (!isExactT0ServiceIdentity(context)) {
     throw new ForbiddenError("The authenticated scope cannot be used for the T0 production profile.");
   }
