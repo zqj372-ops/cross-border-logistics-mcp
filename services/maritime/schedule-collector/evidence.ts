@@ -8,6 +8,7 @@ import type {
   EvidenceStore,
   EvidenceWriteInput,
 } from "./ports";
+import { throwIfAborted } from "./errors";
 
 const MAX_EVIDENCE_BYTES = 2 * 1024 * 1024;
 const EVIDENCE_REF =
@@ -147,12 +148,14 @@ export class FileEvidenceStore implements EvidenceStore {
   }
 
   async write(input: EvidenceWriteInput): Promise<EvidenceReference> {
+    throwIfAborted(input.signal);
     const requestId = safeSegment(input.requestId, "request_id");
     const carrier = safeSegment(input.carrier, "carrier");
     if (input.bytes.byteLength > this.#maxBytes) {
       throw new Error("evidence_too_large");
     }
     const sanitized = redactEvidence(input.bytes, input.mediaType);
+    throwIfAborted(input.signal);
     if (sanitized.byteLength > this.#maxBytes) {
       throw new Error("evidence_too_large");
     }
@@ -161,6 +164,7 @@ export class FileEvidenceStore implements EvidenceStore {
     const directory = join(this.#root, requestId, carrier);
     const path = join(directory, `${digest}${extension}`);
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    throwIfAborted(input.signal);
     try {
       await writeFile(path, sanitized, {
         flag: constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
@@ -179,6 +183,7 @@ export class FileEvidenceStore implements EvidenceStore {
         throw new Error("evidence_collision", { cause: error });
       }
     }
+    throwIfAborted(input.signal);
     const readback = await readFile(path);
     if (sha256(readback) !== digest) throw new Error("evidence_readback_failed");
     return {
@@ -222,10 +227,12 @@ export class InMemoryEvidenceStore implements EvidenceStore {
   readonly #values = new Map<string, Uint8Array>();
 
   write(input: EvidenceWriteInput): Promise<EvidenceReference> {
+    throwIfAborted(input.signal);
     if (input.bytes.byteLength > MAX_EVIDENCE_BYTES) {
       throw new Error("evidence_too_large");
     }
     const sanitized = redactEvidence(input.bytes, input.mediaType);
+    throwIfAborted(input.signal);
     const digest = sha256(sanitized);
     const ref = `evidence:${safeSegment(input.requestId, "request_id")}:${safeSegment(input.carrier, "carrier")}:sha256:${digest}`;
     this.#values.set(ref, Uint8Array.from(sanitized));

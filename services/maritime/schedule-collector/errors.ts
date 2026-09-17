@@ -32,3 +32,19 @@ export class CollectorRuntimeError extends Error {
     this.name = "CollectorRuntimeError";
   }
 }
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new CollectorRuntimeError(
+      "timeout",
+      "unavailable",
+      "collector_aborted",
+    );
+  }
+}
+
+export function signalField(
+  signal?: AbortSignal,
+): { readonly signal?: AbortSignal } {
+  return signal === undefined ? {} : { signal };
+}

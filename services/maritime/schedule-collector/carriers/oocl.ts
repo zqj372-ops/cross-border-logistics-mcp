@@ -6,7 +6,7 @@ import type {
   ScheduleRecord,
   TransportLeg,
 } from "../contracts";
-import { CollectorRuntimeError } from "../errors";
+import { CollectorRuntimeError, signalField } from "../errors";
 import { decimalMinutesToHours, eventFromCompactTimes, routingFromLegs } from "../normalize";
 import type { LocationCandidate, ResolveLocationInput } from "../locations";
 import type { EvidenceStore } from "../ports";
@@ -465,6 +465,7 @@ export function createSyntheticOoclAdapter(options: {
         mediaType: "application/json",
         bytes,
         redactions: ["synthetic_fixture"],
+        ...signalField(context.signal),
       });
       return parseOoclScheduleResponse(options.response, {
         ...context,

@@ -380,6 +380,7 @@ async function waitForRetry(
   attempt: number,
   signal: AbortSignal,
 ): Promise<void> {
+  if (signal.aborted) throw abortError();
   const delayMs = Math.min(250 * 2 ** attempt, 1_000);
   await new Promise<void>((resolve, reject) => {
     const onAbort = (): void => {

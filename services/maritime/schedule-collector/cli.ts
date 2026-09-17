@@ -11,6 +11,7 @@ import {
   syntheticOoclLocationCandidates,
   syntheticOoclScheduleResponse,
 } from "./fixtures/synthetic-oocl";
+import { signalField } from "./errors";
 import { addUtcDays, defaultDateWindow } from "./normalize";
 import type { CollectorPorts } from "./ports";
 import { createCollectorService } from "./service";
@@ -24,6 +25,10 @@ import { createNodePinnedConnector } from "./transport/node-connector";
 export interface CliIo {
   readonly stdout: (value: string) => void;
   readonly stderr: (value: string) => void;
+}
+
+export interface CliRunOptions {
+  readonly signal?: AbortSignal;
 }
 
 class CliUsageError extends Error {
@@ -308,6 +313,7 @@ function queryArgs(argv: readonly string[]): {
 export async function runCli(
   argv: readonly string[],
   io: CliIo,
+  options: CliRunOptions = {},
 ): Promise<number> {
   if (helpRequested(argv)) {
     io.stdout(helpText());
@@ -347,7 +353,7 @@ export async function runCli(
         text: query,
         countryCode: values.get("--country") ?? null,
         locationId: values.get("--location-id") ?? null,
-      });
+      }, signalField(options.signal));
       return printEnvelope(io, result.envelope);
     }
     if (command === "query") {
@@ -370,7 +376,7 @@ export async function runCli(
         from: args.from,
         until: args.until,
         routing: args.routing,
-      });
+      }, signalField(options.signal));
       return printEnvelope(io, result.envelope);
     }
     throw new CliUsageError("cli_unknown_command");
@@ -402,11 +408,24 @@ export async function runCli(
 }
 
 async function main(): Promise<void> {
-  const code = await runCli(process.argv.slice(2), {
-    stdout: (value) => process.stdout.write(value),
-    stderr: (value) => process.stderr.write(value),
-  });
-  process.exitCode = code;
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
+  try {
+    const code = await runCli(
+      process.argv.slice(2),
+      {
+        stdout: (value) => process.stdout.write(value),
+        stderr: (value) => process.stderr.write(value),
+      },
+      { signal: controller.signal },
+    );
+    process.exitCode = code;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
+  }
 }
 
 const launchedPath = process.argv[1]

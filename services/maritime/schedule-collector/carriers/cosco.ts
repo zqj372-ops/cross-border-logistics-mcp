@@ -6,7 +6,7 @@ import type {
   ScheduleRecord,
   TransportLeg,
 } from "../contracts";
-import { CollectorRuntimeError } from "../errors";
+import { CollectorRuntimeError, signalField } from "../errors";
 import type { LocationCandidate } from "../locations";
 import type { EvidenceStore } from "../ports";
 import type {
@@ -538,6 +538,7 @@ export function createCoscoAdapter(): CarrierAdapter {
           prefix: input.text,
           timestamp: String(Date.now()),
         },
+        ...signalField(input.signal),
       });
       return locationBody(input, parseCoscoLocationResponse(decodeJson(response.body)));
     },
@@ -559,6 +560,7 @@ export function createCoscoAdapter(): CarrierAdapter {
           destinationCity: sourceLocationValue(context.destination),
           cargoNature: "All",
         },
+        ...signalField(context.signal),
       });
       const reference = await evidence.write({
         requestId: context.requestId,
@@ -567,6 +569,7 @@ export function createCoscoAdapter(): CarrierAdapter {
         mediaType: response.contentType ?? "application/json",
         bytes: response.body,
         redactions: [],
+        ...signalField(context.signal),
       });
       return parseCoscoScheduleResponse(decodeJson(response.body), {
         ...context,

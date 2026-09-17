@@ -261,6 +261,76 @@ describe("HMM schedule parser", () => {
     expect(result.records).toHaveLength(2);
   });
 
+  it("retains completed windows and evidence before a later source failure", async () => {
+    let pointToPointCalls = 0;
+    const result = await createHmmAdapter().query(
+      context("2026-09-17", "2026-12-15"),
+      {
+        request(input: CarrierHttpRequest) {
+          if (input.path.endsWith("/ScheduleMain.do")) {
+            return Promise.resolve({
+              status: 200,
+              url: "https://www.hmm21.com/e-service/general/schedule/ScheduleMain.do",
+              contentType: "text/html",
+              headers: {},
+              body: new TextEncoder().encode(
+                '<meta name="_csrf" content="synthetic" />',
+              ),
+            });
+          }
+          if (input.path.endsWith("/apiPointToPointList.do")) {
+            pointToPointCalls += 1;
+            if (pointToPointCalls > 1) {
+              return Promise.resolve({
+                status: 503,
+                url: "https://www.hmm21.com/e-service/general/schedule/apiPointToPointList.do",
+                contentType: "application/json",
+                headers: {},
+                body: new TextEncoder().encode('{"error":"synthetic failure"}'),
+              });
+            }
+            return Promise.resolve({
+              status: 200,
+              url: "https://www.hmm21.com/e-service/general/schedule/apiPointToPointList.do",
+              contentType: "application/json",
+              headers: {},
+              body: new TextEncoder().encode(
+                JSON.stringify({
+                  RTN_STS: "OK",
+                  RTN_DATA: {
+                    resultData: { resultCode: "S", GrmNo: "SYNTH-1" },
+                  },
+                }),
+              ),
+            });
+          }
+          return Promise.resolve({
+            status: 200,
+            url: "https://www.hmm21.com/e-service/general/schedule/selectPointToPointList.do",
+            contentType: "application/json",
+            headers: {},
+            body: new TextEncoder().encode(JSON.stringify(response())),
+          });
+        },
+      },
+      new InMemoryEvidenceStore(),
+    );
+    expect(pointToPointCalls).toBe(2);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.evidence_ref).toMatch(/sha256:/u);
+    expect(result.evidenceRefs).toHaveLength(1);
+    expect(result.coverage).toMatchObject({
+      complete: false,
+      covered_windows: [{ from: "2026-09-17", until: "2026-10-14" }],
+      uncovered_windows: [
+        { from: "2026-10-15", until: "2026-11-11" },
+        { from: "2026-11-12", until: "2026-12-09" },
+        { from: "2026-12-10", until: "2026-12-15" },
+      ],
+      failure_reason: "hmm_point_to_point_response_invalid_503_application/json",
+    });
+  });
+
   it("filters a short window by the actual departure date", async () => {
     const payload = response();
     const firstRow = payload.grmData[0]!;

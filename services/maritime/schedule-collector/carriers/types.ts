@@ -32,6 +32,7 @@ export interface CarrierParserContext {
   readonly destination: ResolvedLocation;
   readonly evidenceRef: string;
   readonly observedAt: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface CarrierParserResult {
@@ -49,6 +50,7 @@ export interface CarrierAdapter {
       readonly text: string;
       readonly countryCode: string | null;
       readonly carrierLocationId?: string | null;
+      readonly signal?: AbortSignal;
     },
     http: CarrierHttpPort,
   ): Promise<readonly LocationCandidate[]>;

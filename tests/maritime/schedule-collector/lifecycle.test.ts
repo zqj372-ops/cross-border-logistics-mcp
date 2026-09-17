@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { getEventListeners } from "node:events";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { createControlledHttpTransport } from "../../../services/maritime/schedule-collector/transport/http";
 import type {
@@ -81,5 +83,52 @@ describe("collector lifecycle", () => {
       transport.request({ carrier: "OOCL", method: "GET", path: "/exact" }),
     ).rejects.toMatchObject({ code: "rate_limited" });
     expect(calls).toBe(1);
+  });
+
+  it("clears the request timer and abort listener after completion", async () => {
+    const transport = createControlledHttpTransport({
+      policy,
+      connector: {
+        connect: () =>
+          Promise.resolve({
+            status: 200,
+            url: "https://example.invalid/exact",
+            headers: { "content-type": "application/json" },
+            body: new TextEncoder().encode("{}"),
+          }),
+      },
+    });
+    const controller = new AbortController();
+    await transport.request({
+      carrier: "OOCL",
+      method: "GET",
+      path: "/exact",
+      signal: controller.signal,
+    });
+    expect(getEventListeners(controller.signal, "abort")).toEqual([]);
+  });
+
+  it("does not schedule a retry timer when cancellation wins first", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = createControlledHttpTransport({
+        policy: { ...policy, maxRetries: 1 },
+        connector: {
+          connect: () => Promise.reject(new Error("temporary failure")),
+        },
+      });
+      const controller = new AbortController();
+      const pending = transport.request({
+        carrier: "OOCL",
+        method: "GET",
+        path: "/exact",
+        signal: controller.signal,
+      });
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ code: "timeout" });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

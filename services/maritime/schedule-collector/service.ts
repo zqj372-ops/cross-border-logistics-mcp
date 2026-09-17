@@ -14,8 +14,11 @@ import {
 } from "./locations";
 import { normalizeQuery } from "./normalize";
 import type {
+  CarrierBrowserPort,
+  CarrierHttpPort,
   CollectorEnvelopeResult,
   CollectorPorts,
+  EvidenceStore,
 } from "./ports";
 import {
   createEnvelope,
@@ -32,10 +35,15 @@ import type { CarrierAdapter, CarrierMetadata } from "./carriers/types";
 export interface CollectorServiceOptions {
   readonly ports: CollectorPorts;
   readonly adapters?: readonly CarrierAdapter[];
+  readonly deadlineMs?: number;
   readonly dateFilterBasis?:
     | "departure_from_first_ocean_leg"
     | "departure_from_origin"
     | "unknown";
+}
+
+export interface CollectorOperationOptions {
+  readonly signal?: AbortSignal;
 }
 
 export interface CollectorServiceApi {
@@ -45,11 +53,15 @@ export interface CollectorServiceApi {
     readonly text: string;
     readonly countryCode?: string | null;
     readonly locationId?: string | null;
-  }): Promise<CollectorEnvelopeResult>;
-  query(input: unknown): Promise<CollectorEnvelopeResult>;
+  }, options?: CollectorOperationOptions): Promise<CollectorEnvelopeResult>;
+  query(
+    input: unknown,
+    options?: CollectorOperationOptions,
+  ): Promise<CollectorEnvelopeResult>;
 }
 
 const DEFAULT_DATE_FILTER_BASIS = "departure_from_first_ocean_leg" as const;
+const DEFAULT_DEADLINE_MS = 120_000;
 const SOURCE_WARNING_MESSAGES: Readonly<Record<string, string>> = {
   one_request_terms_cy_cy: "ONE query uses CY/CY receipt and delivery terms.",
   one_cargo_nature_gp_only: "ONE query covers general-purpose cargo only.",
@@ -274,6 +286,115 @@ function issueCodeFromError(error: unknown): CollectorIssueCode {
     : "unexpected_error";
 }
 
+function mergeSignals(
+  left: AbortSignal | undefined,
+  right: AbortSignal | undefined,
+): AbortSignal | undefined {
+  if (left === undefined) return right;
+  if (right === undefined || left === right) return left;
+  return AbortSignal.any([left, right]);
+}
+
+function scopedHttpPort(
+  port: CarrierHttpPort,
+  signal: AbortSignal,
+): CarrierHttpPort {
+  return {
+    request(input) {
+      const merged = mergeSignals(input.signal, signal);
+      return merged === undefined || merged === input.signal
+        ? port.request(input)
+        : port.request({ ...input, signal: merged });
+    },
+  };
+}
+
+function scopedEvidenceStore(
+  store: EvidenceStore,
+  signal: AbortSignal,
+): EvidenceStore {
+  return {
+    write(input) {
+      const merged = mergeSignals(input.signal, signal);
+      return merged === undefined || merged === input.signal
+        ? store.write(input)
+        : store.write({ ...input, signal: merged });
+    },
+    read: (reference) => store.read(reference),
+  };
+}
+
+function scopedBrowserPort(
+  port: CarrierBrowserPort,
+  signal: AbortSignal,
+): CarrierBrowserPort {
+  return {
+    available: port.available,
+    search(input) {
+      const merged = mergeSignals(input.signal, signal);
+      return merged === undefined || merged === input.signal
+        ? port.search(input)
+        : port.search({ ...input, signal: merged });
+    },
+  };
+}
+
+function scopedPorts(ports: CollectorPorts, signal: AbortSignal): CollectorPorts {
+  const base = {
+    clock: ports.clock,
+    context: ports.context,
+    audit: ports.audit,
+    evidence: scopedEvidenceStore(ports.evidence, signal),
+    http: scopedHttpPort(ports.http, signal),
+  };
+  return ports.browser === undefined
+    ? base
+    : {
+        ...base,
+        browser: scopedBrowserPort(ports.browser, signal),
+      };
+}
+
+async function withOperationDeadline<T>(
+  callerSignal: AbortSignal | undefined,
+  deadlineMs: number,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (callerSignal?.aborted) {
+    throw new CollectorRuntimeError(
+      "timeout",
+      "unavailable",
+      "collector_aborted",
+    );
+  }
+  const controller = new AbortController();
+  let rejectDeadline!: (error: CollectorRuntimeError) => void;
+  const deadline = new Promise<never>((_, reject) => {
+    rejectDeadline = reject;
+  });
+  const abortOperation = (message: string): void => {
+    rejectDeadline(
+      new CollectorRuntimeError("timeout", "unavailable", message),
+    );
+    controller.abort();
+  };
+  const onCallerAbort = (): void =>
+    abortOperation("collector_aborted");
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  const timer = setTimeout(
+    () => abortOperation("collector_deadline_exceeded"),
+    deadlineMs,
+  );
+  try {
+    const operationPromise = operation(controller.signal);
+    void operationPromise.catch(() => undefined);
+    return await Promise.race([operationPromise, deadline]);
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  }
+}
+
 function adapterFor(
   registry: ReadonlyMap<string, CarrierAdapter>,
   carrier: string,
@@ -342,6 +463,18 @@ export function createCollectorService(
   const registry = createCarrierRegistry(options.adapters ?? []);
   const dateFilterBasis =
     options.dateFilterBasis ?? DEFAULT_DATE_FILTER_BASIS;
+  const deadlineMs = options.deadlineMs ?? DEFAULT_DEADLINE_MS;
+  if (
+    !Number.isSafeInteger(deadlineMs) ||
+    deadlineMs < 1 ||
+    deadlineMs > DEFAULT_DEADLINE_MS
+  ) {
+    throw new CollectorRuntimeError(
+      "validation_error",
+      "blocked",
+      "collector_deadline_invalid",
+    );
+  }
 
   return {
     carriers() {
@@ -375,95 +508,103 @@ export function createCollectorService(
       });
       return { data, envelope };
     },
-    async resolveLocations(input) {
+    async resolveLocations(input, operationOptions) {
       try {
-        const carrier = normalizeCarrierId(input.carrier);
-        if (carrier === null) {
-          throw new CollectorRuntimeError(
-            "validation_error",
-            "needs_input",
-            "collector_carrier_invalid",
-          );
-        }
-        const adapter = adapterFor(registry, carrier);
-        const candidates = await adapter.resolveLocations(
-          {
-            text: input.text,
-            countryCode: input.countryCode ?? null,
-            carrierLocationId: input.locationId ?? null,
-          },
-          options.ports.http,
-        );
-        const lookup = {
-          text: input.text,
-          country_code: input.countryCode ?? null,
-          carrier_location_id: input.locationId ?? null,
-        } as const;
-        const matches = findLocationCandidates(lookup, candidates);
-        if (matches.length === 0) {
-          throw new CollectorRuntimeError(
-            "location_not_found",
-            "needs_input",
-            "collector_location_not_found",
-          );
-        }
-        const data = {
-          carrier,
-          query: input.text,
-          candidates: matches,
-          resolved:
-            matches.length === 1
-              ? resolveLocationCandidates(lookup, matches)
-              : null,
-        };
-        if (matches.length > 1) {
-          const envelope = createEnvelope({
-            requestId: options.ports.context.requestId,
-            auditId: options.ports.context.auditId,
-            status: "needs_input",
-            data,
-            sourceRefs: [
+        return await withOperationDeadline(
+          operationOptions?.signal,
+          deadlineMs,
+          async (signal) => {
+            const ports = scopedPorts(options.ports, signal);
+            const carrier = normalizeCarrierId(input.carrier);
+            if (carrier === null) {
+              throw new CollectorRuntimeError(
+                "validation_error",
+                "needs_input",
+                "collector_carrier_invalid",
+              );
+            }
+            const adapter = adapterFor(registry, carrier);
+            const candidates = await adapter.resolveLocations(
               {
-                source_id: "collector-location-candidates",
-                source_type: "internal_system",
-                system: "schedule-collector",
-                locator: `location:${carrier}`,
-                version: adapter.metadata.adapterVersion,
-                retrieved_at: options.ports.clock.now().toISOString(),
-                authority: "supporting",
-                content_hash: null,
+                text: input.text,
+                countryCode: input.countryCode ?? null,
+                carrierLocationId: input.locationId ?? null,
+                signal,
               },
-            ],
-            blockers: [
-              notice(
-                "ambiguous_location",
-                "Multiple carrier locations match; select a carrier_location_id.",
-                "error",
-              ),
-            ],
-            reviewStatus: "pending",
-          });
-          return { data, envelope };
-        }
-        const envelope = createEnvelope({
-          requestId: options.ports.context.requestId,
-          auditId: options.ports.context.auditId,
-          status: "success",
-          data,
-          sourceRefs: [
-            {
-              source_id: "collector-location-resolution",
-              source_type: "internal_system",
-              system: "schedule-collector",
-              locator: `location:${carrier}`,
-              version: adapter.metadata.adapterVersion,
-              retrieved_at: options.ports.clock.now().toISOString(),
-              authority: "supporting",
-              content_hash: null,
-            },
-          ],
-        });
-        return { data, envelope };
+              ports.http,
+            );
+            const lookup = {
+              text: input.text,
+              country_code: input.countryCode ?? null,
+              carrier_location_id: input.locationId ?? null,
+            } as const;
+            const matches = findLocationCandidates(lookup, candidates);
+            if (matches.length === 0) {
+              throw new CollectorRuntimeError(
+                "location_not_found",
+                "needs_input",
+                "collector_location_not_found",
+              );
+            }
+            const data = {
+              carrier,
+              query: input.text,
+              candidates: matches,
+              resolved:
+                matches.length === 1
+                  ? resolveLocationCandidates(lookup, matches)
+                  : null,
+            };
+            if (matches.length > 1) {
+              const envelope = createEnvelope({
+                requestId: ports.context.requestId,
+                auditId: ports.context.auditId,
+                status: "needs_input",
+                data,
+                sourceRefs: [
+                  {
+                    source_id: "collector-location-candidates",
+                    source_type: "internal_system",
+                    system: "schedule-collector",
+                    locator: `location:${carrier}`,
+                    version: adapter.metadata.adapterVersion,
+                    retrieved_at: ports.clock.now().toISOString(),
+                    authority: "supporting",
+                    content_hash: null,
+                  },
+                ],
+                blockers: [
+                  notice(
+                    "ambiguous_location",
+                    "Multiple carrier locations match; select a carrier_location_id.",
+                    "error",
+                  ),
+                ],
+                reviewStatus: "pending",
+              });
+              return { data, envelope };
+            }
+            const envelope = createEnvelope({
+              requestId: ports.context.requestId,
+              auditId: ports.context.auditId,
+              status: "success",
+              data,
+              sourceRefs: [
+                {
+                  source_id: "collector-location-resolution",
+                  source_type: "internal_system",
+                  system: "schedule-collector",
+                  locator: `location:${carrier}`,
+                  version: adapter.metadata.adapterVersion,
+                  retrieved_at: ports.clock.now().toISOString(),
+                  authority: "supporting",
+                  content_hash: null,
+                },
+              ],
+            });
+            return { data, envelope };
+          },
+        );
       } catch (error: unknown) {
         await options.ports.audit.record({
           requestId: options.ports.context.requestId,
@@ -476,137 +617,147 @@ export function createCollectorService(
         return errorEnvelope(error, options.ports);
       }
     },
-    async query(input) {
+    async query(input, operationOptions) {
       let carrier: string | null = null;
       try {
-        const parsedInput = parseCollectorQueryInput(input);
-        carrier = parsedInput.carrier;
-        await options.ports.audit.record({
-          requestId: options.ports.context.requestId,
-          event: "query_started",
-          at: options.ports.clock.now().toISOString(),
-          carrier,
-          status: "started",
-          issue_code: null,
-        });
-        const adapter = adapterFor(registry, carrier);
-        const originCandidates = await adapter.resolveLocations(
-          {
-            text: parsedInput.origin.text,
-            countryCode: parsedInput.origin.country_code,
-            carrierLocationId: parsedInput.origin.carrier_location_id,
+        return await withOperationDeadline(
+          operationOptions?.signal,
+          deadlineMs,
+          async (signal) => {
+            const ports = scopedPorts(options.ports, signal);
+            const parsedInput = parseCollectorQueryInput(input);
+            carrier = parsedInput.carrier;
+            await ports.audit.record({
+              requestId: ports.context.requestId,
+              event: "query_started",
+              at: ports.clock.now().toISOString(),
+              carrier,
+              status: "started",
+              issue_code: null,
+            });
+            const adapter = adapterFor(registry, carrier);
+            const originCandidates = await adapter.resolveLocations(
+              {
+                text: parsedInput.origin.text,
+                countryCode: parsedInput.origin.country_code,
+                carrierLocationId: parsedInput.origin.carrier_location_id,
+                signal,
+              },
+              ports.http,
+            );
+            const destinationCandidates = await adapter.resolveLocations(
+              {
+                text: parsedInput.destination.text,
+                countryCode: parsedInput.destination.country_code,
+                carrierLocationId: parsedInput.destination.carrier_location_id,
+                signal,
+              },
+              ports.http,
+            );
+            const origin = resolveLocationCandidates(
+              {
+                text: parsedInput.origin.text,
+                country_code: parsedInput.origin.country_code,
+                carrier_location_id: parsedInput.origin.carrier_location_id,
+              },
+              originCandidates,
+            );
+            const destination = resolveLocationCandidates(
+              {
+                text: parsedInput.destination.text,
+                country_code: parsedInput.destination.country_code,
+                carrier_location_id: parsedInput.destination.carrier_location_id,
+              },
+              destinationCandidates,
+            );
+            const normalizedQuery = queryForMetadata(
+              parsedInput,
+              origin,
+              destination,
+              dateFilterBasis,
+            );
+            const result = await adapter.query(
+              {
+                requestId: ports.context.requestId,
+                normalizedQuery,
+                origin,
+                destination,
+                evidenceRef: "",
+                observedAt: ports.clock.now().toISOString(),
+                signal,
+              },
+              ports.http,
+              ports.evidence,
+            );
+            const filteredResult = {
+              ...result,
+              records:
+                normalizedQuery.routing_filter === "any"
+                  ? result.records
+                  : result.records.filter(
+                      (record) =>
+                        record.routing === normalizedQuery.routing_filter,
+                    ),
+            };
+            const runStatus = runStatusFor(adapter, filteredResult);
+            const provenanceKind = adapter.metadata.provenanceKind;
+            const coverage =
+              provenanceKind !== "live"
+                ? {
+                    ...result.coverage,
+                    complete: false,
+                    uncovered_windows: [
+                      {
+                        from: normalizedQuery.departure_from,
+                        until: normalizedQuery.departure_until,
+                      },
+                    ],
+                    failure_reason:
+                      provenanceKind === "synthetic"
+                        ? "synthetic_fixture_not_live"
+                        : "replay_data_not_live",
+                  }
+                : result.coverage;
+            const observedAt = ports.clock.now().toISOString();
+            const data = parseCollectorResultData({
+              collector_contract_version: "ocean-schedule-collector@2026-09-17.v1",
+              run_status: runStatus,
+              query: normalizedQuery,
+              carrier: {
+                id: adapter.metadata.id,
+                sales_carrier: adapter.metadata.displayName,
+                adapter_version: adapter.metadata.adapterVersion,
+                capability_status: adapter.metadata.capabilityStatus,
+                last_live_verified_at: adapter.metadata.lastLiveVerifiedAt,
+              },
+              records: filteredResult.records,
+              coverage,
+              provenance: {
+                kind: provenanceKind,
+                fetched_at: provenanceKind === "live" ? observedAt : null,
+                fixture_generated_at:
+                  provenanceKind === "synthetic" ? observedAt : null,
+                source_updated_at: null,
+                parser_version: adapter.metadata.adapterVersion,
+                source_refs: [
+                  ...(result.evidenceRef === null ? [] : [result.evidenceRef]),
+                  ...(result.evidenceRefs ?? []),
+                  ...evidenceRefsFromRecords(result.records),
+                ].filter((value, index, all) => all.indexOf(value) === index),
+              },
+              quality: result.quality,
+            });
+            await ports.audit.record({
+              requestId: ports.context.requestId,
+              event: "query_completed",
+              at: observedAt,
+              carrier,
+              status: data.run_status,
+              issue_code: null,
+            });
+            return envelopeFromData(data, ports);
           },
-          options.ports.http,
         );
-        const destinationCandidates = await adapter.resolveLocations(
-          {
-            text: parsedInput.destination.text,
-            countryCode: parsedInput.destination.country_code,
-            carrierLocationId: parsedInput.destination.carrier_location_id,
-          },
-          options.ports.http,
-        );
-        const origin = resolveLocationCandidates(
-          {
-            text: parsedInput.origin.text,
-            country_code: parsedInput.origin.country_code,
-            carrier_location_id: parsedInput.origin.carrier_location_id,
-          },
-          originCandidates,
-        );
-        const destination = resolveLocationCandidates(
-          {
-            text: parsedInput.destination.text,
-            country_code: parsedInput.destination.country_code,
-            carrier_location_id: parsedInput.destination.carrier_location_id,
-          },
-          destinationCandidates,
-        );
-        const normalizedQuery = queryForMetadata(
-          parsedInput,
-          origin,
-          destination,
-          dateFilterBasis,
-        );
-        const result = await adapter.query(
-          {
-            requestId: options.ports.context.requestId,
-            normalizedQuery,
-            origin,
-            destination,
-            evidenceRef: "",
-            observedAt: options.ports.clock.now().toISOString(),
-          },
-          options.ports.http,
-          options.ports.evidence,
-        );
-        const filteredResult = {
-          ...result,
-          records:
-            normalizedQuery.routing_filter === "any"
-              ? result.records
-              : result.records.filter(
-                  (record) =>
-                    record.routing === normalizedQuery.routing_filter,
-                ),
-        };
-        const runStatus = runStatusFor(adapter, filteredResult);
-        const provenanceKind = adapter.metadata.provenanceKind;
-        const coverage =
-          provenanceKind !== "live"
-            ? {
-                ...result.coverage,
-                complete: false,
-                uncovered_windows: [
-                  {
-                    from: normalizedQuery.departure_from,
-                    until: normalizedQuery.departure_until,
-                  },
-                ],
-                failure_reason:
-                  provenanceKind === "synthetic"
-                    ? "synthetic_fixture_not_live"
-                    : "replay_data_not_live",
-              }
-            : result.coverage;
-        const observedAt = options.ports.clock.now().toISOString();
-        const data = parseCollectorResultData({
-          collector_contract_version: "ocean-schedule-collector@2026-09-17.v1",
-          run_status: runStatus,
-          query: normalizedQuery,
-          carrier: {
-            id: adapter.metadata.id,
-            sales_carrier: adapter.metadata.displayName,
-            adapter_version: adapter.metadata.adapterVersion,
-            capability_status: adapter.metadata.capabilityStatus,
-            last_live_verified_at: adapter.metadata.lastLiveVerifiedAt,
-          },
-          records: filteredResult.records,
-          coverage,
-          provenance: {
-            kind: provenanceKind,
-            fetched_at: provenanceKind === "live" ? observedAt : null,
-            fixture_generated_at:
-              provenanceKind === "synthetic" ? observedAt : null,
-            source_updated_at: null,
-            parser_version: adapter.metadata.adapterVersion,
-            source_refs: [
-              ...(result.evidenceRef === null ? [] : [result.evidenceRef]),
-              ...(result.evidenceRefs ?? []),
-              ...evidenceRefsFromRecords(result.records),
-            ].filter((value, index, all) => all.indexOf(value) === index),
-          },
-          quality: result.quality,
-        });
-        await options.ports.audit.record({
-          requestId: options.ports.context.requestId,
-          event: "query_completed",
-          at: observedAt,
-          carrier,
-          status: data.run_status,
-          issue_code: null,
-        });
-        return envelopeFromData(data, options.ports);
       } catch (error: unknown) {
         await options.ports.audit.record({
           requestId: options.ports.context.requestId,

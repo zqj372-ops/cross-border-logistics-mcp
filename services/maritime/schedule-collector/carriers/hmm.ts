@@ -5,7 +5,11 @@ import type {
   ScheduleRecord,
   TransportLeg,
 } from "../contracts";
-import { CollectorRuntimeError } from "../errors";
+import {
+  CollectorRuntimeError,
+  signalField,
+  throwIfAborted,
+} from "../errors";
 import type { LocationCandidate } from "../locations";
 import type {
   CarrierHttpPort,
@@ -805,6 +809,10 @@ function combineHmmResults(
       missing_field_count: missingCount,
     },
     evidenceRef: null,
+    evidenceRefs: [...new Set(results.flatMap((result) => [
+      ...(result.evidenceRef === null ? [] : [result.evidenceRef]),
+      ...(result.evidenceRefs ?? []),
+    ]))],
   };
 }
 
@@ -847,6 +855,7 @@ async function queryHmmWindow(
       itemPolCd: "",
       itemPodCd: "",
     },
+    ...signalField(context.signal),
   });
   assertHmmJsonResponse(first, "point_to_point");
   const grmNo = parseHmmPointToPointResponse(decodeJson(first.body));
@@ -862,6 +871,7 @@ async function queryHmmWindow(
       srchSelPriority: "A",
       srchSelSortBy: "D",
     },
+    ...signalField(context.signal),
   });
   assertHmmJsonResponse(second, "schedule");
   const payload = decodeJson(second.body);
@@ -889,6 +899,7 @@ async function queryHmmWindow(
     mediaType: second.contentType ?? "application/json",
     bytes: second.body,
     redactions: [],
+    ...signalField(context.signal),
   });
   return {
     ...parsed,
@@ -917,6 +928,7 @@ export function createHmmAdapter(): CarrierAdapter {
         carrier: "HMM",
         method: "GET",
         path: LOCATION_PATH,
+        ...signalField(input.signal),
       });
       return locationBody(
         input,
@@ -932,17 +944,42 @@ export function createHmmAdapter(): CarrierAdapter {
         carrier: "HMM",
         method: "GET",
         path: MAIN_PATH,
+        ...signalField(context.signal),
       });
       const csrf = extractCsrf(decodeText(page.body));
       const results: CarrierParserResult[] = [];
-      for (const window of windows(
+      const queryWindows = windows(
         context.normalizedQuery.departure_from,
         context.normalizedQuery.departure_until,
-      )) {
-        results.push(
-          await queryHmmWindow(context, http, evidence, csrf, window),
-        );
+      );
+      for (const [index, window] of queryWindows.entries()) {
+        throwIfAborted(context.signal);
+        try {
+          results.push(
+            await queryHmmWindow(context, http, evidence, csrf, window),
+          );
+        } catch (error: unknown) {
+          throwIfAborted(context.signal);
+          if (results.length === 0) throw error;
+          const completed = combineHmmResults(results, context);
+          return {
+            ...completed,
+            coverage: {
+              ...completed.coverage,
+              complete: false,
+              uncovered_windows: [
+                ...completed.coverage.uncovered_windows,
+                ...queryWindows.slice(index),
+              ],
+              failure_reason:
+                error instanceof CollectorRuntimeError
+                  ? error.message
+                  : "hmm_window_failed",
+            },
+          };
+        }
       }
+      throwIfAborted(context.signal);
       return combineHmmResults(results, context);
     },
   };

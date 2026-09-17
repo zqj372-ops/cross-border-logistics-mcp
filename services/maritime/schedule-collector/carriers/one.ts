@@ -5,7 +5,11 @@ import type {
   ScheduleRecord,
   TransportLeg,
 } from "../contracts";
-import { CollectorRuntimeError } from "../errors";
+import {
+  CollectorRuntimeError,
+  signalField,
+  throwIfAborted,
+} from "../errors";
 import type { LocationCandidate } from "../locations";
 import type {
   CarrierHttpPort,
@@ -749,6 +753,7 @@ async function queryWindow(
       cargoNature: "GP",
       searchType: "List",
     },
+    ...signalField(context.signal),
   });
   assertOneResponse(response);
   const parsed = parseOneScheduleResponse(decodeJson(response.body), {
@@ -776,6 +781,7 @@ async function queryWindow(
     mediaType: response.contentType ?? "application/json",
     bytes: response.body,
     redactions: [],
+    ...signalField(context.signal),
   });
   return {
     ...parsed,
@@ -932,6 +938,7 @@ export function createOneAdapter(): CarrierAdapter {
           userCountryCode: input.countryCode ?? "",
           sortType: "origin",
         },
+        ...signalField(input.signal),
       });
       assertOneResponse(response);
       return locationBody(
@@ -946,11 +953,13 @@ export function createOneAdapter(): CarrierAdapter {
         context.normalizedQuery.departure_until,
       );
       for (const [index, window] of queryWindows.entries()) {
+        throwIfAborted(context.signal);
         try {
           results.push(
             await queryWindow(context, http, evidence, window, index + 1),
           );
         } catch (error: unknown) {
+          throwIfAborted(context.signal);
           if (results.length === 0) throw error;
           const completed = combineResults(results, context);
           return {
@@ -969,6 +978,7 @@ export function createOneAdapter(): CarrierAdapter {
           };
         }
       }
+      throwIfAborted(context.signal);
       return combineResults(results, context);
     },
   };

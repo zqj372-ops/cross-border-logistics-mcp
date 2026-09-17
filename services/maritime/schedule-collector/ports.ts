@@ -33,6 +33,7 @@ export interface EvidenceWriteInput {
   readonly mediaType: string;
   readonly bytes: Uint8Array;
   readonly redactions: readonly string[];
+  readonly signal?: AbortSignal;
 }
 
 export interface EvidenceReference {
