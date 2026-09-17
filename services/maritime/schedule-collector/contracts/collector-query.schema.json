@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/contracts/ocean-schedule-collector/query-2026-09-17.v1",
+  "title": "Ocean schedule collector query input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "carrier",
+    "origin",
+    "destination",
+    "from",
+    "until",
+    "routing"
+  ],
+  "properties": {
+    "carrier": {
+      "enum": [
+        "COSCO",
+        "OOCL",
+        "EVERGREEN",
+        "HMM",
+        "WHL",
+        "YML",
+        "ZIM",
+        "HAPAG_LLOYD",
+        "ONE",
+        "MAERSK",
+        "MSC",
+        "MATSON",
+        "EMC",
+        "MSK",
+        "HAPAG",
+        "WAN_HAI",
+        "YANG_MING",
+        "美森"
+      ]
+    },
+    "origin": {
+      "$ref": "#/$defs/location_query"
+    },
+    "destination": {
+      "$ref": "#/$defs/location_query"
+    },
+    "from": {
+      "type": "string",
+      "format": "date"
+    },
+    "until": {
+      "type": "string",
+      "format": "date"
+    },
+    "routing": {
+      "enum": ["any", "direct", "transshipment"]
+    }
+  },
+  "$defs": {
+    "location_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "country_code", "carrier_location_id"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "country_code": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "carrier_location_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "x-semantic-rules": [
+    "from and until must be real calendar dates",
+    "until must not be before from",
+    "the inclusive window must not exceed 90 days"
+  ]
+}
