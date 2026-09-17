@@ -13,6 +13,7 @@ import { SqliteProductionStore } from "../../src/logistics_mcp/platform/sqlite-p
 import { SyntheticJwtSigner } from "../../services/access-gateway/synthetic";
 import { ApplicationMcpAccessService } from "../../services/access-gateway/portal/business-access/mcp";
 import type { CarrierAdapter } from "../../services/maritime/schedule-collector/carriers/types";
+import { CollectorRuntimeError } from "../../services/maritime/schedule-collector/errors";
 import type { CarrierHttpPort } from "../../services/maritime/schedule-collector/ports";
 import { InMemoryScheduleLiveAuditSink } from "../../services/maritime/schedule-live/audit";
 import { createScheduleLiveService } from "../../services/maritime/schedule-live/service";
@@ -34,16 +35,40 @@ function adapter(): CarrierAdapter {
       lastLiveVerifiedAt: "2026-09-17T10:26:31Z",
     },
     resolveLocations(lookup) {
+      if (lookup.text.toLowerCase().includes("nowhere")) return Promise.resolve([]);
+      if (lookup.text.toLowerCase().includes("fail")) {
+        return Promise.reject(
+          new CollectorRuntimeError("access_restricted", "unavailable", "upstream_denied"),
+        );
+      }
       return Promise.resolve([
-        {
-          name: lookup.text.toUpperCase(),
-          country_code: lookup.countryCode,
-          type: "city",
-          carrier_location_id: lookup.carrierLocationId ?? "CNSHA",
-          mapping_source: "one_point_to_point_search",
-          source_full_name: lookup.text.toUpperCase(),
-          unlocode: null,
-        },
+        ...(lookup.carrierLocationId != null
+          ? [{
+              name: lookup.text.toUpperCase(),
+              country_code: lookup.countryCode,
+              type: "city" as const,
+              carrier_location_id: lookup.carrierLocationId,
+              mapping_source: "one_point_to_point_search",
+              source_full_name: lookup.text.toUpperCase(),
+              unlocode: null,
+            }]
+          : [{
+              name: lookup.text.toUpperCase(),
+              country_code: lookup.countryCode,
+              type: "city" as const,
+              carrier_location_id: "CNSHA",
+              mapping_source: "one_point_to_point_search",
+              source_full_name: lookup.text.toUpperCase(),
+              unlocode: null,
+            }, {
+              name: `${lookup.text.toUpperCase()} YANGSHAN`,
+              country_code: lookup.countryCode,
+              type: "city" as const,
+              carrier_location_id: "CNSHY",
+              mapping_source: "one_point_to_point_search",
+              source_full_name: `${lookup.text.toUpperCase()} YANGSHAN`,
+              unlocode: null,
+            }]),
       ]);
     },
     async query(request, _http, evidence) {
@@ -114,9 +139,10 @@ it("serves schedule-live-v1 tools/list and tools/call with exact scope, tenant b
       (await jwtVerify(token, jwks, { algorithms: ["RS256"], issuer: "https://issuer.example.invalid/", audience: "mcp" })).payload,
   };
   const audit = new InMemoryScheduleLiveAuditSink();
+  let liveEnabled = true;
   const scheduleLive = createScheduleLiveService({
     portal: { getState: () => { throw new Error("machine path must not read Portal membership"); } },
-    policy: { liveEnabled: () => true },
+    policy: { liveEnabled: () => liveEnabled },
     clock: { now: () => new Date("2026-09-18T00:00:00Z") },
     audit,
     evidenceRoot,
@@ -250,9 +276,76 @@ it("serves schedule-live-v1 tools/list and tools/call with exact scope, tenant b
       status: "success",
       data: { coverage: { complete: true }, provenance: { kind: "live" } },
     });
+
+    const ambiguous = await client.client.callTool({
+      name: "maritime.schedule.locations",
+      arguments: { carrier: "ONE", text: "Shanghai", country_code: "CN", carrier_location_id: null },
+    });
+    const ambiguousContent = ambiguous.structuredContent as {
+      readonly status: string;
+      readonly review_status: string;
+      readonly data: {
+        readonly resolved: unknown;
+        readonly candidates: readonly { readonly carrier_location_id: string }[];
+      } | null;
+      readonly blockers: readonly { readonly code: string }[];
+    };
+    expect(ambiguousContent.status).toBe("needs_input");
+    expect(ambiguousContent.review_status).toBe("pending");
+    expect(ambiguousContent.data?.resolved).toBeNull();
+    expect(ambiguousContent.data?.candidates.map((candidate) => candidate.carrier_location_id).sort())
+      .toEqual(["CNSHA", "CNSHY"]);
+    expect(ambiguousContent.blockers.map((blocker) => blocker.code)).toContain("ambiguous_location");
+
+    const selected = await client.client.callTool({
+      name: "maritime.schedule.locations",
+      arguments: {
+        carrier: "ONE",
+        text: "Shanghai",
+        country_code: "CN",
+        carrier_location_id: "CNSHA",
+      },
+    });
+    expect(selected.structuredContent).toMatchObject({
+      status: "success",
+      data: { resolved: { carrier_location_id: "CNSHA" } },
+    });
+
+    const notFound = await client.client.callTool({
+      name: "maritime.schedule.locations",
+      arguments: { carrier: "ONE", text: "Nowhere", country_code: "CN" },
+    });
+    expect(notFound.structuredContent).toMatchObject({
+      status: "needs_input",
+      data: null,
+      blockers: [{ code: "location_not_found" }],
+    });
+
+    const upstreamFailure = await client.client.callTool({
+      name: "maritime.schedule.locations",
+      arguments: { carrier: "ONE", text: "FailPort", country_code: "CN" },
+    });
+    expect(upstreamFailure.structuredContent).toMatchObject({
+      status: "unavailable",
+      data: null,
+      blockers: [{ code: "access_restricted" }],
+    });
+
     expect(audit.entries.filter((entry) => entry.action === "search").every((entry) =>
       entry.tenant_id === "tenant_fixture" && entry.actor_id === "bkey_0123456789abcdef01234567"
     )).toBe(true);
+
+    liveEnabled = false;
+    const disabled = await client.client.callTool({
+      name: "maritime.schedule.search",
+      arguments: searchInput,
+    });
+    expect(disabled.structuredContent).toMatchObject({
+      status: "blocked",
+      data: null,
+      blockers: [{ code: "schedule_live_disabled" }],
+    });
+    liveEnabled = true;
 
     const narrowToken = await exchange(["maritime.schedule.carriers"]);
     const narrow = connect(narrowToken);

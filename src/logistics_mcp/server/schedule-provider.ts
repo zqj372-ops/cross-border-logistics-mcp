@@ -113,26 +113,23 @@ export function createScheduleRuntimeProvider(options: {
           "x-freightclaw-runtime-token": options.runtimeSecret,
         }, signal);
         const envelope = parseScheduleEnvelope(operation, result);
-        if (envelope.status === "success" || envelope.status === "manual_review") {
-          return {
-            status: envelope.status,
-            data: envelope.data as EnvelopeData | null,
-            sourceRefs: envelope.source_refs,
-            assumptions: envelope.assumptions,
-            warnings: envelope.warnings,
-            blockers: envelope.blockers,
-            reviewStatus: envelope.review_status,
-          };
-        }
+        const requiresBlocker =
+          envelope.status !== "success" && envelope.status !== "manual_review";
         return {
           status: envelope.status,
-          data: null,
+          // The validated envelope is authoritative: needs_input may carry
+          // candidate data, while blocked/unavailable are schema-constrained
+          // to data=null before this point.
+          data: envelope.data === null ? null : envelope.data as EnvelopeData,
           sourceRefs: envelope.source_refs,
+          assumptions: envelope.assumptions,
           warnings: envelope.warnings,
           blockers: envelope.blockers.length > 0
             ? envelope.blockers
-            : [{ code: "schedule_source_unready", message: "船期来源未就绪。", severity: "error" as const }],
-          reviewStatus: "not_required" as const,
+            : requiresBlocker
+              ? [{ code: "schedule_source_unready", message: "船期来源未就绪。", severity: "error" as const }]
+              : [],
+          reviewStatus: envelope.review_status,
         };
       } catch {
         return {
