@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createOneAdapter,
@@ -12,12 +12,17 @@ import {
 import { InMemoryEvidenceStore } from "../../../../services/maritime/schedule-collector/evidence";
 import { normalizeQuery } from "../../../../services/maritime/schedule-collector/normalize";
 import type {
+  AuditEvent,
   CarrierHttpPort,
   CarrierHttpRequest,
   CarrierHttpResponse,
   CollectorPorts,
 } from "../../../../services/maritime/schedule-collector/ports";
 import { createCollectorService } from "../../../../services/maritime/schedule-collector/service";
+
+function auditSpy() {
+  return { record: vi.fn((event: AuditEvent) => { void event; return Promise.resolve(); }) };
+}
 
 function context(from = "2026-09-17", until = "2026-10-28") {
   const input = CollectorQueryInputSchema.parse({
@@ -134,6 +139,49 @@ function servicePorts(http: CarrierHttpPort): CollectorPorts {
     audit: { record: () => Promise.resolve() },
     evidence: new InMemoryEvidenceStore(),
     http,
+  };
+}
+
+function withholdingHttpPort(
+  onSecondRequest: () => void,
+): CarrierHttpPort {
+  let calls = 0;
+  return {
+    request(input: CarrierHttpRequest) {
+      if (input.path.endsWith("/search")) {
+        const pointName = input.query?.pointName ?? "";
+        const countryCode = input.query?.userCountryCode ?? null;
+        return Promise.resolve(
+          jsonResponse({
+            points: [
+              {
+                code: pointName === "Shanghai" ? "CNSHA" : "CAVAN",
+                name:
+                  pointName === "Shanghai"
+                    ? "SHANGHAI, SHANGHAI, CHINA"
+                    : "VANCOUVER, BC, CANADA",
+                termCd: "Y",
+                countryCode,
+              },
+            ],
+          }),
+        );
+      }
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          jsonResponse({ scheduleLines: [directLine()], cargoNature: "GP" }),
+        );
+      }
+      onSecondRequest();
+      return new Promise<CarrierHttpResponse>((_resolve, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () => reject(new Error("request aborted")),
+          { once: true },
+        );
+      });
+    },
   };
 }
 
@@ -802,5 +850,165 @@ describe("ONE schedule parser", () => {
       code: "access_restricted",
       status: "unavailable",
     });
+  });
+
+  it("preserves the completed window and evidence when the overall deadline aborts a later window", async () => {
+    const audit = auditSpy();
+    const evidence = new InMemoryEvidenceStore();
+    const service = createCollectorService({
+      deadlineMs: 25,
+      ports: {
+        ...servicePorts(withholdingHttpPort(() => undefined)),
+        audit,
+        evidence,
+      },
+      adapters: [createOneAdapter()],
+    });
+
+    const result = await service.query({
+      carrier: "ONE",
+      origin: {
+        text: "Shanghai",
+        country_code: "CN",
+        carrier_location_id: "CNSHA",
+      },
+      destination: {
+        text: "Vancouver",
+        country_code: "CA",
+        carrier_location_id: "CAVAN",
+      },
+      from: "2026-09-17",
+      until: "2026-12-15",
+      routing: "any",
+    });
+
+    expect(result.envelope).toMatchObject({
+      status: "manual_review",
+      data: {
+        run_status: "partial",
+        coverage: {
+          complete: false,
+          covered_windows: [{ from: "2026-09-17", until: "2026-10-28" }],
+          uncovered_windows: [
+            { from: "2026-10-29", until: "2026-12-09" },
+            { from: "2026-12-10", until: "2026-12-15" },
+          ],
+        },
+      },
+      blockers: [
+        expect.objectContaining({
+          code: "incomplete_results",
+          severity: "error",
+        }),
+      ],
+    });
+    const data = result.envelope as {
+      readonly data: {
+        readonly records: readonly { readonly evidence_ref: string }[];
+      };
+    };
+    expect(data.data.records).toHaveLength(1);
+    expect(data.data.records[0]!.evidence_ref).toMatch(
+      /^evidence:[A-Za-z0-9._:/-]+:[A-Za-z0-9._:/-]+:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(await evidence.read(data.data.records[0]!.evidence_ref)).toBeInstanceOf(
+      Uint8Array,
+    );
+    expect(
+      audit.record.mock.calls.some(
+        ([event]) => event.event === "query_completed",
+      ),
+    ).toBe(false);
+    expect(audit.record.mock.calls.map(([event]) => event)).toContainEqual(
+      expect.objectContaining({
+        event: "query_failed",
+        issue_code: "timeout",
+      }),
+      );
+  });
+
+  it("preserves the completed window and evidence when the caller cancels a later window", async () => {
+    let enteredSecondRequest!: () => void;
+    const secondRequest = new Promise<void>((resolve) => {
+      enteredSecondRequest = resolve;
+    });
+    const audit = auditSpy();
+    const evidence = new InMemoryEvidenceStore();
+    const service = createCollectorService({
+      deadlineMs: 1_000,
+      ports: {
+        ...servicePorts(withholdingHttpPort(enteredSecondRequest)),
+        audit,
+        evidence,
+      },
+      adapters: [createOneAdapter()],
+    });
+    const controller = new AbortController();
+    const pending = service.query(
+      {
+        carrier: "ONE",
+        origin: {
+          text: "Shanghai",
+          country_code: "CN",
+          carrier_location_id: "CNSHA",
+        },
+        destination: {
+          text: "Vancouver",
+          country_code: "CA",
+          carrier_location_id: "CAVAN",
+        },
+        from: "2026-09-17",
+        until: "2026-12-15",
+        routing: "any",
+      },
+      { signal: controller.signal },
+    );
+    await secondRequest;
+    controller.abort();
+
+    const result = await pending;
+    expect(result.envelope).toMatchObject({
+      status: "manual_review",
+      data: {
+        run_status: "partial",
+        coverage: {
+          complete: false,
+          covered_windows: [{ from: "2026-09-17", until: "2026-10-28" }],
+          uncovered_windows: [
+            { from: "2026-10-29", until: "2026-12-09" },
+            { from: "2026-12-10", until: "2026-12-15" },
+          ],
+        },
+      },
+      blockers: [
+        expect.objectContaining({
+          code: "incomplete_results",
+          severity: "error",
+        }),
+      ],
+    });
+    const cancelledData = result.envelope as {
+      readonly data: {
+        readonly records: readonly { readonly evidence_ref: string }[];
+      };
+    };
+    expect(cancelledData.data.records).toHaveLength(1);
+    expect(cancelledData.data.records[0]!.evidence_ref).toMatch(
+      /^evidence:[A-Za-z0-9._:/-]+:[A-Za-z0-9._:/-]+:sha256:[a-f0-9]{64}$/u,
+    );
+    expect(await evidence.read(cancelledData.data.records[0]!.evidence_ref)).toBeInstanceOf(
+      Uint8Array,
+    );
+    expect(
+      audit.record.mock.calls.some(
+        ([event]) => event.event === "query_completed",
+      ),
+    ).toBe(false);
+    expect(audit.record.mock.calls.map(([event]) => event)).toContainEqual(
+      expect.objectContaining({
+        event: "query_failed",
+        issue_code: "timeout",
+      }),
+      );
   });
 });

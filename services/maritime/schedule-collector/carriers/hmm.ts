@@ -6,6 +6,7 @@ import type {
   TransportLeg,
 } from "../contracts";
 import {
+  abortErrorFromSignal,
   CollectorRuntimeError,
   signalField,
   throwIfAborted,
@@ -959,8 +960,8 @@ export function createHmmAdapter(): CarrierAdapter {
             await queryHmmWindow(context, http, evidence, csrf, window),
           );
         } catch (error: unknown) {
-          throwIfAborted(context.signal);
-          if (results.length === 0) throw error;
+          const abortError = abortErrorFromSignal(context.signal);
+          if (results.length === 0) throw abortError ?? error;
           const completed = combineHmmResults(results, context);
           return {
             ...completed,
@@ -973,8 +974,8 @@ export function createHmmAdapter(): CarrierAdapter {
               ],
               failure_reason:
                 error instanceof CollectorRuntimeError
-                  ? error.message
-                  : "hmm_window_failed",
+                  ? abortError?.message ?? error.message
+                  : abortError?.message ?? "hmm_window_failed",
             },
           };
         }

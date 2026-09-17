@@ -23,7 +23,10 @@ export interface AuditEvent {
 }
 
 export interface AuditPort {
-  record(event: AuditEvent): Promise<void>;
+  record(
+    event: AuditEvent,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<void>;
 }
 
 export interface EvidenceWriteInput {

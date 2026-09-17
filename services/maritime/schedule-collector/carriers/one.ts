@@ -6,6 +6,7 @@ import type {
   TransportLeg,
 } from "../contracts";
 import {
+  abortErrorFromSignal,
   CollectorRuntimeError,
   signalField,
   throwIfAborted,
@@ -959,8 +960,8 @@ export function createOneAdapter(): CarrierAdapter {
             await queryWindow(context, http, evidence, window, index + 1),
           );
         } catch (error: unknown) {
-          throwIfAborted(context.signal);
-          if (results.length === 0) throw error;
+          const abortError = abortErrorFromSignal(context.signal);
+          if (results.length === 0) throw abortError ?? error;
           const completed = combineResults(results, context);
           return {
             ...completed,
@@ -972,8 +973,8 @@ export function createOneAdapter(): CarrierAdapter {
                 ...queryWindows.slice(index),
               ],
               failure_reason: error instanceof CollectorRuntimeError
-                ? error.message
-                : "one_window_failed",
+                ? abortError?.message ?? error.message
+                : abortError?.message ?? "one_window_failed",
             },
           };
         }

@@ -33,14 +33,22 @@ export class CollectorRuntimeError extends Error {
   }
 }
 
+export function abortErrorFromSignal(
+  signal?: AbortSignal,
+): CollectorRuntimeError | null {
+  if (signal?.aborted !== true) return null;
+  return signal.reason instanceof CollectorRuntimeError
+    ? signal.reason
+    : new CollectorRuntimeError(
+        "timeout",
+        "unavailable",
+        "collector_aborted",
+      );
+}
+
 export function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw new CollectorRuntimeError(
-      "timeout",
-      "unavailable",
-      "collector_aborted",
-    );
-  }
+  const error = abortErrorFromSignal(signal);
+  if (error !== null) throw error;
 }
 
 export function signalField(

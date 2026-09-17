@@ -7,7 +7,11 @@ import {
   type NormalizedCollectorQuery,
   type ResolvedLocation,
 } from "./contracts";
-import { CollectorRuntimeError, type CollectorIssueCode } from "./errors";
+import {
+  abortErrorFromSignal,
+  CollectorRuntimeError,
+  type CollectorIssueCode,
+} from "./errors";
 import {
   findLocationCandidates,
   resolveLocationCandidates,
@@ -62,6 +66,7 @@ export interface CollectorServiceApi {
 
 const DEFAULT_DATE_FILTER_BASIS = "departure_from_first_ocean_leg" as const;
 const DEFAULT_DEADLINE_MS = 120_000;
+const ABORT_SETTLEMENT_GRACE_MS = 250;
 const SOURCE_WARNING_MESSAGES: Readonly<Record<string, string>> = {
   one_request_terms_cy_cy: "ONE query uses CY/CY receipt and delivery terms.",
   one_cargo_nature_gp_only: "ONE query covers general-purpose cargo only.",
@@ -355,28 +360,33 @@ function scopedPorts(ports: CollectorPorts, signal: AbortSignal): CollectorPorts
       };
 }
 
+interface OperationOutcome<T> {
+  readonly value: T;
+  readonly abortError: CollectorRuntimeError | null;
+}
+
 async function withOperationDeadline<T>(
   callerSignal: AbortSignal | undefined,
   deadlineMs: number,
   operation: (signal: AbortSignal) => Promise<T>,
-): Promise<T> {
-  if (callerSignal?.aborted) {
-    throw new CollectorRuntimeError(
-      "timeout",
-      "unavailable",
-      "collector_aborted",
-    );
-  }
+): Promise<OperationOutcome<T>> {
+  const alreadyAborted = abortErrorFromSignal(callerSignal);
+  if (alreadyAborted !== null) throw alreadyAborted;
   const controller = new AbortController();
-  let rejectDeadline!: (error: CollectorRuntimeError) => void;
-  const deadline = new Promise<never>((_, reject) => {
-    rejectDeadline = reject;
+  let abortError: CollectorRuntimeError | null = null;
+  let resolveAbort!: (error: CollectorRuntimeError) => void;
+  const aborted = new Promise<CollectorRuntimeError>((resolve) => {
+    resolveAbort = resolve;
   });
   const abortOperation = (message: string): void => {
-    rejectDeadline(
-      new CollectorRuntimeError("timeout", "unavailable", message),
+    if (abortError !== null) return;
+    abortError = new CollectorRuntimeError(
+      "timeout",
+      "unavailable",
+      message,
     );
-    controller.abort();
+    controller.abort(abortError);
+    resolveAbort(abortError);
   };
   const onCallerAbort = (): void =>
     abortOperation("collector_aborted");
@@ -385,12 +395,39 @@ async function withOperationDeadline<T>(
     () => abortOperation("collector_deadline_exceeded"),
     deadlineMs,
   );
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const operationPromise = operation(controller.signal);
-    void operationPromise.catch(() => undefined);
-    return await Promise.race([operationPromise, deadline]);
+    const operationPromise = Promise.resolve().then(() =>
+      operation(controller.signal),
+    );
+    const settled = operationPromise.then(
+      (value) => ({ kind: "fulfilled" as const, value }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    );
+    const first = await Promise.race([
+      settled,
+      aborted.then((error) => ({ kind: "aborted" as const, error })),
+    ]);
+    if (first.kind === "fulfilled") {
+      return { value: first.value, abortError };
+    }
+    if (first.kind === "rejected") throw first.error;
+    const settledAfterAbort = await Promise.race([
+      settled,
+      new Promise<{ readonly kind: "grace_elapsed" }>((resolve) => {
+        graceTimer = setTimeout(
+          () => resolve({ kind: "grace_elapsed" }),
+          ABORT_SETTLEMENT_GRACE_MS,
+        );
+      }),
+    ]);
+    if (settledAfterAbort.kind === "fulfilled") {
+      return { value: settledAfterAbort.value, abortError: first.error };
+    }
+    throw first.error;
   } finally {
     clearTimeout(timer);
+    if (graceTimer !== undefined) clearTimeout(graceTimer);
     callerSignal?.removeEventListener("abort", onCallerAbort);
   }
 }
@@ -457,6 +494,42 @@ function runStatusFor(
   return "ok";
 }
 
+/**
+ * A deadline or caller cancellation that races a late adapter result must never
+ * surface as success. Completed windows are preserved as non-success partial
+ * data; a late "complete" claim without evidence collapses to failed so the UI
+ * cannot read it as a trustworthy full result.
+ */
+function downgradeAbortedResult(
+  data: CollectorResultData,
+  abortError: CollectorRuntimeError,
+  query: NormalizedCollectorQuery,
+): CollectorResultData {
+  const hasEvidence =
+    data.records.length > 0 || data.provenance.source_refs.length > 0;
+  const coverage =
+    data.coverage.complete === false
+      ? {
+          ...data.coverage,
+          complete: false,
+          failure_reason: abortError.message,
+        }
+      : {
+          ...data.coverage,
+          complete: false,
+          covered_windows: [],
+          uncovered_windows: [
+            { from: query.departure_from, until: query.departure_until },
+          ],
+          failure_reason: abortError.message,
+        };
+  return {
+    ...data,
+    run_status: hasEvidence ? "partial" : "failed",
+    coverage,
+  };
+}
+
 export function createCollectorService(
   options: CollectorServiceOptions,
 ): CollectorServiceApi {
@@ -510,7 +583,7 @@ export function createCollectorService(
     },
     async resolveLocations(input, operationOptions) {
       try {
-        return await withOperationDeadline(
+        const outcome = await withOperationDeadline(
           operationOptions?.signal,
           deadlineMs,
           async (signal) => {
@@ -605,6 +678,8 @@ export function createCollectorService(
             return { data, envelope };
           },
         );
+        if (outcome.abortError !== null) throw outcome.abortError;
+        return outcome.value;
       } catch (error: unknown) {
         await options.ports.audit.record({
           requestId: options.ports.context.requestId,
@@ -620,7 +695,7 @@ export function createCollectorService(
     async query(input, operationOptions) {
       let carrier: string | null = null;
       try {
-        return await withOperationDeadline(
+        const outcome = await withOperationDeadline(
           operationOptions?.signal,
           deadlineMs,
           async (signal) => {
@@ -634,7 +709,7 @@ export function createCollectorService(
               carrier,
               status: "started",
               issue_code: null,
-            });
+            }, { signal });
             const adapter = adapterFor(registry, carrier);
             const originCandidates = await adapter.resolveLocations(
               {
@@ -719,7 +794,7 @@ export function createCollectorService(
                   }
                 : result.coverage;
             const observedAt = ports.clock.now().toISOString();
-            const data = parseCollectorResultData({
+            const data: unknown = {
               collector_contract_version: "ocean-schedule-collector@2026-09-17.v1",
               run_status: runStatus,
               query: normalizedQuery,
@@ -746,18 +821,66 @@ export function createCollectorService(
                 ].filter((value, index, all) => all.indexOf(value) === index),
               },
               quality: result.quality,
-            });
+            };
+            const parsedResult = parseCollectorResultData(data);
+            const terminalAbort = abortErrorFromSignal(signal);
+            const hasEvidence =
+              parsedResult.records.length > 0 ||
+              parsedResult.provenance.source_refs.length > 0;
+            if (terminalAbort !== null && !hasEvidence) {
+              await ports.audit.record({
+                requestId: ports.context.requestId,
+                event: "query_failed",
+                at: ports.clock.now().toISOString(),
+                carrier,
+                status: "failed",
+                issue_code: terminalAbort.code,
+              }, { signal });
+              return errorEnvelope(terminalAbort, ports);
+            }
+            const finalData =
+              terminalAbort === null
+                ? parsedResult
+                : parseCollectorResultData(
+                    downgradeAbortedResult(
+                      parsedResult,
+                      terminalAbort,
+                      normalizedQuery,
+                    ),
+                  );
+            const successTerminal =
+              statusForData(finalData).status === "success";
             await ports.audit.record({
               requestId: ports.context.requestId,
-              event: "query_completed",
-              at: observedAt,
+              event:
+                successTerminal ? "query_completed" : "query_failed",
+              at: ports.clock.now().toISOString(),
               carrier,
-              status: data.run_status,
-              issue_code: null,
-            });
-            return envelopeFromData(data, ports);
+              status: finalData.run_status,
+              issue_code: successTerminal
+                ? null
+                : terminalAbort?.code ?? "incomplete_results",
+            }, { signal });
+            const lateAbort = abortErrorFromSignal(signal);
+            if (lateAbort !== null && successTerminal) throw lateAbort;
+            return envelopeFromData(finalData, ports);
           },
         );
+        const envelope = outcome.value.envelope as {
+          readonly status?: unknown;
+        };
+        if (outcome.abortError !== null && envelope.status === "success") {
+          await options.ports.audit.record({
+            requestId: options.ports.context.requestId,
+            event: "query_failed",
+            at: options.ports.clock.now().toISOString(),
+            carrier,
+            status: "error",
+            issue_code: outcome.abortError.code,
+          });
+          return errorEnvelope(outcome.abortError, options.ports);
+        }
+        return outcome.value;
       } catch (error: unknown) {
         await options.ports.audit.record({
           requestId: options.ports.context.requestId,
