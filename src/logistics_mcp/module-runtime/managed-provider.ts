@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { z } from "zod";
-import { BUSINESS_MCP_TOOLS } from "../platform/application-tools";
+import { BUSINESS_MCP_TOOLS, SCHEDULE_MCP_TOOLS } from "../platform/application-tools";
+import { SCHEDULE_LIVE_VERSION } from "../../../services/maritime/schedule-live/contracts";
 import type { ExecutionContext } from "../platform/context";
 import type { ToolDefinition } from "../server/tool-registry";
 import { ModuleHost } from "./host";
@@ -84,6 +85,80 @@ export class ManagedProviderRuntime {
     const running=Promise.resolve().then(()=>{controller.signal.throwIfAborted();return definition.handler!(input,context,controller.signal);}).finally(async()=>{current.calls.delete(controller);signal?.removeEventListener("abort",abort);controller.signal.removeEventListener("abort",rejectAbort);if(current.retired&&current.calls.size===0)await this.#dispose(current);});
     if(controller.signal.aborted)rejectAbort();
     try{return await Promise.race([running,aborted]);}catch{return{status:"unavailable",data:null,blockers:[{code:"provider_request_unavailable",message:"业务模块请求未完成。",severity:"error"}]};}
+  }
+  async close(){if(this.#closed)return;this.#closed=true;await this.#queue;this.#listeners.clear();if(this.#active){this.#active.retired=true;this.#retired.add(this.#active);}for(const g of this.#retired){for(const call of g.calls)call.abort();if(g.calls.size===0)await this.#dispose(g);}}
+}
+
+// ---------------------------------------------------------------------------
+// schedule-live-v1: an independent three-tool managed provider. It reuses the
+// same signing, revision, expiry, drain and journal boundaries as business-v1
+// but keeps its own payload/artifact schema and never mounts business modules.
+// ---------------------------------------------------------------------------
+const scheduleArtifactSchema=z.object({schema_version:z.literal("private-provider@2026-09-06.v1"),base_url:z.string().url(),contract_version:z.literal(SCHEDULE_LIVE_VERSION),tools:z.array(z.enum(SCHEDULE_MCP_TOOLS)).length(3)}).strict();
+export const scheduleProviderReleasePayloadSchema=z.object({schema_version:z.literal("provider-release@2026-09-06.v1"),module_id:z.literal("maritime.schedule_collector"),version:z.string().regex(/^\d+\.\d+\.\d+$/u),revision:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),enabled:z.boolean(),artifact_file:filename,artifact_digest:digestSchema,sbom_file:filename,sbom_digest:digestSchema,source_commit:z.string().regex(/^[a-f0-9]{40}$/u),issued_at:z.string().datetime(),expires_at:z.string().datetime()}).strict();
+export const signedScheduleProviderReleaseSchema=z.object({payload:scheduleProviderReleasePayloadSchema,alg:z.literal("Ed25519"),key_id:z.string().regex(/^[A-Za-z0-9_-]{1,100}$/u),signature:z.string().regex(/^[A-Za-z0-9_-]{86}$/u)}).strict();
+export type ScheduleProviderReleasePayload=z.infer<typeof scheduleProviderReleasePayloadSchema>;
+export interface VerifiedScheduleRelease{readonly payload:ScheduleProviderReleasePayload;readonly artifact:z.infer<typeof scheduleArtifactSchema>}
+const scheduleVerified=new WeakSet<object>();
+export function verifyScheduleProviderRelease(options:{release:unknown;artifact:Uint8Array;sbom:Uint8Array;trustedKeys:Readonly<Record<string,string>>;allowedHosts:readonly string[];now?:number}):VerifiedScheduleRelease{
+  const release=signedScheduleProviderReleaseSchema.parse(options.release),key=options.trustedKeys[release.key_id];
+  if(!key)throw new Error("provider_signer_untrusted");
+  const publicKey=createPublicKey(key);
+  if(publicKey.asymmetricKeyType!=="ed25519"||!verify(null,Buffer.from(JSON.stringify(release.payload)),publicKey,Buffer.from(release.signature,"base64url")))throw new Error("provider_signature_invalid");
+  const now=options.now??Date.now(),issued=Date.parse(release.payload.issued_at),expires=Date.parse(release.payload.expires_at);
+  if(issued>now+30000||expires<=now||expires-issued>31*86400000||expires<=issued)throw new Error("provider_release_expired");
+  const digest=(bytes:Uint8Array)=>`sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  if(options.artifact.byteLength>256*1024||options.sbom.byteLength>2*1024*1024||digest(options.artifact)!==release.payload.artifact_digest||digest(options.sbom)!==release.payload.sbom_digest)throw new Error("provider_artifact_mismatch");
+  const artifact=scheduleArtifactSchema.parse(JSON.parse(Buffer.from(options.artifact).toString("utf8")) as unknown);
+  const sbom=z.object({bomFormat:z.literal("CycloneDX"),specVersion:z.string().regex(/^1\.[4-6]$/u),components:z.array(z.unknown()).max(10000)}).passthrough().parse(JSON.parse(Buffer.from(options.sbom).toString("utf8")) as unknown);
+  if(!sbom.components)throw new Error("provider_sbom_invalid");
+  const url=new URL(artifact.base_url);
+  if(url.protocol!=="https:"||url.username||url.password||url.pathname!=="/"||url.search||url.hash||!options.allowedHosts.includes(url.host)||new Set(artifact.tools).size!==3)throw new Error("provider_egress_denied");
+  const result=Object.freeze({payload:Object.freeze(release.payload),artifact:Object.freeze({...artifact,tools:Object.freeze([...artifact.tools]) as unknown as typeof artifact.tools})});scheduleVerified.add(result);return result;
+}
+interface PreparedScheduleProvider{readonly definitions:readonly ToolDefinition[];close():Promise<void>}
+interface ScheduleGeneration{release:VerifiedScheduleRelease;provider:PreparedScheduleProvider;definitions:readonly ToolDefinition[];calls:Set<AbortController>;retired:boolean;disposed:boolean;timer?:ReturnType<typeof setTimeout>;expiryTimer?:ReturnType<typeof setTimeout>}
+interface ManagedScheduleProviderRuntimeOptions{readonly prepare:(release:VerifiedScheduleRelease)=>Promise<PreparedScheduleProvider>;readonly persist:(release:ScheduleProviderReleasePayload)=>Promise<void>;readonly drainTimeoutMs?:number}
+function scheduleDefinitions(release:VerifiedScheduleRelease,definitions:readonly ToolDefinition[]){
+  return definitions.map(d=>({...d,moduleId:"maritime.schedule_collector",moduleVersion:release.payload.version}));
+}
+export class ManagedScheduleProviderRuntime{
+  readonly #options:ManagedScheduleProviderRuntimeOptions;
+  readonly #listeners=new Set<()=>void>();readonly #retired=new Set<ScheduleGeneration>();
+  #active:ScheduleGeneration|undefined;#queue=Promise.resolve();#closed=false;#cleanupFailed=false;
+  constructor(options:ManagedScheduleProviderRuntimeOptions){this.#options=options;}
+  get catalogDefinitions():readonly ToolDefinition[]{const current=this.#active;if(!current)return[];return scheduleDefinitions(current.release,current.definitions).map(d=>({...d,handler:((input,ctx,signal)=>this.#invoke(d.name,input,ctx,signal))}));}
+  get definitions():readonly ToolDefinition[]{const current=this.#active;if(!current||this.#closed||!current.release.payload.enabled||Date.parse(current.release.payload.expires_at)<=Date.now())return[];return this.catalogDefinitions;}
+  subscribe(listener:()=>void){this.#listeners.add(listener);return()=>{this.#listeners.delete(listener);};}
+  snapshot(){return{module_id:"maritime.schedule_collector",revision:this.#active?.release.payload.revision??null,enabled:!this.#closed&&this.#active?.release.payload.enabled===true&&Date.parse(this.#active.release.payload.expires_at)>Date.now(),artifact_digest:this.#active?.release.payload.artifact_digest??null,in_flight:this.#active?.calls.size??0,cleanup_failed:this.#cleanupFailed,draining:[...this.#retired].map(g=>({revision:g.release.payload.revision,in_flight:g.calls.size}))};}
+  activate(release:VerifiedScheduleRelease):Promise<void>{const work=this.#queue.then(()=>this.#activate(release));this.#queue=work.catch(()=>undefined);return work;}
+  async #activate(release:VerifiedScheduleRelease){
+    if(!scheduleVerified.has(release)||this.#closed)throw new Error("provider_release_untrusted");
+    if(this.#active&&release.payload.revision<=this.#active.release.payload.revision)throw new Error("provider_revision_conflict");
+    if(this.#retired.size>=2)throw new Error("provider_drain_pending");
+    if(release.payload.module_id!=="maritime.schedule_collector")throw new Error("provider_contract_invalid");
+    const provider=await this.#options.prepare(release);
+    const definitions=provider.definitions;
+    if(definitions.length!==3||new Set(definitions.map(d=>d.name)).size!==3||definitions.some(d=>!SCHEDULE_MCP_TOOLS.includes(d.name as typeof SCHEDULE_MCP_TOOLS[number])||d.kind!=="read"||d.riskLevel!=="T1"||!d.handler||!d.inputSchema||!d.validateOutput))throw new Error("provider_contract_invalid");
+    try{await this.#options.persist(release.payload);}catch(error){await provider.close().catch(()=>undefined);throw error;}
+    const previous=this.#active;
+    this.#active={release,provider,definitions,calls:new Set(),retired:false,disposed:false};
+    const activated=this.#active;
+    const expire=()=>{if(this.#active!==activated||this.#closed)return;const remaining=Date.parse(activated.release.payload.expires_at)-Date.now();if(remaining>0){activated.expiryTimer=setTimeout(expire,Math.min(remaining,2_147_000_000));activated.expiryTimer.unref();}else for(const listener of this.#listeners)try{listener();}catch{/* Client cleanup is independent of expiry. */}};
+    expire();
+    if(previous){previous.retired=true;this.#retired.add(previous);if(previous.calls.size===0)await this.#dispose(previous);else{previous.timer=setTimeout(()=>{for(const call of previous.calls)call.abort();},this.#options.drainTimeoutMs??30000);previous.timer.unref();}}
+    for(const listener of this.#listeners)try{listener();}catch{/* A broken client notification cannot revert a persisted release. */}
+  }
+  async #dispose(g:ScheduleGeneration){if(g.disposed)return;g.disposed=true;if(g.timer)clearTimeout(g.timer);if(g.expiryTimer)clearTimeout(g.expiryTimer);try{await g.provider.close();}catch{this.#cleanupFailed=true;}finally{this.#retired.delete(g);}}
+  async #invoke(name:string,input:unknown,context:ExecutionContext,signal?:AbortSignal):Promise<Awaited<ReturnType<Handler>>>{
+    const current=this.#active,definition=current?.definitions.find(d=>d.name===name);
+    if(!current||this.#closed||!current.release.payload.enabled||Date.parse(current.release.payload.expires_at)<=Date.now()||!definition?.handler)return{status:"unavailable",data:null,blockers:[{code:"module_disabled_by_release",message:"船期模块当前未开放。",severity:"error"}]};
+    const controller=new AbortController();current.calls.add(controller);
+    const abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener("abort",abort,{once:true});
+    let rejectAbort!:()=>void;const aborted=new Promise<never>((_,reject)=>{rejectAbort=()=>reject(new Error("provider_request_aborted"));controller.signal.addEventListener("abort",rejectAbort,{once:true});});
+    const running=Promise.resolve().then(()=>{controller.signal.throwIfAborted();return definition.handler!(input,context,controller.signal);}).finally(async()=>{current.calls.delete(controller);signal?.removeEventListener("abort",abort);controller.signal.removeEventListener("abort",rejectAbort);if(current.retired&&current.calls.size===0)await this.#dispose(current);});
+    if(controller.signal.aborted)rejectAbort();
+    try{return await Promise.race([running,aborted]);}catch{return{status:"unavailable",data:null,blockers:[{code:"provider_request_unavailable",message:"船期模块请求未完成。",severity:"error"}]};}
   }
   async close(){if(this.#closed)return;this.#closed=true;await this.#queue;this.#listeners.clear();if(this.#active){this.#active.retired=true;this.#retired.add(this.#active);}for(const g of this.#retired){for(const call of g.calls)call.abort();if(g.calls.size===0)await this.#dispose(g);}}
 }
