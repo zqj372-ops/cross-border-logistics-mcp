@@ -11,7 +11,7 @@ const record = {
   record_id: 'internal-record', evidence_ref: 'internal-evidence', parser_version: 'internal-parser',
   operating_carrier: null, service_name: 'Pacific Express', routing: 'direct',
   pol: { name: 'Shanghai' }, pod: { name: 'Vancouver' }, query_origin: 'internal-origin', query_destination: 'internal-destination',
-  transit: { source_total_hours: '240', basis: 'internal-basis' }, cutoffs: {}, missing_fields: [{ field: 'internal-field' }],
+  transit: { source_total_hours: '240', basis: 'internal-basis' }, cutoffs: { si: { at: '2026-09-30T16:00:00+08:00' } }, missing_fields: [{ field: 'internal-field' }],
   legs: [{ mode: 'ocean', sequence: 1, vessel_name: 'TEST VESSEL', voyage: '101E', from: { name: 'Shanghai' }, to: { name: 'Vancouver' }, events: [dateEvent('departure'), dateEvent('arrival')] }],
 };
 const result = (records: unknown[] = [record], complete = true) => ({
@@ -39,6 +39,7 @@ describe('customer schedule presentation', () => {
     expect(html).toContain('2026-10-01 08:00');
     expect(html).toContain('来源未提供时区');
     expect(html).toContain('240 小时');
+    expect(html).toContain('2026-09-30 16:00 UTC+08:00');
     expect(html).toContain('voyage-header');
     expect(html).not.toMatch(/internal-|live_verified|parser|证据引用|local_datetime|原文|实际承运船司：ONE/u);
   });
