@@ -894,26 +894,43 @@ code, pre { font-family: var(--font-code); }
 .maritime-provenance>a{display:inline-flex;align-items:center;gap:6px}.maritime-provenance>a>svg{width:16px;height:16px}.maritime-provenance>details{flex-basis:100%;font-size:13px;color:#617189}.maritime-provenance summary{cursor:pointer}.maritime-provenance details small{display:block;margin-top:10px}
 @media(max-width:1000px){.carrier-business-layout{grid-template-columns:1fr}.carrier-business-layout .carrier-pallet .field-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:480px){.carrier-business-layout .carrier-pallet .field-grid{grid-template-columns:1fr}}
-.schedule-page{max-width:1180px}
-.schedule-query-shell{display:grid;gap:16px;margin-bottom:24px}
-.schedule-context-note{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.schedule-context-note>.inline-note{flex:1;min-width:240px;margin:0}
-.schedule-query{border-color:#c7d5f4}
-.schedule-primary-fields{grid-template-columns:repeat(3,minmax(0,1fr))}
-.schedule-query>.button{margin-top:20px}
-.schedule-secondary{border:1px solid #dfe5ef;border-radius:8px;padding:12px 16px;margin:16px 0;background:#fff}
-.schedule-secondary>summary{cursor:pointer;font-weight:650;color:#33486b;min-height:28px;display:flex;align-items:center}
-.schedule-secondary[open]>summary{margin-bottom:12px}
-.schedule-country{margin:14px 0 0;background:#f8faff}
-.schedule-results{grid-template-columns:1fr}
-.schedule-card .sailing-card-head>div{display:grid;gap:4px;min-width:0}
-.schedule-card .sailing-card-head>div>strong{overflow-wrap:anywhere}
-.schedule-card .sailing-card-head>div>span{color:#66748b;font-size:13px;overflow-wrap:anywhere}
-.schedule-route>div{min-width:0}
-.schedule-route h3{overflow-wrap:anywhere}
-.schedule-route time{white-space:normal;line-height:1.6}
-.schedule-leg-summary{margin:18px 0 10px;color:#526181}
-.schedule-card .maritime-leg{margin:10px 0}
+/* Ship-schedule search and voyage comparison. */
+.schedule-page{max-width:1280px}
+.schedule-query-shell{margin:24px 0}
+.schedule-context-note{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+.schedule-context-note>.inline-note{flex:1;margin:0}
+.schedule-query{border:1px solid #dbe3ed;border-top:3px solid #3560d9;border-radius:8px;padding:24px 28px;background:#f8fafc}
+.schedule-form-title{font-size:18px;margin:0 0 24px;color:#243751}
+.schedule-primary-fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:20px 24px}
+.schedule-primary-fields input,.schedule-primary-fields select{background:#fff}
+.schedule-query>.button{min-width:150px;margin-top:18px}
+.schedule-secondary{border-top:1px solid #e2e7ee;padding:16px 0;margin:16px 0;background:#fff}
+.schedule-secondary>summary{cursor:pointer;font-weight:600;color:#33486b;min-height:28px}
+.schedule-secondary[open]>summary{margin-bottom:16px}
+.schedule-country{border:0;padding:0;margin:18px 0 0;background:transparent}
+.schedule-country>summary{font-size:14px;font-weight:400;color:#365fc0}
+.schedule-country .field-grid{grid-template-columns:1fr 1fr;max-width:650px}
+.schedule-result-empty{text-align:center;padding:46px 20px 36px}
+.schedule-result-empty h2{font-size:21px;margin-bottom:10px}
+.schedule-result-heading{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin:32px 0 14px}
+.schedule-result-heading h2{font-size:22px;margin:0;white-space:nowrap}
+.schedule-result-heading>span,.schedule-business-note{color:#687990;font-size:13px;line-height:1.7}
+.schedule-business-note{margin:12px 0}
+.schedule-results{border:1px solid #dce3ed;border-radius:8px;overflow:hidden}
+.voyage-grid{display:grid;grid-template-columns:1.3fr 1.35fr 1.35fr .65fr .7fr;gap:24px;padding:24px}
+.voyage-header{background:#edf2f8;padding-top:14px;padding-bottom:14px;color:#51647d;font-size:13px;font-weight:600}
+.schedule-card{background:#fff;border-top:1px solid #e3e8ef}
+.schedule-card .voyage-grid>div{display:flex;flex-direction:column;align-items:flex-start;gap:7px;min-width:0;overflow-wrap:anywhere}
+.voyage-grid strong{font-size:15px;font-weight:600;color:#263b55;line-height:1.5}
+.voyage-grid time{font-size:16px;color:#263b55;font-variant-numeric:tabular-nums;line-height:1.5}
+.voyage-grid small,.voyage-vessel>span:not(.voyage-label){color:#697b92;font-size:12px;line-height:1.5}
+.voyage-label{display:none}
+.schedule-voyage-details{padding:0 24px 16px}
+.schedule-voyage-details>summary{cursor:pointer;font-size:13px;color:#365fc0;list-style-position:inside}
+.schedule-voyage-details[open]>summary{margin-bottom:16px}
+.schedule-leg{border-left:2px solid #d9e4f5;padding:0 18px;margin:20px 0;color:#566b85;font-size:13px;line-height:1.7}
+.schedule-leg p{margin:6px 0}.schedule-leg ul{padding-left:18px;margin:6px 0}
 .schedule-snapshot,.schedule-sources{margin-top:20px}
-@media(max-width:900px){.schedule-primary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:600px){.schedule-primary-fields{grid-template-columns:1fr}.schedule-context-note{align-items:stretch}.schedule-context-note>.button{width:100%}.schedule-query>.button{width:100%}.schedule-card{padding:18px}.schedule-route{gap:10px}}
+@media(max-width:950px){.voyage-grid{gap:16px;padding:18px;grid-template-columns:1.2fr 1.25fr 1.25fr .6fr .6fr}}
+@media(max-width:700px){.schedule-primary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.schedule-primary-fields>.field:first-child{grid-column:1/-1}.schedule-query{padding:20px}.schedule-context-note{align-items:flex-start}.schedule-query>.button{width:100%}.schedule-result-heading{display:block}.schedule-result-heading h2{margin-bottom:8px}.voyage-header{display:none}.schedule-results{border:0;overflow:visible}.schedule-card{border:1px solid #dce3ed;border-radius:8px;margin:16px 0}.voyage-grid{grid-template-columns:1fr 1fr;gap:22px 16px;padding:20px}.voyage-grid>.voyage-vessel{grid-column:1/-1;padding-bottom:16px;border-bottom:1px solid #e9edf3}.voyage-label{display:block;font-size:12px;color:#8391a4;margin-bottom:3px}.voyage-grid strong{font-size:14px}.voyage-grid time{font-size:15px}.schedule-voyage-details{padding:0 20px 16px}.schedule-context-note>.button{min-width:64px}.schedule-context-note>.inline-note{min-width:0}}
+@media(max-width:380px){.schedule-query{padding:16px}.schedule-primary-fields{gap:16px 12px}.voyage-grid{padding:16px;gap:18px 12px}}
