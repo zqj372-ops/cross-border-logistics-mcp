@@ -17,6 +17,7 @@ import {
   resolveLocationCandidates,
 } from "./locations";
 import { normalizeQuery } from "./normalize";
+import { portLookup } from "./port-names";
 import type {
   CarrierBrowserPort,
   CarrierHttpPort,
@@ -599,8 +600,7 @@ export function createCollectorService(
             const adapter = adapterFor(registry, carrier);
             const candidates = await adapter.resolveLocations(
               {
-                text: input.text,
-                countryCode: input.countryCode ?? null,
+                ...portLookup(input.text, input.countryCode ?? null),
                 carrierLocationId: input.locationId ?? null,
                 signal,
               },
@@ -713,8 +713,7 @@ export function createCollectorService(
             const adapter = adapterFor(registry, carrier);
             const originCandidates = await adapter.resolveLocations(
               {
-                text: parsedInput.origin.text,
-                countryCode: parsedInput.origin.country_code,
+                ...portLookup(parsedInput.origin.text, parsedInput.origin.country_code),
                 carrierLocationId: parsedInput.origin.carrier_location_id,
                 signal,
               },
@@ -722,8 +721,7 @@ export function createCollectorService(
             );
             const destinationCandidates = await adapter.resolveLocations(
               {
-                text: parsedInput.destination.text,
-                countryCode: parsedInput.destination.country_code,
+                ...portLookup(parsedInput.destination.text, parsedInput.destination.country_code),
                 carrierLocationId: parsedInput.destination.carrier_location_id,
                 signal,
               },

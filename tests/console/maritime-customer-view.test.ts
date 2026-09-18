@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-type Workspace = { page(kind: string): string; submit(form: unknown): Promise<boolean>; input(event: unknown): boolean };
+type Workspace = { page(kind: string): string; submit(form: unknown): Promise<boolean>; input(event: unknown): boolean; action(button: unknown): Promise<boolean> };
 const { createMaritimeWorkspace } = await import(pathToFileURL(resolve('apps/console/maritime.js')).href) as {
   createMaritimeWorkspace: (options: Record<string, unknown>) => Workspace;
 };
@@ -22,11 +22,12 @@ const result = (records: unknown[] = [record], complete = true) => ({
     provenance: { parser_version: 'internal-parser', source_refs: ['internal-evidence'], kind: 'internal-source' } },
 });
 const values = { carrier: 'ONE', origin: 'Shanghai', origin_country: 'CN', destination: 'Vancouver', destination_country: 'CA', from: '2026-10-01', until: '2026-10-28', routing: 'any' };
-async function render(response: unknown) {
+async function render(response: unknown, detail = true) {
   vi.stubGlobal('FormData', class { constructor(readonly form: { values: Record<string, string> }) {} get(key: string) { return this.form.values[key] ?? ''; } });
   const api = vi.fn((path: string) => Promise.resolve(path.endsWith('/carriers') ? { data: { carriers: [{ id: 'ONE', capability_status: 'live_verified' }] } } : path.endsWith('/locations') ? { status: 'success', data: { resolved: { carrier_location_id: 'internal-location' } } } : response));
   const ui = createMaritimeWorkspace({ api, mutate: vi.fn(), esc: (v: string | number | null | undefined) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), head: () => '', note: (v: string) => `<p>${v}</p>`, icon: () => '', canConfigure: () => false, rerender: () => {}, model: () => ({ session: { authenticated: true, organization_id: 'org', identity: { user_id: 'user' } }, directory: { organizations: [{ organization_id: 'org', status: 'active' }], memberships: [{ organization_id: 'org', user_id: 'user', role: 'owner', status: 'active' }] } }) });
   await ui.submit({ dataset: { form: 'maritime-live-query' }, values });
+  if(detail) await ui.action({dataset:{action:'maritime-open-voyages',serviceIndex:'0'}});
   return { ui, html: ui.page('schedules') };
 }
 afterEach(() => vi.unstubAllGlobals());
@@ -38,7 +39,7 @@ describe('customer schedule presentation', () => {
     expect(html).toContain('Shanghai');
     expect(html).toContain('2026-10-01 08:00');
     expect(html).toContain('来源未提供时区');
-    expect(html).toContain('240 小时');
+    expect(html).toContain('10 天');
     expect(html).toContain('2026-09-30 16:00 UTC+08:00');
     expect(html).toContain('voyage-header');
     expect(html).not.toMatch(/internal-|live_verified|parser|证据引用|local_datetime|原文|实际承运船司：ONE/u);
@@ -60,6 +61,45 @@ describe('customer schedule presentation', () => {
     const { html } = await render({ status: 'unavailable', data: null, blockers: [{ code: 'internal-provider', message: 'internal-error' }] });
     expect(html).toContain('稍后重试');
     expect(html).not.toContain('internal-');
+  });
+  it('selects services by actual departure weekdays and opens a full monthly detail page', async () => {
+    const nextMonth = { ...record, legs: [{ ...record.legs[0], vessel_name: 'NOVEMBER VESSEL', events: [{ ...dateEvent('departure'), local_datetime: '2026-11-02T08:00:00' }] }] };
+    const unknown = { ...record, service_name:'Unknown Service',legs: [{ ...record.legs[0], vessel_name: 'UNDATED VESSEL', events: [] }] };
+    const { ui, html } = await render(result([record, nextMonth, unknown]),false);
+    expect(html).toContain('航线周览');expect(html).toContain('直达服务详情');expect(html).toContain('计划开航日');
+    expect(html).not.toContain('NOVEMBER VESSEL');expect(html).not.toContain('表定开航');
+    vi.stubGlobal('document', { querySelector: () => null });
+    await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '1' } });
+    expect(ui.page('schedules')).not.toContain('Unknown Service');
+    await ui.action({ dataset: { action: 'maritime-open-voyages', serviceIndex: '0' } });
+    const detail=ui.page('schedules');
+    expect(detail).toContain('2026 年 10 月船期公告');expect(detail).toContain('2026 年 11 月船期公告');
+    expect(detail).toContain('NOVEMBER VESSEL');expect(detail).toContain('TEST VESSEL');expect(detail).not.toContain('UNDATED VESSEL');
+    expect(detail).toContain('返回航线选择');expect(detail).toContain('操作时间');
+    await ui.action({ dataset: { action: 'maritime-back-services' } });
+    expect(ui.page('schedules')).toContain('直达服务详情');expect(ui.page('schedules')).not.toContain('NOVEMBER VESSEL');
+  });
+  it('keeps planned and actual departure distinct and includes the final inland leg destination', async () => {
+    const oceanLeg = { ...record.legs[0], events: [dateEvent('departure'), { ...dateEvent('departure'), event_kind: 'actual', local_datetime: '2026-10-02T09:00:00' }, { ...dateEvent('arrival'), local_datetime: '2026-10-11T10:00:00' }] };
+    const inlandLeg = { mode: 'rail', sequence: 2, from: { name: 'Vancouver' }, to: { name: 'Toronto' }, events: [{ ...dateEvent('arrival'), local_datetime: '2026-10-18T10:00:00' }] };
+    const { html } = await render(result([{ ...record, routing: 'transshipment', legs: [oceanLeg, inlandLeg], transit: { source_total_hours: '241.5' } }]));
+    expect(html).toContain('2026-10-01 08:00');
+    expect(html).toContain('2026-10-02 09:00');
+    expect(html).toContain('2026-10-18 10:00');
+    expect(html).not.toContain('2026-10-11 10:00');
+    expect(html).toContain('Toronto');
+    expect(html).toContain('经 Vancouver');
+    expect(html).toContain('10 天 1.5 小时');
+    expect(html).not.toContain('internal-');
+  });
+  it('uses the ocean departure weekday rather than preceding road pickup or browser timezone', async () => {
+    const roadLeg = { mode: 'truck', sequence: 1, from: { name: 'Depot' }, to: { name: 'Shanghai' }, events: [{ ...dateEvent('departure'), local_datetime: '2026-09-30T23:00:00' }] };
+    const { ui } = await render(result([{ ...record, legs: [roadLeg, { ...record.legs[0], sequence: 2 }] }]),false);
+    vi.stubGlobal('document', { querySelector: () => null });
+    await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '4' } });
+    expect(ui.page('schedules')).toContain('service-row');
+    await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '3' } });
+    expect(ui.page('schedules')).not.toContain('service-row');
   });
   it('removes stale rendered results and selected candidate controls when the carrier changes', async () => {
     const { ui } = await render(result());

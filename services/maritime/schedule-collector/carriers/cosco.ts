@@ -122,8 +122,10 @@ function place(
   };
 }
 
-function candidateCountryCode(country: string | null): string | null {
-  return country === null ? null : COUNTRY_CODES[country] ?? null;
+function candidateCountryCode(country: string | null, unlocode: string | null): string | null {
+  const named = country === null ? null : COUNTRY_CODES[country];
+  if (named) return named;
+  return unlocode !== null && /^[A-Z]{2}[A-Z0-9]{3}$/u.test(unlocode) ? unlocode.slice(0, 2) : null;
 }
 
 export function parseCoscoLocationResponse(
@@ -140,7 +142,7 @@ export function parseCoscoLocationResponse(
     return [
       {
         name,
-        country_code: candidateCountryCode(stringValue(record.country)),
+        country_code: candidateCountryCode(stringValue(record.country), stringValue(record.unloCode)),
         type: "city" as const,
         carrier_location_id: id,
         mapping_source: "cosco_find_city_district",
@@ -513,7 +515,7 @@ function locationBody(
     ) {
       return candidate.carrier_location_id === input.carrierLocationId;
     }
-    return candidate.name.toLowerCase() === input.text.toLowerCase();
+    return candidate.name.toLowerCase().includes(input.text.toLowerCase());
   });
 }
 

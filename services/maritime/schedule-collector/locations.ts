@@ -3,6 +3,7 @@ import {
   type ResolvedLocation,
 } from "./contracts";
 import { CollectorRuntimeError } from "./errors";
+import { portLookup } from "./port-names";
 
 export interface LocationCandidate {
   readonly name: string;
@@ -28,9 +29,10 @@ function candidateMatchesQuery(
   candidate: LocationCandidate,
   input: ResolveLocationInput,
 ): boolean {
+  const lookup = portLookup(input.text, input.country_code);
   if (
-    input.country_code !== null &&
-    candidate.country_code !== input.country_code
+    lookup.countryCode !== null &&
+    candidate.country_code !== lookup.countryCode
   ) {
     return false;
   }
@@ -38,7 +40,7 @@ function candidateMatchesQuery(
     return candidate.carrier_location_id === input.carrier_location_id;
   }
   const candidateName = normalized(candidate.name);
-  const queryText = normalized(input.text);
+  const queryText = normalized(lookup.text);
   return (
     candidateName === queryText ||
     candidateName.includes(queryText) ||
