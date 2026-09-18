@@ -101,6 +101,13 @@ describe('customer schedule presentation', () => {
     await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '3' } });
     expect(ui.page('schedules')).not.toContain('service-row');
   });
+  it('classifies an ocean-direct sailing with onward rail as a destination transfer', async () => {
+    const inlandLeg = { mode: 'rail', sequence: 2, from: { name: 'Vancouver' }, to: { name: 'Toronto' }, events: [dateEvent('arrival')] };
+    const { html } = await render(result([{ ...record, routing: 'direct', legs: [...record.legs, inlandLeg] }]), false);
+    expect(html).toContain('中转服务详情');
+    expect(html).not.toContain('直达服务详情');
+    expect(html).toContain('铁路');
+  });
   it('withholds conflicting source identities even when the adapter supplied records', async () => {
     const response = result();
     const { html } = await render({ ...response, status: 'manual_review', data: { ...response.data,
