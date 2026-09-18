@@ -330,6 +330,7 @@ async function loadCredentials(id) {
 }
 function render() {
   let { page, id } = route();
+  const focusedPort=page==='schedules'&&document.activeElement?.dataset?.portSide?{id:document.activeElement.id,start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   if (page === 'business-admin') { window.history.replaceState(null,'','#'+legacyConfigurationRoute(id)); ({page,id}=route()); }
   const publicPages = page === 'market' && id === 'configure' ? PUBLIC_PAGES.filter(p=>p!=='market') : PUBLIC_PAGES;
   if (page === 'login' || (!model.session?.authenticated && (!publicPages.includes(page) || new URLSearchParams(location.search).has('auth_error')))) { renderLogin(); return; }
@@ -344,6 +345,7 @@ function render() {
   main.innerHTML = (['customs', 'tax'].includes(page) ? quotaBanner() : '') + (requiresOrganization.includes(page) && !model.session.organization_id ? workspaceHome.page() : (pages[page] || serviceHome)());
   if (page === 'api-keys' && model.verification) main.insertAdjacentHTML('beforeend', verificationPanel());
   main.setAttribute('aria-busy', 'false');
+  if(focusedPort){const input=document.getElementById(focusedPort.id);input?.focus();input?.setSelectionRange(focusedPort.start,focusedPort.end);}
   document.title = `${main.querySelector('h1')?.textContent || '工作台'} · FreightClaw`;
   if (page === 'app') { const application = model.state.applications.find((v) => v.application_id === id); if (application && canCredential(application)) void loadCredentials(id); }
 }
@@ -476,6 +478,7 @@ const serviceHome = createServiceHome({ icon, link });
 const apiKeys = createApiKeysUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, showSecret, render, businessAccess, model: () => model });
 const serviceAccess = createServiceAccessUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, render, businessAccess, model: () => model });
 document.addEventListener('click', async (event) => {
+  maritime.click(event);
   if (!event.target.closest('.account-disclosure')) closeAccount();
   const button = event.target.closest('button'); if (!button || button.disabled) return;
   if (button.dataset.action === 'account-menu') { const menu = document.querySelector('#account-menu'); const open = menu.hidden; closeMenu(); menu.hidden = !open; button.setAttribute('aria-expanded', String(open)); if (open) menu.querySelector('button')?.focus(); return; }
@@ -514,6 +517,7 @@ dialog.addEventListener('cancel', () => closeSecret());
 dialog.addEventListener('close', () => closeSecret());
 window.addEventListener('hashchange', () => { clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 }); });
 document.addEventListener('keydown', (event) => {
+  if (maritime.keydown(event)) return;
   if (event.key === 'Escape' && document.querySelector('#account-menu')?.hidden === false) { event.preventDefault(); closeAccount(true); return; }
   if (!document.querySelector('#sidebar')?.classList.contains('open')) return;
   if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
@@ -523,6 +527,7 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault(); nodes[next]?.focus();
   }
 });
+document.addEventListener('focusin', (event) => { maritime.focus(event); if (!event.target.closest('.account-disclosure')) closeAccount(); });
 render();
 try {
   await ensureSession();
@@ -534,7 +539,6 @@ try {
   else { ensureShell(); document.querySelector('#content').innerHTML = empty('个人中心暂时无法读取', errorMessage(error), '<button class="button primary" data-action="reload">重新加载</button>'); }
 }
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action=reload]')) location.reload(); });
-document.addEventListener('focusin', (event) => { if (!event.target.closest('.account-disclosure')) closeAccount(); });
 
 // Native validation can focus a field inside a collapsed batch item.
 document.addEventListener('invalid', (event) => { const section = event.target.closest('details'); if (section) section.open = true; }, true);
