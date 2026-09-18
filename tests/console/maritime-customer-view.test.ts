@@ -40,7 +40,9 @@ describe('customer schedule presentation', () => {
     expect(html).toContain('2026-10-01 08:00');
     expect(html).toContain('来源未提供时区');
     expect(html).toContain('10 天');
-    expect(html).toContain('2026-09-30 16:00 UTC+08:00');
+    expect(html).not.toContain('2026-09-30 16:00 UTC+08:00');
+    expect(html).not.toContain('操作时间');
+    expect(html).not.toContain('操作截止时间');
     expect(html).toContain('voyage-header');
     expect(html).not.toMatch(/internal-|live_verified|parser|证据引用|local_datetime|原文|实际承运船司：ONE/u);
   });
@@ -75,7 +77,9 @@ describe('customer schedule presentation', () => {
     const detail=ui.page('schedules');
     expect(detail).toContain('2026 年 10 月船期公告');expect(detail).toContain('2026 年 11 月船期公告');
     expect(detail).toContain('NOVEMBER VESSEL');expect(detail).toContain('TEST VESSEL');expect(detail).not.toContain('UNDATED VESSEL');
-    expect(detail).toContain('返回航线选择');expect(detail).toContain('操作时间');
+    expect(detail).toContain('返回航线选择');expect(detail).toContain('航次详情');
+    expect(detail).not.toContain('操作时间');expect(detail).not.toContain('操作截止时间');
+    expect(detail).not.toContain('船期可能调整，请在出运前向船公司确认。');
     await ui.action({ dataset: { action: 'maritime-back-services' } });
     expect(ui.page('schedules')).toContain('直达服务详情');expect(ui.page('schedules')).not.toContain('NOVEMBER VESSEL');
   });
