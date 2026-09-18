@@ -8,7 +8,7 @@ import { createFetchJsonClient, type FetchImplementation } from "../adapters/htt
 import { SCHEDULE_MCP_TOOLS, type ScheduleMcpTool } from "../platform/application-tools";
 import { ENVELOPE_STATUSES, type EnvelopeData, type Notice, type SourceRef } from "../platform/envelope";
 import { authorizeTool, getToolPolicy } from "../platform/rbac";
-import { ManagedProviderRuntime, signedProviderReleaseSchema, verifyProviderRelease } from "../module-runtime/managed-provider";
+import { ManagedScheduleProviderRuntime, signedScheduleProviderReleaseSchema, verifyScheduleProviderRelease, type ScheduleProviderReleasePayload, type VerifiedScheduleRelease } from "../module-runtime/managed-provider";
 import { readBoundedResponse } from "../platform/bounded-response";
 import { requireRequestCredential } from "./request-credential";
 import type { ToolDefinition } from "./tool-registry";
@@ -20,6 +20,7 @@ import {
   ScheduleLiveLocationsRequestSchema,
   ScheduleLiveSearchEnvelopeSchema,
   ScheduleLiveSearchRequestSchema,
+  SCHEDULE_LIVE_VERSION,
   parseScheduleLiveCarriersEnvelope,
   parseScheduleLiveLocationsEnvelope,
   parseScheduleLiveSearchEnvelope,
@@ -27,7 +28,7 @@ import {
 import { CollectorResultDataSchema } from "../../../services/maritime/schedule-collector/contracts";
 
 const SCHEDULE_PROVIDER_HEALTH_VERSION = "schedule-provider-health@2026-09-18.v1" as const;
-const SCHEDULE_PROVIDER_CONTRACT = "ocean-schedule-live@2026-09-18.v1" as const;
+const SCHEDULE_PROVIDER_CONTRACT = SCHEDULE_LIVE_VERSION;
 const CALL_VERSION = "application-mcp-call@2026-09-06.v1" as const;
 
 const emptyInputSchema = z.object({}).strict();
@@ -195,7 +196,17 @@ async function atomicJournal(path: string, value: z.infer<typeof journalSchema>)
   if (JSON.stringify(checked) !== JSON.stringify(value)) throw new Error("provider_activation_readback_failed");
 }
 
-export async function loadManagedScheduleProvider(environment: NodeJS.ProcessEnv) {
+export const scheduleProviderHealthSchema = z.object({
+  schema_version: z.literal(SCHEDULE_PROVIDER_HEALTH_VERSION),
+  ready: z.literal(true),
+  contract_version: z.literal(SCHEDULE_PROVIDER_CONTRACT),
+  operations: z.array(z.enum(SCHEDULE_MCP_TOOLS)).length(3),
+}).strict();
+
+export async function loadManagedScheduleProvider(
+  environment: NodeJS.ProcessEnv,
+  options?: { readonly fetchImpl?: typeof fetch },
+) {
   const required = (name: string) => {
     const value = environment[name]?.trim();
     if (!value) throw new Error(`${name} is required.`);
@@ -211,8 +222,8 @@ export async function loadManagedScheduleProvider(environment: NodeJS.ProcessEnv
   if (runtimeSecret.length < 32) throw new Error("provider_secret_invalid");
   const keys = () => z.record(z.string().regex(/^[A-Za-z0-9_-]{1,100}$/u), z.string().max(4096)).parse(JSON.parse(providerFile(signersFile, 32768).toString("utf8")) as unknown);
   const load = () => {
-    const release = signedProviderReleaseSchema.parse(JSON.parse(providerFile(releaseFile, 16384).toString("utf8")) as unknown);
-    return verifyProviderRelease({
+    const release = signedScheduleProviderReleaseSchema.parse(JSON.parse(providerFile(releaseFile, 16384).toString("utf8")) as unknown);
+    return verifyScheduleProviderRelease({
       release,
       artifact: providerFile(resolve(dirname(releaseFile), release.payload.artifact_file), 256 * 1024),
       sbom: providerFile(resolve(dirname(releaseFile), release.payload.sbom_file), 2 * 1024 * 1024),
@@ -226,17 +237,13 @@ export async function loadManagedScheduleProvider(environment: NodeJS.ProcessEnv
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const healthSchema = z.object({
-    schema_version: z.literal(SCHEDULE_PROVIDER_HEALTH_VERSION),
-    ready: z.literal(true),
-    contract_version: z.literal(SCHEDULE_PROVIDER_CONTRACT),
-    operations: z.array(z.enum(SCHEDULE_MCP_TOOLS)).length(3),
-  }).strict();
+  const healthSchema = scheduleProviderHealthSchema;
+  const fetchImpl = options?.fetchImpl ?? fetch;
   async function probe(baseUrl: string) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch(new URL("/access/v2/application/schedule/provider/health", baseUrl), {
+      const response = await fetchImpl(new URL("/access/v2/application/schedule/provider/health", baseUrl), {
         method: "GET",
         redirect: "error",
         signal: controller.signal,
@@ -249,17 +256,22 @@ export async function loadManagedScheduleProvider(environment: NodeJS.ProcessEnv
       clearTimeout(timer);
     }
   }
-  let current: ReturnType<typeof load> | undefined;
+  let current: VerifiedScheduleRelease | undefined;
   let lastError: string | null = null;
-  const runtime = new ManagedProviderRuntime({
+  const runtime = new ManagedScheduleProviderRuntime({
     prepare: async (release) => {
       if (release.payload.enabled) await probe(release.artifact.base_url);
       return {
-        ...createScheduleRuntimeProvider({ baseUrl: release.artifact.base_url, allowedHosts, runtimeSecret }),
+        ...createScheduleRuntimeProvider({
+          baseUrl: release.artifact.base_url,
+          allowedHosts,
+          runtimeSecret,
+          ...(options?.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+        }),
         close: () => Promise.resolve(),
       };
     },
-    persist: async (payload) => {
+    persist: async (payload: ScheduleProviderReleasePayload) => {
       const hash = digest(JSON.stringify(payload));
       if (journal && (payload.revision < journal.revision || payload.revision === journal.revision && hash !== journal.release_digest)) throw new Error("provider_activation_replay");
       const next = { schema_version: "provider-activation@2026-09-06.v1" as const, revision: payload.revision, release_digest: hash };

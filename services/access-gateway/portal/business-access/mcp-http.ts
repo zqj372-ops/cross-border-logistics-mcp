@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { BUSINESS_MCP_TOOLS, SCHEDULE_MCP_TOOLS } from "../../../../src/logistics_mcp/platform/application-tools";
+import { SCHEDULE_LIVE_VERSION } from "../../../maritime/schedule-live/contracts";
 import { BusinessAccessError } from "./contracts";
 import type { ApplicationMcpAccessService } from "./mcp";
 import { assertBusinessMachineExecutionResult, assertMachineBoundary, readMachineAuth, readMachineBody, sendMachineResponse, validateBusinessMachineInput, type BusinessMachineHttpOptions } from "./http";
@@ -30,7 +31,7 @@ export function createApplicationMcpHttpHandler(options: BusinessMachineHttpOpti
           if(!await options.providerHealth?.())throw new BusinessAccessError("business_provider_unavailable");
           sendMachineResponse(res,200,businessHealth
             ?{schema_version:"business-provider-health@2026-09-06.v1",ready:true,contract_version:"business-mcp-result@2026-09-06.v1",operations:BUSINESS_MCP_TOOLS}
-            :{schema_version:"schedule-provider-health@2026-09-18.v1",ready:true,contract_version:"oceo-schedule-live@2026-09-18.v1",operations:SCHEDULE_MCP_TOOLS});return;
+            :{schema_version:"schedule-provider-health@2026-09-18.v1",ready:true,contract_version:SCHEDULE_LIVE_VERSION,operations:SCHEDULE_MCP_TOOLS});return;
         }
         if (req.method !== "POST" || req.url !== path) throw new BusinessAccessError("business_request_denied");
         const credential = readMachineAuth(req, exchange ? "ApiKey" : "Bearer");
