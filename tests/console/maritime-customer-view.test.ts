@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-type Workspace = { page(kind: string): string; submit(form: unknown): Promise<boolean>; input(event: unknown): boolean };
+type Workspace = { page(kind: string): string; submit(form: unknown): Promise<boolean>; input(event: unknown): boolean; action(button: unknown): Promise<boolean> };
 const { createMaritimeWorkspace } = await import(pathToFileURL(resolve('apps/console/maritime.js')).href) as {
   createMaritimeWorkspace: (options: Record<string, unknown>) => Workspace;
 };
@@ -38,7 +38,7 @@ describe('customer schedule presentation', () => {
     expect(html).toContain('Shanghai');
     expect(html).toContain('2026-10-01 08:00');
     expect(html).toContain('来源未提供时区');
-    expect(html).toContain('240 小时');
+    expect(html).toContain('10 天');
     expect(html).toContain('2026-09-30 16:00 UTC+08:00');
     expect(html).toContain('voyage-header');
     expect(html).not.toMatch(/internal-|live_verified|parser|证据引用|local_datetime|原文|实际承运船司：ONE/u);
@@ -60,6 +60,43 @@ describe('customer schedule presentation', () => {
     const { html } = await render({ status: 'unavailable', data: null, blockers: [{ code: 'internal-provider', message: 'internal-error' }] });
     expect(html).toContain('稍后重试');
     expect(html).not.toContain('internal-');
+  });
+  it('groups actual returned sailings by month and weekday without assuming a recurring weekly service', async () => {
+    const nextMonth = { ...record, legs: [{ ...record.legs[0], vessel_name: 'NOVEMBER VESSEL', events: [{ ...dateEvent('departure'), local_datetime: '2026-11-02T08:00:00' }] }] };
+    const unknown = { ...record, legs: [{ ...record.legs[0], vessel_name: 'UNDATED VESSEL', events: [] }] };
+    const { ui, html } = await render(result([record, nextMonth, unknown]));
+    expect(html).toContain('2026 年 10 月');
+    expect(html).toContain('2026 年 11 月');
+    expect(html).toContain('开航日期待确认');
+    expect(html).toContain('data-weekday="4"');
+    vi.stubGlobal('document', { querySelector: () => null });
+    await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '1' } });
+    const filtered = ui.page('schedules');
+    expect(filtered).toContain('NOVEMBER VESSEL');
+    expect(filtered).not.toContain('TEST VESSEL');
+    expect(filtered).not.toContain('UNDATED VESSEL');
+    expect(filtered).toContain('共 3 条航次');
+  });
+  it('keeps planned and actual departure distinct and includes the final inland leg destination', async () => {
+    const oceanLeg = { ...record.legs[0], events: [dateEvent('departure'), { ...dateEvent('departure'), event_kind: 'actual', local_datetime: '2026-10-02T09:00:00' }, dateEvent('arrival')] };
+    const inlandLeg = { mode: 'rail', sequence: 2, from: { name: 'Vancouver' }, to: { name: 'Toronto' }, events: [{ ...dateEvent('arrival'), local_datetime: '2026-10-18T10:00:00' }] };
+    const { html } = await render(result([{ ...record, routing: 'transshipment', legs: [oceanLeg, inlandLeg], transit: { source_total_hours: '241.5' } }]));
+    expect(html).toContain('2026-10-01 08:00');
+    expect(html).toContain('2026-10-02 09:00');
+    expect(html).toContain('2026-10-18 10:00');
+    expect(html).toContain('Toronto');
+    expect(html).toContain('经 Vancouver');
+    expect(html).toContain('10 天 1.5 小时');
+    expect(html).not.toContain('internal-');
+  });
+  it('uses the ocean departure weekday rather than preceding road pickup or browser timezone', async () => {
+    const roadLeg = { mode: 'truck', sequence: 1, from: { name: 'Depot' }, to: { name: 'Shanghai' }, events: [{ ...dateEvent('departure'), local_datetime: '2026-09-30T23:00:00' }] };
+    const { ui } = await render(result([{ ...record, legs: [roadLeg, { ...record.legs[0], sequence: 2 }] }]));
+    vi.stubGlobal('document', { querySelector: () => null });
+    await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '4' } });
+    expect(ui.page('schedules')).toContain('TEST VESSEL');
+    await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '3' } });
+    expect(ui.page('schedules')).not.toContain('TEST VESSEL');
   });
   it('removes stale rendered results and selected candidate controls when the carrier changes', async () => {
     const { ui } = await render(result());
