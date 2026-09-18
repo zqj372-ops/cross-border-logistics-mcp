@@ -8,7 +8,7 @@ const fresh=()=>({label:'',source:{name:'',url:'',version:'',observed_at:'',expi
 function localDate(value){return `${value.getFullYear()}-${String(value.getMonth()+1).padStart(2,'0')}-${String(value.getDate()).padStart(2,'0')}`}
 function defaultScheduleWindow(){const now=new Date();return{from:localDate(now),until:localDate(new Date(now.getFullYear(),now.getMonth(),now.getDate()+28))}}
 export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rerender,canConfigure}){
-  let epoch=0, state=new Map(), liveEpoch=0;
+  let epoch=0, state=new Map(), liveEpoch=0, carriersEpoch=0;
   let live={mode:'live',carriers:null,carriersPending:false,carriersRequested:false,carrier:'ONE',originText:'',originCountry:'CN',destinationText:'',destinationCountry:'CA',...defaultScheduleWindow(),routing:'any',originId:'',destinationId:'',originCandidates:[],destinationCandidates:[],result:null,pending:false,error:'',controller:null};
   const item=kind=>{if(!state.has(kind))state.set(kind,{input:null,result:null,config:null,editor:null,pending:false,dirty:false,approval:null,error:''});return state.get(kind);};
   const endpoint=kind=>'/admin/'+modules[kind].path;
@@ -30,11 +30,11 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
   const liveStatusLabels={success:'完整结果',manual_review:'部分结果，需人工复核',needs_input:'需要补充选择',blocked:'已阻止',unavailable:'暂不可用'};
   const scheduleAccess=()=>scheduleAccessState({session:model().session,directory:model().directory});
   function scheduleNotice(access){
-    if(access.phase==='anonymous')return `<div class="schedule-context-note">${note('登录后可查询真实船期。现在可以先填写查询条件，登录或选择企业后再提交。','info')}<a class="button primary" href="#login">登录</a></div>`;
+    if(access.phase==='anonymous')return `<div class="schedule-context-note">${note('登录后可查询真实船期。现在可以先填写查询条件，登录或选择企业后再提交。','info')}<button type="button" class="button primary" data-login-return="schedules">登录</button></div>`;
     if(access.phase==='platform-no-org')return note(access.organizations.length?'平台工作区不执行企业船期查询。请使用页面上方“当前工作区”选择具体企业，再提交查询。':'平台账号当前没有可用的企业工作区。请切换到企业账号，或由企业管理员邀请。','info');
     if(access.phase==='select-org')return note('请先在页面顶部选择企业；选择后会继续留在本页，已填写的查询条件会保留。','info');
     if(access.phase==='no-membership')return note('当前账号没有可用的企业成员资格。请联系企业管理员邀请或恢复成员状态；没有成员资格时不会发起真实查询。','warning');
-    if(access.phase==='viewer')return note('当前角色是查看者，不能发起官方船期查询。请联系企业管理员调整为 owner/admin/developer。','warning');
+    if(access.phase==='viewer')return note('当前角色为查看者，不能发起官方船期查询。请联系企业管理员调整为负责人、管理员或开发者。','warning');
     return '';
   }
   function liveCandidateChoices(list,side){
@@ -44,10 +44,10 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
   function liveForm(access){
     const carriers=live.carriers?.carriers||[];
     const fallback=[{id:'ONE',display_name:'Ocean Network Express',capability_status:null},{id:'COSCO',display_name:'COSCO SHIPPING Lines',capability_status:null}];
-    const visible=carriers.length?carriers:fallback;
+    const visible=(carriers.length?carriers:fallback).filter(c=>['ONE','COSCO'].includes(c.id));
     const verified=carriers.filter(c=>c.capability_status==='live_verified').length;
     const disabled=!access.canQuery||!visible.length;
-    const label=c=>c.capability_status?`${c.display_name} · ${liveCapabilityLabels[c.capability_status]||c.capability_status}`:`${c.display_name} · 已实现候选，权限确认后可用`;
+    const label=c=>c.capability_status?`${c.id} · ${liveCapabilityLabels[c.capability_status]||c.capability_status}`:c.id;
     return `<form class="panel maritime-query schedule-query" data-form="maritime-live-query"><div class="form-error" role="alert" hidden></div><div class="field-grid schedule-primary-fields">
 <div class="field"><label for="live-carrier">船司</label><select id="live-carrier" name="carrier" required>${visible.map(c=>`<option value="${esc(c.id)}" ${live.carrier===c.id?'selected':''}>${esc(label(c))}</option>`).join('')}</select></div>
 <div class="field"><label for="live-origin">起运港 / 起运地</label><input id="live-origin" name="origin" value="${esc(live.originText)}" required maxlength="200" placeholder="例如 Shanghai"></div>
@@ -55,21 +55,24 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
 <div class="field"><label for="live-from">离港开始</label><input id="live-from" name="from" type="date" value="${esc(live.from)}" required></div>
 <div class="field"><label for="live-until">离港截止</label><input id="live-until" name="until" type="date" value="${esc(live.until)}" required></div>
 <div class="field"><label for="live-routing">直达 / 中转</label><select id="live-routing" name="routing"><option value="any" ${live.routing==='any'?'selected':''}>不限</option><option value="direct" ${live.routing==='direct'?'selected':''}>直达</option><option value="transshipment" ${live.routing==='transshipment'?'selected':''}>中转</option></select></div>
-</div><details class="schedule-secondary schedule-country"><summary>国家/地区代码（可选）</summary><div class="field-grid"><div class="field"><label for="live-origin-country">起运地国家代码</label><input id="live-origin-country" name="origin_country" value="${esc(live.originCountry)}" maxlength="2" pattern="[A-Za-z]{2}"></div><div class="field"><label for="live-destination-country">目的地国家代码</label><input id="live-destination-country" name="destination_country" value="${esc(live.destinationCountry)}" maxlength="2" pattern="[A-Za-z]{2}"></div></div></details>${liveCandidateChoices(live.originCandidates,'origin')}${liveCandidateChoices(live.destinationCandidates,'destination')}<button type="submit" class="button primary" ${disabled?'disabled':''}>${live.pending?'查询中…（修改后可重新提交）':'查询官方船期'} ${icon('search')}</button><small>${carriers.length?`官方来源查询不会保存为企业快照；当前 ${verified} 家已完成 live 验证，其他状态按目录显示。`:'ONE/COSCO 是已实现候选；实际可用性由企业服务目录、角色权限与部署白名单决定。'}</small></form>`;
+</div><details class="schedule-secondary schedule-country"><summary>国家/地区代码（可选）</summary><div class="field-grid"><div class="field"><label for="live-origin-country">起运地国家代码</label><input id="live-origin-country" name="origin_country" value="${esc(live.originCountry)}" maxlength="2" pattern="[A-Za-z]{2}"></div><div class="field"><label for="live-destination-country">目的地国家代码</label><input id="live-destination-country" name="destination_country" value="${esc(live.destinationCountry)}" maxlength="2" pattern="[A-Za-z]{2}"></div></div></details>${liveCandidateChoices(live.originCandidates,'origin')}${liveCandidateChoices(live.destinationCandidates,'destination')}<button type="submit" class="button primary" ${disabled?'disabled':''}>${live.pending?'查询中…（修改后可重新提交）':'查询官方船期'} ${icon('search')}</button><small>${carriers.length?`查询结果不会自动保存为企业船期记录；当前 ${verified} 家船司标记为已完成验证，其他状态以企业目录为准。`:'登录并选择企业后可查询；具体可用船司以企业目录为准。'}</small>${live.error&&!live.carriers?`<button type="button" class="button" data-action="maritime-live-reload-carriers">重新读取船司目录</button>`:''}</form>`;
   }
-  function liveEventText(event){if(!event)return '未提供';return `${event.local_datetime||event.local_date||'未提供'} · ${event.precision||'unknown'}${event.timezone?' · '+event.timezone:''}${event.utc_datetime?' · UTC '+event.utc_datetime:''}`}
+  const eventKindLabel=event=>events[event?.event_kind]||'事件类型未提供';
+  function readableDateTime(value){if(!value)return null;const match=/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/u.exec(value);return match?(match[4]?`${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}`:`${match[1]}-${match[2]}-${match[3]}`):value;}
+  function liveEventSummary(event){if(!event)return '时间未提供';return `${eventKindLabel(event)} ${readableDateTime(event.local_datetime||event.local_date)||'时间未提供'} · ${event.timezone||'来源未提供时区'}`;}
+  function liveEventDetail(event){const parts=[eventKindLabel(event),readableDateTime(event.local_datetime||event.local_date)||'时间未提供'];if(event.precision)parts.push(`精度 ${event.precision}`);parts.push(`时区 ${event.timezone||'来源未提供时区'}`);if(event.utc_datetime)parts.push(`UTC ${event.utc_datetime}`);if(event.raw_text)parts.push(`原文 ${event.raw_text}`);return parts.join(' · ');}
   function liveRecord(record){
-    const legEvents=leg=>leg.events.map(e=>`<li>${esc(e.event_type==='departure'?'离港':e.event_type==='arrival'?'到港':e.event_type)} ${esc(liveEventText(e))}</li>`).join('');
+    const legEvents=leg=>leg.events.map(e=>`<li>${esc(liveEventDetail(e))}</li>`).join('');
     const legs=record.legs.map(leg=>`<details class="maritime-leg"><summary>第 ${leg.sequence} 段 · ${esc(leg.mode)}${leg.vessel_name?' · '+esc(leg.vessel_name):''}${leg.voyage?' / '+esc(leg.voyage):''}</summary><p>${esc(leg.from?.name||leg.from?.carrier_location_id||'—')} → ${esc(leg.to?.name||leg.to?.carrier_location_id||'—')}</p>${leg.events.length?`<ul>${legEvents(leg)}</ul>`:'<p>该段没有时间事件。</p>'}</details>`).join('');
     const ocean=record.legs.filter(leg=>leg.mode==='ocean');
     const first=ocean[0]||record.legs[0],last=ocean.at(-1)||record.legs.at(-1);
-    const departure=first?.events.find(e=>e.event_type==='departure')||first?.events[0]||null;
-    const arrival=last?.events.find(e=>e.event_type==='arrival')||last?.events.at(-1)||null;
+    const departure=first?.events.find(e=>e.event_type==='departure')||null;
+    const arrival=last?.events.find(e=>e.event_type==='arrival')||null;
     const vessel=ocean.find(leg=>leg.vessel_name)?.vessel_name||null;
     const voyage=ocean.find(leg=>leg.voyage)?.voyage||null;
     const routing=record.routing==='direct'?'直达':record.routing==='transshipment'?'中转':`来源未提供（${record.routing}）`;
     const cutoffs=Object.entries(record.cutoffs||{}).filter(([,v])=>v).map(([k,v])=>`${k.toUpperCase()} ${esc(v.at||'')} · ${esc(v.precision||'unknown')}`).join(' · ');
-    return `<article class="panel sailing-card schedule-card"><div class="sailing-card-head"><div><strong>${esc(vessel||'船名未提供')}</strong><span>${voyage?'航次 '+esc(voyage):'航次未提供'} · ${esc(record.operating_carrier||record.service_name||'船司未提供')}</span></div><span class="badge">${esc(routing)}</span></div><div class="sailing-route schedule-route"><div><span>起运</span><h3>${esc(record.pol?.name||record.query_origin)}</h3><time>${departure?'离港 '+esc(liveEventText(departure)):'离港时间未提供'}</time></div><span class="sailing-route-icon">${icon('ship')}${icon('arrow')}</span><div><span>到达</span><h3>${esc(record.pod?.name||record.query_destination)}</h3><time>${arrival?'到达 '+esc(liveEventText(arrival)):'到达时间未提供'}</time></div></div><p class="schedule-leg-summary">${record.legs.length} 段运输${record.transit?.source_total_hours?` · 来源总时长 ${esc(record.transit.source_total_hours)} 小时`:''}${record.transit?.basis?` · 口径 ${esc(record.transit.basis)}`:''}</p><details class="schedule-secondary"><summary>查看 ${record.legs.length} 段运输与时间精度</summary>${legs}</details><details class="schedule-secondary"><summary>截关、证据与来源字段</summary>${cutoffs?`<p><small>截关：${cutoffs}</small></p>`:''}${record.missing_fields?.length?note('来源缺少字段：'+record.missing_fields.join('、'),'warning'):''}<p><small>证据引用 <code>${esc(record.evidence_ref)}</code></small></p></details></article>`;
+    return `<article class="panel sailing-card schedule-card"><div class="sailing-card-head"><div><strong>${esc(vessel||'船名未提供')}</strong><span>${voyage?'航次 '+esc(voyage):'航次未提供'}</span><span>实际承运船司：${esc(record.operating_carrier||'未提供')}</span></div><span class="badge">${esc(routing)}</span></div><div class="sailing-route schedule-route"><div><span>起运</span><h3>${esc(record.pol?.name||record.query_origin)}</h3><time>${departure?'离港 '+esc(liveEventSummary(departure)):'离港时间未提供'}</time></div><span class="sailing-route-icon">${icon('ship')}${icon('arrow')}</span><div><span>到达</span><h3>${esc(record.pod?.name||record.query_destination)}</h3><time>${arrival?'到达 '+esc(liveEventSummary(arrival)):'到达时间未提供'}</time></div></div><p class="schedule-leg-summary">${record.legs.length} 段运输${record.transit?.source_total_hours?` · 来源总时长 ${esc(record.transit.source_total_hours)} 小时`:''}${record.transit?.basis?` · 口径 ${esc(record.transit.basis)}`:''}</p><details class="schedule-secondary"><summary>查看 ${record.legs.length} 段运输与时间精度</summary>${legs}</details><details class="schedule-secondary"><summary>截关、证据与来源字段</summary>${cutoffs?`<p><small>截关：${cutoffs}</small></p>`:''}${record.missing_fields?.length?note('来源缺少字段：'+record.missing_fields.join('、'),'warning'):''}<p><small>证据引用 <code>${esc(record.evidence_ref)}</code></small></p></details></article>`;
   }
   function liveResults(){
     if(live.error)return note(live.error,'error');
@@ -81,13 +84,14 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
     const uncovered=(coverage?.uncovered_windows||[]).map(w=>`${w.from}—${w.until}`).join('、');
     const records=d.records||[];
     const empty=records.length?'':`<div class="maritime-empty"><h3>覆盖范围内没有匹配航次</h3><p>${r.status==='success'?'当前条件下官方来源没有返回记录；这不代表其他日期或航线没有船期。':'当前结果不完整，请查看覆盖范围和阻塞原因，不要据此判断没有船期。'}</p></div>`;
-    return `<div class="maritime-provenance"><strong>${esc(d.carrier.sales_carrier)}</strong><span class="badge">${esc(liveStatusLabels[r.status]||r.status)}</span><span>来源 ${esc(provenance.kind)} · ${esc(provenance.parser_version)} · ${esc(d.carrier.capability_status)}</span><span>覆盖 ${coverage.complete?'完整':'不完整'}${uncovered?' · 未覆盖 '+esc(uncovered):''}</span><span>${records.length} 条航次</span></div>${d.carrier.id==='ONE'?note('ONE 的到达时间当前来自官方靠泊时间（berthingDate），与官方到港字段（arrivalDate）可能不同，页面不推断两者等价或存在固定时差。','warning'):''}${notices}${empty}<div class="maritime-results schedule-results">${records.map(liveRecord).join('')}</div><details class="schedule-secondary"><summary>覆盖、来源与证据引用</summary><p><small>请求 ${esc(coverage.requested_from)} 至 ${esc(coverage.requested_until)} · 已覆盖 ${esc((coverage.covered_windows||[]).map(w=>`${w.from}—${w.until}`).join('、')||'无')} · 未覆盖 ${esc(uncovered||'无')} · parser ${esc(provenance.parser_version)} · ${esc((provenance.source_refs||[]).length)} 个证据引用</small></p>${(provenance.source_refs||[]).map(x=>`<p><code>${esc(x)}</code></p>`).join('')}</details>`;
+    return `<div class="maritime-provenance"><strong>${esc(d.carrier.sales_carrier)}</strong><span class="badge">${esc(liveStatusLabels[r.status]||r.status)}</span><span>覆盖 ${coverage.complete?'完整':'不完整'}${uncovered?' · 未覆盖 '+esc(uncovered):''}</span><span>${records.length} 条航次</span></div>${d.carrier.id==='ONE'?note('ONE 的到达时间来自官方靠泊时间（berthingDate）；页面不把它标记为已验证到港，也不推断它与 arrivalDate 等价或存在固定时差。','warning'):''}${notices}${empty}<div class="maritime-results schedule-results">${records.map(liveRecord).join('')}</div><details class="schedule-secondary"><summary>覆盖、来源与证据引用</summary><p><small>请求 ${esc(coverage.requested_from)} 至 ${esc(coverage.requested_until)} · 已覆盖 ${esc((coverage.covered_windows||[]).map(w=>`${w.from}—${w.until}`).join('、')||'无')} · 未覆盖 ${esc(uncovered||'无')} · 来源类型 ${esc(provenance.kind)} · parser ${esc(provenance.parser_version)} · 船司目录状态 ${esc(d.carrier.capability_status)} · ${esc((provenance.source_refs||[]).length)} 个证据引用</small></p>${(provenance.source_refs||[]).map(x=>`<p><code>${esc(x)}</code></p>`).join('')}</details>`;
   }
   async function loadLiveCarriers(){
     if(live.carriers||live.carriersPending)return;
+    const generation=carriersEpoch;
     live.carriersPending=true;
-    try{const r=await api('/maritime/schedule-collector/carriers',{acceptBusiness:true});live.carriers=r.data;}catch(error){live.carriersRequested=false;live.error=error.code==='schedule_live_unavailable'?'官方查询尚未在此环境启用。':'船司目录读取失败，请稍后重试。';}
-    live.carriersPending=false;rerender();
+    try{const r=await api('/maritime/schedule-collector/carriers',{acceptBusiness:true});if(generation!==carriersEpoch)return;live.carriers=r.data;}catch(error){if(generation!==carriersEpoch)return;live.error=error.code==='schedule_live_unavailable'?'官方查询尚未在此环境启用。':'船司目录读取失败，请点击“重新读取船司目录”再试。';}
+    finally{if(generation===carriersEpoch){live.carriersPending=false;rerender();}}
   }
   async function runLive(form){
     const access=scheduleAccess();
@@ -121,7 +125,7 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
       const access=scheduleAccess();
       if(access.canQuery&&!live.carriers&&!live.carriersRequested){live.carriersRequested=true;void loadLiveCarriers();}
       const firstScreen=`<section class="schedule-query-shell" data-schedule-phase="${access.phase}">${scheduleNotice(access)}${liveForm(access)}${liveResults()}</section>`;
-      return `<div class="maritime-workspace schedule-page">${head(m.title,'查询官方实时船期：船司、起运地、目的地、离港日期与直达/中转。',canConfigure()?`<a class="button" href="#configure/${m.id}">配置船期快照</a>`:'')}<div class="maritime-intro">${icon(m.icon)}<p>默认查询官方实时船期；企业已发布快照与官方来源入口收在下方，不占首屏。</p></div>${firstScreen}<details class="schedule-secondary schedule-snapshot"><summary>企业已发布船期快照（次入口）</summary>${snapshotBody}</details><details class="schedule-secondary schedule-sources"><summary>官方来源入口（辅助）</summary>${sources('schedules',q.destination||'')}</details><p class="maritime-cli"><a href="/console/workspace-cli.md" target="_blank" rel="noopener">${icon('terminal')} CLI 使用说明</a> <code>freightclaw workspace schedules live-search</code></p></div>`;
+      return `<div class="maritime-workspace schedule-page">${head(m.title,'查询官方船期：船司、起运地、目的地、离港日期与直达/中转。',canConfigure()?`<a class="button" href="#configure/${m.id}">配置船期快照</a>`:'')}<div class="maritime-intro">${icon(m.icon)}<p>查询船公司官方船期；需要企业数据时可查看企业船期记录。</p></div>${firstScreen}<details class="schedule-secondary schedule-snapshot"><summary>企业船期记录</summary>${snapshotBody}</details><details class="schedule-secondary schedule-sources"><summary>其他官方来源</summary>${sources('schedules',q.destination||'')}</details><p class="maritime-cli"><a href="/console/workspace-cli.md" target="_blank" rel="noopener">${icon('terminal')} CLI 使用说明</a> <code>freightclaw workspace schedules live-search</code></p></div>`;
     }
     return `<div class="maritime-workspace">${head(m.title,'查看铁路、锚地、闸口与堆场指标，按统计区间判断运输安排。',canConfigure()?`<a class="button" href="#configure/${m.id}">配置效率数据</a>`:'')}<div class="maritime-intro">${icon(m.icon)}<p>不同码头与统计周期分别展示；堆场占用英尺不等于箱量。</p></div>${signed()?snapshotBody:`<div class="maritime-empty"><h2>登录后查看企业数据</h2><p>企业自行核验的码头效率资料会显示在登录后的工作区。</p></div>`}${sources(kind,q.destination||q.port)}<p class="maritime-cli"><a href="/console/workspace-cli.md" target="_blank" rel="noopener">${icon('terminal')} CLI 使用说明</a> <code>freightclaw workspace ${kind} query</code></p></div>`;
   }
@@ -166,6 +170,7 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
     if(!b.dataset.action?.startsWith('maritime-'))return false;
     const kind=b.dataset.kind,s=item(kind),a=b.dataset.action.slice(9),generation=epoch;
     if(a==='reload'){state.delete(kind);rerender();return true;}
+    if(a==='live-reload-carriers'){live.carriers=null;live.carriersPending=false;live.carriersRequested=true;live.error='';rerender();void loadLiveCarriers();return true;}
     if(a==='add'||a==='remove'){
       capture(document.querySelector('[data-form="maritime-save"]'));
       if(a==='add'&&s.editor.records.length<500)s.editor.records.push({id:crypto.randomUUID()});
@@ -188,10 +193,15 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
     if(liveForm){
       const data=new FormData(liveForm),get=k=>String(data.get(k)??'').trim();
       live.carrier=get('carrier')||live.carrier;live.originText=get('origin');live.originCountry=get('origin_country').toUpperCase();live.destinationText=get('destination');live.destinationCountry=get('destination_country').toUpperCase();live.from=get('from');live.until=get('until');live.routing=get('routing')||'any';
-      live.result=null;live.error='';if(event.target.name==='origin'){live.originId='';live.originCandidates=[];}if(event.target.name==='destination'){live.destinationId='';live.destinationCandidates=[];}return true;
+      live.controller?.abort();live.controller=null;liveEpoch++;live.pending=false;live.result=null;live.error='';
+      const field=event.target.name;
+      if(field==='carrier'){live.originId='';live.destinationId='';live.originCandidates=[];live.destinationCandidates=[];}
+      else if(field==='origin'||field==='origin_country'){live.originId='';live.originCandidates=[];}
+      else if(field==='destination'||field==='destination_country'){live.destinationId='';live.destinationCandidates=[];}
+      return true;
     }
     const queryForm=event.target.closest('[data-form="maritime-query"]');
     if(queryForm){const s=item(queryForm.dataset.kind);s.result=null;document.querySelector('.maritime-results')?.replaceChildren();const source=document.querySelector('.maritime-provenance');if(source)source.textContent='条件已修改，请重新查询。';return true;}
     const form=event.target.closest('[data-form="maritime-save"]');if(!form)return false;const s=item(form.dataset.kind);capture(form);s.dirty=true;s.approval=null;document.querySelector('[data-maritime-dirty]').textContent='有未保存修改';document.querySelectorAll('[data-action="maritime-preview"],[data-action="maritime-confirm"]').forEach(b=>{b.disabled=true;});return true;}
-  return {page,admin,action,submit,input,reset(preserveQuery=false){epoch++;state=new Map();liveEpoch++;live.controller?.abort();const keep=preserveQuery?{carrier:live.carrier,originText:live.originText,originCountry:live.originCountry,destinationText:live.destinationText,destinationCountry:live.destinationCountry,from:live.from,until:live.until,routing:live.routing,carriers:live.carriers}:null;live={mode:'live',carriers:keep?.carriers??null,carriersPending:false,carriersRequested:Boolean(keep?.carriers),carrier:keep?.carrier??'ONE',originText:keep?.originText??'',originCountry:keep?.originCountry??'CN',destinationText:keep?.destinationText??'',destinationCountry:keep?.destinationCountry??'CA',...defaultScheduleWindow(),...(keep?{from:keep.from,until:keep.until,routing:keep.routing}:{}),originId:'',destinationId:'',originCandidates:[],destinationCandidates:[],result:null,pending:false,error:'',controller:null};},isDirty:()=>[...state.values()].some(s=>s.dirty),configurationStatus(kind){const s=load(kind==='sailing-schedules'?'schedules':'terminals');return s.pending?'正在读取…':s.error?'状态读取失败':s.config?.active_release?'已发布快照':s.config?.draft?'草稿待发布':'尚未配置';}};
+  return {page,admin,action,submit,input,reset(preserveQuery=false){epoch++;state=new Map();liveEpoch++;carriersEpoch++;live.controller?.abort();const keep=preserveQuery?{carrier:live.carrier,originText:live.originText,originCountry:live.originCountry,destinationText:live.destinationText,destinationCountry:live.destinationCountry,from:live.from,until:live.until,routing:live.routing}:null;live={mode:'live',carriers:null,carriersPending:false,carriersRequested:false,carrier:keep?.carrier??'ONE',originText:keep?.originText??'',originCountry:keep?.originCountry??'CN',destinationText:keep?.destinationText??'',destinationCountry:keep?.destinationCountry??'CA',...defaultScheduleWindow(),...(keep?{from:keep.from,until:keep.until,routing:keep.routing}:{}),originId:'',destinationId:'',originCandidates:[],destinationCandidates:[],result:null,pending:false,error:'',controller:null};},isDirty:()=>[...state.values()].some(s=>s.dirty),configurationStatus(kind){const s=load(kind==='sailing-schedules'?'schedules':'terminals');return s.pending?'正在读取…':s.error?'状态读取失败':s.config?.active_release?'已发布快照':s.config?.draft?'草稿待发布':'尚未配置';}};
 }

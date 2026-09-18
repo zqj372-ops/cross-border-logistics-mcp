@@ -7,7 +7,7 @@ import { createChannelsUi, createCliAuthorizationUi } from "./channels.js";
 import { createLoginForm } from "./login.js";
 import { createCasesUi } from "./cases.js";
 import { icon } from './icons.js';
-import { rememberLoginDestination, consumeLoginDestination } from './login-destination.js';
+import { rememberLoginDestination, consumeLoginDestination, peekLoginDestination } from './login-destination.js';
 import { createCliGuide } from './cli-guide.js';
 import { createServiceHome } from './home.js';
 import { createCustomsHistoryUi } from "./customs-history.js";
@@ -171,7 +171,7 @@ async function refresh() {
 function brand() { return `<a class="brand" href="#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
 function loginStorage() { try { return window.sessionStorage; } catch { return null; } }
 function renderLogin() {
-  rememberLoginDestination(['case','channels','cli-authorize','business-admin','quote','configure','market'].includes(route().page) && route().id ? `${route().page}/${route().id}` : route().page, loginStorage());
+  if (!peekLoginDestination(loginStorage())) rememberLoginDestination(['case','channels','cli-authorize','business-admin','quote','configure','market'].includes(route().page) && route().id ? `${route().page}/${route().id}` : route().page, loginStorage());
   document.title = '登录 · FreightClaw';
   app.className = 'login-shell';
   app.innerHTML = `<section class="login-story">${brand()}<h1>从一票需求，<br>到每一步进展。</h1><p>询价、查询和业务协作，都在一个工作台。</p><div class="login-features"><div class="login-feature">${icon('file')}需求与进度随时可查</div><div class="login-feature">${icon('users')}账号登录，权限自动匹配</div><div class="login-feature">${icon('key')}网页与接口共享服务</div></div></section><section class="login-panel"><h2>欢迎回来</h2><p>登录账号，继续你的工作。</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? loginForm.markup() : '<a class="button primary" href="/console/auth/login">账号密码登录</a><a class="login-return" href="#home">返回首页</a>'}</section>`;
@@ -479,7 +479,8 @@ document.addEventListener('click', async (event) => {
   if (!event.target.closest('.account-disclosure')) closeAccount();
   const button = event.target.closest('button'); if (!button || button.disabled) return;
   if (button.dataset.action === 'account-menu') { const menu = document.querySelector('#account-menu'); const open = menu.hidden; closeMenu(); menu.hidden = !open; button.setAttribute('aria-expanded', String(open)); if (open) menu.querySelector('button')?.focus(); return; }
-  if (button.dataset.go) { go(button.dataset.go); return; }
+  if (button.dataset.go) { if (!model.session?.authenticated && button.dataset.go === 'account') rememberLoginDestination(route().page, loginStorage()); go(button.dataset.go); return; }
+  if (button.dataset.loginReturn) { rememberLoginDestination(button.dataset.loginReturn, loginStorage()); go('login'); return; }
   if (!button.dataset.action) return;
   clearNotice(); const previous = button.innerHTML; button.disabled = true;
   try { await runAction(button); } catch (error) {
