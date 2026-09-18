@@ -101,6 +101,25 @@ describe('customer schedule presentation', () => {
     await ui.action({ dataset: { action: 'maritime-live-weekday', weekday: '3' } });
     expect(ui.page('schedules')).not.toContain('service-row');
   });
+  it('withholds conflicting source identities even when the adapter supplied records', async () => {
+    const response = result();
+    const { html } = await render({ ...response, status: 'manual_review', data: { ...response.data,
+      quality: { conflicts: ['internal-destination-mismatch'] } } });
+    expect(html).toContain('船公司返回的地点与本次查询不一致');
+    expect(html).not.toContain('TEST VESSEL');
+    expect(html).not.toContain('2026-10-01 08:00');
+    expect(html).not.toContain('internal-');
+  });
+  it('leaves final arrival blank when only the ocean ETA and cargo availability are known', async () => {
+    const oceanLeg = { ...record.legs[0], events: [dateEvent('departure'),
+      { ...dateEvent('arrival'), local_datetime: '2026-10-11T10:00:00' }] };
+    const inlandLeg = { mode: 'unknown', sequence: 2, from: { name: 'Vancouver' }, to: { name: 'Toronto' }, events: [] };
+    const { html } = await render(result([{ ...record, routing: 'unknown',
+      cargo_available_at: '2026-10-19T12:00:00', legs: [oceanLeg, inlandLeg] }]));
+    expect(html).toContain('到达时间未提供');
+    expect(html).not.toContain('2026-10-11 10:00');
+    expect(html).not.toContain('2026-10-19 12:00');
+  });
   it('removes stale rendered results and selected candidate controls when the carrier changes', async () => {
     const { ui } = await render(result());
     const region = { innerHTML: 'TEST VESSEL' };

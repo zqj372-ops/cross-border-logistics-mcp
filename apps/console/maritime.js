@@ -171,6 +171,7 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     if(!r)return '<div class="maritime-empty schedule-result-empty"><h2>查询您的下一程</h2><p>选择起运地、目的地和离港日期，查看可选航次。</p></div>';
     const d=r.data,coverage=d?.coverage;
     if(!d)return note(liveStatusLabels[r.status]||'暂时无法查询，请稍后重试。','warning');
+    if(d.quality?.conflicts?.length)return note('船公司返回的地点与本次查询不一致，暂不展示该结果。请更换船公司或稍后重试。','warning');
     const records=d.records||[],partial=r.status!=='success'||!coverage.complete;
     const uncovered=(coverage?.uncovered_windows||[]).map(w=>`${w.from}—${w.until}`).join('、');
     const empty=records.length?'':`<div class="maritime-empty"><h3>${partial?'暂未取得完整船期':'未找到匹配航次'}</h3><p>${partial?'请稍后重试，或向船公司确认。':'请调整起运地、目的地或离港日期后重试。'}</p></div>`;
