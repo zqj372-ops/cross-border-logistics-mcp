@@ -174,7 +174,7 @@ describe("COSCO schedule adapter", () => {
     expect(result.quality.evaluation_status).toBe("partial");
   });
 
-  it("marks source city echo conflicts as partial without discarding records", () => {
+  it("withholds records when the source returns a conflicting city identity", () => {
     const response = {
       ...syntheticCoscoScheduleResponse,
       data: {
@@ -188,7 +188,7 @@ describe("COSCO schedule adapter", () => {
       },
     };
     const result = parseCoscoScheduleResponse(response, context());
-    expect(result.records).toHaveLength(1);
+    expect(result.records).toHaveLength(0);
     expect(result.quality).toMatchObject({
       key_fields_complete: false,
       evaluation_status: "partial",
@@ -261,6 +261,51 @@ describe("COSCO schedule adapter", () => {
       evaluation_status: "partial",
     });
     expect(result.quality.missing_field_count).toBe(1);
+  });
+
+  it("groups explicit sequential ocean legs into one itinerary", () => {
+    const row = syntheticCoscoScheduleResponse.data.content.data[0];
+    const response = { ...syntheticCoscoScheduleResponse, data: { content: {
+      ...syntheticCoscoScheduleResponse.data.content, data: [
+        { ...row, pod: "Busan", podPortCode: "PUS" },
+        { ...row, id: null, legSequence: 2, pol: "Busan", polPortCode: "PUS" },
+        { ...row, id: "2" },
+      ] } } };
+    const result = parseCoscoScheduleResponse(response, context());
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0]?.routing).toBe("transshipment");
+    expect(result.records[0]?.legs).toHaveLength(2);
+    expect(result.records[0]?.legs[0]?.to.country_code).toBeNull();
+    expect(result.records[0]?.legs[1]?.from.country_code).toBeNull();
+    expect(result.records[0]?.legs[1]?.to.country_code).toBe("CA");
+    expect(result.records.map(r => r.record_id)).toEqual(["cosco-1", "cosco-2"]);
+  });
+
+  it("never presents an intermediate-port ETA or cargo availability as the final arrival", () => {
+    const row = syntheticCoscoScheduleResponse.data.content.data[0];
+    const response = { ...syntheticCoscoScheduleResponse, data: { content: {
+      ...syntheticCoscoScheduleResponse.data.content, data: [{ ...row,
+        pod: "Prince Rupert", podPortCode: "PRR", available: "2026-10-07 09:00" }],
+    } } };
+    const result = parseCoscoScheduleResponse(response, context());
+    const record = result.records[0]!;
+    expect(record.legs.at(-1)?.to.name).toBe("Vancouver");
+    expect(record.legs.at(-1)?.events).toEqual([]);
+    expect(record.legs.at(-1)?.mode).toBe("unknown");
+    expect(record.cargo_available_at).toBe("2026-10-07T09:00:00.000");
+    expect(record.place_of_delivery).toBe("synthetic-cosco-vancouver-ca");
+    expect(result.quality.key_fields_complete).toBe(false);
+  });
+
+  it("fails closed for orphan and disconnected continuation rows", () => {
+    const row = syntheticCoscoScheduleResponse.data.content.data[0];
+    const run = (rows: unknown[]) => parseCoscoScheduleResponse({
+      ...syntheticCoscoScheduleResponse, data: { content: {
+        ...syntheticCoscoScheduleResponse.data.content, data: rows,
+      } },
+    }, context());
+    expect(() => run([{ ...row, id: null, legSequence: 2 }])).toThrow();
+    expect(() => run([row, { ...row, id: null, legSequence: 2, pol: "Busan", polPortCode: "PUS" }])).toThrow();
   });
 
   it("builds the official public HTTP request through the injected port", async () => {

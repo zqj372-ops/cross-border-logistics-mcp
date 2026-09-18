@@ -99,7 +99,7 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     const ocean=record.legs.filter(leg=>leg.mode==='ocean');
     const vessel=ocean.find(leg=>leg.vessel_name)?.vessel_name||null;
     const voyage=ocean.find(leg=>leg.voyage)?.voyage||null;
-    const routing=record.routing==='direct'?'直达':record.routing==='transshipment'?'中转':'待确认';
+    const routing=serviceRouting(record)==='direct'?'直达':serviceRouting(record)==='transshipment'?'中转':'待确认';
     const cutoffLabels={si:'补料截止',vgm:'VGM 截止',cy:'截港',customs:'报关截止'};
     const cutoffs=Object.entries(record.cutoffs||{}).filter(([,v])=>v?.at).map(([k,v])=>`<div><dt>${cutoffLabels[k]||'截止时间'}</dt><dd>${stamp(v.at)}</dd>${v.conditions?.length?`<dd>${v.conditions.map(esc).join('；')}</dd>`:''}</div>`).join('');
     const timeCell=(event,missing)=>event?`<time>${event.local_datetime||event.local_date?esc(readableDateTime(event.local_datetime||event.local_date)):stamp(event.utc_datetime)}</time><small>${esc(eventKindLabel(event))} · ${esc(event.timezone||'来源未提供时区')}</small>`:`<small>${missing}</small>`;
@@ -116,6 +116,12 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     if(!scored.length)return '航程待确认';
     const first=scored[0],last=scored.at(-1);
     return first.n*last.d===last.n*first.d?first.label:`${first.label} — ${last.label}`;
+  }
+  function serviceRouting(record){
+    if(record.routing==='unknown')return 'unknown';
+    const first=record.legs.findIndex(leg=>leg.mode==='ocean'),after=record.legs.slice(first<0?1:first+1);
+    if(after.some(leg=>leg.mode==='unknown'))return 'unknown';
+    return record.routing==='transshipment'||after.length?'transshipment':'direct';
   }
   function serviceGroups(records){
     const groups=new Map();
@@ -139,11 +145,11 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     const modes={ocean:'海运',rail:'铁路',truck:'公路',barge:'驳船',unknown:'待确认'},first=r.legs.findIndex(leg=>leg.mode==='ocean'),after=r.legs.slice(first<0?1:first+1),via=after.map(leg=>locationLabel({name:leg.from.name,country_code:leg.from.country_code}).zh||leg.from.name);
     const cutoffNames={si:'截单 / 补料',cy:'截港',customs:'截关',vgm:'截 VGM'};
     const cutoffCells=Object.entries(cutoffNames).map(([key,label])=>{const values=[...new Set(group.records.map(record=>record.cutoffs?.[key]?.at||''))];return `<div><dt>${label}</dt><dd>${values.length===1?values[0]?stamp(values[0]):'未提供':'各航次不同，见下方详情'}</dd></div>`;}).join('');
-    return `<div class="service-detail-view"><button type="button" class="text-button service-back" data-action="maritime-back-services">← 返回航线选择</button><section class="service-profile"><header><h2>船公司：<strong>${esc(group.carrier)}</strong></h2><span>${group.records.length} 条航次</span></header><div class="service-profile-body"><dl class="service-facts"><div><dt>计划开航日</dt><dd>${days}</dd></div><div><dt>航程</dt><dd>${esc(transitRange(group.records))}</dd></div><div><dt>航线</dt><dd>${esc(r.service_name||'未提供')}</dd></div><div><dt>挂靠码头</dt><dd>${esc(r.terminal?.name||'未提供')}</dd></div><div><dt>起运地</dt><dd>${esc(live.originText)}</dd></div><div><dt>后程运输</dt><dd>${after.length?[...new Set(after.map(leg=>modes[leg.mode]||'待确认'))].join(' → '):'—'}</dd></div></dl><div class="service-routing"><strong>${r.routing==='direct'?'直达':r.routing==='transshipment'?'中转':'待确认'}</strong><div>${via.length?via.map(name=>`<span>经 ${esc(name)}</span>`).join(''):`<span>${esc(live.destinationText)}</span>`}</div></div></div></section><section class="service-operations"><header><h2>操作时间</h2><span>按船公司本次返回的航次截止时间显示</span></header><dl>${cutoffCells}</dl></section>${monthlyVoyages(group.records)}<p class="schedule-business-note">到达时间为最终目的地时间。船期如有调整，请向船公司确认。</p></div>`;
+    return `<div class="service-detail-view"><button type="button" class="text-button service-back" data-action="maritime-back-services">← 返回航线选择</button><section class="service-profile"><header><h2>船公司：<strong>${esc(group.carrier)}</strong></h2><span>${group.records.length} 条航次</span></header><div class="service-profile-body"><dl class="service-facts"><div><dt>计划开航日</dt><dd>${days}</dd></div><div><dt>航程</dt><dd>${esc(transitRange(group.records))}</dd></div><div><dt>航线</dt><dd>${esc(r.service_name||'未提供')}</dd></div><div><dt>挂靠码头</dt><dd>${esc(r.terminal?.name||'未提供')}</dd></div><div><dt>起运地</dt><dd>${esc(live.originText)}</dd></div><div><dt>后程运输</dt><dd>${after.length?[...new Set(after.map(leg=>modes[leg.mode]||'待确认'))].join(' → '):'—'}</dd></div></dl><div class="service-routing"><strong>${serviceRouting(r)==='direct'?'直达':serviceRouting(r)==='transshipment'?'中转':'待确认'}</strong><div>${via.length?via.map(name=>`<span>经 ${esc(name)}</span>`).join(''):`<span>${esc(live.destinationText)}</span>`}</div></div></div></section><section class="service-operations"><header><h2>操作时间</h2><span>按船公司本次返回的航次截止时间显示</span></header><dl>${cutoffCells}</dl></section>${monthlyVoyages(group.records)}<p class="schedule-business-note">到达时间为最终目的地时间。船期如有调整，请向船公司确认。</p></div>`;
   }
   function weeklyOverview(records,partial){
     const overview=(routing,title)=>{
-      const matches=records.filter(record=>record.routing===routing),days=['1','2','3','4','5','6','0',...(matches.some(r=>departureDay(r).weekday==='unknown')?['unknown']:[])];
+      const matches=records.filter(record=>serviceRouting(record)===routing),days=['1','2','3','4','5','6','0',...(matches.some(r=>departureDay(r).weekday==='unknown')?['unknown']:[])];
       return `<section class="service-overview"><h3>${title}</h3><div class="service-week-table"><div class="service-week-head"><span>计划开航日</span><span>船公司 / 航程</span></div>${matches.length?days.map(day=>{
         const rows=matches.filter(record=>departureDay(record).weekday===day),carriers=new Map();
         for(const record of rows){const carrier=record.operating_carrier||live.result.data.carrier.id;if(!carriers.has(carrier))carriers.set(carrier,[]);carriers.get(carrier).push(record);}
@@ -156,7 +162,7 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     const modes={ocean:'海运',rail:'铁路',truck:'公路',barge:'驳船',unknown:'待确认'};
     const placeName=place=>place?locationLabel({name:place.name,country_code:place.country_code}).zh||place.name:'待确认';
     const section=(routing,title)=>{
-      const rows=groups.filter(group=>group.record.routing===routing&&(weekday==='all'||group.records.some(record=>departureDay(record).weekday===weekday)));
+      const rows=groups.filter(group=>serviceRouting(group.record)===routing&&(weekday==='all'||group.records.some(record=>departureDay(record).weekday===weekday)));
       if(!rows.length)return '';
       return `<section class="service-section"><h3>${title}</h3><div class="service-table-wrap"><table class="service-table"><thead><tr><th>船公司</th><th>挂靠码头</th><th>航线</th><th>开航日</th><th>中转港</th><th>后程运输</th><th>航程</th><th>相关信息</th></tr></thead><tbody>${rows.map(group=>{
         const r=group.record,days=[...new Set(group.records.map(record=>departureDay(record).weekday))].map(day=>day==='unknown'?'待确认':weekNames[Number(day)]).join('、'),firstOcean=r.legs.findIndex(leg=>leg.mode==='ocean'),after=r.legs.slice(firstOcean<0?1:firstOcean+1),via=after.map(leg=>leg.from).filter(Boolean);
@@ -171,6 +177,7 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     if(!r)return '<div class="maritime-empty schedule-result-empty"><h2>查询您的下一程</h2><p>选择起运地、目的地和离港日期，查看可选航次。</p></div>';
     const d=r.data,coverage=d?.coverage;
     if(!d)return note(liveStatusLabels[r.status]||'暂时无法查询，请稍后重试。','warning');
+    if(d.quality?.conflicts?.length)return note('船公司返回的地点与本次查询不一致，暂不展示该结果。请更换船公司或稍后重试。','warning');
     const records=d.records||[],partial=r.status!=='success'||!coverage.complete;
     const uncovered=(coverage?.uncovered_windows||[]).map(w=>`${w.from}—${w.until}`).join('、');
     const empty=records.length?'':`<div class="maritime-empty"><h3>${partial?'暂未取得完整船期':'未找到匹配航次'}</h3><p>${partial?'请稍后重试，或向船公司确认。':'请调整起运地、目的地或离港日期后重试。'}</p></div>`;

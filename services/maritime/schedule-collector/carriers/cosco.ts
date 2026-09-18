@@ -15,7 +15,7 @@ import type {
   CarrierParserResult,
 } from "./types";
 
-const PARSER_VERSION = "cosco-schedule-parser@1";
+const PARSER_VERSION = "cosco-schedule-parser@2";
 const LOCATION_PATH = "/ebbase/public/general/findCityDistrictByPrefix";
 const SCHEDULE_PATH = "/ebschedule/public/purpoShipmentWs";
 
@@ -204,6 +204,13 @@ function sourceEchoConflicts(
   return conflicts;
 }
 
+function countryForPlace(name: string | null, context: CarrierParserContext): string | null {
+  const normalized = name?.trim().toLowerCase();
+  if (normalized === context.origin.name.toLowerCase()) return context.origin.country_code;
+  if (normalized === context.destination.name.toLowerCase()) return context.destination.country_code;
+  return null;
+}
+
 function parseScheduleRow(
   rawRow: unknown,
   sequence: number,
@@ -228,12 +235,12 @@ function parseScheduleRow(
   const pol = place(
     polName,
     polId,
-    context.origin.country_code,
+    countryForPlace(polName, context),
   );
   const pod = place(
     podName,
     podId,
-    context.destination.country_code,
+    countryForPlace(podName, context),
   );
   if (pol === null || pod === null) {
     return {
@@ -272,14 +279,8 @@ function parseScheduleRow(
   const legSequence = numberValue(row.legSequence) ?? 1;
   const deList1 = asArray(row.deList1);
   const deList2 = asArray(row.deList2);
-  const direct =
-    legSequence === 1 && deList1.length === 0 && deList2.length === 0;
-  if (!direct) {
-    missing.push({
-      field: `content.data[${sequence}].routing`,
-      reason: "cosco_routing_semantics_unverified",
-    });
-  }
+  const direct = deList1.length === 0 && deList2.length === 0;
+  if (!direct) missing.push({ field: `content.data[${sequence}].routing`, reason: "cosco_routing_semantics_unverified" });
   const leg: TransportLeg = {
     sequence: 1,
     mode: "ocean",
@@ -369,6 +370,58 @@ function parseScheduleRow(
   };
 }
 
+function parseItinerary(rows: readonly unknown[], context: CarrierParserContext) {
+  const parsed = rows.map((row, i) => parseScheduleRow(row, i + 1, context));
+  const first = parsed[0]?.record;
+  const last = parsed.at(-1)?.record;
+  if (!first || !last || parsed.some(p => !p.record)) {
+    throw new CollectorRuntimeError("parse_error", "unavailable", "cosco_schedule_rows_unparseable");
+  }
+  const legs = parsed.map((p, i) => ({ ...p.record!.legs[0]!, sequence: i + 1 }));
+  for (let i = 1; i < legs.length; i++) {
+    if (legs[i - 1]!.to.carrier_location_id !== legs[i]!.from.carrier_location_id) {
+      throw new CollectorRuntimeError("parse_error", "unavailable", "cosco_disconnected_segments");
+    }
+  }
+  const missing = parsed.flatMap(p => p.missing);
+  const reachesDestination = last.pod?.name.toLowerCase() === context.destination.name.toLowerCase();
+  if (!reachesDestination) {
+    // The source's cargo-available timestamp is not a destination arrival event.
+    // Retain the requested delivery location without assigning a transport mode or ETA.
+    legs.push({ sequence: legs.length + 1, mode: "unknown", source_leg_id: null,
+      vessel_name: null, voyage: null, from: last.pod!,
+      to: { name: context.destination.name, country_code: context.destination.country_code,
+        carrier_location_id: context.destination.carrier_location_id,
+        unlocode: context.destination.unlocode, type: "inland" }, events: [] });
+    missing.push({ field: "destination.arrival", reason: "cosco_final_destination_arrival_unavailable" });
+  }
+  return {
+    record: { ...first, pod: last.pod, legs,
+      routing: !reachesDestination ? "unknown" as const : legs.length > 1 ? "transshipment" as const : first.routing,
+      terminal: !reachesDestination ? null : first.terminal,
+      place_of_delivery: reachesDestination ? last.place_of_delivery : context.destination.carrier_location_id,
+      cargo_available_at: last.cargo_available_at, missing_fields: missing },
+    missing, keyFieldsComplete: reachesDestination && parsed.every(p => p.keyFieldsComplete),
+  };
+}
+
+function itineraryRows(rows: readonly unknown[]): readonly (readonly unknown[])[] {
+  const groups: unknown[][] = [];
+  for (const raw of rows) {
+    const row = asRecord(raw), sequence = numberValue(row?.legSequence);
+    if (sequence === 1) {
+      groups.push([raw]);
+    } else {
+      const group = groups.at(-1);
+      if (!group || sequence !== group.length + 1 || stringValue(row?.id) !== null) {
+        throw new CollectorRuntimeError("parse_error", "unavailable", "cosco_segment_sequence_invalid");
+      }
+      group.push(raw);
+    }
+  }
+  return groups;
+}
+
 export function parseCoscoScheduleResponse(
   input: unknown,
   context: CarrierParserContext,
@@ -406,7 +459,7 @@ export function parseCoscoScheduleResponse(
   }
   const rows = content.data;
   const echoConflicts = sourceEchoConflicts(content.conditions, context);
-  if (rows.length === 0) {
+  if (rows.length === 0 || echoConflicts.length > 0) {
     return {
       records: [],
       coverage: {
@@ -438,13 +491,12 @@ export function parseCoscoScheduleResponse(
       evidenceRef: context.evidenceRef,
     };
   }
-  const parsedRows = rows.map((row, index) =>
-    parseScheduleRow(row, index + 1, context),
-  );
+  const groups = itineraryRows(rows);
+  const parsedRows = groups.map(group => parseItinerary(group, context));
   const records = parsedRows
     .map((entry) => entry.record)
     .filter((record): record is ScheduleRecord => record !== null);
-  if (records.length !== rows.length) {
+  if (records.length !== groups.length) {
     throw new CollectorRuntimeError(
       "parse_error",
       "unavailable",
