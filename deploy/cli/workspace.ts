@@ -16,6 +16,7 @@ import { freightcomInputSchema } from '../../services/access-gateway/portal/busi
 import { customsHistoryListInput, customsHistoryGetInput, customsHistoryListResponse, customsHistoryGetResponse } from '../../services/access-gateway/portal/business/customs-history-client';
 import { customsSaveSchema, residentialSaveSchema, nativePublishSchema, nativeRollbackSchema, nativeDisableSchema } from '../../services/access-gateway/portal/native-admin-contracts';
 import { freightcomSaveSchema, freightcomDisableSchema, nativeDataSchema, nativeResponseSchema, freightcomViewSchema } from '../../services/access-gateway/portal/native-admin-contracts';
+import {ScheduleLiveLocationsRequestSchema,ScheduleLiveSearchRequestSchema,parseScheduleLiveCarriersEnvelope,parseScheduleLiveLocationsEnvelope,parseScheduleLiveSearchEnvelope} from '../../services/maritime/schedule-live/contracts';
 import { caseSchemas, linkedDocumentInputValidators, linkedDocumentResponseValidators, validCaseInput, validateCaseResponse, validateCaseResponseV2 } from './workspace-contracts';
 import { constants } from 'node:fs';
 import { open, mkdir, unlink } from 'node:fs/promises';
@@ -32,6 +33,9 @@ const maritimeCommands=(['schedules','terminals'] as const).flatMap(kind=>{
  return [['query','POST','/maritime/'+path+'/query'],['get','GET','/admin/'+path],['save','POST','/admin/'+path+'/save'],['preview','GET','/admin/'+path+'/preview'],['publish','POST','/admin/'+path+'/publish'],['disable','POST','/admin/'+path+'/disable'],['rollback','POST','/admin/'+path+'/rollback']].map(([action,method,url])=>[kind+' '+action,method!,url!,`${kind==='schedules'?'船期':'码头效率'} ${action}`] as const);
 });
 const map=[...maritimeCommands,
+ ['schedules live-carriers','GET','/maritime/schedule-collector/carriers','查询官方船司目录与能力状态'],
+ ['schedules live-locations','POST','/maritime/schedule-collector/locations','解析官方地点候选；多候选时需要人工选择'],
+ ['schedules live-search','POST','/maritime/schedule-collector/search','查询官方船期（live），保留分段、覆盖与证据引用'],
  ['quote shared-preview','GET','/session','将共用资料转换为承运商实际托盘请求；不发送询价'],
  ['whoami','GET','/session','当前登录身份'],['state','GET','/state','当前企业、成员与应用'],['organizations','GET','/my-organizations','可进入的企业'],['use','POST','/session/organization','切换当前企业'],
  ['cases list','GET','/cases','查询询价列表'],['cases get','GET','/cases/:id','读取询价与进度'],['cases create','POST','/cases','提交询价'],['cases update','POST','/cases/:id/update','管理询价进度'],['cases reply','POST','/cases/:id/reply','补充询价资料'],
@@ -70,6 +74,8 @@ for(const action of ['native-prepare','save','list','get','approve','reject','ex
 const caseLinkInputSchema=z.object({contract_version:z.literal(CASE_LINK_VERSION)}).strict();
 schemas['cases get v2']=caseLinkInputSchema;
 for(const kind of ['schedules','terminals'] as const)Object.assign(schemas,{[kind+' query']:maritimeQuerySchema(kind),[kind+' save']:maritimeSaveSchema(kind),[kind+' publish']:nativePublishSchema,[kind+' disable']:nativeDisableSchema,[kind+' rollback']:nativeRollbackSchema});
+schemas['schedules live-locations']=ScheduleLiveLocationsRequestSchema;
+schemas['schedules live-search']=ScheduleLiveSearchRequestSchema;
 const token=z.string().regex(/^[A-Za-z0-9_-]{32,128}$/u);
 const sessionSchema=z.object({origin:z.string(),session_token:token,csrf_token:token,expires_at:z.number()}).strict();
 const pendingSchema=z.object({origin:z.string(),device_secret:token,user_code:z.string().regex(/^[A-F0-9]{8}$/u),expires_at:z.number()}).strict();
@@ -81,7 +87,7 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   const {values,positionals,tokens}=parseArgs({args,allowPositionals:true,tokens:true,options:{help:{type:'boolean',short:'h'},json:{type:'boolean'},input:{type:'string',short:'i'},file:{type:'string'},id:{type:'string'},'session-file':{type:'string'},endpoint:{type:'string'},'idempotency-key':{type:'string'}}});
   const optionNames=tokens.filter(t=>t.kind==='option').map(t=>t.name);if(new Set(optionNames).size!==optionNames.length)throw new Failure('duplicate_option');
   const emit=(value:unknown)=>output(JSON.stringify(value,null,values.json?undefined:2)+'\n');const name=positionals.join(' ');
-  if(values.help||!name){output('FreightClaw 人员工作台 CLI\nworkspace login start --session-file <私有文件> [--endpoint <地址>]\n打开返回链接并在网页确认，再运行 workspace login finish --session-file <同一文件>\nworkspace commands 列出已实现操作；workspace schema channels create 查看输入。\n价格表 import-preview / export 使用 --file 指定本地表格。\n业务命令使用 --session-file，--id 指定记录，--input 提供 JSON（或 - 读标准输入）。\n写入要求 --idempotency-key，同一请求重试保留同一个值；不自动重试。\nworkspace logout 撤销 CLI 会话。查询 API Key 不自动获得管理权限。\n');return 0;}
+  if(values.help||!name){output('FreightClaw 人员工作台 CLI\nworkspace login start --session-file <私有文件> [--endpoint <地址>]\n打开返回链接并在网页确认，再运行 workspace login finish --session-file <同一文件>\nworkspace commands 列出已实现操作；workspace schema channels create 查看输入。\n价格表 import-preview / export 使用 --file 指定本地表格。\n业务命令使用 --session-file，--id 指定记录，--input 提供 JSON（或 - 读标准输入）。\n写入要求 --idempotency-key，同一请求重试保留同一个值；不自动重试。\n官方船期：workspace schedules live-carriers；live-locations/live-search 需要 --input。\nlive 查询保留分段、覆盖、来源限制与证据引用，不保存为企业快照。\nworkspace logout 撤销 CLI 会话。查询 API Key 不自动获得管理权限。\n');return 0;}
   if(name==='commands'){emit(map.map(([command,method,path,description])=>({command:`workspace ${command}`,method,path,description,auth:'person_session'})));return 0;}
   if(positionals[0]==='schema'){const schema=schemas[positionals.slice(1).join(' ')];if(!schema){const frozen=caseSchemas[positionals.slice(1).join(' ')];if(!frozen)throw new Failure('schema_not_available');emit(frozen);}else emit(z.toJSONSchema(schema));return 0;}
   const filename=values['session-file']??env.FREIGHTCLAW_SESSION_FILE;if(!filename)throw new Failure('session_file_required');
@@ -112,9 +118,16 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   if(linkedRequest){const validator=linkedInputValidators[documentAction];if(!validator||!validator(input))throw new Failure('input_schema_invalid');}
   else if(workflowRequest){const schema=workflowRequestSchemas[documentAction];if(!schema||!schema.safeParse(input).success)throw new Failure('input_schema_invalid');}
   else if(!caseLinkedRequest&&(!validCaseInput(name,input)||schemas[name]&&!schemas[name].safeParse(input).success))throw new Failure('input_schema_invalid');
-  if(command[1]==='POST'&&!path.startsWith('/business/')&&!['schedules query','terminals query','documents list','customs-packages browse','documents get','documents preview','documents native-prepare','documents review','documents export'].includes(name)&&(!values['idempotency-key']||!/^[A-Za-z0-9._:-]{16,128}$/u.test(values['idempotency-key'])))throw new Failure('idempotency_key_required');
+  if(command[1]==='POST'&&!path.startsWith('/business/')&&!['schedules query','terminals query','schedules live-locations','schedules live-search','documents list','customs-packages browse','documents get','documents preview','documents native-prepare','documents review','documents export'].includes(name)&&(!values['idempotency-key']||!/^[A-Za-z0-9._:-]{16,128}$/u.test(values['idempotency-key'])))throw new Failure('idempotency_key_required');
   if(command[1]==='GET'){const query=new URLSearchParams();for(const[k,v]of Object.entries(name==='customs-data browse'||name==='quote shared-preview'||tableCommand?{}:input)){if(!['string','number','boolean'].includes(typeof v))throw new Failure('query_invalid');query.set(k,String(v));}if(query.size)path+='?'+query.toString();}
-  const response=await request(path,command[1],path.startsWith('/business/')?{input}:input,true,linkedRequest||workflowRequest);
+  const response=await request(path,command[1],path.startsWith('/business/')?{input}:input,true,linkedRequest||workflowRequest||name.startsWith('schedules live-'));
+  if(name.startsWith('schedules live-')){
+   try{
+    if(name==='schedules live-carriers')parseScheduleLiveCarriersEnvelope(response);
+    else if(name==='schedules live-locations')parseScheduleLiveLocationsEnvelope(response);
+    else parseScheduleLiveSearchEnvelope(response);
+   }catch{throw new Failure('response_invalid',1);}
+  }
   if(workflowRequest){
    if(response.schema_version!==WORKFLOW_RESPONSE_VERSION)throw new Failure('response_invalid',1);
    if(response.status==='success'){
@@ -133,7 +146,7 @@ export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promi
   }
   if(caseLinkedRequest){if(!validateCaseResponseV2(response))throw new Failure('response_invalid',1);}
   if(name==='quote shared-preview'){if(response.authenticated!==true)throw new Failure('session_expired',5);const result=prepareSharedQuote(input);emit({schema_version:'shared-quote@2026-09-08.v1',...result});return result.status==='success'?0:3;}
-  if(name.startsWith('schedules ')||name.startsWith('terminals ')){
+  if((name.startsWith('schedules ')||name.startsWith('terminals '))&&!name.startsWith('schedules live-')){
    const kind=name.startsWith('schedules ')?'schedules':'terminals';
    const schema=name.endsWith(' query')?maritimeResponseSchema(kind):nativeResponseSchema(nativeDataSchema(kind,name.endsWith(' preview')));
    if(!schema.safeParse(response).success)throw new Failure('response_invalid',1);

@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { expect, it, vi } from "vitest";
-import { BUSINESS_MCP_TOOLS, type ApplicationMcpTool, type BusinessMcpTool } from "../../src/logistics_mcp/platform/application-tools";
+import { BUSINESS_MCP_TOOLS, type ApplicationMcpTool, type BusinessMcpTool, type ScheduleMcpTool } from "../../src/logistics_mcp/platform/application-tools";
 import { createProductionComposition } from "../../src/logistics_mcp/server/composition";
 import { createBusinessRuntimeProvider } from "../../src/logistics_mcp/server/business-provider";
 import { SqliteProductionStore } from "../../src/logistics_mcp/platform/sqlite-production-store";
@@ -36,7 +36,7 @@ it("executes all five business tools through production composition, preserves u
   const jwks = createLocalJWKSet({ keys: (await signer.getJwks()).keys.map(key => ({ ...key })) });
   const verifier = { verify: async (token: string) => (await jwtVerify(token, jwks, { algorithms: ["RS256"], issuer: "https://issuer.example.invalid/", audience: "mcp" })).payload };
   let active = true, executions = 0;
-  const current = (tools: readonly ApplicationMcpTool[]) => {
+  const current = (tools: readonly (ApplicationMcpTool | ScheduleMcpTool)[]) => {
     if (!active) throw new Error("revoked");
     return { tenantId: "tenant_fixture", clientId: "client_fixture", applicationId: "app_fixture", credentialId: "bkey_0123456789abcdef01234567", toolNames: [...tools] };
   };

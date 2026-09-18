@@ -25,6 +25,7 @@ import type { PortalIdentityProvider } from "./identity";
 import type { PortalSession, PortalSessionManager } from "./session";
 import { parsePortalSessionCookie } from "./session";
 import type { PortalService } from "./service";
+import type { ScheduleLiveServiceApi } from "../../maritime/schedule-live/service";
 import type { OrganizationBridge } from "./organization-bridge";
 import type { PortalBusinessService, PortalBusinessOperation } from "./business/service";
 import type { BusinessAccessService } from "./business-access/service";
@@ -65,6 +66,7 @@ export interface PortalHttpOptions {
   readonly documentService?: DocumentService;
   readonly documentWorkflowService?: DocumentWorkflowService;
   readonly nativeFreightcom?: NativeFreightcomService;
+  readonly scheduleLive?: ScheduleLiveServiceApi;
   readonly businessAccessService?: BusinessAccessService;
   readonly identityProvider: PortalIdentityProvider;
   readonly sessions: PortalSessionManager;
@@ -118,6 +120,7 @@ function json(response: ServerResponse, status: number, body: unknown, cookie?: 
 }
 function errorStatus(code: string): number {
   if (code === "document_pdf_invalid") return 503;
+  if (code.startsWith("schedule_live_")) return code.includes("unavailable") || code.includes("not_configured") ? 503 : 403;
   if (code === "case_daily_limit" || code === "cli_rate_limited") return 429;
   if (code === "case_transition_invalid") return 409;
   if (code === "login_rate_limited") return 429;
@@ -333,6 +336,7 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
 }
 function authenticatedResourcePath(path: string): boolean {
   if (/^\/console\/api\/v1\/maritime\/(sailing-schedules|terminal-efficiency)\/query$/u.test(path)) return true;
+  if (/^\/console\/api\/v1\/maritime\/schedule-collector\/(carriers|locations|search)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|review|approve|reject|export)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/freightcom(?:\/(save|disable))?$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/admin\/customs-packages(?:\/(import|publish|disable|browse))?$/u.test(path)) return true;
@@ -441,6 +445,29 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
         const kind=maritimeMatch[1]==='sailing-schedules'?'schedules':'terminals';
         const result=maritimeResponseSchema(kind).parse(options.nativeAdmin.query(ctx,kind,await body(request,4096)));
         json(response,200,result,undefined,true);return true;
+      }
+      const scheduleLiveMatch=/^\/console\/api\/v1\/maritime\/schedule-collector\/(carriers|locations|search)$/u.exec(path);
+      if(scheduleLiveMatch){
+        if(!options.scheduleLive)throw new PortalError('schedule_live_unavailable');
+        if(url.search)throw new PortalError('native_input_invalid');
+        const action=scheduleLiveMatch[1]!;
+        if(action==='carriers'){
+          if(request.method!=='GET')throw new PortalError('method_not_allowed');
+          const result=await options.scheduleLive.carriers(ctx,{requestId:id});
+          json(response,200,result.body,undefined,true);return true;
+        }
+        if(request.method!=='POST')throw new PortalError('method_not_allowed');
+        const controller=new AbortController();
+        const abort=():void=>{if(!response.writableEnded)controller.abort();};
+        request.once('aborted',abort);response.once('close',abort);
+        try{
+          const input=await body(request,4096);
+          const result=action==='locations'
+            ?await options.scheduleLive.locations(ctx,input,{requestId:id,signal:controller.signal})
+            :await options.scheduleLive.search(ctx,input,{requestId:id,signal:controller.signal});
+          json(response,200,result.body,undefined,true);
+        }finally{request.off('aborted',abort);response.off('close',abort);}
+        return true;
       }
       const nativeDocumentMatch=/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|review|approve|reject|export)$/u.exec(path);
       if(nativeDocumentMatch){

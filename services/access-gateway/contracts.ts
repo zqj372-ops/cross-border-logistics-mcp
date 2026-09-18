@@ -1,4 +1,4 @@
-import type { ApplicationMcpTool } from "../../src/logistics_mcp/platform/application-tools";
+import type { ApplicationMcpTool, ScheduleMcpTool } from "../../src/logistics_mcp/platform/application-tools";
 export const ACCESS_GATEWAY_SCHEMA_VERSION = "2026-08-27.v1" as const;
 
 export const T0_TOOL_NAMES = Object.freeze([
@@ -168,8 +168,8 @@ export interface JwtClaims {
 }
 
 export interface ApplicationMcpJwtClaims extends Omit<JwtClaims, "scopes"> {
-  readonly mcp_profile: "business-v1";
-  readonly scopes: readonly `tool:${ApplicationMcpTool}`[];
+  readonly mcp_profile: "business-v1" | "schedule-live-v1";
+  readonly scopes: readonly `tool:${ApplicationMcpTool | ScheduleMcpTool}`[];
 }
 export type GatewayJwtClaims = JwtClaims | ApplicationMcpJwtClaims;
 

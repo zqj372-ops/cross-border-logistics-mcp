@@ -41,12 +41,12 @@ try {
   const pepperStat = lstatSync(pepperPath);
   if (!pepperStat.isFile() || pepperStat.isSymbolicLink() || pepperStat.size !== 32 || (pepperStat.mode & 0o077) !== 0) throw new Error("business_fixture_pepper_invalid");
   const credentialPepper = readFileSync(pepperPath);
-  const businessAccess = await createBusinessAccessFixture({ databasePath: resolve(databaseDirectory, "business-access.sqlite"), portalService: runtime.service, credentialPepper, operationAuthority: { isAvailable: (tenantId, operation) => businessService.isAvailable(tenantId, operation) }, tenantClientAuthority: { requireActive: (tenantId, clientId) => runtime.requireActiveTenantClient(tenantId, clientId) } });
+  const businessAccess = await createBusinessAccessFixture({ databasePath: resolve(databaseDirectory, "business-access.sqlite"), portalService: runtime.service, credentialPepper, operationAuthority: { isAvailable: (tenantId, operation) => businessService.isAvailable(tenantId, operation as never) }, tenantClientAuthority: { requireActive: (tenantId, clientId) => runtime.requireActiveTenantClient(tenantId, clientId) } });
   credentialPepper.fill(0);
   const unifiedBridge = runtime.createUnifiedBridge(businessAccess.service);
   const machine = createPortalMachineHttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries });
   const t0Machine = createProductionT0HttpHandler({ mode: "fixtures", bridge: unifiedBridge, ...boundaries, trustedProxyAddresses: [] });
-  const businessMachine = createBusinessMachineHttpHandler({ mode: "fixtures", service: businessAccess.service, executor: { execute: async (request) => businessService.executeMachine(request) }, ...boundaries, trustedProxyAddresses: [] });
+  const businessMachine = createBusinessMachineHttpHandler({ mode: "fixtures", service: businessAccess.service, executor: { execute: async (request) => businessService.executeMachine(request as never) }, ...boundaries, trustedProxyAddresses: [] });
   const caseService=new CaseService(caseStore, runtime.service);
   const documentService=new DocumentService(documentStore,runtime.service,undefined,{business:businessService,current:org=>nativeStore.current(org,'residential')},caseService);
   const documentWorkflowService=new DocumentWorkflowService(documentWorkflowStore,documentService,runtime.service);

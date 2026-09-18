@@ -1,0 +1,710 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freightclaw.local/contracts/ocean-schedule-collector/result-2026-09-17.v1",
+  "title": "Ocean schedule collector result data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "collector_contract_version",
+    "run_status",
+    "query",
+    "carrier",
+    "records",
+    "coverage",
+    "provenance",
+    "quality"
+  ],
+  "properties": {
+    "collector_contract_version": {
+      "const": "ocean-schedule-collector@2026-09-17.v1"
+    },
+    "run_status": {
+      "enum": ["ok", "no_results", "partial", "failed", "unsupported", "not_run"]
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "carrier",
+        "query_origin",
+        "query_destination",
+        "departure_from",
+        "departure_until",
+        "date_filter_basis",
+        "routing_filter"
+      ],
+      "properties": {
+        "carrier": {
+          "enum": [
+            "COSCO",
+            "OOCL",
+            "EVERGREEN",
+            "HMM",
+            "WHL",
+            "YML",
+            "ZIM",
+            "HAPAG_LLOYD",
+            "ONE",
+            "MAERSK",
+            "MSC",
+            "MATSON"
+          ]
+        },
+        "query_origin": {
+          "$ref": "#/$defs/query_location"
+        },
+        "query_destination": {
+          "$ref": "#/$defs/query_location"
+        },
+        "departure_from": {
+          "type": "string",
+          "format": "date"
+        },
+        "departure_until": {
+          "type": "string",
+          "format": "date"
+        },
+        "date_filter_basis": {
+          "enum": [
+            "departure_from_first_ocean_leg",
+            "departure_from_origin",
+            "unknown"
+          ]
+        },
+        "routing_filter": {
+          "enum": ["any", "direct", "transshipment"]
+        }
+      }
+    },
+    "carrier": {
+      "$ref": "#/$defs/carrier"
+    },
+    "records": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "quality": {
+      "$ref": "#/$defs/quality"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"
+    },
+    "evidence_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,299}$"
+    },
+    "query_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_text",
+        "country_code",
+        "carrier_location_id",
+        "mapping_source",
+        "source_full_name"
+      ],
+      "properties": {
+        "input_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "country_code": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z]{2}$"
+        },
+        "carrier_location_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "mapping_source": {
+          "$ref": "#/$defs/version"
+        },
+        "source_full_name": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "carrier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sales_carrier",
+        "adapter_version",
+        "capability_status",
+        "last_live_verified_at"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "COSCO",
+            "OOCL",
+            "EVERGREEN",
+            "HMM",
+            "WHL",
+            "YML",
+            "ZIM",
+            "HAPAG_LLOYD",
+            "ONE",
+            "MAERSK",
+            "MSC",
+            "MATSON"
+          ]
+        },
+        "sales_carrier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "adapter_version": {
+          "$ref": "#/$defs/version"
+        },
+        "capability_status": {
+          "enum": [
+            "not_probed",
+            "probed",
+            "implemented_unverified",
+            "synthetic_only",
+            "live_verified",
+            "blocked",
+            "unsupported"
+          ]
+        },
+        "last_live_verified_at": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "country_code",
+        "carrier_location_id",
+        "unlocode",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "country_code": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z]{2}$"
+        },
+        "carrier_location_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "unlocode": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z]{2}[A-Z0-9]{3}$"
+        },
+        "type": {
+          "enum": ["city", "port", "terminal", "inland", "unknown"]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "raw_text",
+        "local_date",
+        "local_datetime",
+        "utc_datetime",
+        "offset",
+        "timezone",
+        "precision",
+        "event_kind",
+        "timezone_source"
+      ],
+      "properties": {
+        "event_type": {
+          "enum": ["departure", "arrival"]
+        },
+        "raw_text": {
+          "type": ["string", "null"]
+        },
+        "local_date": {
+          "type": ["string", "null"]
+        },
+        "local_datetime": {
+          "type": ["string", "null"]
+        },
+        "utc_datetime": {
+          "type": ["string", "null"]
+        },
+        "offset": {
+          "type": ["string", "null"]
+        },
+        "timezone": {
+          "type": ["string", "null"]
+        },
+        "precision": {
+          "enum": ["date", "local_datetime", "utc_datetime", "unknown"]
+        },
+        "event_kind": {
+          "enum": ["planned", "estimated", "actual", "unknown"]
+        },
+        "timezone_source": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "leg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "mode",
+        "source_leg_id",
+        "vessel_name",
+        "voyage",
+        "from",
+        "to",
+        "events"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "enum": ["ocean", "rail", "truck", "barge", "unknown"]
+        },
+        "source_leg_id": {
+          "type": ["string", "null"]
+        },
+        "vessel_name": {
+          "type": ["string", "null"]
+        },
+        "voyage": {
+          "type": ["string", "null"]
+        },
+        "from": {
+          "$ref": "#/$defs/place"
+        },
+        "to": {
+          "$ref": "#/$defs/place"
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      }
+    },
+    "cutoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "precision", "place", "conditions", "source_text"],
+      "properties": {
+        "at": {
+          "type": ["string", "null"]
+        },
+        "precision": {
+          "enum": ["date", "datetime", "unknown"]
+        },
+        "place": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/place"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_text": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "source_itinerary_id",
+        "operating_carrier",
+        "service_name",
+        "routing",
+        "query_origin",
+        "query_destination",
+        "place_of_receipt",
+        "place_of_delivery",
+        "pol",
+        "pod",
+        "terminal",
+        "legs",
+        "cutoffs",
+        "cargo_available_at",
+        "transit",
+        "evidence_ref",
+        "observed_at",
+        "parser_version",
+        "missing_fields"
+      ],
+      "properties": {
+        "record_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_itinerary_id": {
+          "type": ["string", "null"]
+        },
+        "operating_carrier": {
+          "type": ["string", "null"]
+        },
+        "service_name": {
+          "type": ["string", "null"]
+        },
+        "routing": {
+          "enum": ["direct", "transshipment", "unknown"]
+        },
+        "query_origin": {
+          "$ref": "#/$defs/identifier"
+        },
+        "query_destination": {
+          "$ref": "#/$defs/identifier"
+        },
+        "place_of_receipt": {
+          "type": ["string", "null"]
+        },
+        "place_of_delivery": {
+          "type": ["string", "null"]
+        },
+        "pol": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/place"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pod": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/place"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/place"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "legs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/leg"
+          }
+        },
+        "cutoffs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["si", "vgm", "cy", "customs"],
+          "properties": {
+            "si": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/cutoff"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "vgm": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/cutoff"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cy": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/cutoff"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "customs": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/cutoff"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "cargo_available_at": {
+          "type": ["string", "null"]
+        },
+        "transit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_total_minutes",
+            "source_total_hours",
+            "source_total_days",
+            "calculated_total_hours",
+            "source_ocean_minutes",
+            "source_ocean_hours",
+            "source_ocean_days",
+            "calculated_ocean_hours",
+            "basis"
+          ],
+          "properties": {
+            "source_total_minutes": {
+              "type": ["string", "null"]
+            },
+            "source_total_hours": {
+              "type": ["string", "null"]
+            },
+            "source_total_days": {
+              "type": ["string", "null"]
+            },
+            "calculated_total_hours": {
+              "type": ["string", "null"]
+            },
+            "source_ocean_minutes": {
+              "type": ["string", "null"]
+            },
+            "source_ocean_hours": {
+              "type": ["string", "null"]
+            },
+            "source_ocean_days": {
+              "type": ["string", "null"]
+            },
+            "calculated_ocean_hours": {
+              "type": ["string", "null"]
+            },
+            "basis": {
+              "$ref": "#/$defs/identifier"
+            }
+          }
+        },
+        "evidence_ref": {
+          "$ref": "#/$defs/evidence_ref"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "parser_version": {
+          "$ref": "#/$defs/version"
+        },
+        "missing_fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "reason"],
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/$defs/identifier"
+              }
+            }
+          }
+        }
+      }
+    },
+    "coverage_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "until"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "format": "date"
+        },
+        "until": {
+          "type": "string",
+          "format": "date"
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_from",
+        "requested_until",
+        "covered_windows",
+        "uncovered_windows",
+        "pages_read",
+        "complete",
+        "truncated",
+        "failure_reason"
+      ],
+      "properties": {
+        "requested_from": {
+          "type": "string",
+          "format": "date"
+        },
+        "requested_until": {
+          "type": "string",
+          "format": "date"
+        },
+        "covered_windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverage_window"
+          }
+        },
+        "uncovered_windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverage_window"
+          }
+        },
+        "pages_read": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "failure_reason": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "fetched_at",
+        "fixture_generated_at",
+        "source_updated_at",
+        "parser_version",
+        "source_refs"
+      ],
+      "properties": {
+        "kind": {
+          "enum": ["live", "synthetic", "replay"]
+        },
+        "fetched_at": {
+          "type": ["string", "null"]
+        },
+        "fixture_generated_at": {
+          "type": ["string", "null"]
+        },
+        "source_updated_at": {
+          "type": ["string", "null"]
+        },
+        "parser_version": {
+          "$ref": "#/$defs/version"
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key_fields_complete",
+        "evaluation_status",
+        "conflicts",
+        "warnings",
+        "missing_field_count"
+      ],
+      "properties": {
+        "key_fields_complete": {
+          "type": ["boolean", "null"]
+        },
+        "evaluation_status": {
+          "enum": ["evaluated", "partial", "not_evaluated"]
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "missing_field_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "x-semantic-rules": [
+    "record leg sequences must be contiguous starting at 1",
+    "date precision cannot contain a derived local or UTC instant",
+    "unknown precision cannot contain normalized time",
+    "complete coverage must align with query and cover the requested inclusive window",
+    "synthetic and replay provenance cannot be reported as ok"
+  ]
+}

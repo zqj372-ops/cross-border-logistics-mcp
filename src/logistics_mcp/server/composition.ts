@@ -1,4 +1,4 @@
-import { BUSINESS_MCP_TOOLS, isApplicationMcpIdentity } from "../platform/application-tools";
+import { BUSINESS_MCP_TOOLS, SCHEDULE_MCP_TOOLS, isApplicationMcpIdentity, isScheduleMcpIdentity } from "../platform/application-tools";
 import { z } from "zod";
 
 import {
@@ -191,6 +191,7 @@ export interface ProductionCompositionOptions
   readonly dataMode: "production";
   readonly profile?: string;
   readonly businessProvider?: { readonly definitions: readonly ToolDefinition[];readonly catalogDefinitions?:readonly ToolDefinition[];subscribe?(listener:()=>void):()=>void;snapshot?():unknown;health?():Promise<{ready:boolean}>;close?():Promise<void> };
+  readonly scheduleProvider?: { readonly definitions: readonly ToolDefinition[];readonly catalogDefinitions?:readonly ToolDefinition[];subscribe?(listener:()=>void):()=>void;snapshot?():unknown;health?():Promise<{ready:boolean}>;close?():Promise<void> };
   readonly auditRepository?: DurableAuditRepository;
   readonly idempotencyRepository?: DurableIdempotencyRepository;
   readonly tokenVerifier?: ProductionTokenVerifier;
@@ -210,6 +211,7 @@ export interface GatewayComposition {
   readonly definitions: readonly ToolDefinition[];
   readonly moduleHost: ModuleHost;
   readonly businessModuleSnapshot?:()=>unknown;
+  readonly scheduleModuleSnapshot?:()=>unknown;
   readonly agentAccessRuntime: AgentAccessRuntime;
   readonly handler: McpHttpHandler;
   readonly readiness: () => Promise<PlatformReadiness>;
@@ -839,9 +841,14 @@ export function createProductionComposition(
   if (profile === "business-v1" && options.businessProvider) {
     assertExactStringSet((options.businessProvider.catalogDefinitions??options.businessProvider.definitions).map(tool => tool.name), BUSINESS_MCP_TOOLS, "business_mcp_tool_set_invalid");
   }
+  if (profile === "schedule-live-v1" && options.scheduleProvider) {
+    assertExactStringSet((options.scheduleProvider.catalogDefinitions??options.scheduleProvider.definitions).map(tool => tool.name), SCHEDULE_MCP_TOOLS, "schedule_mcp_tool_set_invalid");
+  }
   const tools = profile === "business-v1" && options.businessProvider
     ? { ...baseTools, get definitions(){return Object.freeze([...baseTools.definitions, ...options.businessProvider!.definitions]);} }
-    : baseTools;
+    : profile === "schedule-live-v1" && options.scheduleProvider
+      ? { ...baseTools, get definitions(){return Object.freeze([...baseTools.definitions, ...options.scheduleProvider!.definitions]);} }
+      : baseTools;
   const mountedModules = tools.moduleHost.snapshot().modules.map((module) => ({
     module_id: module.module_id,
     version: module.version,
@@ -860,6 +867,8 @@ export function createProductionComposition(
   const structuralReasons = [
     ...(profile === "business-v1" && !options.businessProvider ? ["production_business_provider_missing"] : []),
     ...(profile !== "business-v1" && options.businessProvider ? ["production_business_provider_wrong_profile"] : []),
+    ...(profile === "schedule-live-v1" && !options.scheduleProvider ? ["production_schedule_provider_missing"] : []),
+    ...(profile !== "schedule-live-v1" && options.scheduleProvider ? ["production_schedule_provider_wrong_profile"] : []),
     ...platform.reasonCodes,
     ...(allowedOrigins.length === 0 ? ["production_allowed_origins_missing"] : []),
     ...(allowedHosts.length === 0 ? ["production_allowed_hosts_missing"] : []),
@@ -885,6 +894,7 @@ export function createProductionComposition(
     const liveReasons = await Promise.all(liveChecks);
     reasons.push(...liveReasons.filter((reason): reason is string => reason !== null));
     if(options.businessProvider?.health){try{if(!(await options.businessProvider.health()).ready)reasons.push("production_business_provider_unhealthy");}catch{reasons.push("production_business_provider_unhealthy");}}
+    if(options.scheduleProvider?.health){try{if(!(await options.scheduleProvider.health()).ready)reasons.push("production_schedule_provider_unhealthy");}catch{reasons.push("production_schedule_provider_unhealthy");}}
     const uniqueReasons = [...new Set(reasons)];
     return { ready: uniqueReasons.length === 0, reasons: uniqueReasons };
   };
@@ -899,8 +909,14 @@ export function createProductionComposition(
             if (!isCompactJwt(token)) throw new AuthenticationError();
             const claims = await options.tokenVerifier!.verify(token);
             const identity = { role: claims.actor_role, roles: claims.roles, scopes: claims.scopes, profile: claims.mcp_profile };
-            if (!(claims.mcp_profile === undefined ? isExactT0ServiceIdentity(identity)
-              : profile === "business-v1" && isApplicationMcpIdentity(identity))) {
+            const validIdentity = claims.mcp_profile === undefined
+              ? isExactT0ServiceIdentity(identity)
+              : claims.mcp_profile === "business-v1"
+                ? profile === "business-v1" && isApplicationMcpIdentity(identity)
+                : claims.mcp_profile === "schedule-live-v1"
+                  ? profile === "schedule-live-v1" && isScheduleMcpIdentity(identity)
+                  : false;
+            if (!validIdentity) {
               throw new AuthenticationError();
             }
             return claims;
@@ -909,7 +925,8 @@ export function createProductionComposition(
           handlers: tools.handlers,
           contracts: tools.contracts,
           definitions: tools.definitions,
-          ...(options.businessProvider?.subscribe?{dynamicDefinitions:{get:()=>tools.definitions,subscribe:(listener:()=>void)=>options.businessProvider!.subscribe!(listener)}}:{}),
+          ...(options.businessProvider?.subscribe?{dynamicDefinitions:{get:()=>tools.definitions,subscribe:(listener:()=>void)=>options.businessProvider!.subscribe!(listener)}}
+            :options.scheduleProvider?.subscribe?{dynamicDefinitions:{get:()=>tools.definitions,subscribe:(listener:()=>void)=>options.scheduleProvider!.subscribe!(listener)}}:{}),
           agentAccessRuntime: tools.agentAccessRuntime,
           auditRepository: platform.dependencies.auditRepository,
           idempotencyRepository: platform.dependencies.idempotencyRepository,
@@ -932,6 +949,7 @@ export function createProductionComposition(
       const results = await Promise.allSettled([
         platform.close(),
         ...(options.businessProvider?.close?[options.businessProvider.close()]:[]),
+        ...(options.scheduleProvider?.close?[options.scheduleProvider.close()]:[]),
         ...(options.tokenVerifier === undefined ||
         typeof options.tokenVerifier.close !== "function"
           ? []
@@ -943,7 +961,7 @@ export function createProductionComposition(
     },
     profile,
   );
-  return {...composition,get definitions(){return tools.definitions;},...(options.businessProvider?.snapshot?{businessModuleSnapshot:()=>options.businessProvider!.snapshot!()}: {})};
+  return {...composition,get definitions(){return tools.definitions;},...(options.businessProvider?.snapshot?{businessModuleSnapshot:()=>options.businessProvider!.snapshot!()}: {}),...(options.scheduleProvider?.snapshot?{scheduleModuleSnapshot:()=>options.scheduleProvider!.snapshot!()}: {})};
 }
 
 interface ProductionDependencyStatus {

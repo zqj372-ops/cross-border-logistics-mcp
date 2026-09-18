@@ -105,14 +105,16 @@ function closeAccount(restoreFocus = false) {
   const menu = document.querySelector('#account-menu'); if (menu) menu.hidden = true;
   const button = document.querySelector('[data-action=account-menu]'); button?.setAttribute('aria-expanded', 'false'); if (restoreFocus) button?.focus();
 }
-async function request(path, { method = 'GET', body, key, acceptBusiness = false, guestRetry = false } = {}) {
+async function request(path, { method = 'GET', body, key, acceptBusiness = false, guestRetry = false, signal } = {}) {
   const originalPath = path;
   const publicCustoms = ['/business/customs/query', '/business/customs/tax-estimate', '/business/customs/tax-estimates/batch'].includes(path) && !organizationSession();
   if (publicCustoms) { await ensureSession(); path = path.replace('/business/customs/', '/public/customs/'); }
   const writes = method !== 'GET'; const headers = { Accept: 'application/json' };
   if (writes) Object.assign(headers, { 'Content-Type': 'application/json', 'X-CSRF-Token': model.session?.csrf_token || '', 'Idempotency-Key': key || crypto.randomUUID() });
   const generation = model.sessionGeneration || 0;
-  let response; try { response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(writes ? { body: JSON.stringify(body || {}) } : {}), signal: AbortSignal.timeout(['/admin/customs-packages/import','/admin/customs-packages/publish'].includes(path)?120000:20000) }); } catch { throw Object.assign(new Error('network'), { code: 'network' }); }
+  const timeoutSignal = AbortSignal.timeout(['/admin/customs-packages/import','/admin/customs-packages/publish'].includes(path)?120000:20000);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  let response; try { response = await fetch(`${API}${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(writes ? { body: JSON.stringify(body || {}) } : {}), signal: requestSignal }); } catch (error) { throw Object.assign(new Error(error?.name === 'AbortError' ? 'request_aborted' : 'network'), { code: error?.name === 'AbortError' ? 'request_aborted' : 'network' }); }
   if (publicCustoms && response.headers.has('x-freightclaw-quota-remaining')) model.publicQuota = { limit: Number(response.headers.get('x-freightclaw-quota-limit')), remaining: Number(response.headers.get('x-freightclaw-quota-remaining')), resets_at: response.headers.get('x-freightclaw-quota-reset') };
   let result; try { result = await response.json(); } catch { throw Object.assign(new Error('invalid_response'), { code: 'portal_unavailable' }); }
   if (generation !== (model.sessionGeneration || 0)) throw Object.assign(new Error('account_changed'), { code: 'account_changed' });
@@ -120,7 +122,7 @@ async function request(path, { method = 'GET', body, key, acceptBusiness = false
     model.session = null;
     await ensureSession();
     if (!model.session.authenticated) { model.state = null; model.directory = null; model.businessCatalog = []; model.credentials.clear(); }
-    return request(originalPath, { method, body, key, acceptBusiness, guestRetry: true });
+    return request(originalPath, { method, body, key, acceptBusiness, guestRetry: true, signal });
   }
   if (acceptBusiness && typeof result.schema_version === 'string' && ['success', 'needs_input', 'manual_review', 'blocked', 'unavailable'].includes(result.status)) return result;
   if (response.ok && result.status === 'manual_review' && result.secret_delivery?.status === 'withheld') return result;
