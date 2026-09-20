@@ -13,7 +13,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, resolve, sep } from "node:path";
 import type { PortalIdentityProvider } from "./identity";
 import { FixturePortalIdentityProvider } from "./identity";
+import type {PortalIdentity} from "./contracts";
 import { createPortalHttpHandler, type PortalCredentialBridge } from "./http";
+import type {FclHttpDependencies} from "./fcl-http";
 import type { OrganizationBridge } from "./organization-bridge";
 import type { PortalBusinessService } from "./business/service";
 import type { BusinessAccessService } from "./business-access/service";
@@ -61,6 +63,7 @@ export interface StartPortalServerOptions {
   readonly maxBodyBytes?: number;
   readonly runtimeStatus?: PortalRuntimeStatus;
   readonly businessJwks?: () => Promise<unknown>;
+  readonly fcl?:FclHttpDependencies;
 }
 export interface StartedPortalServer { readonly server: Server; readonly host: string; readonly port: number; readonly origin: string; close(): Promise<void> }
 
@@ -107,7 +110,8 @@ export async function startPortalServer(options: StartPortalServerOptions): Prom
   const identityProvider = options.identityProvider ?? new FixturePortalIdentityProvider({ mode: "fixtures", loopback: true });
   if (fixture && identityProvider.kind !== "fixture") throw new Error("fixture_identity_provider_required");
   const sessionStore = options.sessionStore ?? new InMemoryPortalSessionStore();
-  const sessions = new PortalSessionManager({ store: sessionStore, ...(options.sessionTtlMs === undefined ? {} : { ttlMs: options.sessionTtlMs }), secureCookie: !fixture });
+  const canSelectPersonal=options.fcl?((identity:PortalIdentity)=>{try{options.fcl!.caseService.listFclCases({identity,organizationId:null},{limit:1,status:null,cursor:null});return true;}catch{return false;}}):undefined;
+  const sessions = new PortalSessionManager({ store: sessionStore, ...(options.sessionTtlMs === undefined ? {} : { ttlMs: options.sessionTtlMs }), secureCookie: !fixture, ...(canSelectPersonal?{canSelectPersonal}:{}) });
   const staticRoot = resolve(options.staticDirectory ?? "dist/console"); let portalHandler: ReturnType<typeof createPortalHttpHandler> | null = null; let allowedHost = "";
   const server = createServer((request,response)=>{ void (async()=>{
     const pathname=new URL(request.url??"/","http://portal.invalid").pathname;
@@ -129,6 +133,6 @@ export async function startPortalServer(options: StartPortalServerOptions): Prom
   const boundHost=`${host.includes(":")?`[${host}]`:host}:${address.port}`; const origin=configuredOrigin?.origin??`http://${boundHost}`;
   const publicUrl=configuredOrigin??new URL(origin);
   allowedHost=publicUrl.host;
-  portalHandler=createPortalHttpHandler({...(options.customsPackages?{customsPackages:options.customsPackages}:{}),...(options.documentService?{documentService:options.documentService}:{}),...(options.documentWorkflowService?{documentWorkflowService:options.documentWorkflowService}:{}), ...(options.nativeFreightcom?{nativeFreightcom:options.nativeFreightcom}:{}), ...(options.nativeAdmin?{nativeAdmin:options.nativeAdmin}:{}), ...(options.scheduleLive?{scheduleLive:options.scheduleLive}:{}), ...(options.channelService ? {channelService: options.channelService} : {}),...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
+  portalHandler=createPortalHttpHandler({...(options.customsPackages?{customsPackages:options.customsPackages}:{}),...(options.documentService?{documentService:options.documentService}:{}),...(options.documentWorkflowService?{documentWorkflowService:options.documentWorkflowService}:{}), ...(options.nativeFreightcom?{nativeFreightcom:options.nativeFreightcom}:{}), ...(options.nativeAdmin?{nativeAdmin:options.nativeAdmin}:{}), ...(options.scheduleLive?{scheduleLive:options.scheduleLive}:{}), ...(options.channelService ? {channelService: options.channelService} : {}),...(options.caseService?{caseService:options.caseService}:{}),...(options.publicCustoms ? { publicCustoms: options.publicCustoms } : {}),...(options.fcl?{fcl:{...options.fcl,secureCookie:!fixture}}:{}),mode:options.mode,service:options.service,...(options.bridge?{bridge:options.bridge}:{}),...(options.organizationBridge?{organizationBridge:options.organizationBridge}:{}),...(options.businessService?{businessService:options.businessService}:{}),...(options.businessAccessService?{businessAccessService:options.businessAccessService}:{}),...(options.callLogService?{callLogService:options.callLogService}:{}),identityProvider,sessions,allowedHosts:[allowedHost],allowedOrigins:[origin],allowLoopbackHttp:fixture,...(options.trustedProxyAddresses?{trustedProxyAddresses:options.trustedProxyAddresses}:{}),...(options.maxBodyBytes===undefined?{}:{maxBodyBytes:options.maxBodyBytes})});
   return {server,host,port:address.port,origin,close:()=>new Promise<void>((resolveClose,reject)=>server.close(error=>error?reject(error):resolveClose()))};
 }

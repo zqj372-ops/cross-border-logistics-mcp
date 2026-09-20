@@ -59,6 +59,7 @@ export function validateProductionPortalEnvironment(environment:NodeJS.ProcessEn
  for(const name of ["PORTAL_OIDC_CLIENT_SECRET_FILE","PORTAL_BUSINESS_CONFIG_FILE","PORTAL_BUSINESS_PEPPER_FILE","PORTAL_BUSINESS_JWT_PRIVATE_KEY_FILE"]){const path=req(environment,name);if(!isAbsolute(path)){throw new Error(`${name} must be absolute.`);}const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink())throw new Error(`${name} is invalid.`);}
  for(const name of ["ACCESS_GATEWAY_APPLICATION_ROOT","ACCESS_GATEWAY_MANAGEMENT_TENANT_ID","ACCESS_GATEWAY_INSTANCE_ID","ACCESS_GATEWAY_JWT_ISSUER","ACCESS_GATEWAY_JWT_AUDIENCE","ACCESS_GATEWAY_PEPPER_VERSION","PORTAL_T0_REST_AUDIENCE","PORTAL_RELEASE_ID","PORTAL_BUILD_ID","PORTAL_OIDC_ISSUER","PORTAL_OIDC_CLIENT_ID","PORTAL_BUSINESS_TOKEN_ISSUER","PORTAL_BUSINESS_PEPPER_VERSION","PORTAL_BUSINESS_JWT_KEY_HISTORY_FILE"]){req(environment,name);}
  if(environment.PORTAL_T0_REST_AUDIENCE?.trim()===environment.ACCESS_GATEWAY_JWT_AUDIENCE?.trim())throw new Error("portal_t0_audience_not_isolated");
+ if(environment.PORTAL_FCL_ENABLED==="true")throw new Error("fcl_receiver_authority_unavailable");
 }
 export interface ProductionPortalRuntime{readonly server:StartedPortalServer;close():Promise<void>}
 export async function startProductionPortal(environment:NodeJS.ProcessEnv=process.env):Promise<ProductionPortalRuntime>{

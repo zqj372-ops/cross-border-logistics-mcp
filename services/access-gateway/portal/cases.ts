@@ -119,6 +119,13 @@ export type FclMailMessage = {
 export type FclMailTransport = {
   send(message: FclMailMessage): Promise<void> | void;
 };
+export type FclNotificationSettings = {
+  readonly enabled?: boolean;
+  readonly recipient?: string | null;
+  readonly cc?: readonly string[];
+  readonly transport?: FclMailTransport;
+  readonly timeoutMs?: number;
+};
 export type CaseStoreOptions = {
   fcl?:
     | { mode: 'fresh_fixture'; authorized: true; oldWritersStopped: true }
@@ -138,6 +145,15 @@ export type FclCaseServiceOptions = {
     transport?: FclMailTransport;
     timeoutMs?: number;
   };
+  notificationSettings?: () => FclNotificationSettings | null;
+};
+type NormalizedFclMail = {
+  enabled: boolean;
+  recipient: string | null;
+  cc: string[];
+  transport: FclMailTransport | undefined;
+  timeoutMs: number;
+  configurationReason: string | null;
 };
 type NormalizedFclOptions = {
   receiverUserId: string;
@@ -145,14 +161,8 @@ type NormalizedFclOptions = {
   credentialSecret: Buffer;
   credentialTtlDays: number;
   now: () => string;
-  mail: {
-    enabled: boolean;
-    recipient: string | null;
-    cc: string[];
-    transport: FclMailTransport | undefined;
-    timeoutMs: number;
-    configurationReason: string | null;
-  };
+  mail: NormalizedFclMail;
+  notificationSettings: (() => FclNotificationSettings | null) | null;
 };
 type FclCaseSubmission = z.infer<typeof fclCaseSubmissionSchema>;
 type FclCaseInternalView = z.infer<typeof fclCaseInternalViewSchema>;
@@ -299,7 +309,17 @@ export class CaseService {
       throw new Error('fcl_credential_ttl_invalid');
     }
     if (!options.receiverUserId.trim()) throw new Error('fcl_receiver_configuration_invalid');
-    const mail = options.mail ?? {};
+    return {
+      receiverUserId: options.receiverUserId,
+      receiverIsActive: options.receiverIsActive,
+      credentialSecret: secret,
+      credentialTtlDays: options.credentialTtlDays,
+      now: options.now ?? (() => new Date().toISOString()),
+      mail: this.normalizeFclMail(options.mail ?? {}),
+      notificationSettings: options.notificationSettings ?? null,
+    };
+  }
+  private normalizeFclMail(mail: FclNotificationSettings): NormalizedFclMail {
     const enabled = mail.enabled === true;
     const recipient = typeof mail.recipient === 'string' ? mail.recipient : null;
     const cc = [...(mail.cc ?? [])];
@@ -310,18 +330,11 @@ export class CaseService {
       else if (!mail.transport) configurationReason = 'mail_transport_unavailable';
       else if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) configurationReason = 'mail_configuration_invalid';
     }
-    return {
-      receiverUserId: options.receiverUserId,
-      receiverIsActive: options.receiverIsActive,
-      credentialSecret: secret,
-      credentialTtlDays: options.credentialTtlDays,
-      now: options.now ?? (() => new Date().toISOString()),
-      mail: { enabled, recipient, cc, transport: mail.transport, timeoutMs, configurationReason },
-    };
+    return { enabled, recipient, cc, transport: mail.transport, timeoutMs, configurationReason };
   }
   private assertFclStartup(options: NormalizedFclOptions) {
     if (!this.store.fclEnabled) throw new Error('fcl_upgrade_not_authorized');
-    if (!options.receiverIsActive(options.receiverUserId)) throw new Error('fcl_receiver_unavailable');
+    try{if(!options.receiverIsActive(options.receiverUserId))throw new Error('inactive');}catch{throw new Error('fcl_receiver_unavailable');}
     const owners = this.store.db.prepare('SELECT DISTINCT receiver_user_id FROM fcl_inquiries').all() as { receiver_user_id: string }[];
     if (owners.some((owner) => owner.receiver_user_id !== options.receiverUserId)) throw new Error('fcl_receiver_configuration_mismatch');
   }
@@ -332,7 +345,7 @@ export class CaseService {
   private requireFclReceiver(ctx: PortalContext) {
     const options = this.fclOptions();
     if (!ctx.identity.emailVerified || ctx.organizationId !== null || ctx.identity.userId !== options.receiverUserId) throw new PortalError('fcl_not_found');
-    if (!options.receiverIsActive(options.receiverUserId)) throw new PortalError('fcl_unavailable');
+    try{if(!options.receiverIsActive(options.receiverUserId))throw new PortalError('fcl_unavailable');}catch(error){if(error instanceof PortalError&&error.code==='fcl_unavailable')throw error;throw new PortalError('fcl_unavailable');}
     return options;
   }
   private scope(ctx: PortalContext): Scope {
@@ -1107,14 +1120,23 @@ export class CaseService {
   }
   private async attemptFclNotification(row: FclRow, submission: FclCaseSubmission, input: FclInquiryInput) {
     const options = this.fclOptions();
-    if (!options.mail.enabled) {
+    let mail = options.mail;
+    if (options.notificationSettings) {
+      try {
+        const settings = options.notificationSettings();
+        if (settings === null) return this.setFclNotification(row.fcl_inquiry_id, 'disabled', 'mail_configuration_missing', null);
+        mail = this.normalizeFclMail(settings);
+      } catch {
+        return this.setFclNotification(row.fcl_inquiry_id, 'failed', 'mail_configuration_unavailable', options.now());
+      }
+    }
+    if (!mail.enabled) {
       return this.setFclNotification(row.fcl_inquiry_id, 'disabled', null, null);
     }
-    if (options.mail.configurationReason !== null) {
+    if (mail.configurationReason !== null) {
       const at = options.now();
-      return this.setFclNotification(row.fcl_inquiry_id, 'failed', options.mail.configurationReason, at);
+      return this.setFclNotification(row.fcl_inquiry_id, 'failed', mail.configurationReason, at);
     }
-    const mail = options.mail;
     const transport = mail.transport;
     const recipient = mail.recipient;
     if (!transport || !recipient) throw new PortalError('fcl_readback_failed');

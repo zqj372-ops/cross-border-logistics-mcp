@@ -7,6 +7,34 @@ import { residentialRatesSchema } from '../../quote-native/contracts';
 import { fclRateDatasetSchema, fclRatePublicationSchema, fclRateSaveSchema } from '../../quote-native/fcl-contracts';
 export const NATIVE_ADMIN_VERSION='portal-native-admin@2026-09-07.v1';
 export type NativeKind='customs'|'residential'|'schedules'|'terminals'|'fcl';
+export const FCL_NOTIFICATION_VERSION='fcl-notification@2026-09-21.v1' as const;
+const fclNotificationEmail=z.string().trim().min(1).max(254).refine(value=>z.email().safeParse(value).success);
+export const fclNotificationConfigSchema=z.object({
+  enabled:z.boolean(),
+  recipient:z.string().trim().max(254).nullable(),
+  cc:z.array(fclNotificationEmail).max(10),
+}).strict().superRefine((value,context)=>{
+  if(value.enabled&&(value.recipient===null||!z.email().safeParse(value.recipient).success))context.addIssue({code:'custom',path:['recipient'],message:'enabled_notification_requires_recipient'});
+  if(value.recipient!==null&&value.recipient!==''&&!z.email().safeParse(value.recipient).success)context.addIssue({code:'custom',path:['recipient'],message:'notification_recipient_invalid'});
+  if(new Set(value.cc).size!==value.cc.length)context.addIssue({code:'custom',path:['cc'],message:'notification_cc_duplicate'});
+});
+export const fclNotificationSaveSchema=z.object({
+  contract_version:z.literal(FCL_NOTIFICATION_VERSION),
+  expected_version:z.number().int().nonnegative(),
+  input:fclNotificationConfigSchema,
+  confirmed:z.literal(true),
+}).strict();
+export const fclNotificationViewSchema=z.object({
+  contract_version:z.literal(FCL_NOTIFICATION_VERSION),
+  version:z.number().int().nonnegative(),
+  input:fclNotificationConfigSchema.nullable(),
+  replay:z.object({
+    replayed:z.boolean(),
+    submitted_version:z.number().int().nonnegative().nullable(),
+    current:z.boolean(),
+  }).strict(),
+}).strict();
+export const fclNotificationSchemas={save:fclNotificationSaveSchema,output:fclNotificationViewSchema} as const;
 export const nativePublishSchema=z.object({expected_version:z.number().int().nonnegative(),preview_hash:z.string().regex(/^[a-f0-9]{64}$/u),confirmation:z.literal('reviewed_sources_and_conditions')}).strict();
 export const nativeDisableSchema=z.object({expected_version:z.number().int().nonnegative()}).strict();
 export const nativeRollbackSchema=nativePublishSchema.extend({release_id:z.uuid()});

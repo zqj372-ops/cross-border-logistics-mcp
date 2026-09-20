@@ -3,6 +3,8 @@ import {packageSchemas} from '../../services/customs-native/package-contracts';
 import {quoteDocumentSchemas,outputSchemas,quoteDocumentSchemasV2,linkedResponseSchemas,linkedErrorEnvelopeSchema} from '../../services/quote-documents/contracts';
 import {workflowRequestSchemas,workflowOutputSchemas,workflowErrorEnvelopeSchema} from '../../services/quote-documents/workflow-contracts';
 import {fclDocumentSchemas} from '../../services/quote-documents/fcl-contracts';
+import {fclNotificationSchemas} from '../../services/access-gateway/portal/native-admin-contracts';
+import {fclHttpRequestSchemas,fclHttpResponseSchemas,fclPublicOutputSchemas} from '../../services/access-gateway/portal/fcl-http-contracts';
 import {fclQuoteSchemas,fclQuoteCostSellSchemas} from '../../services/quote-native/fcl-contracts';
 import { z } from 'zod';
 import { writeFileSync,mkdirSync } from 'node:fs';
@@ -18,6 +20,11 @@ for(const [name,schema] of Object.entries({...Object.fromEntries(Object.entries(
 for(const [name,schema] of Object.entries(fclQuoteSchemas))writeFileSync(`schemas/admin-control/quote-documents/fcl-quote-${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 for(const [name,schema] of Object.entries(fclQuoteCostSellSchemas))writeFileSync(`schemas/admin-control/quote-documents/fcl-quote-${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 for(const [name,schema] of Object.entries(fclDocumentSchemas))writeFileSync(`schemas/admin-control/quote-documents/fcl-${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
+for(const [name,schema] of Object.entries(fclNotificationSchemas))writeFileSync(`schemas/admin-control/native-business/fcl-notification-${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
+mkdirSync('schemas/access-gateway/fcl',{recursive:true});
+for(const [name,schema] of Object.entries(fclHttpRequestSchemas))writeFileSync(`schemas/access-gateway/fcl/${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
+for(const [name,schema] of Object.entries(fclHttpResponseSchemas))writeFileSync(`schemas/access-gateway/fcl/${name}-response.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
+for(const [name,schema] of Object.entries(fclPublicOutputSchemas))writeFileSync(`schemas/access-gateway/fcl/public-${name}-response.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 
 mkdirSync('schemas/admin-control/customs-packages',{recursive:true});for(const [name,schema] of Object.entries(packageSchemas))writeFileSync(`schemas/admin-control/customs-packages/${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 

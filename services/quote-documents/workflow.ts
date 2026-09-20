@@ -68,6 +68,7 @@ import {
   fclQuoteGetRequestSchema,
   fclQuoteListSchema,
   fclQuoteListRequestSchema,
+  fclQuoteMatchRequestSchema,
   fclQuoteReferenceSchema,
   fclQuoteSaveRequestSchema,
   fclQuoteViewSchema,
@@ -1029,6 +1030,11 @@ export class DocumentWorkflowService{
     const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();
     this.store.ensureWritable();
     return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.saveFclQuoteLocked(ctx,options,input,key)));
+  }
+  matchFclQuote(ctx:PortalContext,input:unknown){
+    this.requireFclReceiver(ctx);const dependencies=this.fclQuoteDependencies();
+    const request=parse(fclQuoteMatchRequestSchema,input,'fcl_quote_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>dependencies.quoteService.match(ctx,request)));
   }
   getFclQuote(ctx:PortalContext,input:unknown):FclQuoteView{
     const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclQuoteGetRequestSchema,input,'fcl_quote_input_invalid');

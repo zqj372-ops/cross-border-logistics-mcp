@@ -20,6 +20,9 @@ import {
   nativeDisableSchema,
   nativeRollbackSchema,
   customsSaveSchema,
+  FCL_NOTIFICATION_VERSION,
+  fclNotificationSaveSchema,
+  fclNotificationViewSchema,
   residentialSaveSchema,
   type NativeKind,
 } from './native-admin-contracts';
@@ -159,9 +162,10 @@ export class NativeAdminService {
     } catch {
       throw new Error('fcl_receiver_unavailable');
     }
-    const scopes = this.store.db.prepare(`SELECT scope FROM native_configs WHERE kind='fcl'
+    const scopes = this.store.db.prepare(`SELECT scope FROM native_configs WHERE kind IN ('fcl','fcl-notification')
       UNION SELECT scope FROM native_releases WHERE kind='fcl'
-      UNION SELECT scope FROM native_audit WHERE kind='fcl'`).all() as { scope: string }[];
+      UNION SELECT scope FROM native_audit WHERE kind IN ('fcl','fcl-notification')
+      UNION SELECT json_extract(scope,'$[0]') AS scope FROM native_idempotency WHERE json_valid(scope) AND json_extract(scope,'$[0]') LIKE 'fcl-person:%'`).all() as { scope: string }[];
     if (scopes.some((row) => row.scope !== options.scope)) throw new Error('fcl_receiver_configuration_mismatch');
   }
   private fclOptions() {
@@ -177,20 +181,21 @@ export class NativeAdminService {
     );
     return result;
   }
-  private scope(ctx: PortalContext, write = false, kind?: NativeKind) {
-    if (kind === 'fcl') {
-      const options = this.fclOptions();
-      if (!ctx.identity.emailVerified || ctx.organizationId !== null || ctx.identity.userId !== options.receiverUserId) {
-        throw new PortalError('fcl_not_found');
-      }
-      try {
-        if (!options.receiverIsActive(options.receiverUserId)) throw new PortalError('fcl_unavailable');
-      } catch (error) {
-        if (error instanceof PortalError && error.code === 'fcl_unavailable') throw error;
-        throw new PortalError('fcl_unavailable');
-      }
-      return options.scope;
+  private fclReceiverScope(ctx: PortalContext): NormalizedFclOptions {
+    const options = this.fclOptions();
+    if (!ctx.identity.emailVerified || ctx.organizationId !== null || ctx.identity.userId !== options.receiverUserId) {
+      throw new PortalError('fcl_not_found');
     }
+    try {
+      if (!options.receiverIsActive(options.receiverUserId)) throw new PortalError('fcl_unavailable');
+    } catch (error) {
+      if (error instanceof PortalError && error.code === 'fcl_unavailable') throw error;
+      throw new PortalError('fcl_unavailable');
+    }
+    return options;
+  }
+  private scope(ctx: PortalContext, write = false, kind?: NativeKind) {
+    if (kind === 'fcl') return this.fclReceiverScope(ctx).scope;
     if (!ctx.identity.emailVerified || !ctx.organizationId) throw new PortalError('native_organization_required');
     const state = this.portal.getState(ctx).data;
     const member = state?.memberships.find((value) => value.userId === ctx.identity.userId && value.organizationId === ctx.organizationId && value.status === 'active');
@@ -278,6 +283,64 @@ export class NativeAdminService {
       active_release: this.store.current(scope, kind),
       history,
     };
+  }
+  private fclNotificationView(scope: string, replay: { replayed: boolean; submitted_version: number | null; current: boolean } = { replayed: false, submitted_version: null, current: true }) {
+    const row = this.store.db.prepare("SELECT version,draft FROM native_configs WHERE scope=? AND kind='fcl-notification'").get(scope) as { version: number; draft: string } | undefined;
+    let input: unknown = null;
+    if (row) {
+      try { input = JSON.parse(row.draft) as unknown; }
+      catch { throw new PortalError('native_readback_failed'); }
+    }
+    try { return fclNotificationViewSchema.parse({ contract_version: FCL_NOTIFICATION_VERSION, version: row?.version ?? 0, input, replay }); }
+    catch { throw new PortalError('native_readback_failed'); }
+  }
+  private assertFclNotificationCommitted(scope: string, expected: ReturnType<NativeAdminService['fclNotificationView']>, auditId: string, createdAt: string, actionDigest: string, partition: string, key: string, actor: string): void {
+    const row = this.store.db.prepare("SELECT scope,kind,version,draft,active FROM native_configs WHERE scope=? AND kind='fcl-notification'").get(scope) as { scope:string;kind:string;version:number;draft:string;active:string|null }|undefined;
+    const readback=this.fclNotificationView(scope);
+    const audit=this.store.db.prepare('SELECT id,scope,kind,actor,action,digest,created FROM native_audit WHERE id=?').get(auditId) as {id:string;scope:string;kind:string;actor:string;action:string;digest:string;created:string}|undefined;
+    const idempotency=this.store.db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+    if(!row||row.scope!==scope||row.kind!=='fcl-notification'||row.active!==null||row.version!==expected.version||row.draft!==JSON.stringify(expected.input)||JSON.stringify(readback)!==JSON.stringify(expected)||!audit||audit.id!==auditId||audit.scope!==scope||audit.kind!=='fcl-notification'||audit.actor!==actor||audit.action!=='save'||audit.digest!==actionDigest||audit.created!==createdAt||!idempotency||idempotency.digest!==actionDigest||idempotency.result!==JSON.stringify(expected))throw new PortalError('native_readback_failed');
+  }
+  getFclNotification(ctx: PortalContext) {
+    const scope = this.fclReceiverScope(ctx).scope;
+    return this.fclNotificationView(scope);
+  }
+  saveFclNotification(ctx: PortalContext, input: unknown, key: string) {
+    const options = this.fclReceiverScope(ctx), scope = options.scope;
+    if (!/^[A-Za-z0-9._:-]{16,128}$/u.test(key)) throw new PortalError('idempotency_key_invalid');
+    const change = fclNotificationSaveSchema.safeParse(input);
+    if (!change.success) throw new PortalError('native_input_invalid');
+    const db = this.store.db, partition = JSON.stringify([scope, 'fcl-notification', 'save']), actionDigest = digest(change.data);
+    db.exec('BEGIN IMMEDIATE');
+    let committed = false;
+    try {
+      const old = db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(partition, key) as { digest: string; result: string } | undefined;
+      if (old) {
+        if (old.digest !== actionDigest) throw new PortalError('idempotency_conflict');
+        let submitted:ReturnType<NativeAdminService['fclNotificationView']>;
+        try{submitted=fclNotificationViewSchema.parse(JSON.parse(old.result) as unknown);}catch{throw new PortalError('native_readback_failed');}
+        db.exec('COMMIT');committed=true;
+        const current=this.fclNotificationView(scope);
+        return this.fclNotificationView(scope,{replayed:true,submitted_version:submitted.version,current:current.version===submitted.version&&JSON.stringify(current.input)===JSON.stringify(submitted.input)});
+      }
+      const current = this.fclNotificationView(scope);
+      if (current.version !== change.data.expected_version) throw new PortalError('version_conflict');
+      const next = fclNotificationViewSchema.parse({ contract_version: FCL_NOTIFICATION_VERSION, version: current.version + 1, input: change.data.input, replay:{replayed:false,submitted_version:null,current:true} });
+      db.prepare("INSERT INTO native_configs(scope,kind,version,draft,active) VALUES(?,?,?,?,NULL) ON CONFLICT(scope,kind) DO UPDATE SET version=excluded.version,draft=excluded.draft,active=NULL")
+        .run(scope, 'fcl-notification', next.version, JSON.stringify(next.input));
+      const auditId = randomUUID(), createdAt = options.now();
+      db.prepare('INSERT INTO native_audit VALUES(?,?,?,?,?,?,?)').run(auditId, scope, 'fcl-notification', ctx.identity.userId, 'save', actionDigest, createdAt);
+      db.prepare('INSERT INTO native_idempotency VALUES(?,?,?,?)').run(partition, key, actionDigest, JSON.stringify(next));
+      this.assertFclNotificationCommitted(scope,next,auditId,createdAt,actionDigest,partition,key,ctx.identity.userId);
+      db.exec('COMMIT'); committed = true;
+      this.assertFclNotificationCommitted(scope,next,auditId,createdAt,actionDigest,partition,key,ctx.identity.userId);
+      return this.fclNotificationView(scope);
+    } catch (error) {
+      if (!committed && (this.store.db as typeof db & { isTransaction: boolean }).isTransaction) {
+        try { db.exec('ROLLBACK'); } catch { /* Preserve the notification failure. */ }
+      }
+      throw error;
+    }
   }
   withFclReadLock<T>(ctx: PortalContext, operation: () => T extends Promise<unknown> ? never : T): T {
     this.scope(ctx, false, 'fcl');

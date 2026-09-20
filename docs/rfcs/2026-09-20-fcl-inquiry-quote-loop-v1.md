@@ -474,4 +474,91 @@ Document 写 guard 保持到 Case COMMIT 和提交后读回完成；它不是 FC
 
 ### FCL.12.4 未交付入口
 
-CLI、HTTP、UI 和 MCP 暴露仍待 FCL.13；本节点没有新增 route、没有新增 MCP tool、没有改变现有 Case/Quote/Document 公共合同。FCL.12 只交付上述服务层方法和生成 Schema，部署、真实连接、外部邮件、Booking/SO 及生产业务验收均不在本节点范围内。
+CLI、HTTP、UI 仍待 FCL.13；本 M1 不新增 MCP 写入口，也不改变静态工具注册。FCL.12 没有新增 route、没有改变现有 Case/Quote/Document 公共合同，只交付上述服务层方法和生成 Schema，部署、真实连接、外部邮件、Booking/SO 及生产业务验收均不在本节点范围内。
+
+## FCL.13a 实施说明
+
+本附录记录 FCL service 到现有 Portal 运行入口的窄 HTTP 接线。它不新增 MCP tool、不修改静态工具注册、不交付 UI/CLI 页面，也不创建第二套业务服务。
+
+### FCL.13a.1 Canonical staff HTTP map
+
+人员接口固定在 `/console/api/v1/fcl/<action>`。请求先使用既有 `/console` cookie、Origin/Host/transport、CSRF、device-auth 和当前 session context；FCL action 不接受客户端 owner、tenant、source、价格权威或通用 `operation` 字段。
+
+```text
+GET  case-list
+POST case-get
+POST case-status
+POST case-staff-supplement
+POST case-confirm
+GET  rate-get
+POST rate-save
+GET  rate-preview
+POST rate-publish
+POST rate-disable
+POST rate-rollback
+POST quote-match
+POST quote-save
+POST quote-get
+POST quote-list
+GET  issuer-config
+POST issuer-config-save
+POST document-save
+POST document-get
+POST document-list
+POST document-review
+POST document-approve
+POST document-reject
+POST document-export
+POST handoff-save
+POST handoff-get
+GET  notification-get
+POST notification-save
+```
+
+以上是唯一 canonical staff route/method map；不提供 REST 风格别名。`case-list` 的 query 只允许 `limit/status/cursor` 并有界解析。`quote-match` 保留 matcher 原五状态与 data evidence，HTTP 外层不把 `manual_review`、`blocked` 或 `unavailable` 改写成 `success`。`document-export` 在 HTTP action 内真实 await service Promise，再按导出 Schema 验证响应。
+
+`fcl-http-contracts.ts` 用现有 service Zod Schema 生成每个 action 的闭合 request/response map；response 成功态绑定对应 data Schema，`blocked/unavailable` 的 error data 为 `null`，`quote-match` 保留 matcher 的 MatchData 证据。CLI/OpenAPI 必须复用该 map，不复制第二套字段。生成的 FCL HTTP response schema 会对实际序列化 envelope 再验证。
+
+`fcl-http-contracts.ts` 同时导出 `FCL_HTTP_BODY_LIMITS`、公开 action body limits 和 `FCL_HTTP_MAX_RESPONSE_BYTES`，作为 CLI/OpenAPI 的统一 transport 限制。`rate-save` 允许 16 MiB 的合法 Rate dataset，其余 Quote/Case/Document/Notification 请求使用按合同收紧的有界上限；超过上限返回 HTTP 413、`needs_input`、`body_too_large`，不会伪装成服务不可用。该字节上限是领域 Schema 之外额外请求限制，超长备注或大批量数据应缩减后拆分提交。
+
+### FCL.13a.2 Public inquiry HTTP 与本票 session
+
+公开接口单独位于 `/inquiry/api/v1`，不复用 `/console` cookie Path 或平台管理员身份：
+
+```text
+GET  /inquiry/api/v1/session
+POST /inquiry/api/v1/fcl/submit
+POST /inquiry/api/v1/fcl/credential/exchange
+GET  /inquiry/api/v1/fcl
+POST /inquiry/api/v1/fcl/supplement
+POST /inquiry/api/v1/logout
+```
+
+公开 bootstrap 返回五状态 envelope、CSRF 和匿名 session；submit/exchange/supplement 必须带现有 CSRF、Origin/Host/transport、JSON body limit、闭合 Schema 和幂等 key。浏览器只在 URL fragment 保存恢复信息，exchange 后清除 fragment，后续使用 `Path=/inquiry`、HttpOnly、SameSite 的加密/认证 cookie；credential 不进入 query、localStorage 或访问日志。
+
+公开 cookie 的内部 payload 使用闭合 Schema、AES-GCM 认证和至少 32 bytes 的服务端 secret。无目标 cookie 等同于匿名，不静默创建新身份；重复、损坏或过期目标 cookie fail closed。exchange 保留匿名 session ID 和原匿名 session 期限，不延长 credential 的 CaseService 到期时间。
+
+`GET /inquiry/api/v1/fcl` 只允许 `inquiry_id` query，必须等于 cookie 绑定票；`supplement` 的薄 wrapper 显式包含同一 `inquiry_id`，去除该字段后才调用既有 Case 客户补料 Schema。跨票、跨标签页或 credential query 一律拒绝，不把 A 票操作发送到 B 票。每次 CaseService 读取仍重新校验 credential 到期。
+
+公开响应使用同一 FCL HTTP version 和裸五状态 envelope；submit/exchange/get/supplement 的成功 data 非空，logout 成功 data 为 null，错误 data 为 null。公开 session 只返回公开 allowlist，不返回内部 Case/Cost/Sell/GP、审核原因、handoff 备注或 receiver 信息。内存中有界 per-IP attempt limiter 限制 bootstrap/exchange 滥用；它不复用海关 20 次公共配额，也不建立新 Quota 业务平台。
+
+### FCL.13a.3 Notification 配置与提交行为
+
+通知配置复用 Native `native_configs/native_audit/native_idempotency`，使用 `kind=fcl-notification`、个人 `scope=fcl-person:<receiver>`，不新建 SMTP、邮件模板或队列服务。配置版本为 `fcl-notification@2026-09-21.v1`，闭合字段只有 `enabled`、`recipient`、`cc`：
+
+```text
+getFclNotification(ctx)
+saveFclNotification(ctx,input,key)
+```
+
+保存使用 CAS、`confirmed=true`、个人 actor/action 幂等分区和 COMMIT 前/后完整 readback；config row 必须 `active=NULL`，audit、idempotency result、版本和 input 全部核对。same-key replay 从已提交 result 恢复，不以当前新版本伪装旧请求；配置变化以 `replay.submitted_version/current` 明确。通知配置和 FCL Rate 使用不同 kind/scope row，保存通知不会改变 active release 或使报价失效。
+
+Inquiry 成功保存后才读取该受控配置；缺失、disabled、transport 失败或 timeout 只写 `not_attempted/disabled/sent/failed` 通知状态，不改变 Inquiry 原件。server 注入 fake transport，客户端不能提供 SMTP/transport；accepted 不等于 delivered，同 key replay 不重复发送。
+
+### FCL.13a.4 Fixture 与生产边界
+
+`start-portal-fixture.ts --fixtures` 在 `PORTAL_FIXTURE_FCL_PERSONAL=true` 时显式进入个人 FCL 模式：不 seed `org_fixture`/`tenant_fixture`，组织数为 0；只在全新空 store 使用 `fresh_fixture`，已有 FCL store 使用 `reopen`，不 reset 数据库或 secret。Case/Native/Quote/Document 共享固定业务时钟 `2026-10-08T12:00:00Z`，session/CLI TTL 仍使用真实时间；receiver 必须来自显式 fixture identity 且 `emailVerified=true`，启动日志只打印 origin、synthetic 日期和非秘密边界。
+
+生产 FCL 默认关闭。`PORTAL_FCL_ENABLED=true` 在尚未接入可信 receiver authority 前以 `fcl_receiver_authority_unavailable` 启动失败，不使用用户表存在、在线 session、`()=>true` 或客户端 boolean 伪造 receiver。server 对 FCL public cookie 强制 `secureCookie=!fixture`，生产调用方不能通过 false 绕过 Transport/Secure 要求。
+
+真实部署、真实邮件、真实 IdP authority、UI 和 CLI 仍不在 FCL.13a 范围内；FCL.13b 尚未开始。
