@@ -360,3 +360,13 @@ node --import tsx/esm deploy/scripts/generate-native-schemas.ts
 - 服务端用现有 Document signing secret 对 domain、document/owner/revision/version、Case/Quote/Source/模板/客户投影和日期做 HMAC。读取和重放校验签名、历史 quote digest 引用、source binding、revision/current/event/audit 元数据和 owner；本地引用损坏 fail closed，当前 Rate 变化只影响 `currentness`。
 - cache 只保留完整可审核 quote；混币缺 FX、缺成本/售价、待补 scope 均不得生成客户文档。日期门禁为 `quote_date <= today <= valid_until`，且整个窗口位于来源 Rate 有效期内；未发布 draft 不改变当前 active source。
 - 同一 document 仅允许 draft refresh append 下一 draft revision并保留历史；approved/rejected 的后续实际转换留给 FCL.10。
+
+## FCL.10 实施说明
+
+本节点在同一 DocumentWorkflowService、v5 表、revision/current/event/audit/idempotency 和临时 `reviews` Map 内增加 FCL review/approve/reject，不新增审批表、审批服务或数据库。
+
+- `reviewFclDocument` 只在 Case、active Rate、Quote、模板、日期和 currentness 全部有效且 quote 完整时发出 10 分钟 review credential。review hash 使用现有 secret、FCL domain、个人 owner/actor、document/revision/version、完整 content digest、Case/Quote/来源/模板/日期和 expiry。
+- `approveFclDocument` 只接受 document/version/review hash及 `confirmed:true`，在 Case→Rate→Document 同步锁内重新校验 review 记录、currentness、quote completeness 和真实 payload，再 append approved revision。decision 记录 source revision/version/digest、reviewed/approved actor/time、review hash/expiry 和 approved revision/version，并由 HMAC 覆盖。
+- `rejectFclDocument` 是纠正动作，只要求当前 draft、个人权限、CAS、非空 reason 和 Case→Document 顺序；不读取 active Rate 或 quote currentness。拒绝只写内部 decision/reject event，不把 reason 注入 public Case event。
+- draft 普通 refresh 保留；rejected 使用显式 `resubmit`，允许同一 Quote 仅修正展示字段；approved 使用显式 `re_quote`，要求 Quote ref/version 或个人模板版本发生变化。重提/re_quote 生成新 draft，清除旧 decision，保留旧 approved/rejected revision。
+- decision 为 payload 可选字段；旧 draft 无 decision 时仍保持原签名/digest 可读。approved/rejected 强制 decision 完整、前驱 revision 为真实 draft 且 HMAC/digest 有效；读取同时核对 row source/review/rejection、current pointer、event/audit 和 idempotency reference。

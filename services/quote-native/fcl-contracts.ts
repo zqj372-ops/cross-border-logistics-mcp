@@ -1,9 +1,7 @@
 import { z } from 'zod';
 import { FCL_CONTAINER_TYPES, FCL_SERVICE_IDS } from '../../apps/inquiry/fcl-model';
-import { FCL_DOCUMENT_WORKFLOW_VERSION } from '../quote-documents/fcl-contracts';
-import { fclCurrentnessSchema } from '../quote-documents/workflow-contracts';
-import { templateRefSchema } from '../quote-documents/workflow-contracts';
-export { FCL_DOCUMENT_WORKFLOW_VERSION } from '../quote-documents/fcl-contracts';
+import { FCL_DOCUMENT_WORKFLOW_VERSION,fclCurrentnessSchema,templateRefSchema } from '../quote-documents/workflow-contracts';
+export { FCL_DOCUMENT_WORKFLOW_VERSION } from '../quote-documents/workflow-contracts';
 
 export const FCL_RATE_DATASET_VERSION = 'fcl-rate-dataset@2026-09-20.v1' as const;
 

@@ -64,7 +64,7 @@ it('ships closed Cost/Sell FCL quote schemas with bounded decimal formats',()=>{
 });
 it('ships closed linked FCL document schemas',()=>{
  const linked=files(/^fcl-linked-.*\.schema\.json$/);
- expect(linked).toHaveLength(5);
+ expect(linked).toHaveLength(9);
  for(const file of linked){const schema=read(file);expect(()=>compile(file)).not.toThrow();assertClosed(schema,file);}
  const save=compile('fcl-linked-save-request.schema.json');
  const base={contract_version:'fcl-document-workflow@2026-09-20.v1',operation:'create',quote_ref:'00000000-0000-4000-8000-000000000001',expected_quote_version:1,expected_quote_digest:'a'.repeat(64),expected_case_version:1,expected_customer_supplement_ref:null,expected_config_version:1,quote_no:'FCL-001',quote_date:'2026-10-08',valid_until:'2026-10-15',remark:null};

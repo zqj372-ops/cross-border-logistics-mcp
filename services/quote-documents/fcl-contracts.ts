@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {FCL_CONTAINER_TYPES,FCL_INCOTERMS,FCL_SERVICE_IDS} from '../../apps/inquiry/fcl-model';
+import {fclQuoteSnapshotSchema} from '../quote-native/fcl-contracts';
 import {draftDocumentSchema,FCL_DOCUMENT_WORKFLOW_VERSION,feeTemplateSchema,feeTemplateSelectionSchema,fclCurrentnessSchema} from './workflow-contracts';
 export {FCL_DOCUMENT_WORKFLOW_VERSION} from './workflow-contracts';
 
@@ -39,6 +40,8 @@ export type FclConfigView=z.infer<typeof fclConfigViewSchema>;
 export type FclDocumentPayload=z.infer<typeof fclDocumentPayloadSchema>;
 export type FclDocumentView=z.infer<typeof fclDocumentViewSchema>;
 export type FclDocumentSaveRequest=z.infer<typeof fclDocumentSaveRequestSchema>;
+export type FclDocumentDecision=z.infer<typeof fclDocumentDecisionSchema>;
+export type FclDocumentReviewView=z.infer<typeof fclDocumentReviewViewSchema>;
 
 export const fclDocumentCaseBindingSchema=z.object({
   case_ref:z.string().uuid(),
@@ -99,6 +102,24 @@ export const fclDocumentTemplateSchema=z.object({
   terms:z.string().min(1).max(4000),
 }).strict();
 
+export const fclDocumentDecisionSchema=z.object({
+  kind:z.enum(['approved','rejected']),
+  source_revision_id:z.string().uuid(),
+  source_version:z.number().int().positive(),
+  source_content_digest:z.string().regex(/^[a-f0-9]{64}$/u),
+  review_hash:z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+  approved_revision_id:z.string().uuid().nullable(),
+  approved_version:z.number().int().positive().nullable(),
+  reviewed_at:z.iso.datetime().nullable(),
+  review_expires_at:z.iso.datetime().nullable(),
+  reason:z.string().trim().min(1).max(2000).nullable(),
+  actor:z.string().min(1).max(200),
+  at:z.iso.datetime(),
+}).strict().superRefine((value,context)=>{
+  if(value.kind==='approved'&&(value.review_hash===null||value.approved_revision_id===null||value.approved_version===null||value.reviewed_at===null||value.review_expires_at===null||value.reason!==null))context.addIssue({code:'custom',message:'approved_decision_invalid'});
+  if(value.kind==='rejected'&&(value.reason===null||value.review_hash!==null||value.approved_revision_id!==null||value.approved_version!==null||value.reviewed_at!==null||value.review_expires_at!==null))context.addIssue({code:'custom',message:'rejected_decision_invalid'});
+});
+
 export const fclDocumentPayloadSchema=z.object({
   contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
   schema_version:z.literal('fcl-linked-document@2026-09-20.v1'),
@@ -117,6 +138,7 @@ export const fclDocumentPayloadSchema=z.object({
   customer_totals:fclDocumentCustomerTotalsSchema,
   template:fclDocumentTemplateSchema,
   template_version:z.number().int().nonnegative(),
+  decision:fclDocumentDecisionSchema.nullable().optional(),
   content_digest:z.string().regex(/^[a-f0-9]{64}$/u),
   signature:z.string().regex(/^[a-f0-9]{64}$/u),
   actor:z.string().min(1).max(200),
@@ -128,6 +150,7 @@ export const fclDocumentViewSchema=fclDocumentPayloadSchema.extend({
   current_version:z.number().int().positive(),
   historical:z.boolean(),
   currentness:fclCurrentnessSchema,
+  replay:z.object({replayed:z.boolean(),submitted_version:z.number().int().positive().nullable(),current:z.boolean()}).strict(),
 }).strict();
 
 export const fclDocumentListItemSchema=z.object({
@@ -180,7 +203,10 @@ export const fclDocumentRefreshRequestSchema=z.object({
   ...displayFields,
 }).strict();
 
-export const fclDocumentSaveRequestSchema=z.discriminatedUnion('operation',[fclDocumentCreateRequestSchema,fclDocumentRefreshRequestSchema]);
+export const fclDocumentResubmitRequestSchema=fclDocumentRefreshRequestSchema.extend({operation:z.literal('resubmit')}).strict();
+export const fclDocumentReQuoteRequestSchema=fclDocumentRefreshRequestSchema.extend({operation:z.literal('re_quote')}).strict();
+
+export const fclDocumentSaveRequestSchema=z.discriminatedUnion('operation',[fclDocumentCreateRequestSchema,fclDocumentRefreshRequestSchema,fclDocumentResubmitRequestSchema,fclDocumentReQuoteRequestSchema]);
 export const fclDocumentGetRequestSchema=z.object({
   contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
   document_id:z.string().uuid(),
@@ -194,6 +220,35 @@ export const fclDocumentListRequestSchema=z.object({
 }).strict();
 export const fclDocumentListSchema=z.object({items:z.array(fclDocumentListItemSchema).max(100),next_cursor:z.string().nullable()}).strict();
 export const fclDocumentReferenceSchema=z.object({document_id:z.string().uuid(),version:z.number().int().positive(),audit_id:z.string().uuid()}).strict();
+export const fclDocumentReviewRequestSchema=z.object({
+  contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+  document_id:z.string().uuid(),
+  expected_version:z.number().int().positive(),
+}).strict();
+export const fclDocumentReviewQuoteSchema=fclQuoteSnapshotSchema;
+export const fclDocumentReviewViewSchema=z.object({
+  contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+  document_id:z.string().uuid(),
+  revision_id:z.string().uuid(),
+  version:z.number().int().positive(),
+  review_hash:z.string().regex(/^[a-f0-9]{64}$/u),
+  review_expires_at:z.iso.datetime(),
+  quote:fclDocumentReviewQuoteSchema,
+  document:fclDocumentViewSchema,
+}).strict();
+export const fclDocumentApproveRequestSchema=z.object({
+  contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+  document_id:z.string().uuid(),
+  expected_version:z.number().int().positive(),
+  review_hash:z.string().regex(/^[a-f0-9]{64}$/u),
+  confirmed:z.literal(true),
+}).strict();
+export const fclDocumentRejectRequestSchema=z.object({
+  contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+  document_id:z.string().uuid(),
+  expected_version:z.number().int().positive(),
+  reason:z.string().trim().min(1).max(2000),
+}).strict();
 
 export const fclDocumentSchemas:Record<string,z.ZodType>={
   ...fclConfigSchemas,
@@ -202,4 +257,8 @@ export const fclDocumentSchemas:Record<string,z.ZodType>={
   'linked-list-request':fclDocumentListRequestSchema,
   'linked-list-output':fclDocumentListSchema,
   'linked-view-output':fclDocumentViewSchema,
+  'linked-review-request':fclDocumentReviewRequestSchema,
+  'linked-review-output':fclDocumentReviewViewSchema,
+  'linked-approve-request':fclDocumentApproveRequestSchema,
+  'linked-reject-request':fclDocumentRejectRequestSchema,
 };
