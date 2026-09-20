@@ -35,7 +35,7 @@ export {
   fclQuoteSnapshotSchema,
   fclQuoteViewSchema,
 } from './fcl-contracts';
-export type { FclQuoteSelectedSnapshot, FclQuoteView } from './fcl-contracts';
+export type { FclQuoteCurrentness, FclQuoteSelectedSnapshot, FclQuoteView } from './fcl-contracts';
 
 type FclCaseView = ReturnType<CaseService['getFclCase']>;
 type FclQuoteMatchRequest = ReturnType<typeof fclQuoteMatchRequestSchema.parse>;

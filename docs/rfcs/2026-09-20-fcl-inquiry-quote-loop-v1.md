@@ -349,3 +349,14 @@ node --import tsx/esm deploy/scripts/generate-native-schemas.ts
 - 金额使用共享 precision 48 / HALF_UP：逐行 quantity×price 先 round2，再按 USD/CAD/CNY 汇总；Revenue、Cost、GP、Margin 均保留独立可解释 trace。单币种原币利润不要求 CNY FX；混合贡献币种缺必要 USD/CAD→CNY FX 时 quote completeness 标记缺失，CNY 折算值和统一利润为 null，不自动取行情或补 1。
 - 新 Cost/Sell Schema 为闭合 Draft 2020-12；正 decimal 上限为 10 位整数、6 位小数，计算金额和 Ratio 使用足以容纳合法输入乘积/负利润的十进制范围。`customer_note` 对齐旧文档 500 字符，模板引用复用现有 `templateRefSchema`，模板不提供价格权威。
 - 保存事务对 payload、内容 digest、row metadata、audit 和 idempotency 做同事务读回；触发器替换为合法 JSON 也必须回滚。提交后读回失败不回滚已提交版本；外层锁释放失败时，同一幂等 key 重试必须读取已有 quote，不重复 quote/audit。
+
+## FCL.9 实施说明
+
+本节点只生成客户售价投影和 `fcl_linked` draft，不实现 approve/reject、正式 PDF、HTTP/UI/CLI、handoff 或第二套审批对象。
+
+- Quote get/list/save 增加 live `currentness` 投影，不改已存 snapshot/digest。Case version/补充/状态、Quote 当前版本、active Rate release/Rate 内容、来源有效期均分别返回可识别 reason code；历史 quote 仍可读历史金额。
+- 继续使用 Document DB v5 的 `document_revisions`、`document_current_revisions`、`document_revision_events`、`document_audit` 和 `document_idempotency`，不新增表或 store。个人文档固定 `org=NULL`、`personal_owner_id=receiver`、`document_kind=fcl_linked`。
+- 客户 DraftDocument 只由服务端 quote/case/config 生成：费用行只取 `sell_price`，note 只取 `customer_note`，内部成本、利润、supplier/source 原文和 internal note 不进入客户投影。`container_no` 保持 null，柜型/数量保留在 case projection；POL/POD/final destination 不做推断。
+- 服务端用现有 Document signing secret 对 domain、document/owner/revision/version、Case/Quote/Source/模板/客户投影和日期做 HMAC。读取和重放校验签名、历史 quote digest 引用、source binding、revision/current/event/audit 元数据和 owner；本地引用损坏 fail closed，当前 Rate 变化只影响 `currentness`。
+- cache 只保留完整可审核 quote；混币缺 FX、缺成本/售价、待补 scope 均不得生成客户文档。日期门禁为 `quote_date <= today <= valid_until`，且整个窗口位于来源 Rate 有效期内；未发布 draft 不改变当前 active source。
+- 同一 document 仅允许 draft refresh append 下一 draft revision并保留历史；approved/rejected 的后续实际转换留给 FCL.10。

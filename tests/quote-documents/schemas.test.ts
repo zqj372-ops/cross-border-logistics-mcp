@@ -62,3 +62,12 @@ it('ships closed Cost/Sell FCL quote schemas with bounded decimal formats',()=>{
  const save=compile('fcl-quote-cost-sell-save-request.schema.json');
  expect(save({contract_version:'fcl-document-workflow@2026-09-20.v1',operation:'create',case_ref:'00000000-0000-4000-8000-000000000001',expected_case_version:1,expected_customer_supplement_ref:null,selected_rate_id:'00000000-0000-4000-8000-000000000002',expected_release_id:'00000000-0000-4000-8000-000000000003',expected_release_version:1,expected_dataset_digest:'a'.repeat(64),input:{source_sell_prices:[],manual_fees:[],service_scopes:[],exchange_rates:{USD:'10000000000',CAD:null},remark:null}})).toBe(false);
 });
+it('ships closed linked FCL document schemas',()=>{
+ const linked=files(/^fcl-linked-.*\.schema\.json$/);
+ expect(linked).toHaveLength(5);
+ for(const file of linked){const schema=read(file);expect(()=>compile(file)).not.toThrow();assertClosed(schema,file);}
+ const save=compile('fcl-linked-save-request.schema.json');
+ const base={contract_version:'fcl-document-workflow@2026-09-20.v1',operation:'create',quote_ref:'00000000-0000-4000-8000-000000000001',expected_quote_version:1,expected_quote_digest:'a'.repeat(64),expected_case_version:1,expected_customer_supplement_ref:null,expected_config_version:1,quote_no:'FCL-001',quote_date:'2026-10-08',valid_until:'2026-10-15',remark:null};
+ expect(save(base)).toBe(true);
+ expect(save({...base,cost_price:'3200'})).toBe(false);
+});

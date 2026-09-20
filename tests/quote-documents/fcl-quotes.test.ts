@@ -89,7 +89,7 @@ async function setup(){
   const published=rateService.publish(receiver,'fcl',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fcl-quote-rate-publish-0001');
   const quoteService=new FclQuoteService({caseReader:caseService,rateReader:rateService,now:()=>now});
   const documentWorkflowStore=new DocumentWorkflowStore(documentStore,fclStore);
-  const documentWorkflow=new DocumentWorkflowService(documentWorkflowStore,new DocumentService(documentStore,portal),portal,undefined,{receiverUserId:receiverId,receiverIsActive:()=>active.value,now:()=>now},{quoteService,caseReader:caseService,caseLock:caseService,rateLock:rateService});
+  const documentWorkflow=new DocumentWorkflowService(documentWorkflowStore,new DocumentService(documentStore,portal),portal,undefined,{receiverUserId:receiverId,receiverIsActive:()=>active.value,now:()=>now},{quoteService,caseReader:caseService,caseLock:caseService,rateLock:rateService,rateReader:rateService});
   return {root,caseStore,rateStore,documentStore,documentWorkflowStore,documentWorkflow,caseService,rateService,quoteService,active,confirmed,published:published.active_release!};
 }
 
@@ -123,6 +123,7 @@ describe('personal FCL cost sell quotes',()=>{
     const created=f.documentWorkflow.saveFclQuote(receiver,createRequest(f),'fcl-quote-create-0001');
     expect(created.quote_ref).toMatch(/^[0-9a-f-]{36}$/u);
     expect(created).toMatchObject({version:1,current_version:1,historical:false,completeness:{complete:true}});
+    expect(created.currentness).toEqual({valid_now:true,reason_codes:[]});
     expect(created.calculation.by_currency.USD).toMatchObject({cost_subtotal:'6400.00',revenue_subtotal:'7000.00',gp_subtotal:'600.00',margin:'0.085714'});
     const updated=f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:created.quote_ref,expected_version:1,source_binding:{mode:'retain'},input:draftInput('3600')},'fcl-quote-update-0001');
     expect(updated).toMatchObject({quote_ref:created.quote_ref,version:2,current_version:2});
@@ -133,7 +134,7 @@ describe('personal FCL cost sell quotes',()=>{
     f.documentStore.close();
     const reopenedStore=new DocumentStore(join(f.root,'documents.sqlite'),reopenFcl);
     const reopenedWorkflow=new DocumentWorkflowStore(reopenedStore,reopenFcl);
-    const reopened=new DocumentWorkflowService(reopenedWorkflow,new DocumentService(reopenedStore,portal),portal,undefined,{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=>now},{quoteService:f.quoteService,caseReader:f.caseService,caseLock:f.caseService,rateLock:f.rateService});
+    const reopened=new DocumentWorkflowService(reopenedWorkflow,new DocumentService(reopenedStore,portal),portal,undefined,{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=>now},{quoteService:f.quoteService,caseReader:f.caseService,caseLock:f.caseService,rateLock:f.rateService,rateReader:f.rateService});
     expect(reopened.getFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toMatchObject({version:2,calculation:{by_currency:{USD:{gp_subtotal:'800.00'}}}});
     reopenedStore.close();
     f.rateStore.close();f.caseStore.close();
@@ -168,6 +169,7 @@ describe('personal FCL cost sell quotes',()=>{
     const f=await setup();
     const created=f.documentWorkflow.saveFclQuote(receiver,createRequest(f),'fcl-quote-create-0004');
     const nextRelease=republish(f,'3400');
+    const stale=f.documentWorkflow.getFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null});expect(stale.currentness.valid_now).toBe(false);expect(stale.currentness.reason_codes).toContain('fcl_quote_source_release_changed');
     const retained=f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:created.quote_ref,expected_version:1,source_binding:{mode:'retain'},input:draftInput('3600')},'fcl-quote-update-0004');
     expect(retained.calculation.by_currency.USD).toMatchObject({cost_subtotal:'6400.00',revenue_subtotal:'7200.00'});
     expect(()=>f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:created.quote_ref,expected_version:2,source_binding:{mode:'replace',expected_case_version:f.confirmed.case_version,expected_customer_supplement_ref:null,selected_rate_id:(f.published.input as FclRateDataset).rates[0]!.rate_id,expected_release_id:f.published.release_id,expected_release_version:f.published.version,expected_dataset_digest:f.published.digest},input:draftInput('3700')},'fcl-quote-update-0005')).toThrow('fcl_quote_source_changed');
@@ -178,6 +180,7 @@ describe('personal FCL cost sell quotes',()=>{
     f.caseService.updateFclCaseStatus(receiver,f.confirmed.case_id,{expected_version:caseView.case_version,status:'closed',public_note:'Closed fixture',internal_note:''},'fcl-quote-close-0001');
     expect(()=>f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:created.quote_ref,expected_version:3,source_binding:{mode:'retain'},input:draftInput('3800')},'fcl-quote-update-0007')).toThrow('fcl_quote_case_closed');
     expect(f.documentWorkflow.getFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:1})).toMatchObject({version:1,historical:true});
+    expect(f.documentWorkflow.getFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null}).currentness.reason_codes).toContain('fcl_quote_case_closed');
     f.documentStore.close();f.rateStore.close();f.caseStore.close();
   });
 

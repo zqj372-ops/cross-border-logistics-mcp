@@ -237,6 +237,28 @@
             ],
             "additionalProperties": false
           },
+          "currentness": {
+            "type": "object",
+            "properties": {
+              "valid_now": {
+                "type": "boolean"
+              },
+              "reason_codes": {
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                }
+              }
+            },
+            "required": [
+              "valid_now",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -253,6 +275,7 @@
           "release_id",
           "complete",
           "by_currency",
+          "currentness",
           "created_at"
         ],
         "additionalProperties": false

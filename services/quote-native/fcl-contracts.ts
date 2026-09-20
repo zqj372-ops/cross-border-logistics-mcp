@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { FCL_CONTAINER_TYPES, FCL_SERVICE_IDS } from '../../apps/inquiry/fcl-model';
 import { FCL_DOCUMENT_WORKFLOW_VERSION } from '../quote-documents/fcl-contracts';
+import { fclCurrentnessSchema } from '../quote-documents/workflow-contracts';
 import { templateRefSchema } from '../quote-documents/workflow-contracts';
 export { FCL_DOCUMENT_WORKFLOW_VERSION } from '../quote-documents/fcl-contracts';
 
@@ -424,6 +425,7 @@ export const fclQuoteSnapshotSchema = z.object({
 export const fclQuoteViewSchema = fclQuoteSnapshotSchema.extend({
   current_version: z.number().int().positive(),
   historical: z.boolean(),
+  currentness: fclCurrentnessSchema,
   replay: z.object({
     replayed: z.boolean(),
     submitted_version: z.number().int().positive().nullable(),
@@ -441,6 +443,7 @@ export const fclQuoteListItemSchema = z.object({
   release_id: z.string().uuid(),
   complete: z.boolean(),
   by_currency: fclQuoteCalculationSchema.shape.by_currency,
+  currentness: fclCurrentnessSchema,
   created_at: z.iso.datetime(),
 }).strict();
 
@@ -469,3 +472,4 @@ export type FclQuoteServiceCoverage = z.infer<typeof fclQuoteServiceCoverageSche
 export type FclQuoteSelectedSnapshot = z.infer<typeof fclQuoteSelectedSnapshotSchema>;
 export type FclQuoteCaseBinding = z.infer<typeof fclQuoteCaseBindingSchema>;
 export type FclQuoteCaseProjection = z.infer<typeof fclQuoteCaseProjectionSchema>;
+export type FclQuoteCurrentness = z.infer<typeof fclCurrentnessSchema>;

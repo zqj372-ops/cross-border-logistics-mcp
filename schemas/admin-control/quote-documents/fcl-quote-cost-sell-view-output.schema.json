@@ -1330,6 +1330,28 @@
     "historical": {
       "type": "boolean"
     },
+    "currentness": {
+      "type": "object",
+      "properties": {
+        "valid_now": {
+          "type": "boolean"
+        },
+        "reason_codes": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "valid_now",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
     "replay": {
       "type": "object",
       "properties": {
@@ -1379,6 +1401,7 @@
     "created_at",
     "current_version",
     "historical",
+    "currentness",
     "replay"
   ],
   "additionalProperties": false
