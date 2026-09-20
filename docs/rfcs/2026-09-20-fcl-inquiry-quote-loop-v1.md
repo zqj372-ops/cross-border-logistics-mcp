@@ -1,0 +1,279 @@
+# RFC：FCL 询价、成本/售价、审核与正式文件 v1
+
+Status: **Accepted for isolated M1 implementation — 2026-09-20**。用户完成第一阶段审计后明确要求“把 M1 模块完整做完”。本机据此接受本文的 FCL 专用合同作为隔离实施基线，并负责每节点独立审核；K12 在精确 Task Packet 范围内实现。本文不表示 Main 合并、生产发布、真实价格确认或邮件外发已获授权或已完成。
+
+日期：2026-09-20。代码依据：`2c0356adb05987317a9813d4036f9bf2d040424f`。
+
+配套：[14 项审计与方案](../product/2026-09-20-fcl-main-loop-audit.md)、[最小 Schema 草案](2026-09-20-fcl-main-loop.schema.json)。草案位于 docs/rfcs，不被生成器或运行时引用。
+
+## 1. 动机、已确认决定与范围
+
+当前 Case 可以保存需求和追加文字补充；Quote Documents 已有版本、审核和 PDF，但 linked/native_unlinked 绑定住宅尾程请求与价格，不能承载 FCL 人工成本和客户售价。公开询价入口又要求人员登录。因此不能仅以页面更名实现整柜链路。
+
+用户最新明确选择：**公开提交，固定由本人受理，不建公司。** 此决定替代本轮较早的“固定运营企业”答复。服务端显式配置唯一受理个人账号；客户不需登录，受理人使用现有已验证人员账号登录。不得创建占位公司、伪造 organization_id，或把平台 operator 当作个人报价授权。
+
+当前代码尚不支持完整个人受理：Case 可保存 organization_id=null 的个人需求，但普通个人不能管理 Case；NativeAdmin 和 DocumentWorkflow 都要求企业身份。因此本 RFC 必须增加仅供 FCL 使用的个人归属与管理权限，不能只删除三个 organization 检查。
+
+仅做中国→加拿大 FCL：Inquiry → 结构化 Case → Rate 匹配 → 内部 Cost/Sell → 人工审核/退回/重提 → 现有正式 PDF → 简单交接。具体真实港口、城市及当前有效 Rate 尚未核定，使用合成样例完成本地开发不会取得真实价格资格。
+
+不进入 LCL、CBM/KG/托盘/住宅 Zone/Freightcom 定价、船期集成、Booking/SO、Tracking、Actual Cost、结算、CRM、BI、自动定价或完整客户门户。
+
+## 2. 权威与必要存储
+
+| 对象 | 唯一权威与必要变化 |
+|---|---|
+| Inquiry | `CaseStore` 同一 SQLite 中新 `fcl_inquiries`：原始 payload 不可变；独立 inquiry UUID/no，关联既有 Case UUID。身份/通知元数据不覆盖原件 |
+| Case | 复用 `business_cases`；FCL 当前结构化 payload 可更新，原 Inquiry 保留；所有更新同步追加 `business_case_events` |
+| FCL Rate | `NativeAdminStore.native_configs/native_releases` 的 `kind=fcl`，归属固定受理人的个人数据集，多条 Rate 候选；不新建第二套价格发布仓库 |
+| 内部 FCL Quote | 一张 `fcl_quote_revisions` 追加保存 quote_id/version、Case 绑定、Rate/成本/售价/FX/trace；不保存第二份审核状态 |
+| Quote Document | 现有 DocumentWorkflow revision、review、approval、template、PDF 权威；仅保存客户售价投影及内部报价 opaque 绑定引用 |
+| Handoff | 既有 Case 的受权事件。pending 从当前已批准文件派生；handed_off 必须有相应事件和版本 |
+
+建议 `fcl_quote_revisions` 与文档 revision 同库，便于报价版本与文件绑定事务；只在文档服务内部授权方法读写，不让公共 HTTP/CLI 直接访问数据库。Case 与 Rate 仍由各自已有存储访问器提供证据，不直接跨表偷读。
+
+Rate 多条记录存在于已版本化 JSON 数据集即可。第一版没有额外供应商、船司、利润、FX、交接表或通用工作流服务。
+
+旧 Native Business Authority RFC 仍为 Draft；本提案只复用其已经存在的存储/发布实现。FCL 的价格权威在本 RFC 接受后明确为本人核验并发布的 FCL 数据集；真实报价不能以 fixture、默认值或历史来源服务的静默副本补齐。
+
+## 3. 公共提交与补充权限
+
+### 3.1 固定归属
+
+- `fcl_receiver_user_id` 只从服务端显式配置读取；启动与每次提交确认账号存在、有效且已验证。请求中任何 tenant/org/owner/reviewer/source/price 字段均拒绝。账号未配置、停用或无法验证：公开入口 unavailable，不保存无法受理的业务单。
+- 新 FCL Case 的 `owner_id` 固定为受理人、`organization_id=null`，并有明确 FCL 版本标记；外部提交主体另存于 Inquiry 和类型化事件。旧 Case 的 owner=客户语义不变，旧 reply/列表路径不能把新记录的受理人误认成客户。
+- 只有当前登录的固定受理人，在个人上下文中，才可管理自己的 FCL Case、Rate、成本/售价、模板、审核和交接。每次写入、重放及正式导出重新校验账号状态与记录归属；其他个人、企业管理员、平台角色和查询 Key 不自动得到此权限。
+- 单人第一版允许本人制单后进入独立 review 页面，再显式 approve；审核 actor 如实记录同一个人，不伪称双人复核，也不能保存即自动批准。
+- 受理人变更不能把旧 Inquiry、Rate 或文件静默转给新账号。本版不实现转让；存在业务记录时更换受理配置应阻断启动并要求单独的数据归属迁移方案。
+
+### 3.2 个人隔离如何复用现有存储
+
+- Case 复用已有可空 organization_id 和 owner_id，仅 FCL selector 增加本人管理分支；旧企业/个人 Case 路径保持原权限。
+- NativeAdmin 已有通用 `scope` 列。FCL 使用服务端构造的个人命名空间（例如 `fcl-person:<user UUID>`），并在合同中明确其是个人 scope，绝不当作 organization_id 传给旧服务。既有企业 kind 与 scope 原样保留；用户输入不能选择 scope。
+- 文档模板、revision/current、审计及来源凭据的归属需支持显式个人分支。候选迁移为现有 org 列允许 null、增加 personal_owner_id，并用 CHECK 保证恰好一项有效；旧记录 org 不变，新增 FCL 个人记录 org=null。所有查询、唯一键、幂等和签名必须同时绑定归属类型和 ID。不是只放宽 NOT NULL，也不能将个人 ID 塞入 org 列冒充公司。
+- 个人分支仅接受新的 FCL 工作流合同，不能据此开启个人 Zone、关税或所有旧文档能力。不创建通用账户/团队平台或个人工作区表。
+- 复用现有模板配置与 PDF 排版，FCL 新模板合同使用真实出具人名称/联系方式和条款，UI 标为“报价出具人”，允许个人；不要求注册公司或填写虚构 company_name。模板的名称展示与授权主体分别保存。
+
+### 3.3 本票补充
+
+- 公开提交之前由服务端建立匿名提交会话与 CSRF 绑定；浏览器和无界面客户端使用同一明确 bootstrap 合同。不得把客户端提供的邮箱当成已验证账号。
+- 保存后签发有期限、仅本票使用的高熵 opaque 凭据。它仅允许查看客户可见摘要及在 needs_input 时追加补充；不能看任何内部成本、来源备注、其他询价或企业数据。
+- 建议本地试点期限 30 天，作为明确服务端配置与响应 expires_at。过期后不能静默续期；内部人员仍可记录线下补充，但必须使用 staff 身份标明“代录”，不能伪装 customer event。
+- 持久化只保留凭据哈希和绑定元数据；采用服务端私密持久密钥的带用途 HMAC 派生，使同一授权提交会话的幂等重放能重新交付同一凭据。密钥独立于报价内容、业务 Key 和客户输入；缺失/轮换不兼容时 fail closed，不重建成另一把默认密钥。具体密钥保管沿用项目私密持久化约束。
+- 客户页面复用 `/inquiry/` 的本票补充模式。凭据不放 query、日志、分析事件或 localStorage；可用 URL fragment 交换仅本票 HttpOnly 会话，随即清除 fragment。分享链接即分享本票补充权，页面需准确说明。
+- 匿名网络限流、请求大小、Origin/Host、CSRF、幂等和字段闭合检查由服务端执行。限额独立配置，不挪用关税游客额度；跨票 token 返回无披露错误。
+
+这是 FCL 公共提交和补充的最小对象权限，不扩展为账号注册、团队管理或通用客户权限平台。
+
+### 3.4 邮件边界
+
+新增的后台配置只有 `recipient`、可选 `cc`、`enabled`，服务端受控 transport 注入；不能接受用户指定的 SMTP 主机或任意收件人。固定主题和正文按用户要求生成，头字段拒绝 CR/LF。内部通知链接不能携带客户补充凭据。
+
+提交事务先保存 Inquiry、编号、Case、初始事件与幂等记录，完成读回后才尝试通知。禁用、配置缺失、transport 失败或超时都不回滚保存；返回“需求已保存，通知未确认/失败”，不能报告送达。重复提交不重复发送；进程在 commit 与发送之间退出可留下未确认，不盲目重发。第一版不建通用邮件队列或模板系统。
+
+本阶段所有验收使用 fake mail transport。真实 SMTP 配置及外发需单独明确启用，不能把本地验证当成邮件已送达。
+
+## 4. 版本与旧/新 JSON
+
+保留旧 case v1/v2、document v1/v2/v3 及查询 Key 合同。新公共 FCL 提交使用 `fcl-inquiry@2026-09-20.v1`；FCL Case、报价工作流与响应各有独立显式版本，候选命名如下，不改旧严格 Schema 的含义：
+
+- `fcl-case@2026-09-20.v1`
+- `fcl-rate-dataset@2026-09-20.v1`
+- `fcl-quote-workflow@2026-09-20.v1`
+- 新文档分支 `document_kind:fcl_linked`；沿现有文档 route 按上述 FCL workflow selector 分发。
+
+旧提交（节选）：
+
+```json
+{"mode":"shipping","transportMode":"fcl","origin":"Shenzhen","destination":"Vancouver","containerType":"40HQ","containerCount":"2"}
+```
+
+新提交完整示例：
+
+```json
+{
+  "contract_version":"fcl-inquiry@2026-09-20.v1",
+  "transport_mode":"FCL",
+  "origin_city":"Shenzhen",
+  "pol":"Yantian",
+  "pod":"Vancouver",
+  "final_destination":"Toronto",
+  "containers":[{"type":"40HQ","quantity":2}],
+  "cargo_name":"Synthetic general cargo",
+  "cargo_type":"general",
+  "estimated_weight":{"value":"18000","unit":"kg"},
+  "cargo_ready_date":"2026-10-08",
+  "incoterm":"EXW",
+  "incoterm_other":null,
+  "selected_services":["pickup","export_customs","ocean_freight","canada_customs","delivery"],
+  "contact":{"name":"Synthetic shipper","company":null,"email":"shipper@example.test","phone":null},
+  "notes":null,
+  "consent":true
+}
+```
+
+新 Case 写入概念形状：
+
+```json
+{
+  "contract_version":"fcl-case@2026-09-20.v1",
+  "expected_version":3,
+  "expected_customer_supplement_ref":"00000000-0000-4000-8000-000000000002",
+  "confirmed_fields":{"pol":"Yantian","pod":"Vancouver","containers":[{"type":"40HQ","quantity":2}]},
+  "reason":"已核对客户补充"
+}
+```
+
+`confirmed_fields` 是完整闭合 FCL 字段集的显式子集，不接受任意 JSON Patch 或自由对象；最终 JSON Schema 在接受后由基线生成。每次确认记录实际 staff actor、时间、原值/新值、补充引用、前后 Case version。公众补充使用单独闭合输入，只允许其有权提供的客户字段；未知字段不忽略。
+
+旧 native binding 固定 `zoneInputSchema`。新 FCL 文档绑定示意：
+
+```json
+{
+  "document_kind":"fcl_linked",
+  "fcl_quote_binding_v1":{
+    "quote_ref":"00000000-0000-4000-8000-000000000003",
+    "quote_version":2,
+    "case_ref":"00000000-0000-4000-8000-000000000004",
+    "case_version":4,
+    "reviewed_customer_event_ref":"00000000-0000-4000-8000-000000000002",
+    "cost_snapshot_digest":"<server sha256>",
+    "sell_projection_digest":"<server sha256>",
+    "source_refs_digest":"<server sha256>",
+    "binding_hash":"<server signature>"
+  }
+}
+```
+
+这是字段解释示意，不是可校验实例。Rate 的完整 provenance 留在绑定的内部 Quote revision；此对象用引用和摘要复用既有签名/审核机制，不另建 Provenance 服务。客户 PDF 不打印该内部对象。
+
+所有对象 Draft 2020-12、additionalProperties=false；金额、FX、比例为 decimal string；重量单位显式；柜数为正整数并由柜型语义限定为柜。版本及身份字段不由客户端认定权威。
+
+## 5. Case / Rate / Cost-Sell 语义
+
+### 5.1 原件与当前需求
+
+Inquiry 允许未确认信息；Case 逐步补齐。缺字段时返回 JSON Pointer 缺项和 needs_input，不从 Shenzhen 猜 Yantian，不把 Toronto 自动改成某个 POD。
+
+复用 submitted/in_review/needs_input/closed/cancelled。新的公共补充事件有明确 kind；不再靠 actor_label 或文字内容判断是否客户补充。旧事件派生规则保留用于旧文档，不能追溯重写为新型事件。
+
+FCL 新审核严格绑定当前 Case.version 和补充引用。该版本任何变化均要求刷新 FCL review；既有 linked 的“普通进度不失效”不受影响。终态阻断新报价/正式导出/交接，保留授权历史读取。
+
+### 5.2 精确匹配与服务范围
+
+POL、POD 精确规范值、柜型全部覆盖、Ready Date 在有效期内；不存在显式映射时不做别名、邻港或城市推断。单个 Rate 可含多柜型价，第一版不自动跨来源拼价。
+
+零候选 manual_review；多个候选 manual_review 并列示，人工选择后仍完整校验；未发布/损坏数据 unavailable。显式零费用与缺价是不同值；不得对缺价补零。
+
+Service Scope 只决定应处理的费用范围。每项所选服务必须有明确费用，或有经人员确认的“已包含/明确免费/不在本次范围”说明；存在未定费用时只能是不完整草稿，不称全程总价。EXW/FOB/CIF/DDU/DDP 不能自动产生税费/保险或推定收付责任；尤其 DDP 缺税费依据时必须保留未覆盖项并阻断完整含税承诺。
+
+### 5.3 成本、人工价与汇率
+
+自动生成的 O/F 成本严格来自选中 Rate；staff 可以填写 sell_price。修改已有来源成本必须重新绑定经核验来源，不提供“改成本但继续沿用旧 Rate digest”的入口。
+
+其他人工附费可沿现有模板建立行，但必须明确内部来源 evidence_ref/version 和数量条件。每行 quantity×price 先按既有 Decimal 舍入到两位，再按币种汇总；GP=Revenue−Cost，Margin=GP/Revenue，零收入 Margin=null。
+
+混币种复用既有 USD/CAD 对 CNY 的显式 FX 快照，不自动取行情或填 1。缺必要 FX 时只显示分币种结果，不签发虚构的统一利润结论。
+
+客户售价投影仅输出客户可见名称、分组、数量、单位、sell_price→unit_price、币种和独立客户备注；内部 note 不自动拷贝。已有 hiddenIncluded/hiddenExcluded 是显示规则，不能当作成本保密措施。
+
+## 6. 来源、有效期与审核
+
+每份内部成本快照固定 source_ref/version、rate_id、release_id、digest、有效期、selected_at 和 calculation trace。更新来源不改旧金额，当前性检查发现变化返回 manual_review 并标注“报价来源已更新”。第一版按数据集发布粒度失效，避免依赖图抽象。
+
+Ready 匹配与正式签发分开：Ready 在所用 Rate 窗口内；正式 Quote 日期窗口也受来源有效期约束。提前使用尚未开始有效的 Rate 作成本候选可展示，但正式签发仍须有明确允许的业务语义；本版不默认允许。主 fixture 时钟固定 2026-10-08。
+
+review 签名至少覆盖：个人归属类型与受理人 ID、Case ID/version/latest supplement、内部 Quote id/version/完整内容 digest、全部来源版本/有效期、客户售价与 FX、出具人/条款模板、Quote 日期、reviewer 和期限。approve 再读取当前 Case、来源、报价版本和权限，不接受旧 hash。沿现有文档 n→n+1 批准证据，不另做审批引擎。
+
+来源读回在计算 await 与 PDF render await 之后重查，changed/unavailable 不提交结果。单实例 fixture 中，关联 checkpoint 应在既有串行写入边界完成；各库不能宣称天然具有同一事务。实施必须以竞争测试证明 Case/Rate/Quote 在检查至写入窗口发生变化时失败闭合，并明确统一写入调度或短事务锁顺序；不能靠页面刷新代替。
+
+**退回是纠正性动作。** 当前权限、对象可见性、expected_version、可退回状态与幂等仍必须检查；新的客户补充、来源过期/更新或终态不应让工作人员无法记录拒绝原因。不得调用只适用于新审批/新正式承诺的当前性门禁阻断纠正性退回。
+
+“退回补充”由已有 document reject 和 Case needs_input 两个业务动作组成。复用其窄方法，分别幂等与读回；界面必须展示部分成功并安全续做，不能把两个数据库的非原子写入包装成一次已完成。客户回复之后再次确认、匹配、定价、审核，旧批准不复用。
+
+## 7. API / Web / CLI 及状态
+
+候选端点如下，仅列 FCL 主闭环必须的操作；不扩充公共 MCP 工具目录或业务查询 Key。
+
+| 边界 | 候选入口 | 必要性 |
+|---|---|---|
+| 公开 | `POST /inquiry/api/v1/session`、`POST /inquiry/api/v1/fcl` | 匿名安全提交与原子建立 Inquiry/Case |
+| 本票 | `GET /inquiry/api/v1/fcl/{ref}`、`POST .../{ref}/supplements` | 客户可见摘要与补充，受本票凭据限制 |
+| 人员 Case | 原 `/console/api/v1/cases` 路径，显式 FCL selector；新增窄 `confirm-fcl`、`handoff` 动作 | 结构化确认与交接，不制造第二套 Case API |
+| 人员 Rate | `/console/api/v1/admin/fcl-rates` 及既有 save/preview/publish/disable/rollback 动词 | 复用 NativeAdmin 发布模型 |
+| 人员报价 | 现有文档路由下 FCL selector；补 `fcl-match`、`fcl-save`、`fcl-get` | 匹配、内部 Cost/Sell 工作与版本读回 |
+| 人员文档 | 现有 prepare/save/get/list/review/approve/reject/export 动词，FCL selector | 售价投影与正式/历史文件 |
+
+内部报价方法放在现有 quote-native 服务边界，document workflow 仅受控调用；route 名称可以在正式 Schema 接受时收敛，但操作责任不得混成 generic write。
+
+Web/API/CLI 共用服务计算与状态。人员 CLI 继续用 workspace session、CSRF 和 Idempotency-Key；公众 CLI/API 使用公开 bootstrap/本票凭据，不能混用企业或查询 Key。所有新增动作都交付 CLI 操作与 schema/help，双方权限投影一致。
+
+| 结果 | 包络状态 |
+|---|---|
+| 不完整但结构合法的 Inquiry/草稿已持久化 | success，业务 complete=false |
+| 定价缺字段、缺 FX、缺报价费用 | needs_input |
+| 没有匹配 Rate、多候选未选、来源/Case 更新 | manual_review |
+| 越权、跨票、伪造来源、版本/幂等冲突 | blocked，禁止泄露对象存在性 |
+| 运营配置/来源依赖/持久化/PDF renderer 不可用 | unavailable |
+
+只能使用现有五状态。具体 reason enum 与精确 HTTP 映射须随正式闭合响应 Schema 交付；本草案不能直接代替运行合同。客户公共响应不包含内部 Cost/Sell/来源候选。
+
+## 8. 兼容、迁移和回退
+
+1. 在隔离 fixture 完成合同和失败测试后再实现。不得把当前业务表原地解释成 FCL；旧 Case 保持原 payload，读旧表单不会自动触发转录。
+2. 增量建立两张必要表，为 Case/event 增加 FCL 引用与类型化 payload；旧行和旧版本语义保持。文档表按第 3.2 节迁移归属列、约束和索引，核对原记录数量、digest 和历史读取；涉及 SQLite 重建表时必须在受控迁移事务中完成。编号唯一索引与外键保证 Inquiry/Case 原子提交。所有序列与版本不能靠 COUNT(*) + 1 无锁生成。
+3. 原生配置只新增 fcl kind 的受版本分发数据。旧 binary 可能把未知 kind 误当 maritime，故不允许未升级 writer 接管新数据。
+4. 文档新分支只能由 FCL selector 读写。旧请求不能移除 FCL 绑定或转换成 manual/native_unlinked 绕过审核；旧版本列表过滤新记录，直读明确要求新合同。
+5. 每个受影响 SQLite store 使用新版本门禁，升级前停止旧 writers，事务升级后读回。不能复制一个可写数据库再做双写。临时测试使用 fresh fixture；真实升级与 Linux writer 门禁另验。
+6. 回退先关闭公开提交/FCL 编辑发布入口，保留新表、事件、文档版本、PDF 和只读兼容 reader。不删除原件、不换回旧备份假装最新。旧 writer 对新 schema 拒绝打开。
+7. 需要灾难恢复时单独确认恢复点和潜在业务丢失，保留新库；生产备份恢复与部署均非本次审计授权。
+
+## 9. 精确文件方案与职责
+
+以下为 M1 实施涉及的文件职责；每次实际写权限由本机单节点 Task Packet 缩小到精确文件，不是整目录写权限授权：
+
+| 文件 | 修改职责 |
+|---|---|
+| `services/access-gateway/portal/cases.ts`、`case-contracts.ts` | Inquiry/Case/事件、公开 actor 与本票访问、FCL 个人管理、字段确认、编号、交接 |
+| `services/access-gateway/portal/http.ts`、`server.ts`、`production.ts` | 窄 public/personnel 路由和显式受理账号注入，拒绝默认账号或占位企业 |
+| `services/access-gateway/portal/native-admin.ts`、`native-admin-contracts.ts` | FCL 个人数据集与现有版本发布、权限和读回 |
+| 新 `services/quote-native/fcl-contracts.ts`、`fcl.ts` | FCL 闭合合同、匹配、Cost/Sell；是现有服务内文件，不另起通用引擎 |
+| `services/quote-documents/workflow-contracts.ts`、`workflow.ts`、`service.ts` | 个人归属存储迁移与仅 FCL 授权、出具人模板、Quote revision 持久化、sell 绑定、review/export 门禁、纠正性退回；旧业务不开放个人写入 |
+| `services/quote-documents/engine.ts` | 尽量直接复用；必要的个人出具人及 FCL 路线/柜量展示，不重建 PDF |
+| `apps/inquiry/model.ts`、`app.js`、`index.html`、`styles.css` | 固定 FCL 三步、公开提交和本票补充 UI；旧历史需要的模型保留版本化读取 |
+| `apps/console/cases.js`、`quote-documents.js`、`quote-documents.css`、`native-admin.js` | 同一 Case 工作区、FCL 编辑器/Rate 配置，不新增导航体系 |
+| `deploy/cli/workspace.ts`、`workspace-contracts.ts` | 人员 CLI；公开 CLI 的最小路由在现有 CLI 主入口接入，不授予查询 Key 写权限 |
+| `deploy/scripts/start-portal-fixture.ts` | 显式 fixture 受理个人、无公司全链路、假 mail transport 与固定 clock |
+| `deploy/scripts/generate-case-schemas.ts`、`generate-native-schemas.ts`、`generate-portal-openapi.ts` | 接受合同后由对应 01/06 维护正式生成物 |
+| 现有 case/document/native/CLI/HTTP 测试及最小 FCL 测试 | 属地维护者覆盖对应反例与同源读回 |
+
+共享 Contract/Schema 由 01 维护；Portal 07、CLI/e2e 06 与业务服务维护者须确认上述精确文件归属。`docs/agent/workstreams/current.json` 与 AGENTS 对 07 的列举差异不在本 RFC 顺手修复。
+
+## 10. 验收与接受条件
+
+完整矩阵见审计第 13 节，覆盖 Route/POD/Container/Validity/Multiple Rate/Case Version/Source Version 七类必测冲突，并加个人/企业隔离、零公司记录的全链路、外部补充、Cost/Sell 泄漏、退回、并发、幂等、历史 PDF 与 fake mail。
+
+既有精确回归命令：
+
+```sh
+npx --no-install vitest run tests/e2e/shipper-inquiry.test.ts tests/access-gateway/portal-cases.test.ts tests/access-gateway/portal-cases-http.test.ts tests/access-gateway/portal-workspace-cli.test.ts tests/access-gateway/portal-quote-workflow-v3-http.test.ts tests/quote-documents/engine.test.ts tests/quote-documents/schemas.test.ts tests/quote-documents/service.test.ts tests/quote-documents/workflow.test.ts tests/quote-documents/workflow-linked.test.ts --maxWorkers=2
+```
+
+实施后必须新增对应 FCL 失败测试，并运行受影响测试、typecheck、lint、validate:schemas、validate:agent-standards、build:agent-pack、build、build:cli、git diff --check。浏览器和真实 PDF fixture 验收须另外实跑，不能被上述单元测试替代。新增精确测试路径在代码建立后登记，不将不存在的命令写为已通过。
+
+本轮既有回归结果为 10 文件、113 通过、2 跳过；新的 FCL 系统、Schema 运行接入、真实报价和部署均未完成。
+
+本次隔离实施接受：公开提交固定个人受理与本票凭据、仅 FCL 的个人授权及存储迁移、两张必要表、FCL 新绑定/版本失效规则、纠正性退回、客户输出白名单及上述文件职责。其依据是用户先确认个人受理、随后要求完整完成 M1；并非 K12 自行扩展业务范围。01 合同维护由本机负责，07 Portal 与06集成及相关业务文件由 K12 在每包精确授权下实施。新运行 Schema 随相关实现由同一 Zod 合同生成，本文的 JSON 示例不是运行输入。
+
+实施和验收使用可丢弃合成 fixture。每节点允许一个范围内本地提交，后续节点可从已审核的候选 SHA 继续，不伪称候选已合并 Main。真实邮件、真实数据导入、生产发布、推送和合并仍需相应明确授权。若实现发现需要改变以上业务、安全或数据归属语义，本机先修订本文并审核，不让执行器自行扩大权限。
+
+## FCL.3 实施说明
+
+本节点只实现隔离服务层，不启用 HTTP、UI、CLI、Rate、Quote、Document 或 MCP。
+
+- `CaseStore` 默认仍以 v1 打开，不创建 `fcl_inquiries`，也不增加事件类型列。
+- FCL v2 升级必须显式提供 `fresh_fixture` 或 `exclusive_verified` 模式、`authorized=true` 和 `oldWritersStopped=true`。
+- `fresh_fixture` 仅在 `business_cases`、`business_case_events`、`business_case_idempotency` 都为空时允许。
+- `exclusive_verified` 必须执行服务端注入的同步 `assertExclusive`；缺失或抛错均阻断升级。本节点测试只使用受控离线 fixture callback，不包含生产 writer 探测。
+- 已升级数据库只通过 `reopen` 模式重新打开；未升级的旧 writer 因 `user_version=2` 拒绝打开。
+- `submitFclInquiry` 使用同一 `BEGIN IMMEDIATE` 保存 Inquiry、Case、两条类型化初始事件和幂等记录。首次提交在提交前与提交后各执行一次初始读回；幂等重放读取不可变原件与当前合法 Case 状态，不强制 Case 仍为 v1。
+- 通知失败、超时、禁用或配置缺失不回滚业务保存，不重发；`complete` 只表示基本询价需求完整，不表示 Rate、费用、审核或正式报价完整。

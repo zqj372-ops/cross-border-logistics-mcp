@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fclInquirySchema } from '../../../apps/inquiry/fcl-model';
 import { createDraft, validateStep, type Draft } from '../../../apps/inquiry/model';
 
 export const CASE_VERSION = 'portal-cases@2026-09-07.v1';
@@ -32,4 +33,91 @@ export const caseResponseV2Schema = z.object({
   status:z.literal('success'),
   data:caseViewV2Schema,
   reason_codes:z.array(z.string()).length(0),
+}).strict();
+
+// FCL personal-case contracts. These are additive and do not reinterpret the old Draft.
+export const FCL_CASE_VERSION = 'fcl-case@2026-09-20.v1' as const;
+export const FCL_NOTIFICATION_STATUSES = ['not_attempted','disabled','sent','failed'] as const;
+export const fclCaseInputSchema = fclInquirySchema;
+export const fclCaseNotificationSchema = z.object({
+  status:z.enum(FCL_NOTIFICATION_STATUSES),
+  reason_code:z.string().min(1).max(120).nullable(),
+  attempted_at:z.string().datetime().nullable(),
+}).strict();
+const fclCaseEventBase = {
+  event_id:z.string().uuid(),
+  version:z.number().int().positive(),
+  status:z.enum(CASE_STATUSES),
+  message:safeText(2000),
+  visibility:z.enum(['customer','internal']),
+  actor_label:safeText(80),
+  actor_kind:z.enum(['anonymous_customer','system']),
+  actor_ref:z.string().min(1).max(200),
+  created_at:z.string().datetime(),
+};
+export const fclCaseEventSchema = z.discriminatedUnion('kind', [
+  z.object({
+    ...fclCaseEventBase,
+    kind:z.literal('fcl_inquiry_submitted'),
+    payload:z.object({fcl_inquiry_id:z.string().uuid(), inquiry_no:z.string().regex(/^FCL-\d{8}-\d{4,}$/u)}).strict(),
+  }).strict(),
+  z.object({
+    ...fclCaseEventBase,
+    kind:z.literal('fcl_receiver_assigned'),
+    payload:z.object({receiver_user_id:z.string().min(1).max(128)}).strict(),
+  }).strict(),
+]);
+export const fclCaseSubmissionSchema = z.object({
+  contract_version:z.literal(FCL_CASE_VERSION),
+  inquiry_id:z.string().uuid(),
+  inquiry_no:z.string().regex(/^FCL-\d{8}-\d{4,}$/u),
+  case_id:z.string().uuid(),
+  case_status:z.enum(CASE_STATUSES),
+  case_version:z.number().int().positive(),
+  created_at:z.string().datetime(),
+  credential:z.string().min(32).max(256),
+  credential_expires_at:z.string().datetime(),
+  notification:fclCaseNotificationSchema,
+  replay:z.boolean(),
+}).strict();
+export const fclCaseInternalViewSchema = z.object({
+  contract_version:z.literal(FCL_CASE_VERSION),
+  inquiry_id:z.string().uuid(),
+  inquiry_no:z.string().regex(/^FCL-\d{8}-\d{4,}$/u),
+  case_id:z.string().uuid(),
+  receiver_user_id:z.string().min(1).max(128),
+  original_input:fclInquirySchema,
+  current_input:fclInquirySchema,
+  case_status:z.enum(CASE_STATUSES),
+  case_version:z.number().int().positive(),
+  created_at:z.string().datetime(),
+  updated_at:z.string().datetime(),
+  notification:fclCaseNotificationSchema,
+  events:z.array(fclCaseEventSchema).min(1).max(1000),
+}).strict();
+export const fclCasePublicSummarySchema = z.object({
+  contract_version:z.literal(FCL_CASE_VERSION),
+  inquiry_id:z.string().uuid(),
+  inquiry_no:z.string().regex(/^FCL-\d{8}-\d{4,}$/u),
+  case_status:z.enum(CASE_STATUSES),
+  case_version:z.number().int().positive(),
+  created_at:z.string().datetime(),
+  credential_expires_at:z.string().datetime(),
+  complete:z.boolean(),
+  input:fclInquirySchema,
+}).strict();
+export const fclCaseListSchema = z.object({
+  items:z.array(fclCaseInternalViewSchema).max(50),
+}).strict();
+export const fclCaseSuccessEnvelopeSchema = z.object({
+  schema_version:z.literal(FCL_CASE_VERSION),
+  status:z.literal('success'),
+  data:z.union([fclCaseSubmissionSchema,fclCaseInternalViewSchema,fclCasePublicSummarySchema,fclCaseListSchema]),
+  reason_codes:z.array(z.string()).length(0),
+}).strict();
+export const fclCaseErrorEnvelopeSchema = z.object({
+  schema_version:z.literal(FCL_CASE_VERSION),
+  status:z.enum(['needs_input','manual_review','blocked','unavailable']),
+  data:z.null(),
+  reason_codes:z.array(z.string().min(1).max(120)).min(1).max(32),
 }).strict();

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "fcl-case@2026-09-20.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "needs_input",
+        "manual_review",
+        "blocked",
+        "unavailable"
+      ]
+    },
+    "data": {
+      "type": "null"
+    },
+    "reason_codes": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "data",
+    "reason_codes"
+  ],
+  "additionalProperties": false,
+  "$id": "https://freightclaw.local/schemas/portal-fcl-case-error.schema.json"
+}

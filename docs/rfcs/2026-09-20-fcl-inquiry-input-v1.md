@@ -1,7 +1,10 @@
 # RFC: FCL Inquiry 输入合同 v1
 
 Status: FCL.2 input-only implementation candidate, pending merge review.
-Revision: FCL.2-R1, adding explicit draft/final schemas and stricter final email validation.
+Revision history:
+
+- FCL.2: initial draft/final contract separation.
+- FCL.2-R1: stricter final email validation.
 
 日期：2026-09-20
 合同版本：`fcl-inquiry@2026-09-20.v1`
