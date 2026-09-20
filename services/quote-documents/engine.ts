@@ -43,7 +43,10 @@ export function renderHtml(d:QuoteDocument,t:QuoteTemplate,approved:boolean,fclM
  const rows=fclMetadata?fclRows:legacyRows;
  const hasNonCny=result.by_currency.USD!=='0.00'||result.by_currency.CAD!=='0.00',hasNonUsd=result.by_currency.CAD!=='0.00'||result.by_currency.CNY!=='0.00';
  const fclConversionCards=`${hasNonCny&&result.total_cny!==null?`<div class="total-card"><h3>折算人民币</h3><strong>${result.total_cny} CNY</strong></div>`:''}${hasNonUsd&&result.total_usd!==null?`<div class="total-card"><h3>折算美元</h3><strong>${result.total_usd} USD</strong></div>`:''}`;
- const fclRateParts=fclConversionCards===''?[]:(['USD','CAD'] as const).flatMap(currency=>result.by_currency[currency]==='0.00'||d.exchange_rates[currency]===null?[]:[`1 ${currency} = ${d.exchange_rates[currency]} CNY`]);
+ const fclRateParts=fclConversionCards===''?[]:(['USD','CAD'] as const).flatMap(currency=>{
+   const rate=d.exchange_rates[currency],participates=result.by_currency[currency]!=='0.00'||(currency==='USD'&&hasNonUsd&&result.total_usd!==null);
+   return rate===null||!participates?[]:[`1 ${currency} = ${rate} CNY`];
+ });
  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:"><title>${e(d.quote_no)}</title><style>
   @page { size: A4; margin: 14mm; }
   * { box-sizing: border-box; }
