@@ -651,3 +651,11 @@ OpenAPI 生成器同时更新 `apps/console/openapi.json` 与 `docs/integrations
 本节不表示生产已启用。真实部署仍缺可信 FCL receiver authority adapter、真实 IdP authority、真实邮件和运营验收；生产 FCL 默认关闭，API/CLI 存在不等于 `pilot_verified` 或 `deployed`。13c 不修改 MCP 工具合同、不新增静态工具，也不进入 Booking/SO/邮件订舱。
 
 `docs/rfcs/2026-09-20-fcl-main-loop.schema.json` 是实施前 proposal，不被运行时读取；当前运行合同是 `fcl-http-contracts.ts` 及其生成 Schema。审计文档和早期节点中的“CLI/UI/HTTP 未实现”描述不再代表 13c 完成后的全局状态。
+
+### FCL.13c.4 最终本地验收记录
+
+13c 最终实现 SHA 为 `47766b2874e41542d9ecb6f62c53ef8c2426ac5f`。可复现的零企业合成 fixture、真实本地 HTTP、Edge/沙箱 renderer、CLI device flow、ticket recovery、Rate/CostSell 混币、Document review/approve、PDF、Handoff、历史版本和 restart 读回步骤见 [FCL M1 本地验收 Runbook](../runbooks/2026-09-21-fcl-m1-local-acceptance.md)。
+
+该记录只代表本地合成验收：真实 production receiver authority、IdP、邮件 transport、生产数据库、部署与运营验收仍未完成，因此不能声明 `pilot_verified` 或 `deployed`。
+
+补充验收还确认：bundled CLI 可保存不完整 Inquiry，`pol`、`cargo_ready_date`、`40HQ.quantity` 的 null 不会被自动补齐，`get.complete=false`；exchange 后 same-key 重放返回同一 Inquiry；重启前旧 person session 为 CLI exit 5，重启后必须重新 device flow；零企业 fixture 保持 0 organizations / 0 memberships。root 另用关闭后的 DB/secret 私有副本完成了两个入口 HTTP 200 的独立 demo，原验收数据未被该 demo 写入。
