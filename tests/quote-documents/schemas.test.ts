@@ -46,3 +46,12 @@ it('allows exactly the approved manual review additions for approve (document_ex
  expect(linkedResponseSchemas.export?.safeParse(manual('document_expired')).success).toBe(false);
  expect(linkedResponseSchemas.approve?.safeParse({...manual('document_expired'),data:{id:'00000000-0000-4000-8000-000000000001'}}).success).toBe(false);
 });
+it('ships closed FCL personal configuration schemas with a real email format',()=>{
+ const request=compile('fcl-config-request.schema.json'),response=compile('fcl-config-output.schema.json'),input={issuer_name:'Synthetic',issuer_address:'',issuer_phone:'',issuer_email:'issuer@example.test',terms:'Terms',standard_fee_template_v1:null},requestBody={contract_version:'fcl-document-workflow@2026-09-20.v1',expected_version:0,input,confirmed:true};
+ for(const file of ['fcl-config-request.schema.json','fcl-config-output.schema.json'])assertClosed(read(file),file);
+ expect(request(requestBody)).toBe(true);
+ expect(request({...requestBody,input:{...input,issuer_email:''}})).toBe(true);
+ expect(request({...requestBody,input:{...input,issuer_email:'not-an-email'}})).toBe(false);
+ expect(request({...requestBody,extra:true})).toBe(false);
+ expect(response({contract_version:'fcl-document-workflow@2026-09-20.v1',version:0,input:null,catalog:null})).toBe(false);
+});

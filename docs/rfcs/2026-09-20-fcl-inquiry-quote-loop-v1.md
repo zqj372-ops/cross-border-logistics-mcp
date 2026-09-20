@@ -258,6 +258,26 @@ Web/API/CLI 共用服务计算与状态。人员 CLI 继续用 workspace session
 npx --no-install vitest run tests/e2e/shipper-inquiry.test.ts tests/access-gateway/portal-cases.test.ts tests/access-gateway/portal-cases-http.test.ts tests/access-gateway/portal-workspace-cli.test.ts tests/access-gateway/portal-quote-workflow-v3-http.test.ts tests/quote-documents/engine.test.ts tests/quote-documents/schemas.test.ts tests/quote-documents/service.test.ts tests/quote-documents/workflow.test.ts tests/quote-documents/workflow-linked.test.ts --maxWorkers=2
 ```
 
+## 11. FCL.7a 实施附录
+
+本附录记录 `FCL.7a` 对现有 Quote Documents 服务层的隔离实现，不扩大第 1 节范围，也不表示报价、审批、HTTP/UI/CLI 或生产发布已经完成。
+
+- `DocumentStore` 默认仍最多打开 v3。v4 只由显式 FCL store opt-in 打开；v3 reader 遇到 v4 必须拒绝，不能静默降级。
+- v4 将 `document_configs`、`document_revisions`、`document_current_revisions`、`document_audit` 重建为 `org`/`personal_owner_id` 二选一归属，并以 `CHECK((org IS NULL)!=(personal_owner_id IS NULL))` 固定。`document_configs` 两个 owner 列分别唯一。
+- 迁移只在单个 `BEGIN EXCLUSIVE` 事务中完成，保留旧 payload、revision/current、digest、audit、PDF bytes 和 signing secret。迁移逐表核对固定 v3 列名、类型、nullability、primary/unique 约束；只接受命名索引 `document_revisions_document(document_id, version DESC)` 和 `document_current_org(org, updated_at DESC)`。未知列、触发器、额外显式索引或以名称伪装但列定义不符的索引以 `workflow_schema_unsupported` fail closed。预留 `_v4` 同名表不会被删除或覆盖。
+- v4 reopen 和 read-only 路径校验元数据、固定列布局、nullable owner 列、XOR 约束、primary/unique owner 约束，以及 `document_revisions_document`、`document_revisions_personal`、`document_current_org`、`document_current_personal`、`document_audit_personal` 的实际列序、排序和唯一性；read-only 不执行建表或业务写入。
+- FCL 文档配置合同为 `fcl-document-workflow@2026-09-20.v1`，服务方法为 `fclConfig(ctx)` 与 `saveFclConfig(ctx,input,key)`。归属使用 `org=NULL, personal_owner_id=<receiver>`，复用现有 `standardFeeTemplate` 和 `feeTemplateSelectionSchema`。
+- 每次 FCL 读取、写入和幂等重放重新校验已验证个人身份、`organizationId=null`、固定 receiver 和 active callback。存在其他个人 owner 时启动失败；未启用 FCL 时个人行不可见。
+- 个人配置写入使用 CAS、`confirmed=true`、个人 actor/action 幂等分区。同 key 异 body 返回 `idempotency_conflict`；同 key 重放返回当前配置，不重复 audit。audit、idempotency 与配置 readback 在同一事务内校验；提交后的读回失败不触发第二次回滚。
+
+本节点的精确验证命令：
+
+```sh
+npx --no-install vitest run tests/quote-documents/fcl-personal-store.test.ts tests/quote-documents/service.test.ts tests/quote-documents/workflow.test.ts tests/quote-documents/workflow-linked.test.ts tests/quote-documents/schemas.test.ts --maxWorkers=2
+npm run typecheck
+node --import tsx/esm deploy/scripts/generate-native-schemas.ts
+```
+
 实施后必须新增对应 FCL 失败测试，并运行受影响测试、typecheck、lint、validate:schemas、validate:agent-standards、build:agent-pack、build、build:cli、git diff --check。浏览器和真实 PDF fixture 验收须另外实跑，不能被上述单元测试替代。新增精确测试路径在代码建立后登记，不将不存在的命令写为已通过。
 
 本轮既有回归结果为 10 文件、113 通过、2 跳过；新的 FCL 系统、Schema 运行接入、真实报价和部署均未完成。

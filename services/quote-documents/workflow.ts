@@ -3,7 +3,7 @@ import {readdirSync,statSync} from 'node:fs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
-import type {DocumentService,DocumentStore} from './service';
+import type {DocumentFclStoreOptions,DocumentService,DocumentStore} from './service';
 import {calculate,renderHtml} from './engine';
 import {renderPdf} from './renderer';
 import {
@@ -25,8 +25,14 @@ import {
   type NativeBindingV3,
   type WorkflowDocumentView,
 } from './workflow-contracts';
-import type {z} from 'zod';
+import {z} from 'zod';
 import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema} from './contracts';
+import {
+  FCL_DOCUMENT_WORKFLOW_VERSION,
+  fclConfigSaveSchema,
+  fclConfigViewSchema,
+  type FclConfigView,
+} from './fcl-contracts';
 
 const parse=<T>(schema:z.ZodType<T>,input:unknown,code='document_input_invalid'):T=>{
   const parsed=schema.safeParse(input);
@@ -109,6 +115,18 @@ export const standardFeeTemplate={
     ]},
   ],
 } as const;
+
+export interface FclDocumentWorkflowOptions{
+  readonly receiverUserId:string;
+  readonly receiverIsActive:(userId:string)=>boolean;
+  readonly now?:()=>string;
+}
+
+type NormalizedFclDocumentWorkflowOptions={
+  receiverUserId:string;
+  receiverIsActive:(userId:string)=>boolean;
+  now:()=>string;
+};
 
 export function nativeFeeDigest(fees:DraftFee[]):string{
   const rows=fees.map(fee=>({
@@ -300,30 +318,117 @@ function renderDocument(input:DraftDocument){
 }
 
 /** oldWritersStopped is an explicit deployment attestation, not a probing inference. */
-export interface DocumentWorkflowStoreOptions{readonly oldWritersStopped?:boolean;readonly readOnly?:boolean;readonly ownershipMode?:'existing-database'|'fresh-fixture';readonly externalHandleProbe?:(path:string)=>void}
+type ExpectedColumn={name:string;type:string;notnull:number;pk:boolean};
+type ExpectedIndex={name:string;columns:Array<{name:string;desc:boolean}>;unique:boolean};
+const v3TableLayouts:Record<string,ExpectedColumn[]>={
+  document_configs:[
+    {name:'org',type:'TEXT',notnull:0,pk:true},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'input',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_revisions:[
+    {name:'revision_id',type:'TEXT',notnull:0,pk:true},
+    {name:'document_id',type:'TEXT',notnull:1,pk:false},
+    {name:'org',type:'TEXT',notnull:1,pk:false},
+    {name:'owner',type:'TEXT',notnull:1,pk:false},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'state',type:'TEXT',notnull:1,pk:false},
+    {name:'schema_version',type:'INTEGER',notnull:1,pk:false},
+    {name:'payload',type:'TEXT',notnull:1,pk:false},
+    {name:'input_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'template_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'source_revision_id',type:'TEXT',notnull:0,pk:false},
+    {name:'review_hash',type:'TEXT',notnull:0,pk:false},
+    {name:'rejection_reason',type:'TEXT',notnull:0,pk:false},
+    {name:'created_by',type:'TEXT',notnull:1,pk:false},
+    {name:'created_at',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_current_revisions:[
+    {name:'document_id',type:'TEXT',notnull:0,pk:true},
+    {name:'org',type:'TEXT',notnull:1,pk:false},
+    {name:'owner',type:'TEXT',notnull:1,pk:false},
+    {name:'revision_id',type:'TEXT',notnull:1,pk:false},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'schema_version',type:'INTEGER',notnull:1,pk:false},
+    {name:'projection_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'updated_at',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_audit:[
+    {name:'id',type:'TEXT',notnull:0,pk:true},
+    {name:'org',type:'TEXT',notnull:1,pk:false},
+    {name:'actor',type:'TEXT',notnull:1,pk:false},
+    {name:'action',type:'TEXT',notnull:1,pk:false},
+    {name:'digest',type:'TEXT',notnull:1,pk:false},
+    {name:'created',type:'TEXT',notnull:1,pk:false},
+  ],
+};
+const v4TableLayouts:Record<string,ExpectedColumn[]>={
+  document_configs:[
+    {name:'org',type:'TEXT',notnull:0,pk:false},
+    {name:'personal_owner_id',type:'TEXT',notnull:0,pk:false},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'input',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_revisions:v3TableLayouts.document_revisions!.flatMap(column=>column.name==='org'?[{...column,notnull:0},{name:'personal_owner_id',type:'TEXT',notnull:0,pk:false}]:[{...column,notnull:column.name==='revision_id'?0:column.notnull}]),
+  document_current_revisions:v3TableLayouts.document_current_revisions!.flatMap(column=>column.name==='org'?[{...column,notnull:0}, {name:'personal_owner_id',type:'TEXT',notnull:0,pk:false}]:[{...column,notnull:column.name==='document_id'?0:column.notnull}]),
+  document_audit:v3TableLayouts.document_audit!.flatMap(column=>column.name==='org'?[{...column,notnull:0}, {name:'personal_owner_id',type:'TEXT',notnull:0,pk:false}]:[{...column,notnull:column.name==='id'?0:column.notnull}]),
+};
+const v3Indexes:Record<string,ExpectedIndex[]> = {
+  document_revisions:[{name:'document_revisions_document',columns:[{name:'document_id',desc:false},{name:'version',desc:true}],unique:false}],
+  document_current_revisions:[{name:'document_current_org',columns:[{name:'org',desc:false},{name:'updated_at',desc:true}],unique:false}],
+};
+const v4Indexes:Record<string,ExpectedIndex[]> = {
+  document_revisions:[...v3Indexes.document_revisions!,{name:'document_revisions_personal',columns:[{name:'personal_owner_id',desc:false},{name:'document_id',desc:false},{name:'version',desc:true}],unique:false}],
+  document_current_revisions:[...v3Indexes.document_current_revisions!,{name:'document_current_personal',columns:[{name:'personal_owner_id',desc:false},{name:'updated_at',desc:true}],unique:false}],
+  document_audit:[{name:'document_audit_personal',columns:[{name:'personal_owner_id',desc:false},{name:'created',desc:true}],unique:false}],
+};
+export interface DocumentWorkflowStoreOptions{
+  readonly oldWritersStopped?:boolean;
+  readonly readOnly?:boolean;
+  readonly ownershipMode?:'existing-database'|'fresh-fixture';
+  readonly externalHandleProbe?:(path:string)=>void;
+  readonly fcl?:DocumentFclStoreOptions;
+}
 export class DocumentWorkflowStore{
   readonly db;
   readonly signingSecret:string;
   private schemaReady=false;
+  private fclReady=false;
   private readonly oldWritersStopped:boolean;
   private readonly ownershipMode:'existing-database'|'fresh-fixture';
   private readonly externalHandleProbe:(path:string)=>void;
+  private readonly fclStoreOptions:DocumentFclStoreOptions|undefined;
   readonly readOnly:boolean;
   constructor(readonly store:DocumentStore,options:DocumentWorkflowStoreOptions={}){
     this.db=store.db;
     this.oldWritersStopped=options.oldWritersStopped===true;
     this.ownershipMode=options.ownershipMode??'existing-database';
     this.externalHandleProbe=options.externalHandleProbe??assertNoExternalSqliteHandles;
+    this.fclStoreOptions=options.fcl;
     this.readOnly=options.readOnly===true;
     const db=this.db;
     const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
+    const fclRequested=this.fclStoreOptions!==undefined||store.fclEnabled;
+    if(fclRequested){
+      if(!store.fclEnabled)throw new Error('document_fcl_open_required');
+      if(version>4)throw new Error('workflow_schema_incompatible');
+      if(version===4){
+        this.signingSecret=this.readSigningSecret();
+        this.assertV4Schema();
+        this.schemaReady=true;
+        this.fclReady=true;
+        if(this.readOnly)db.exec('PRAGMA query_only=ON;');
+        return;
+      }
+      if(this.readOnly)throw new Error('workflow_read_only_requires_v4');
+      this.signingSecret=version===3?this.readSigningSecret():randomBytes(32).toString('hex');
+      this.migrateToV4(version);
+      return;
+    }
     if(version>3)throw new Error('workflow_schema_incompatible');
     if(this.readOnly&&version!==3)throw new Error('workflow_read_only_requires_v3');
     if(version===3){
-      const row=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
-      const revisionTable=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_revisions'").get();
-      if(!row?.value||!revisionTable)throw new Error('workflow_metadata_invalid');
-      this.signingSecret=row.value;
+      this.signingSecret=this.readSigningSecret();
       this.schemaReady=true;
       if(this.readOnly)db.exec('PRAGMA query_only=ON;');
     }else{
@@ -331,6 +436,163 @@ export class DocumentWorkflowStore{
     }
   }
   static openReadOnly(store:DocumentStore):DocumentWorkflowStore{return new DocumentWorkflowStore(store,{readOnly:true});}
+  private readSigningSecret():string{
+    const row=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
+    const revisionTable=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_revisions'").get();
+    if(!row?.value||!revisionTable)throw new Error('workflow_metadata_invalid');
+    return row.value;
+  }
+  private indexColumns(indexName:string):Array<{name:string;desc:boolean}>{
+    return (this.db.prepare('SELECT name,"desc" AS is_desc FROM pragma_index_xinfo(?) WHERE key=1 ORDER BY seqno').all(indexName) as Array<{name:string;is_desc:number}>).map(column=>({name:column.name,desc:column.is_desc===1}));
+  }
+  private assertTableLayout(table:string,expected:ExpectedColumn[]):void{
+    const columns=this.db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{name:string;type:string;notnull:number;pk:number}>;
+    if(columns.length!==expected.length)throw new Error('workflow_schema_unsupported');
+    for(const [index,column] of columns.entries()){
+      const wanted=expected[index];
+      if(!wanted||column.name!==wanted.name||column.type.toUpperCase()!==wanted.type||column.notnull!==wanted.notnull||(column.pk>0)!==wanted.pk)throw new Error('workflow_schema_unsupported');
+    }
+  }
+  private assertIndexDefinition(table:string,expected:ExpectedIndex):void{
+    const row=this.db.prepare(`PRAGMA index_list('${table}')`).all().find(index=>(index as {name:string}).name===expected.name) as {name:string;unique:number}|undefined;
+    if(!row||(row.unique===1)!==expected.unique)throw new Error('workflow_schema_unsupported');
+    const columns=this.indexColumns(expected.name);
+    if(columns.length!==expected.columns.length||columns.some((column,index)=>column.name!==expected.columns[index]?.name||column.desc!==expected.columns[index]?.desc))throw new Error('workflow_schema_unsupported');
+  }
+  private assertUniqueColumns(table:string,columns:string[]):void{
+    const indexes=this.db.prepare(`PRAGMA index_list('${table}')`).all() as Array<{name:string;unique:number}>;
+    if(!indexes.some(index=>index.unique===1&&this.indexColumns(index.name).every((column,position)=>column.name===columns[position])&&this.indexColumns(index.name).length===columns.length))throw new Error('workflow_schema_unsupported');
+  }
+  private assertKnownSchema(layouts:Record<string,ExpectedColumn[]>,indexes:Record<string,ExpectedIndex[]>):void{
+    for(const [table,expected] of Object.entries(layouts)){
+      this.assertTableLayout(table,expected);
+      const allowed=new Set(indexes[table]?.map(index=>index.name)??[]);
+      const existing=this.db.prepare(`PRAGMA index_list('${table}')`).all() as Array<{name:string}>;
+      if(existing.some(index=>!index.name.startsWith('sqlite_autoindex_')&&!allowed.has(index.name)))throw new Error('workflow_schema_unsupported');
+      const trigger=this.db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=? LIMIT 1").get(table);
+      if(trigger)throw new Error('workflow_schema_unsupported');
+    }
+    for(const [table,expected] of Object.entries(indexes))for(const index of expected)this.assertIndexDefinition(table,index);
+  }
+  private assertV4OwnerConstraints():void{
+    const tables=['document_configs','document_revisions','document_current_revisions','document_audit'];
+    for(const table of tables){
+      const row=this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {sql:string}|undefined;
+      const sql=row?.sql.replace(/\s+/gu,'').toLowerCase()??'';
+      if(!sql.includes('check((orgisnull)!=(personal_owner_idisnull))'))throw new Error('workflow_schema_unsupported');
+    }
+    this.assertUniqueColumns('document_configs',['org']);
+    this.assertUniqueColumns('document_configs',['personal_owner_id']);
+    this.assertUniqueColumns('document_revisions',['document_id','version']);
+    this.assertUniqueColumns('document_current_revisions',['revision_id']);
+  }
+  private assertKnownV3Schema():void{
+    this.assertKnownSchema(v3TableLayouts,v3Indexes);
+    this.assertUniqueColumns('document_configs',['org']);
+    this.assertUniqueColumns('document_revisions',['document_id','version']);
+    this.assertUniqueColumns('document_current_revisions',['revision_id']);
+  }
+  private assertKnownV4Schema():void{
+    this.assertKnownSchema(v4TableLayouts,v4Indexes);
+    this.assertV4OwnerConstraints();
+  }
+  private assertV4Schema():void{
+    const metadata=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('schema_version') as {value:string}|undefined;
+    if(metadata?.value!=='4')throw new Error('workflow_metadata_invalid');
+    this.assertKnownV4Schema();
+  }
+  private assertFreshFixtureEmpty():void{
+    const tables=['document_configs','quote_documents','document_idempotency','document_audit','document_pdfs','document_revisions','document_current_revisions','document_revision_events','document_native_prepare_credentials'];
+    for(const table of tables){
+      const exists=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if(exists&&this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())throw new PortalError('fcl_upgrade_fresh_fixture_not_empty');
+    }
+  }
+  private assertV4UpgradeOwnership():void{
+    try{this.store.assertExclusiveOwnership();}catch{throw new PortalError('fcl_upgrade_old_writer_open');}
+    const fclOptions=this.fclStoreOptions;
+    const mode=fclOptions?.mode??(this.ownershipMode==='fresh-fixture'?'fresh_fixture':'exclusive_verified');
+    if(mode==='reopen')throw new PortalError('fcl_schema_not_upgraded');
+    if(mode==='fresh_fixture'){
+      if(fclOptions&&fclOptions.mode==='fresh_fixture'&&(!fclOptions.authorized||!fclOptions.oldWritersStopped))throw new PortalError('fcl_upgrade_not_authorized');
+      if(!fclOptions&&(!this.oldWritersStopped||this.ownershipMode!=='fresh-fixture'))throw new PortalError('fcl_upgrade_not_authorized');
+      this.assertFreshFixtureEmpty();
+      return;
+    }
+    if(fclOptions&&fclOptions.mode==='exclusive_verified'&&(!fclOptions.authorized||!fclOptions.oldWritersStopped))throw new PortalError('fcl_upgrade_not_authorized');
+    if(!fclOptions&&!this.oldWritersStopped)throw new PortalError('fcl_upgrade_not_authorized');
+    if(fclOptions?.mode==='exclusive_verified'&&fclOptions.assertExclusive){
+      try{fclOptions.assertExclusive();}catch{throw new PortalError('fcl_upgrade_ownership_unverified');}
+    }
+    try{this.externalHandleProbe(this.store.path);}catch(error){
+      if(error instanceof PortalError&&error.code==='document_v3_upgrade_old_writer_open')throw new PortalError('fcl_upgrade_old_writer_open');
+      throw new PortalError('fcl_upgrade_ownership_unverified');
+    }
+  }
+  private createV3Tables():void{
+    this.db.exec(`CREATE TABLE IF NOT EXISTS document_store_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_revisions(revision_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,org TEXT NOT NULL,owner TEXT NOT NULL,version INTEGER NOT NULL,state TEXT NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL,input_digest TEXT NOT NULL,template_digest TEXT NOT NULL,source_revision_id TEXT,review_hash TEXT,rejection_reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(document_id,version));
+CREATE TABLE IF NOT EXISTS document_current_revisions(document_id TEXT PRIMARY KEY,org TEXT NOT NULL,owner TEXT NOT NULL,revision_id TEXT NOT NULL UNIQUE,version INTEGER NOT NULL,schema_version INTEGER NOT NULL,projection_digest TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_revision_events(audit_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,revision_id TEXT NOT NULL,version INTEGER NOT NULL,action TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_native_prepare_credentials(binding_hash TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,document_kind TEXT NOT NULL,case_ref TEXT,binding_digest TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS document_revisions_document ON document_revisions(document_id,version DESC);
+CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(org,updated_at DESC);`);
+  }
+  private migrateV4Tables():void{
+    this.db.exec(`CREATE TABLE document_configs_v4(org TEXT UNIQUE,personal_owner_id TEXT UNIQUE,version INTEGER NOT NULL,input TEXT NOT NULL,CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_configs_v4(org,personal_owner_id,version,input) SELECT org,NULL,version,input FROM document_configs;
+CREATE TABLE document_revisions_v4(revision_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,org TEXT,personal_owner_id TEXT,owner TEXT NOT NULL,version INTEGER NOT NULL,state TEXT NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL,input_digest TEXT NOT NULL,template_digest TEXT NOT NULL,source_revision_id TEXT,review_hash TEXT,rejection_reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(document_id,version),CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_revisions_v4(revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) SELECT revision_id,document_id,org,NULL,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at FROM document_revisions;
+CREATE TABLE document_current_revisions_v4(document_id TEXT PRIMARY KEY,org TEXT,personal_owner_id TEXT,owner TEXT NOT NULL,revision_id TEXT NOT NULL UNIQUE,version INTEGER NOT NULL,schema_version INTEGER NOT NULL,projection_digest TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_current_revisions_v4(document_id,org,personal_owner_id,owner,revision_id,version,schema_version,projection_digest,updated_at) SELECT document_id,org,NULL,owner,revision_id,version,schema_version,projection_digest,updated_at FROM document_current_revisions;
+CREATE TABLE document_audit_v4(id TEXT PRIMARY KEY,org TEXT,personal_owner_id TEXT,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL,CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_audit_v4(id,org,personal_owner_id,actor,action,digest,created) SELECT id,org,NULL,actor,action,digest,created FROM document_audit;
+DROP TABLE document_configs;
+DROP TABLE document_revisions;
+DROP TABLE document_current_revisions;
+DROP TABLE document_audit;
+ALTER TABLE document_configs_v4 RENAME TO document_configs;
+ALTER TABLE document_revisions_v4 RENAME TO document_revisions;
+ALTER TABLE document_current_revisions_v4 RENAME TO document_current_revisions;
+ALTER TABLE document_audit_v4 RENAME TO document_audit;
+CREATE INDEX document_revisions_document ON document_revisions(document_id,version DESC);
+CREATE INDEX document_revisions_personal ON document_revisions(personal_owner_id,document_id,version DESC);
+CREATE INDEX document_current_org ON document_current_revisions(org,updated_at DESC);
+CREATE INDEX document_current_personal ON document_current_revisions(personal_owner_id,updated_at DESC);
+CREATE INDEX document_audit_personal ON document_audit(personal_owner_id,created DESC);`);
+  }
+  private migrateToV4(initialVersion:number):void{
+    this.assertV4UpgradeOwnership();
+    const db=this.db;
+    db.exec('BEGIN EXCLUSIVE');
+    try{
+      const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
+      if(version!==initialVersion)throw new Error('workflow_upgrade_ownership_conflict');
+      if(version>4)throw new Error('workflow_schema_incompatible');
+      if(version===4)throw new Error('workflow_upgrade_ownership_conflict');
+      if(version<3){
+        this.createV3Tables();
+        db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','3');
+        db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('workflow_signing_secret',this.signingSecret);
+        db.exec('PRAGMA user_version=3;');
+      }else{
+        const existing=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
+        if(!existing||existing.value!==this.signingSecret)throw new Error('workflow_upgrade_ownership_conflict');
+      }
+      this.assertKnownV3Schema();
+      this.migrateV4Tables();
+      db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','4');
+      db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('workflow_signing_secret',this.signingSecret);
+      db.exec('PRAGMA user_version=4;');
+      this.assertV4Schema();
+      db.exec('COMMIT');
+      this.schemaReady=true;
+      this.fclReady=true;
+    }catch(error){
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   private ensureCredentialTable(){this.db.exec('CREATE TABLE IF NOT EXISTS document_native_prepare_credentials(binding_hash TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,document_kind TEXT NOT NULL,case_ref TEXT,binding_digest TEXT NOT NULL,created_at TEXT NOT NULL);');}
   rememberPrepareCredential(input:{bindingHash:string;org:string;actor:string;documentKind:StoredPayload['document_kind'];caseRef:string|null;bindingDigest:string}){
     this.ensureWritable();
@@ -338,7 +600,7 @@ export class DocumentWorkflowStore{
   }
   nativePrepareCredential(bindingHash:string){if(!this.schemaReady||!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_native_prepare_credentials'").get())return null;return this.db.prepare('SELECT org,actor,document_kind,case_ref,binding_digest FROM document_native_prepare_credentials WHERE binding_hash=?').get(bindingHash) as {org:string;actor:string;document_kind:StoredPayload['document_kind'];case_ref:string|null;binding_digest:string}|undefined??null;}
   private upgrade():void{
-    if(this.schemaReady){this.ensureCredentialTable();return;}
+    if(this.schemaReady){if(!this.fclReady)this.ensureCredentialTable();return;}
     if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');
     if(!this.oldWritersStopped)throw new PortalError('document_v3_upgrade_ownership_required');
     try{this.store.assertExclusiveOwnership();}catch{throw new PortalError('document_v3_upgrade_old_writer_open');}
@@ -375,6 +637,7 @@ CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(or
   }
   close(){void this.store;}
   isV3(){return this.schemaReady;}
+  isV4(){return this.fclReady;}
   ensureWritable(){if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');this.upgrade();}
   health(){try{const version=Number((this.store.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);if(version<=2)return true;this.store.db.prepare('SELECT revision_id FROM document_revisions LIMIT 1').get();return true;}catch{return false;}}
 }
@@ -382,8 +645,124 @@ CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(or
 export class DocumentWorkflowService{
   private readonly secret;
   private readonly reviews=new Map<string,{id:string;version:number;revision_id:string|null;content_digest:string;expires:number;actor:string}>();
-  constructor(readonly store:DocumentWorkflowStore,private readonly legacy:DocumentService,private readonly portal:Pick<PortalService,'getState'>,private readonly renderer:(html:string)=>Promise<Buffer>=renderPdf){this.secret=store.signingSecret;}
+  private readonly fcl:NormalizedFclDocumentWorkflowOptions|null;
+  constructor(
+    readonly store:DocumentWorkflowStore,
+    private readonly legacy:DocumentService,
+    private readonly portal:Pick<PortalService,'getState'>,
+    private readonly renderer:(html:string)=>Promise<Buffer>=renderPdf,
+    fclOptions?:FclDocumentWorkflowOptions,
+  ){
+    this.secret=store.signingSecret;
+    this.fcl=fclOptions?this.normalizeFclOptions(fclOptions):null;
+    if(this.fcl)this.assertFclStartup(this.fcl);
+  }
 
+  private normalizeFclOptions(options:FclDocumentWorkflowOptions):NormalizedFclDocumentWorkflowOptions{
+    if(!this.store.isV4())throw new Error('fcl_upgrade_not_authorized');
+    if(!options.receiverUserId.trim())throw new Error('fcl_receiver_configuration_invalid');
+    const now=options.now??(()=>new Date().toISOString());
+    let initialNow:string;
+    try{initialNow=now();}catch{throw new Error('fcl_clock_invalid');}
+    if(!z.iso.datetime().safeParse(initialNow).success)throw new Error('fcl_clock_invalid');
+    return {receiverUserId:options.receiverUserId,receiverIsActive:options.receiverIsActive,now};
+  }
+  private fclTimestamp(options:NormalizedFclDocumentWorkflowOptions):string{
+    let value:string;
+    try{value=options.now();}catch{throw new PortalError('fcl_clock_invalid');}
+    if(!z.iso.datetime().safeParse(value).success)throw new PortalError('fcl_clock_invalid');
+    return value;
+  }
+  private assertFclStartup(options:NormalizedFclDocumentWorkflowOptions):void{
+    let active:boolean;
+    try{active=options.receiverIsActive(options.receiverUserId);}catch{active=false;}
+    if(!active)throw new Error('fcl_receiver_unavailable');
+    const owners=this.store.db.prepare(`SELECT personal_owner_id AS owner_id FROM document_configs WHERE personal_owner_id IS NOT NULL
+      UNION SELECT personal_owner_id FROM document_revisions WHERE personal_owner_id IS NOT NULL
+      UNION SELECT personal_owner_id FROM document_current_revisions WHERE personal_owner_id IS NOT NULL
+      UNION SELECT personal_owner_id FROM document_audit WHERE personal_owner_id IS NOT NULL`).all() as Array<{owner_id:string}>;
+    if(owners.some(row=>row.owner_id!==options.receiverUserId))throw new Error('fcl_receiver_configuration_mismatch');
+  }
+  private fclOptions():NormalizedFclDocumentWorkflowOptions{
+    if(!this.fcl)throw new PortalError('fcl_unavailable');
+    return this.fcl;
+  }
+  private requireFclReceiver(ctx:PortalContext):NormalizedFclDocumentWorkflowOptions{
+    const options=this.fclOptions();
+    if(!ctx.identity.emailVerified||ctx.organizationId!==null||ctx.identity.userId!==options.receiverUserId)throw new PortalError('fcl_not_found');
+    let active:boolean;
+    try{active=options.receiverIsActive(options.receiverUserId);}catch{active=false;}
+    if(!active)throw new PortalError('fcl_unavailable');
+    return options;
+  }
+  private fclConfigRaw(personalOwnerId:string):FclConfigView{
+    const row=this.store.db.prepare('SELECT version,input FROM document_configs WHERE org IS NULL AND personal_owner_id=?').get(personalOwnerId) as {version:number;input:string}|undefined;
+    let input:unknown=null;
+    if(row){
+      try{input=JSON.parse(row.input);}catch{throw new PortalError('document_readback_failed');}
+    }
+    const parsed=fclConfigViewSchema.safeParse({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,version:row?.version??0,input,catalog:standardFeeTemplate});
+    if(!parsed.success)throw new PortalError('document_readback_failed');
+    return parsed.data;
+  }
+  fclConfig(ctx:PortalContext):FclConfigView{
+    const options=this.requireFclReceiver(ctx);
+    return this.fclConfigRaw(options.receiverUserId);
+  }
+  private assertFclCommitted(input:{personalOwnerId:string;version:number;input:unknown;auditId:string;partition:string;key:string;digest:string;created:string}):void{
+    const readback=this.fclConfigRaw(input.personalOwnerId);
+    if(readback.version!==input.version||canonicalHash(readback.input)!==canonicalHash(input.input))throw new PortalError('document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.personalOwnerId||audit.action!=='fcl-config-save'||audit.digest!==input.digest||audit.created!==input.created)throw new PortalError('document_readback_failed');
+    const idempotency=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!idempotency||idempotency.digest!==input.digest)throw new PortalError('document_readback_failed');
+    let persisted:FclConfigView;
+    try{persisted=fclConfigViewSchema.parse(JSON.parse(idempotency.result));}catch{throw new PortalError('document_readback_failed');}
+    if(canonicalHash(persisted)!==canonicalHash(readback))throw new PortalError('document_readback_failed');
+  }
+  saveFclConfig(ctx:PortalContext,input:unknown,key:string):FclConfigView{
+    const options=this.requireFclReceiver(ctx);
+    const data=parse(fclConfigSaveSchema,input);
+    const createdAt=this.fclTimestamp(options);
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
+    const partition=JSON.stringify(['v4-personal',options.receiverUserId,ctx.identity.userId,'fcl-config-save']),digest=canonicalHash(data),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==digest)throw new PortalError('idempotency_conflict');
+        this.requireFclReceiver(ctx);
+        db.exec('COMMIT');
+        committed=true;
+        return this.fclConfigRaw(options.receiverUserId);
+      }
+      const current=this.fclConfigRaw(options.receiverUserId);
+      if(current.version!==data.expected_version)throw new PortalError('version_conflict');
+      const nextVersion=data.expected_version+1;
+      const committedView:FclConfigView=fclConfigViewSchema.parse({
+        contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+        version:nextVersion,
+        input:data.input,
+        catalog:standardFeeTemplate,
+      });
+      db.prepare('INSERT INTO document_configs(org,personal_owner_id,version,input) VALUES(?,?,?,?) ON CONFLICT(personal_owner_id) DO UPDATE SET version=excluded.version,input=excluded.input').run(null,options.receiverUserId,nextVersion,JSON.stringify(data.input));
+      const auditId=randomUUID();
+      db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,'fcl-config-save',digest,createdAt);
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,digest,JSON.stringify(committedView));
+      this.assertFclCommitted({personalOwnerId:options.receiverUserId,version:nextVersion,input:data.input,auditId,partition,key,digest,created:createdAt});
+      this.requireFclReceiver(ctx);
+      db.exec('COMMIT');
+      committed=true;
+      this.assertFclCommitted({personalOwnerId:options.receiverUserId,version:nextVersion,input:data.input,auditId,partition,key,digest,created:createdAt});
+      return this.fclConfigRaw(options.receiverUserId);
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');
+      throw error;
+    }
+  }
   private scope(ctx:PortalContext,manage=false):Scope{
     if(!ctx.identity.emailVerified||!ctx.organizationId)throw new PortalError('document_organization_required');
     const state=this.portal.getState(ctx).data;
@@ -473,7 +852,7 @@ export class DocumentWorkflowService{
       const current=this.configRaw(scope);
       if(current.version!==data.expected_version)throw new PortalError('version_conflict');
       const merged={...current.input,...data.input};
-      this.store.store.db.prepare('INSERT INTO document_configs VALUES(?,?,?) ON CONFLICT(org) DO UPDATE SET version=excluded.version,input=excluded.input').run(scope.org,current.version+1,JSON.stringify(merged));
+      this.store.store.db.prepare('INSERT INTO document_configs(org,version,input) VALUES(?,?,?) ON CONFLICT(org) DO UPDATE SET version=excluded.version,input=excluded.input').run(scope.org,current.version+1,JSON.stringify(merged));
       return this.config(ctx);
     });
   }
@@ -591,9 +970,9 @@ export class DocumentWorkflowService{
     const revisionId=payload.revision_id??randomUUID();
     const stored={...payload,revision_id:revisionId,version,state,updated_at:new Date().toISOString()};
     const inputDigest=canonicalHash(stored.input),templateDigest=canonicalHash(stored.template),created=new Date().toISOString();
-    this.store.store.db.prepare('INSERT INTO document_revisions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,stored.id,scope.org,stored.owner_id,version,state,3,JSON.stringify(stored),inputDigest,templateDigest,sourceRevision,reviewHash,rejectionReason,scope.user,created);
-    this.store.store.db.prepare('INSERT INTO document_current_revisions VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET org=excluded.org,owner=excluded.owner,revision_id=excluded.revision_id,version=excluded.version,schema_version=excluded.schema_version,projection_digest=excluded.projection_digest,updated_at=excluded.updated_at').run(stored.id,scope.org,stored.owner_id,revisionId,version,3,inputDigest,created);
-    const auditId=randomUUID();this.store.store.db.prepare('INSERT INTO document_audit VALUES(?,?,?,?,?,?)').run(auditId,scope.org,scope.user,action,inputDigest,created);
+    this.store.store.db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,stored.id,scope.org,stored.owner_id,version,state,3,JSON.stringify(stored),inputDigest,templateDigest,sourceRevision,reviewHash,rejectionReason,scope.user,created);
+    this.store.store.db.prepare('INSERT INTO document_current_revisions(document_id,org,owner,revision_id,version,schema_version,projection_digest,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET org=excluded.org,owner=excluded.owner,revision_id=excluded.revision_id,version=excluded.version,schema_version=excluded.schema_version,projection_digest=excluded.projection_digest,updated_at=excluded.updated_at').run(stored.id,scope.org,stored.owner_id,revisionId,version,3,inputDigest,created);
+    const auditId=randomUUID();this.store.store.db.prepare('INSERT INTO document_audit(id,org,actor,action,digest,created) VALUES(?,?,?,?,?,?)').run(auditId,scope.org,scope.user,action,inputDigest,created);
     this.store.store.db.prepare('INSERT INTO document_revision_events VALUES(?,?,?,?,?)').run(auditId,stored.id,revisionId,version,action);
     return stored;
   }
