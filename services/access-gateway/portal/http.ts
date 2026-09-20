@@ -450,12 +450,16 @@ function fclStaffRoute(path:string):{action:FclHttpAction;method:"GET"|"POST"}|n
 async function handleStaffFcl(request:IncomingMessage,response:ServerResponse,url:URL,fclHttp:FclHttpService,options:PortalHttpOptions,ctx:PortalContext,route:{action:FclHttpAction;method:"GET"|"POST"}):Promise<boolean>{
   try{
     if((request.method??"GET")!==route.method){json(response,405,{schema_version:FCL_HTTP_VERSION,status:"blocked",data:null,reason_codes:["method_not_allowed"]},undefined,true);return true;}
-    if(url.search&&route.action!=="case-list")throw new PortalError("fcl_input_invalid");
+    if(url.search&&!["case-list","rate-preview"].includes(route.action))throw new PortalError("fcl_input_invalid");
     let input:Record<string,unknown>;
       if(request.method==="GET"){
       if(route.action==="case-list"){
         const query=publicFclQuery(url,["limit","status","cursor"]);
         input={limit:query.limit===undefined?25:Number(query.limit),status:query.status===undefined?null:query.status,cursor:query.cursor===undefined?null:query.cursor};
+      }else if(route.action==="rate-preview"){
+        const release=url.searchParams.get("release_id");
+        if(url.search&&(!release||!/^[0-9a-f-]{36}$/u.test(release)||[...url.searchParams.keys()].length!==1))throw new PortalError("fcl_input_invalid");
+        input=release?{release_id:release}:{};
       }else input={};
     }else{
       input=await body(request,Math.min(options.maxBodyBytes??FCL_HTTP_BODY_LIMITS[route.action],FCL_HTTP_BODY_LIMITS[route.action]));

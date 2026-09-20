@@ -562,3 +562,54 @@ Inquiry 成功保存后才读取该受控配置；缺失、disabled、transport 
 生产 FCL 默认关闭。`PORTAL_FCL_ENABLED=true` 在尚未接入可信 receiver authority 前以 `fcl_receiver_authority_unavailable` 启动失败，不使用用户表存在、在线 session、`()=>true` 或客户端 boolean 伪造 receiver。server 对 FCL public cookie 强制 `secureCookie=!fixture`，生产调用方不能通过 false 绕过 Transport/Secure 要求。
 
 真实部署、真实邮件、真实 IdP authority、UI 和 CLI 仍不在 FCL.13a 范围内；FCL.13b 尚未开始。
+
+## FCL.13b 实施说明
+
+FCL.13b 在已验证的 FCL.13a HTTP 合同之上交付公开询价页和个人 FCL 工作区，不新增业务权威、不接入 Booking/SO/邮件外发，也不开启生产。公开页复用 `/inquiry/` 三步表单、本票 fragment 交换和 HttpOnly cookie；人员页复用 `/console/#fcl` 与既有 Case、Native Rate、Quote、Document、Handoff 服务。
+
+### FCL.13b.1 Rate preview 历史 release 薄适配
+
+FCL.13a 的 `rate-preview` 只预览当前草稿，而既有 `NativeAdminService.preview(ctx,'fcl',release_id?)` 已支持按历史 release 预览。`rate-rollback` 必须提交目标 release 的 preview hash，因此 13b 只补充既有能力的 HTTP 透传，不改变领域算法、权限、发布语义或 active release 指向。
+
+旧请求：
+
+```json
+{}
+```
+
+新请求：
+
+```json
+{"release_id":"00000000-0000-4000-8000-000000000001"}
+```
+
+`release_id` 为可选 UUID；省略时仍按当前草稿预览，保持 13a 行为兼容。HTTP 只允许 `GET /console/api/v1/fcl/rate-preview?release_id=<uuid>`，拒绝未知 key、重复 key 和非法 UUID。请求 map 由 `fclRatePreviewRequestSchema` 闭合，生成的 `schemas/access-gateway/fcl/rate-preview.schema.json` 必须包含可选 `release_id`。历史 release 预览仍经过 `NativeAdminService` 的个人 scope、exact receiver、发布存在性、digest 和权限校验；其他个人或企业 context 不能借用该 query 读取 FCL 个人 release。
+
+### FCL.13b.2 页面与状态
+
+公开页固定为 Inquiry → Case 个人本票视图：
+
+- 三步表单覆盖线路、柜型/柜数、货物、日期、Incoterm、服务、联系人和 consent；不猜测港口、服务或价格。
+- 成功提交后先写入 fragment，凭据交换成功才清除；交换失败保留 fragment 和内存链接，刷新可重试，不把 credential 放入 query、localStorage 或日志。
+- 本票 GET、补充和 bootstrap 使用 cookie 绑定 `inquiry_id`，异步响应以 generation guard 防止旧票覆盖新票。
+- 客户补充可编辑完整闭合字段，提交前显示客户端 before/after；失败保留全部输入。公开事件不暴露内部字段或 Cost/Sell/GP。
+
+个人 FCL 工作区覆盖：
+
+- Case list/get、状态、工作人员代录完整字段、确认/重新核对和事件 before/after。
+- Rate dataset 草稿保存、预览、发布、停用和历史回退；附费、服务、单位、柜型、币种和来源版本由人员明确填写，不用缺价补零。
+- Quote match 保留 matcher 五状态与候选；不自动选最低价。首次报价 `operation=create`，已有当前报价使用 `operation=update`，缺价/缺 FX 的 `needs_input` data 原样保留并在同一 `quote_ref` 新版本补全。
+- CostSell 来源成本只读，售价、人工费用、服务范围、FX 和备注由人员填写；保存后只展示服务器计算结果。
+- Case 工作区在宽屏使用“需求摘要 / CostSell / 利润与文件”三列；状态处理与工作人员 17 字段代录折叠，窄屏按既有规则堆叠。
+- Document create/refresh/resubmit/re_quote、独立 review、approve、reject、历史查看和正式/历史 PDF 导出；编辑报价或来源变化清除 review/export 凭证。PDF 必须按 response schema、文件名、长度、`%PDF-` 头和服务端 sha256 校验后才允许下载。
+- Handoff 只接受当前 approved Document 和本次会话实际校验的正式 PDF；展示 pending/handed_off/history 和不透明引用，不创建 Booking、Shipment、Order 或 SO。
+- Quote/Document 历史读取保留服务器 `needs_input`、`manual_review` 合法 data；个人页面只在同一 `quote_ref` 上更新待补报价，并显示历史金额、版本和来源窗口，不改写旧版本。
+- Case/Status/Staff/Confirm/Issuer/Notification/Document-display 表单在非成功响应、路由切换及 `loadRelated`/`loadConfig` 重绘时保留本地 draft；离开 Case 或切换 scope 时使旧 async 响应失效，未保存引用的利润不会伪装成已审核结果。
+
+人员 FCL 写请求统一使用闭合 `fclHttpResponseSchemas` 和 `acceptBusiness:true`：`success`、`needs_input`、`manual_review` 保留 data；`blocked`、`unavailable` 不得当成功或无结果，必须显示 reason code 并保留待重试 draft/idempotency key。缺价、缺 FX、来源/版本冲突、权限失败、PDF renderer 不可用分别按上述状态展示。
+
+### FCL.13b.3 验证边界
+
+精确测试覆盖公开补充 change projection、报价 `needs_input` → 同 quote update、历史 release preview → rollback、个人/企业跨 scope 拒绝、query 严格解析、PDF hash/文件名校验以及真实 loopback HTTP 全链。浏览器 fixture 使用 `PORTAL_FIXTURE_FCL_PERSONAL=true` 和既有 `start-portal-fixture.ts --fixtures`，从公开三步提交、staff confirm、rate publish、needs_input quote update、Document review/approve 跑到正式 PDF 与 Handoff；本机若缺少可用 sandbox，只允许把结果标为 `partial`，不得声称 PDF/Handoff 已通过。
+
+FCL.13b 不修改 MCP 工具合同、不新增 REST 别名、不进入 FCL.13c OpenAPI/CLI 扩展。13c 如启用 CLI/OpenAPI，必须复用同一 `fcl-http-contracts.ts` request/response map 和 `rate-preview` 可选 release_id 合同。

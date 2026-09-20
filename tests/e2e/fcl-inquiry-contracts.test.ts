@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call -- Browser ESM helper is intentionally untyped for runtime bundling. */
 import { readFileSync } from 'node:fs';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
@@ -18,6 +19,8 @@ import {
   validateFclInquiryDraft,
   type FclInquiryDraft,
 } from '../../apps/inquiry/fcl-model.js';
+// @ts-expect-error Browser ESM module intentionally has no TypeScript declaration.
+import {buildFclSupplementChanges} from '../../apps/inquiry/fcl-inquiry.js';
 
 const draftIssuePaths = (input: unknown) => validateFclInquiryDraft(input).map((issue) => issue.path.join('.'));
 const submitIssuePaths = (input: unknown) => validateFclInquiryForSubmit(input).map((issue) => issue.path.join('.'));
@@ -281,5 +284,32 @@ describe('FCL inquiry shared input contract', () => {
     }
     expect(validateSchema(completeInput())).toBe(true);
     expect(validateFclInquiryDraft(createFclInquiryDraft())).toEqual([]);
+  });
+});
+
+describe('FCL public supplement change projection',()=>{
+  it('projects all editable before/after fields and preserves explicit clearing',()=>{
+    const before=completeInput();
+    const after={
+      ...completeInput(),
+      pod:'Prince Rupert',
+      final_destination:null,
+      estimated_weight:{value:'13000',unit:'kg' as const},
+      selected_services:['ocean_freight','delivery'],
+      contact:{...completeInput().contact,name:'Updated shipper',email:null},
+      notes:null,
+    };
+    expect(buildFclSupplementChanges(before,after)).toEqual([
+      {field:'pod',value:'Prince Rupert'},
+      {field:'final_destination',value:null},
+      {field:'estimated_weight',value:{value:'13000',unit:'kg'}},
+      {field:'selected_services',value:['ocean_freight','delivery']},
+      {field:'contact.name',value:'Updated shipper'},
+      {field:'contact.email',value:null},
+      {field:'notes',value:null},
+    ]);
+  });
+  it('returns no patch when public fields are unchanged',()=>{
+    expect(buildFclSupplementChanges(completeInput(),completeInput())).toEqual([]);
   });
 });

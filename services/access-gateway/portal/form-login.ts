@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { PortalError } from './contracts';
 // Local acceptance credentials only. This class is never mounted in production.
-const accounts:Readonly<Record<string,string>>={user:'fixture-sales',admin:'fixture-operator','sales@example.test':'fixture-sales','operator@example.test':'fixture-operator'};
+const accounts:Readonly<Record<string,string>>={user:'fixture-sales',admin:'fixture-operator','fcl-receiver':'fixture-fcl-receiver','sales@example.test':'fixture-sales','operator@example.test':'fixture-operator','fcl-receiver@example.test':'fixture-fcl-receiver'};
 const digest=(value:string)=>createHash('sha256').update(value).digest();
 const glyphs:Record<string,string[]>={
  '2':['11110','00001','00001','01110','10000','10000','11111'],

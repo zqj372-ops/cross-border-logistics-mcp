@@ -4,6 +4,10 @@ import {
 } from './model.ts';
 
 const root = document.querySelector('#inquiry');
+const isLegacyHash = () => location.hash === '#business' || location.hash === '#legacy';
+let legacyMode = isLegacyHash();
+let fclController = null;
+let fclModulePromise = null;
 const drafts = { shipping: createDraft(), business: createDraft('business') };
 let mode = location.hash === '#business' ? 'business' : 'shipping';
 let step = 1;
@@ -106,6 +110,7 @@ function heading() {
   return `<div class="page-heading"><div><h1>${isBusiness() ? '企业与合规服务' : '加拿大海运询价'}</h1><p>${isBusiness() ? '说明办理需求，获取服务方案与报价。' : '选好服务，整理需求，获取报价。'}</p></div>${isBusiness() ? '<a class="back-link" href="#">返回海运询价 →</a>' : '<span class="route-label">中国 → 加拿大</span>'}</div>`;
 }
 function render({ focus = false, restore } = {}) {
+  if (!legacyMode) return;
   if (submitted) {
     root.innerHTML = `${heading()}<section class="generated submission-success"><div class="generated-heading"><span class="document-icon">${icon('document')}</span><div><h2 id="submitted-title" tabindex="-1">需求已提交</h2><p>工作人员收到后会跟进，您可随时查看进度。</p></div></div><dl class="mail-meta submission-meta"><div><dt>需求编号</dt><dd>${esc(submitted.case_id)}</dd></div><div><dt>当前状态</dt><dd>${({submitted:'待处理',in_review:'处理中',needs_input:'待补充',closed:'已结束',cancelled:'已取消'})[submitted.status]}</dd></div></dl><div class="mail-actions"><a class="button primary" href="/console/#case/${encodeURIComponent(submitted.case_id)}">查看询价进度</a><a class="button secondary" href="/console/#cases">我的询价</a></div><p class="mail-note">本次提交为询价需求，服务范围和费用仍待确认。</p></section>`;
     root.querySelector('#submitted-title')?.focus(); return;
@@ -126,6 +131,38 @@ function render({ focus = false, restore } = {}) {
     if (!firstError) root.scrollIntoView({ block: 'start' });
   }
 }
+async function activateFcl() {
+  if (fclController) return;
+  fclModulePromise ||= import('./fcl-inquiry.js');
+  const { mountFclInquiry } = await fclModulePromise;
+  if (isLegacyHash() || fclController) return;
+  root.replaceChildren();
+  fclController = mountFclInquiry(root);
+}
+function deactivateFcl() {
+  if (!fclController) return true;
+  const disposed = fclController();
+  if (disposed === false) return false;
+  fclController = null;
+  return true;
+}
+async function syncMode({ focus = false } = {}) {
+  const nextLegacy = isLegacyHash();
+  if (!nextLegacy) {
+    legacyMode = false;
+    await activateFcl();
+    return;
+  }
+  if (!deactivateFcl()) {
+    window.history.replaceState(null, '', `${location.pathname}${location.search}#fcl`);
+    window.alert('正在确认上一笔询价保存结果，请稍候再离开。');
+    return;
+  }
+  legacyMode = true;
+  mode = location.hash === '#business' ? 'business' : 'shipping';
+  step = 1; errors = {}; generated = null; submitted = null; submitMessage = ''; loginRequired = false;
+  render({ focus });
+}
 function renderGenerated() {
   const g = generated;
   root.innerHTML = `${heading()}<section class="generated" aria-labelledby="generated-title"><div class="generated-heading"><span class="document-icon">${icon('document')}</span><div><h2 id="generated-title" tabindex="-1">询价邮件已生成，尚未发送</h2><p>打开邮件应用或复制内容，确认后发送给我们。</p></div></div><dl class="mail-meta"><div><dt>收件人</dt><dd>${esc(g.recipient)}</dd></div><div><dt>主题</dt><dd>${esc(g.subject)}</dd></div></dl><details class="mail-preview" open><summary>查看邮件内容</summary><pre>${esc(g.body)}</pre></details>
@@ -134,6 +171,7 @@ function renderGenerated() {
   root.scrollIntoView({ block: 'start' });
 }
 function capture(event) {
+  if (!legacyMode) return;
   const el = event.target;
   if (submitting || !el.name || !(el.name in draft())) return;
   if (el.name === 'services') {
@@ -154,6 +192,7 @@ function capture(event) {
 root.addEventListener('input', capture);
 root.addEventListener('change', capture);
 root.addEventListener('submit', async event => {
+  if (!legacyMode) return;
   event.preventDefault();
   errors = validateStep(draft(), step);
   if (Object.keys(errors).length) { render({ focus: true }); return; }
@@ -168,6 +207,7 @@ root.addEventListener('submit', async event => {
   render({ focus: true });
 });
 root.addEventListener('click', async event => {
+  if (!legacyMode) return;
   const el = event.target.closest('button');
   if (!el || submitting) return;
   if (el.hasAttribute('data-email')) { errors = validateStep(draft(), 3); if (Object.keys(errors).length) { render({ focus: true }); return; } generated = buildInquiry(draft()); render(); return; }
@@ -196,10 +236,11 @@ root.addEventListener('click', async event => {
   }
 });
 document.querySelector('.skip-link').addEventListener('click', event => {
+  if (!legacyMode) return;
   event.preventDefault(); root.focus(); root.scrollIntoView({ block: 'start' });
 });
 window.addEventListener('hashchange', () => {
-  mode = location.hash === '#business' ? 'business' : 'shipping';
-  step = 1; errors = {}; generated = null; submitted = null; submitMessage = ''; render({ focus: true });
+  void syncMode({ focus: true });
 });
-render();
+if (legacyMode) render();
+else void syncMode();

@@ -55,6 +55,7 @@ export const fclCaseStaffSupplementRequestSchema=withCaseId(fclCaseStaffSuppleme
 export const fclCaseConfirmationRequestSchema=withCaseId(fclCaseConfirmationSchema);
 export const fclCaseIdRequestSchema=z.object({case_id:caseId}).strict();
 export const fclEmptyRequestSchema=z.object({}).strict();
+export const fclRatePreviewRequestSchema=z.object({release_id:z.string().uuid().optional()}).strict();
 
 export const fclHttpActions=[
   'case-list',
@@ -140,7 +141,7 @@ export const fclHttpRequestSchemas:Record<FclHttpAction,z.ZodType>={
   'case-confirm':fclCaseConfirmationRequestSchema,
   'rate-get':fclEmptyRequestSchema,
   'rate-save':fclRateSaveSchema,
-  'rate-preview':fclEmptyRequestSchema,
+  'rate-preview':fclRatePreviewRequestSchema,
   'rate-publish':nativePublishSchema,
   'rate-disable':nativeDisableSchema,
   'rate-rollback':nativeRollbackSchema,

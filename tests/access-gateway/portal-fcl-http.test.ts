@@ -141,6 +141,68 @@ it('runs the staff Quote, document, PDF, and handoff chain over real HTTP',async
   }finally{await f.close();}
 });
 
+it('preserves needs_input quote data and updates the same quote after price and FX completion',async()=>{
+  const f=await fclHttpFixture();
+  try{
+    const session=await staffSession(f),call=(action:string,payload:unknown,key:string)=>fetch(`${f.origin}/console/api/v1/fcl/${action}`,{method:'POST',headers:{cookie:session.cookie,origin:f.origin,'x-csrf-token':session.csrf,'idempotency-key':key,'content-type':'application/json'},body:JSON.stringify(payload)});
+    await call('rate-save',{expected_version:0,input:rates()},'fcl-http-partial-rate-save-01');
+    const preview=await fetch(f.origin+'/console/api/v1/fcl/rate-preview',{headers:{cookie:session.cookie}}),previewBody=await preview.json() as {data:{preview_hash:string}};
+    await call('rate-publish',{expected_version:1,preview_hash:previewBody.data.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fcl-http-partial-rate-publish-01');
+    const rateGet=await fetch(f.origin+'/console/api/v1/fcl/rate-get',{headers:{cookie:session.cookie}}),rateGetBody=await rateGet.json() as {data:{active_release:{release_id:string;version:number;digest:string}}},active=rateGetBody.data.active_release;
+    const submission=await f.caseService.submitFclInquiry('fcl-http-partial-session','fcl-http-partial-submit-01',inquiry());
+    const confirmed=await call('case-confirm',{case_id:submission.case_id,expected_version:submission.case_version,expected_customer_supplement_ref:null,confirmed_fields:{changes:[]},reason:'Confirmed'},'fcl-http-partial-confirm-01');
+    const confirmedBody=await confirmed.json() as {data:{case_version:number}};
+    const partial=await call('quote-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'create',case_ref:submission.case_id,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,selected_rate_id:rates().rates[0]!.rate_id,expected_release_id:active.release_id,expected_release_version:active.version,expected_dataset_digest:active.digest,input:{source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:null,customer_note:null}],manual_fees:[],service_scopes:[],exchange_rates:{USD:null,CAD:null},remark:null}},'fcl-http-partial-quote-create-01');
+    expect(partial.status).toBe(200);
+    const partialBody=await partial.json() as {status:string;data:{quote_ref:string;version:number;current_version:number;completeness:{complete:boolean;missing_fields:string[]};calculation:{unified_profit:{missing_fx:string[]}}}};
+    expect(partialBody.status).toBe('needs_input');
+    expect(partialBody.data).toMatchObject({version:1,current_version:1,completeness:{complete:false}});
+    expect(partialBody.data.calculation.unified_profit.missing_fx).toEqual(['USD']);
+    expect(partialBody.data.completeness.missing_fields).toEqual(expect.arrayContaining(['/cost_rows/0/sell_price','/service_coverage/0']));
+
+    const completed=await call('quote-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:partialBody.data.quote_ref,expected_version:partialBody.data.version,source_binding:{mode:'retain'},input:{source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:'Customer confirmed'}],manual_fees:[],service_scopes:[],exchange_rates:{USD:'7.2',CAD:null},remark:'Complete synthetic quote'}},'fcl-http-partial-quote-update-01');
+    expect(completed.status).toBe(200);
+    const completedBody=await completed.json() as {status:string;data:{quote_ref:string;version:number;current_version:number;completeness:{complete:boolean};calculation:{complete:boolean;unified_profit:{missing_fx:string[]}}}};
+    expect(completedBody.status).toBe('success');
+    expect(completedBody.data).toMatchObject({quote_ref:partialBody.data.quote_ref,version:2,current_version:2,completeness:{complete:true},calculation:{complete:true}});
+    expect(completedBody.data.calculation.unified_profit.missing_fx).toEqual([]);
+  }finally{await f.close();}
+});
+
+it('previews a selected historical release before creating a rollback publication',async()=>{
+  const f=await fclHttpFixture();
+  try{
+    const session=await staffSession(f),call=(action:string,payload:unknown,key:string)=>fetch(`${f.origin}/console/api/v1/fcl/${action}`,{method:'POST',headers:{cookie:session.cookie,origin:f.origin,'x-csrf-token':session.csrf,'idempotency-key':key,'content-type':'application/json'},body:JSON.stringify(payload)});
+    await call('rate-save',{expected_version:0,input:rates()},'fcl-http-rollback-rate-v1-save');
+    const firstPreview=await fetch(f.origin+'/console/api/v1/fcl/rate-preview',{headers:{cookie:session.cookie}}),firstPreviewBody=await firstPreview.json() as {data:{preview_hash:string}};
+    await call('rate-publish',{expected_version:1,preview_hash:firstPreviewBody.data.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fcl-http-rollback-rate-v1-publish');
+    const firstGet=await fetch(f.origin+'/console/api/v1/fcl/rate-get',{headers:{cookie:session.cookie}}),firstGetBody=await firstGet.json() as {data:{version:number;active_release:{release_id:string;version:number;digest:string}}},first=firstGetBody.data.active_release;
+    const secondRates=rates();secondRates.label='HTTP rates v2';secondRates.rates[0]!.items[0]!.ocean_freight='3300';secondRates.rates[0]!.source_version='v2';
+    await call('rate-save',{expected_version:firstGetBody.data.version,input:secondRates},'fcl-http-rollback-rate-v2-save');
+    const secondPreview=await fetch(f.origin+'/console/api/v1/fcl/rate-preview',{headers:{cookie:session.cookie}}),secondPreviewBody=await secondPreview.json() as {data:{preview_hash:string}};
+    await call('rate-publish',{expected_version:firstGetBody.data.version+1,preview_hash:secondPreviewBody.data.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fcl-http-rollback-rate-v2-publish');
+    const secondGet=await fetch(f.origin+'/console/api/v1/fcl/rate-get',{headers:{cookie:session.cookie}}),secondGetBody=await secondGet.json() as {data:{version:number}};
+    const historicalPreview=await fetch(`${f.origin}/console/api/v1/fcl/rate-preview?release_id=${encodeURIComponent(first.release_id)}`,{headers:{cookie:session.cookie}});
+    expect(historicalPreview.status).toBe(200);
+    const historicalBody=await historicalPreview.json() as {status:string;data:{release_id:string;can_publish:boolean;input:{label:string};preview_hash:string}};
+    expect(historicalBody).toMatchObject({status:'success',data:{release_id:first.release_id,can_publish:true,input:{label:'HTTP rates'}}});
+    const isolatedHttp=new FclHttpService({caseService:f.caseService,nativeAdmin:f.rateService,documentWorkflow:{} as never,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08'});
+    const otherPersonal={organizationId:null,identity:{userId:'fixture-other-personal',displayName:'Other personal',email:'other@example.test',emailVerified:true,platformRole:null}};
+    const organizationContext={organizationId:'org_fixture',identity:receiver.identity};
+    await expect(isolatedHttp.executeStaff(otherPersonal,'rate-preview',{release_id:first.release_id},()=> 'isolated-other-preview')).rejects.toThrow();
+    await expect(isolatedHttp.executeStaff(organizationContext,'rate-preview',{release_id:first.release_id},()=> 'isolated-org-preview')).rejects.toThrow();
+    const rollback=await call('rate-rollback',{expected_version:secondGetBody.data.version,preview_hash:historicalBody.data.preview_hash,confirmation:'reviewed_sources_and_conditions',release_id:first.release_id},'fcl-http-rollback-rate-create');
+    expect(rollback.status).toBe(200);
+    const rollbackBody=await rollback.json() as {status:string;data:{active_release:{input:{label:string;rates:Array<{items:Array<{ocean_freight:string}>}>}}}};
+    expect(rollbackBody.status).toBe('success');
+    expect(rollbackBody.data.active_release.input.label).toBe('HTTP rates');
+    expect(rollbackBody.data.active_release.input.rates[0]!.items[0]!.ocean_freight).toBe('3200');
+    expect((await fetch(`${f.origin}/console/api/v1/fcl/rate-preview?release_id=not-a-uuid`,{headers:{cookie:session.cookie}})).status).toBe(400);
+    expect((await fetch(`${f.origin}/console/api/v1/fcl/rate-preview?release_id=${first.release_id}&release_id=${first.release_id}`,{headers:{cookie:session.cookie}})).status).toBe(400);
+    expect((await fetch(`${f.origin}/console/api/v1/fcl/rate-preview?unknown=value`,{headers:{cookie:session.cookie}})).status).toBe(400);
+  }finally{await f.close();}
+});
+
 it('uses the FCL envelope for unauthenticated, CSRF, origin, and unknown-route failures',async()=>{
   const f=await fclHttpFixture();
   try{

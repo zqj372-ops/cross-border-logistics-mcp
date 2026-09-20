@@ -181,7 +181,7 @@ export class FclHttpService{
       case 'case-confirm':{const value=request as {case_id:string}&Record<string,unknown>;const {case_id,...body}=value;data=this.dependencies.caseService.confirmFclCase(ctx,case_id,body,key());break;}
       case 'rate-get':data=this.dependencies.nativeAdmin.get(ctx,'fcl');break;
       case 'rate-save':data=this.dependencies.nativeAdmin.save(ctx,'fcl',request,key());break;
-      case 'rate-preview':data=this.dependencies.nativeAdmin.preview(ctx,'fcl');break;
+      case 'rate-preview':data=this.dependencies.nativeAdmin.preview(ctx,'fcl',(request as {release_id?:string}).release_id);break;
       case 'rate-publish':data=this.dependencies.nativeAdmin.publish(ctx,'fcl',request,key());break;
       case 'rate-disable':data=this.dependencies.nativeAdmin.disable(ctx,'fcl',request,key());break;
       case 'rate-rollback':data=this.dependencies.nativeAdmin.rollback(ctx,'fcl',request,key());break;

@@ -1110,3 +1110,56 @@ select[aria-invalid=true] {
 .submission-success .button { font-size:16px; border-radius:8px; }
 .submission-success .button.primary { background:#252830; border-color:#252830; color:#fff; }
 .submission-success .mail-note { font-size:14px; }
+
+.fcl-public-page .fcl-container-grid,
+.fcl-public-page .fcl-service-grid {
+  border: 1px solid #d8dbe5;
+  border-radius: 8px;
+  padding: 14px;
+  margin: 0 0 18px;
+}
+
+.fcl-public-page .fcl-container-grid legend,
+.fcl-public-page .fcl-service-grid legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.fcl-public-page .fcl-container-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+
+.fcl-public-page .fcl-container-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.fcl-public-page .fcl-service-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.fcl-public-page .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fcl-public-page .fcl-ticket-card {
+  padding: 18px;
+  border: 1px solid #d8dbe5;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 720px) {
+  .fcl-public-page .fcl-container-grid,
+  .fcl-public-page .fcl-service-grid {
+    grid-template-columns: 1fr;
+  }
+}
