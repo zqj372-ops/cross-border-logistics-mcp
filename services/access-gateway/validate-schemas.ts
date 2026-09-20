@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import Ajv2020 from "ajv/dist/2020.js";
@@ -7,16 +7,21 @@ import addFormats from "ajv-formats";
 export function validateAccessGatewaySchemas(root = resolve(".")) {
   const directory = join(root, "schemas", "access-gateway");
   const failures: string[] = [];
-  const files = readdirSync(directory).filter((file) => file.endsWith(".schema.json")).sort();
+  const files = [
+    ...readdirSync(directory).filter((file) => file.endsWith(".schema.json")).map((file) => ({ file, path: join(directory, file) })),
+    ...(existsSync(join(directory, "fcl"))
+      ? readdirSync(join(directory, "fcl")).filter((file) => file.endsWith(".schema.json")).sort().map((file) => ({ file: `fcl/${file}`, path: join(directory, "fcl", file) }))
+      : []),
+  ];
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   addFormats(ajv);
-  const schemas = files.map((file) => ({
+  const schemas = files.map(({ file, path }) => ({
     file,
-    schema: JSON.parse(readFileSync(join(directory, file), "utf8")) as object,
+    schema: JSON.parse(readFileSync(path, "utf8")) as object,
   }));
   for (const { file, schema } of schemas) {
     try {
-      ajv.addSchema(schema);
+      ajv.addSchema(schema, file);
     } catch (error: unknown) {
       failures.push(`${file}: ${error instanceof Error ? error.message : "invalid schema"}`);
     }
@@ -24,7 +29,7 @@ export function validateAccessGatewaySchemas(root = resolve(".")) {
   for (const { file, schema } of schemas) {
     try {
       const id = (schema as { $id?: unknown }).$id;
-      if (typeof id !== "string" || ajv.getSchema(id) === undefined) {
+      if (ajv.getSchema(typeof id === "string" ? id : file) === undefined) {
         throw new Error("schema did not compile");
       }
     } catch (error: unknown) {

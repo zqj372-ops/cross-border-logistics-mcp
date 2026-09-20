@@ -27,12 +27,14 @@ import { z } from 'zod';
 import type { CliIO } from './cli';
 import {CASE_LINK_VERSION} from '../../services/access-gateway/portal/case-contracts';
 import { channelInput, channelSave, channelPublish, channelDisable, channelRollback, channelViewSchema, channelListSchema, channelPreviewSchema, channelHistorySchema, CHANNEL_VERSION } from '../../services/access-gateway/portal/channel-contracts';
-type Helpers={endpoint:(s:string)=>URL;readFileBounded:(s:string,n:number,secret?:boolean)=>Promise<Buffer>;readStdin:(s:NodeJS.ReadStream,n:number)=>Promise<Buffer>;parseJson:(b:Uint8Array)=>unknown;readResponse:(r:Response,maximum?:number)=>Promise<string>};
+import {fclCommandMetadata,fclWorkspaceCommands,fclWorkspaceSchemas,runFclWorkspace} from './fcl-workspace';
+export type Helpers={endpoint:(s:string)=>URL;readFileBounded:(s:string,n:number,secret?:boolean)=>Promise<Buffer>;readStdin:(s:NodeJS.ReadStream,n:number)=>Promise<Buffer>;parseJson:(b:Uint8Array)=>unknown;readResponse:(r:Response,maximum?:number)=>Promise<string>};
 const maritimeCommands=(['schedules','terminals'] as const).flatMap(kind=>{
  const path=kind==='schedules'?'sailing-schedules':'terminal-efficiency';
  return [['query','POST','/maritime/'+path+'/query'],['get','GET','/admin/'+path],['save','POST','/admin/'+path+'/save'],['preview','GET','/admin/'+path+'/preview'],['publish','POST','/admin/'+path+'/publish'],['disable','POST','/admin/'+path+'/disable'],['rollback','POST','/admin/'+path+'/rollback']].map(([action,method,url])=>[kind+' '+action,method!,url!,`${kind==='schedules'?'船期':'码头效率'} ${action}`] as const);
 });
 const map=[...maritimeCommands,
+ ...fclWorkspaceCommands,
  ['schedules live-carriers','GET','/maritime/schedule-collector/carriers','查询官方船司目录与能力状态'],
  ['schedules live-locations','POST','/maritime/schedule-collector/locations','解析官方地点候选；多候选时需要人工选择'],
  ['schedules live-search','POST','/maritime/schedule-collector/search','查询官方船期（live），保留分段、覆盖与证据引用'],
@@ -83,13 +85,14 @@ class Failure extends Error{constructor(readonly code:string,readonly exitCode=2
 const linkedInputValidators:Record<string,(value:unknown)=>boolean>=linkedDocumentInputValidators,linkedResponseValidators:Record<string,(value:unknown)=>boolean>=linkedDocumentResponseValidators,linkedErrorValidator:(value:unknown)=>boolean=linkedDocumentResponseValidators.error;
 export async function runWorkspace(args:string[],io:CliIO,helpers:Helpers):Promise<number>{
  const output=io.stdout??(s=>{process.stdout.write(s);}),errorOutput=io.stderr??(s=>{process.stderr.write(s);});const env=io.env??process.env;
+ if(args[0]==='fcl')return runFclWorkspace(args,io,helpers);
  try{
   const {values,positionals,tokens}=parseArgs({args,allowPositionals:true,tokens:true,options:{help:{type:'boolean',short:'h'},json:{type:'boolean'},input:{type:'string',short:'i'},file:{type:'string'},id:{type:'string'},'session-file':{type:'string'},endpoint:{type:'string'},'idempotency-key':{type:'string'}}});
   const optionNames=tokens.filter(t=>t.kind==='option').map(t=>t.name);if(new Set(optionNames).size!==optionNames.length)throw new Failure('duplicate_option');
   const emit=(value:unknown)=>output(JSON.stringify(value,null,values.json?undefined:2)+'\n');const name=positionals.join(' ');
-  if(values.help||!name){output('FreightClaw 人员工作台 CLI\nworkspace login start --session-file <私有文件> [--endpoint <地址>]\n打开返回链接并在网页确认，再运行 workspace login finish --session-file <同一文件>\nworkspace commands 列出已实现操作；workspace schema channels create 查看输入。\n价格表 import-preview / export 使用 --file 指定本地表格。\n业务命令使用 --session-file，--id 指定记录，--input 提供 JSON（或 - 读标准输入）。\n写入要求 --idempotency-key，同一请求重试保留同一个值；不自动重试。\n官方船期：workspace schedules live-carriers；live-locations/live-search 需要 --input。\nlive 查询保留分段、覆盖、来源限制与证据引用，不保存为企业快照。\nworkspace logout 撤销 CLI 会话。查询 API Key 不自动获得管理权限。\n');return 0;}
-  if(name==='commands'){emit(map.map(([command,method,path,description])=>({command:`workspace ${command}`,method,path,description,auth:'person_session'})));return 0;}
-  if(positionals[0]==='schema'){const schema=schemas[positionals.slice(1).join(' ')];if(!schema){const frozen=caseSchemas[positionals.slice(1).join(' ')];if(!frozen)throw new Failure('schema_not_available');emit(frozen);}else emit(z.toJSONSchema(schema));return 0;}
+  if(values.help||!name){output('FreightClaw 人员工作台 CLI\nworkspace login start --session-file <私有文件> [--endpoint <地址>]\n打开返回链接并在网页确认，再运行 workspace login finish --session-file <同一文件>\nworkspace commands 列出已实现操作；workspace schema channels create 查看输入。\nFCL 人员操作：workspace fcl <action>；公开询价：workspace fcl inquiry <action>。\n价格表 import-preview / export 使用 --file 指定本地表格。\n业务命令使用 --session-file，--id 指定记录，--input 提供 JSON（或 - 读标准输入）。\n写入要求 --idempotency-key，同一请求重试保留同一个值；不自动重试。\n官方船期：workspace schedules live-carriers；live-locations/live-search 需要 --input。\nlive 查询保留分段、覆盖、来源限制与证据引用，不保存为企业快照。\nworkspace logout 撤销 CLI 会话。查询 API Key 不自动获得管理权限。\n');return 0;}
+  if(name==='commands'){emit(map.map(([command,method,path,description])=>({command:`workspace ${command}`,method,path,description,...(fclCommandMetadata(command)??{auth:'person_session'})})));return 0;}
+  if(positionals[0]==='schema'){const schema=schemas[positionals.slice(1).join(' ')]??fclWorkspaceSchemas[positionals.slice(1).join(' ')];if(!schema){const frozen=caseSchemas[positionals.slice(1).join(' ')];if(!frozen)throw new Failure('schema_not_available');emit(frozen);}else emit(z.toJSONSchema(schema));return 0;}
   const filename=values['session-file']??env.FREIGHTCLAW_SESSION_FILE;if(!filename)throw new Failure('session_file_required');
   const suppliedOrigin=values.endpoint??env.FREIGHTCLAW_ENDPOINT;
   let stored:Record<string,unknown>|undefined;if(name!=='login start'){const input=helpers.parseJson(await helpers.readFileBounded(filename,4096,true));stored=(name==='login finish'?pendingSchema:sessionSchema).parse(input);}

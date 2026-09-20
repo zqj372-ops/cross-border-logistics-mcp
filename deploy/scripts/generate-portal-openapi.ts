@@ -10,8 +10,31 @@ import { z } from "zod";
 import { cargoToolContract } from "../../src/logistics_mcp/domains/cargo/tool";
 import { containerPlanSummaryToolContract } from "../../src/logistics_mcp/domains/container/service";
 import { agentContextToolContract } from "../../src/logistics_mcp/agent-context/runtime";
+import {
+  FCL_HTTP_BODY_LIMITS,
+  FCL_HTTP_MAX_RESPONSE_BYTES,
+  FCL_HTTP_RESPONSE_LIMITS,
+  FCL_HTTP_VERSION,
+  FCL_PUBLIC_BODY_LIMITS,
+  FCL_PUBLIC_ROUTES,
+  FCL_STAFF_ACTION_METHODS,
+  FCL_STAFF_WRITE_ACTIONS,
+  fclHttpActions,
+  fclHttpRequestSchemas,
+  fclHttpResponseSchemas,
+  fclPublicOutputSchemas,
+  fclPublicRequestSchemas,
+  type FclHttpAction,
+  type FclPublicAction,
+} from "../../services/access-gateway/portal/fcl-http-contracts";
 
 type ObjectValue = Record<string, unknown>;
+const openApiSchema=(schema:z.ZodType):ObjectValue=>{
+  const value=z.toJSONSchema(schema,{target:"draft-2020-12"}) as ObjectValue;
+  delete value.$schema;
+  return value;
+};
+const pascal=(value:string)=>value.split(/[-_]/u).map(part=>part[0]!.toUpperCase()+part.slice(1)).join("");
 export function generatePortalOpenApi(): ObjectValue {
   const schemas: Record<string, ObjectValue> = {};
   const names = new Map<string, string>();
@@ -94,6 +117,20 @@ export function generatePortalOpenApi(): ObjectValue {
     delete schemas[name].$schema;
     post(`/api/v2/tools/${tool}`,name,title,ref(name),ref(tool==="system.agent_context.get"?"AgentContextEnvelope":"DomainEnvelope"),["ApplicationKey","BearerToken"],"可直接使用统一应用 Key，也可使用兼容的 T0 REST 短令牌。请求体直接使用原工具 input，不能再包一层 input。数据及计算规则的来源必须明确。");
   }
+  const fclRequestNames=new Map<FclHttpAction,string>(),fclResponseNames=new Map<FclHttpAction,string>();
+  for(const action of fclHttpActions){
+    const requestName=`Fcl${pascal(action)}Request`,responseName=`Fcl${pascal(action)}Response`;
+    schemas[requestName]=openApiSchema(fclHttpRequestSchemas[action]);
+    schemas[responseName]=openApiSchema(fclHttpResponseSchemas[action]);
+    fclRequestNames.set(action,requestName);fclResponseNames.set(action,responseName);
+  }
+  const fclPublicRequestNames=new Map<FclPublicAction,string>(),fclPublicResponseNames=new Map<FclPublicAction,string>();
+  for(const action of Object.keys(FCL_PUBLIC_ROUTES) as FclPublicAction[]){
+    const requestName=`FclPublic${pascal(action)}Request`,responseName=`FclPublic${pascal(action)}Response`;
+    schemas[requestName]=openApiSchema(fclPublicRequestSchemas[action]);
+    schemas[responseName]=openApiSchema(fclPublicOutputSchemas[action]);
+    fclPublicRequestNames.set(action,requestName);fclPublicResponseNames.set(action,responseName);
+  }
   paths["/access/v2/business/jwks.json"]={get:{operationId:"businessJwks",summary:"业务令牌验证公钥",security:[],responses:{"200":response(ref("AccessJwksResponse"))}}};
   for(const action of Object.keys(outputSchemas)){
     const schema=action==='config'?null:quoteDocumentSchemas[(action==='export'?'get':action) as keyof typeof quoteDocumentSchemas];
@@ -125,6 +162,44 @@ export function generatePortalOpenApi(): ObjectValue {
     }
   }
   paths["/console/api/v1/cases/{case_id}"]={get:{operationId:"cases_get",summary:"人员读取单条询价",description:"省略 contract_version 返回 portal-cases@2026-09-07.v1；仅接受唯一的 contract_version=inquiry-quote-link@2026-09-13.v1，返回 portal-cases@2026-09-13.v2（含 review_context）；重复或未知取值拒绝。",security:[{PortalSession:[]}],parameters:[{name:"case_id",in:"path",required:true,schema:{type:"string",format:"uuid"}},{name:"contract_version",in:"query",required:false,schema:{const:"inquiry-quote-link@2026-09-13.v1"}}],responses:{"200":response({oneOf:[ref("AccessPortalCasesResponse"),ref("AccessPortalCasesResponseV2")]}),"400":response(ref("PortalError")),"401":response(ref("PortalError")),"403":response(ref("PortalError")),"404":response(ref("PortalError")),"503":response(ref("PortalError"))}}};
+  const fclWrite=new Set<string>(FCL_STAFF_WRITE_ACTIONS);
+  for(const action of fclHttpActions){
+    const method=FCL_STAFF_ACTION_METHODS[action].toLowerCase() as "get"|"post",requestName=fclRequestNames.get(action)!,responseName=fclResponseNames.get(action)!;
+    const requestSchema=schemas[requestName]!,properties=(requestSchema.properties??{}) as ObjectValue,parameters:ObjectValue[]=[];
+    if(method==="get")for(const [name,schema] of Object.entries(properties))parameters.push({name,in:"query",required:false,schema});
+    else{
+      parameters.push({name:"X-CSRF-Token",in:"header",required:true,schema:{type:"string"}});
+      if(fclWrite.has(action))parameters.push({name:"Idempotency-Key",in:"header",required:true,schema:{type:"string",minLength:16,maxLength:128}});
+    }
+    paths[`/console/api/v1/fcl/${action}`]={[method]:{
+      operationId:`fcl_${action.replaceAll("-","_")}`,
+      summary:`FCL 人员操作 ${action}`,
+      description:`固定合同 ${FCL_HTTP_VERSION}；最大请求 ${FCL_HTTP_BODY_LIMITS[action]} bytes，最大响应 ${FCL_HTTP_RESPONSE_LIMITS[action]} bytes。人员会话和精确 FCL receiver 由服务端校验，API Key 或企业上下文不能替代。`,
+      security:[{PortalSession:[]}],
+      parameters,
+      ...(method==="post"?{requestBody:{required:true,content:{"application/json":{schema:ref(requestName)}}}}:{}),
+      responses:{"200":response(ref(responseName)),"400":response(ref(responseName)),"401":response(ref(responseName)),"403":response(ref(responseName)),"405":response(ref(responseName)),"413":response(ref(responseName)),"429":response(ref(responseName)),"503":response(ref(responseName))},
+      "x-freightclaw-max-request-bytes":FCL_HTTP_BODY_LIMITS[action],
+      "x-freightclaw-max-response-bytes":FCL_HTTP_RESPONSE_LIMITS[action],
+    }};
+  }
+  for(const action of Object.keys(FCL_PUBLIC_ROUTES) as FclPublicAction[]){
+    const route=FCL_PUBLIC_ROUTES[action],method=route.method.toLowerCase() as "get"|"post",requestName=fclPublicRequestNames.get(action)!,responseName=fclPublicResponseNames.get(action)!;
+    const parameters:ObjectValue[]=[];
+    if(action==="get")parameters.push({name:"inquiry_id",in:"query",required:true,schema:{type:"string",format:"uuid"}});
+    if(route.method==="POST"&&action!=="session")parameters.push({name:"X-CSRF-Token",in:"header",required:true,schema:{type:"string"}},{name:"Idempotency-Key",in:"header",required:true,schema:{type:"string",minLength:16,maxLength:128}});
+    paths[route.path]={[method]:{
+      operationId:`fclPublic_${action}`,
+      summary:`公开 FCL ${action}`,
+      description:`固定合同 ${FCL_HTTP_VERSION}。credential 只允许出现在请求体或受限本票 cookie，不得进入 URL、日志或示例。`,
+      security:action==="session"?[]:[{InquirySession:[]}],
+      parameters,
+      ...(route.method==="POST"?{requestBody:{required:true,content:{"application/json":{schema:ref(requestName)}}}}:{}),
+      responses:{"200":response(ref(responseName)),"400":response(ref(responseName)),"401":response(ref(responseName)),"403":response(ref(responseName)),"404":response(ref(responseName)),"413":response(ref(responseName)),"429":response(ref(responseName)),"503":response(ref(responseName))},
+      ...(action in FCL_PUBLIC_BODY_LIMITS?{"x-freightclaw-max-request-bytes":FCL_PUBLIC_BODY_LIMITS[action as keyof typeof FCL_PUBLIC_BODY_LIMITS]}:{}),
+      "x-freightclaw-max-response-bytes":FCL_HTTP_MAX_RESPONSE_BYTES,
+    }};
+  }
   for(const action of ['list','import','publish','disable','browse'] as const){const read=action==='list';paths['/console/api/v1/admin/customs-packages'+(read?'':'/'+action)]={[read?'get':'post']:{operationId:'customsPackages_'+action,summary:'完整关务数据包 '+action,security:[{PortalSession:[]}],parameters:read?[]:[{name:'X-CSRF-Token',in:'header',required:true,schema:{type:'string'}},...(action==='browse'?[]:[{name:'Idempotency-Key',in:'header',required:true,schema:{type:'string'}}])],...(read?{}:{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(packageSchemas[action],{target:'draft-2020-12'})}}}}),responses:{'200':response(z.toJSONSchema(z.object({schema_version:z.literal('native-customs-packages@2026-09-08.v1'),status:z.literal('success'),data:action==='browse'?packageSchemas.browse_output:packageList,reason_codes:z.array(z.string()).length(0)}).strict(),{target:'draft-2020-12'})),'403':response(ref('PortalError'))}}};}
   for(const kind of ['schedules','terminals'] as const){
     const path=kind==='schedules'?'sailing-schedules':'terminal-efficiency';
@@ -136,7 +211,7 @@ export function generatePortalOpenApi(): ObjectValue {
       paths[url]={[read?'get':'post']:{operationId:kind+'_'+action,summary:(kind==='schedules'?'船期':'码头效率')+' '+action,security:[{PortalSession:[]}],parameters:read?(action==='preview'?[{name:'release_id',in:'query',required:false,schema:{type:'string',format:'uuid'}}]:[]):[{name:'X-CSRF-Token',in:'header',required:true,schema:{type:'string'}},...(action==='query'?[]:[{name:'Idempotency-Key',in:'header',required:true,schema:{type:'string',minLength:16,maxLength:128}}])],...(input?{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(input,{target:'draft-2020-12'})}}}}:{}),responses:{'200':response(z.toJSONSchema(result,{target:'draft-2020-12'})),'403':response(ref('PortalError')),'503':response(ref('PortalError'))}}};
     }
   }
-  return {openapi:"3.1.0",jsonSchemaDialect:"https://json-schema.org/draft/2020-12/schema",info:{title:"FreightClaw 机器接入 API",version:"2026-09-06.v4",description:"由当前代码和JSON Schema生成。统一应用 Key 可直接调用固定 REST 路由，也可换取 MCP 短令牌；网页使用邮箱账号密码。正式报价保存、人工审核和PDF是人员授权业务操作，不在机器凭证中隐式开放。"},servers:[{url:"https://www.freightclaw.net"}],paths,components:{securitySchemes:{PortalSession:{type:"apiKey",in:"cookie",name:"fc_portal_session",description:"人员会话；POST还需X-CSRF-Token。"},ApplicationKey:{type:"apiKey",in:"header",name:"Authorization",description:"完整值为 ApiKey <KEY>"},BearerToken:{type:"http",scheme:"bearer",bearerFormat:"JWT"}},schemas}};
+  return {openapi:"3.1.0",jsonSchemaDialect:"https://json-schema.org/draft/2020-12/schema",info:{title:"FreightClaw 机器接入 API",version:"2026-09-21.v5",description:"由当前代码和JSON Schema生成。统一应用 Key 可直接调用固定 REST 路由，也可换取 MCP 短令牌；网页使用邮箱账号密码。FCL 人员与公开询价使用各自 cookie 会话，正式报价保存、人工审核和PDF不进入机器凭证。"},servers:[{url:"https://www.freightclaw.net"}],paths,components:{securitySchemes:{PortalSession:{type:"apiKey",in:"cookie",name:"fc_portal_session",description:"人员会话；POST还需X-CSRF-Token。"},InquirySession:{type:"apiKey",in:"cookie",name:"fc_fcl_public",description:"公开 FCL 本票 cookie；写请求还需 session 返回的 X-CSRF-Token 和显式 Idempotency-Key。"},ApplicationKey:{type:"apiKey",in:"header",name:"Authorization",description:"完整值为 ApiKey <KEY>"},BearerToken:{type:"http",scheme:"bearer",bearerFormat:"JWT"}},schemas}};
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

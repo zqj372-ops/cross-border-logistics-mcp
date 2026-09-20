@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:freightclaw:proposal:fcl-main-loop:2026-09-20",
+  "title": "Proposed FCL inquiry, rate dataset and internal cost/sell row",
+  "$comment": "Review candidate only. Not a registered runtime contract. Cross-field, authorization, source-currentness and business-completeness checks are defined in the companion RFC.",
+  "oneOf": [
+    { "$ref": "#/$defs/inquiry" },
+    { "$ref": "#/$defs/rate_dataset" },
+    { "$ref": "#/$defs/quote_line" }
+  ],
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "nullable_text": { "oneOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+    "decimal": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,9})(\\.[0-9]{1,6})?$" },
+    "positive_decimal": { "allOf": [{ "$ref": "#/$defs/decimal" }, { "not": { "pattern": "^0(\\.0+)?$" } }] },
+    "nullable_money": { "oneOf": [{ "$ref": "#/$defs/decimal" }, { "type": "null" }] },
+    "currency": { "enum": ["USD", "CAD", "CNY"] },
+    "container_type": { "enum": ["20GP", "40GP", "40HQ", "45HQ"] },
+    "service": { "enum": ["pickup", "export_customs", "ocean_freight", "canada_customs", "devanning_storage", "delivery"] },
+    "notes": { "type": ["string", "null"], "maxLength": 4000, "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$" },
+    "container": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "quantity"],
+      "properties": {
+        "type": { "$ref": "#/$defs/container_type" },
+        "quantity": { "type": ["integer", "null"], "minimum": 1, "maximum": 9999 }
+      }
+    },
+    "weight": {
+      "type": "object", "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "$ref": "#/$defs/positive_decimal" },
+        "unit": { "const": "kg" }
+      }
+    },
+    "contact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "company", "email", "phone"],
+      "properties": {
+        "name": { "allOf": [{ "$ref": "#/$defs/text" }, { "maxLength": 80 }] },
+        "company": { "$ref": "#/$defs/nullable_text" },
+        "email": { "type": "string", "format": "email", "maxLength": 254, "pattern": "^[^\\s<>]+$" },
+        "phone": { "oneOf": [{ "allOf": [{ "$ref": "#/$defs/text" }, { "maxLength": 80 }] }, { "type": "null" }] }
+      }
+    },
+    "inquiry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract_version", "transport_mode", "origin_city", "pol", "pod", "final_destination", "containers", "cargo_name", "cargo_type", "estimated_weight", "cargo_ready_date", "incoterm", "incoterm_other", "selected_services", "contact", "notes", "consent"],
+      "properties": {
+        "contract_version": { "const": "fcl-inquiry@2026-09-20.v1" },
+        "transport_mode": { "const": "FCL" },
+        "origin_city": { "$ref": "#/$defs/nullable_text" },
+        "pol": { "$ref": "#/$defs/nullable_text" },
+        "pod": { "$ref": "#/$defs/nullable_text" },
+        "final_destination": { "$ref": "#/$defs/nullable_text" },
+        "containers": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/container" } },
+        "cargo_name": { "$ref": "#/$defs/nullable_text" },
+        "cargo_type": { "enum": ["general", "battery", "liquid_powder", "wood", "regulated", "other", null] },
+        "estimated_weight": { "oneOf": [{ "$ref": "#/$defs/weight" }, { "type": "null" }] },
+        "cargo_ready_date": { "type": ["string", "null"], "format": "date" },
+        "incoterm": { "enum": ["EXW", "FOB", "CIF", "DDU", "DDP", "Other", null] },
+        "incoterm_other": { "$ref": "#/$defs/nullable_text" },
+        "selected_services": { "type": "array", "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/$defs/service" } },
+        "contact": { "$ref": "#/$defs/contact" },
+        "notes": { "$ref": "#/$defs/notes" },
+        "consent": { "const": true }
+      }
+    },
+    "rate_item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["container_type", "ocean_freight", "currency"],
+      "properties": {
+        "container_type": { "$ref": "#/$defs/container_type" },
+        "ocean_freight": { "$ref": "#/$defs/decimal" },
+        "currency": { "$ref": "#/$defs/currency" }
+      }
+    },
+    "rate_fee": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "group", "service", "unit", "container_type", "cost_price", "currency", "note"],
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "group": { "enum": ["A", "B", "C"] },
+        "service": { "$ref": "#/$defs/service" },
+        "unit": { "enum": ["CNTR", "SHIPMENT"] },
+        "container_type": { "oneOf": [{ "$ref": "#/$defs/container_type" }, { "type": "null" }] },
+        "cost_price": { "$ref": "#/$defs/decimal" },
+        "currency": { "$ref": "#/$defs/currency" },
+        "note": { "$ref": "#/$defs/notes" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "unit": { "const": "CNTR" } }, "required": ["unit"] },
+          "then": { "properties": { "container_type": { "$ref": "#/$defs/container_type" } } },
+          "else": { "properties": { "container_type": { "type": "null" } } }
+        }
+      ]
+    },
+    "rate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rate_id", "supplier_label", "pol", "pod", "valid_from", "valid_until", "source_ref", "source_version", "note", "items", "additional_fees"],
+      "properties": {
+        "rate_id": { "type": "string", "format": "uuid" },
+        "supplier_label": { "$ref": "#/$defs/text" },
+        "pol": { "$ref": "#/$defs/text" },
+        "pod": { "$ref": "#/$defs/text" },
+        "valid_from": { "type": "string", "format": "date" },
+        "valid_until": { "type": "string", "format": "date" },
+        "source_ref": { "$ref": "#/$defs/text" },
+        "source_version": { "$ref": "#/$defs/text" },
+        "note": { "$ref": "#/$defs/notes" },
+        "items": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/rate_item" } },
+        "additional_fees": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/rate_fee" } }
+      }
+    },
+    "rate_dataset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract_version", "label", "rates"],
+      "properties": {
+        "contract_version": { "const": "fcl-rate-dataset@2026-09-20.v1" },
+        "label": { "$ref": "#/$defs/text" },
+        "rates": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "$ref": "#/$defs/rate" } }
+      }
+    },
+    "quote_line": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "group", "quantity", "unit", "cost_price", "sell_price", "currency", "note"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "$ref": "#/$defs/text" },
+        "group": { "enum": ["A", "B", "C"] },
+        "quantity": { "$ref": "#/$defs/positive_decimal" },
+        "unit": { "allOf": [{ "$ref": "#/$defs/text" }, { "maxLength": 20 }] },
+        "cost_price": { "$ref": "#/$defs/nullable_money" },
+        "sell_price": { "$ref": "#/$defs/nullable_money" },
+        "currency": { "$ref": "#/$defs/currency" },
+        "note": { "$ref": "#/$defs/notes" }
+      }
+    }
+  }
+}

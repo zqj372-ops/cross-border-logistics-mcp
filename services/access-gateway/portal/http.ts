@@ -22,7 +22,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import { PORTAL_CAPABILITIES, PortalError, PORTAL_SCHEMA_VERSION, type Membership, type PortalCapabilityId, type PortalContext, type PortalMutation } from "./contracts";
 import {FclHttpService,fclHttpFailure,type FclHttpDependencies} from "./fcl-http";
-import {FCL_HTTP_BODY_LIMITS,FCL_HTTP_RESPONSE_LIMITS,FCL_HTTP_VERSION,FCL_PUBLIC_BODY_LIMITS,fclHttpActions,fclHttpResponseSchemas,fclPublicOutputSchemas,type FclHttpAction} from "./fcl-http-contracts";
+import {FCL_HTTP_BODY_LIMITS,FCL_HTTP_RESPONSE_LIMITS,FCL_HTTP_VERSION,FCL_PUBLIC_BODY_LIMITS,FCL_STAFF_ACTION_METHODS,fclHttpActions,fclHttpResponseSchemas,fclPublicOutputSchemas,type FclHttpAction} from "./fcl-http-contracts";
 import type { PortalIdentityProvider } from "./identity";
 import type { PortalSession, PortalSessionManager } from "./session";
 import { parsePortalSessionCookie } from "./session";
@@ -442,9 +442,7 @@ function fclStaffRoute(path:string):{action:FclHttpAction;method:"GET"|"POST"}|n
   const direct=/^\/console\/api\/v1\/fcl\/([a-z-]+)$/u.exec(path);
   if(!direct||!fclHttpActions.includes(direct[1] as FclHttpAction))return null;
   const action=direct[1] as FclHttpAction;
-  const getActions=new Set<FclHttpAction>(["case-list","rate-get","rate-preview","issuer-config","notification-get"]);
-  const expected=getActions.has(action)?"GET":"POST";
-  return {action,method:expected};
+  return {action,method:FCL_STAFF_ACTION_METHODS[action]};
 }
 
 async function handleStaffFcl(request:IncomingMessage,response:ServerResponse,url:URL,fclHttp:FclHttpService,options:PortalHttpOptions,ctx:PortalContext,route:{action:FclHttpAction;method:"GET"|"POST"}):Promise<boolean>{

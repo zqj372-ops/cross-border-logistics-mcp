@@ -625,3 +625,29 @@ R1 只修正 13b 已授权 UI 和既有 HTTP 合同内的交互边界，不新�
 - 完整原始 Inquiry 和当前需求使用同一只读 17 字段摘要；独立 review 明确展示 Document 绑定的 Case projection、客户 scope、报价日期/有效期和出具人版本。
 - FCL 内部路由和 Case 切换在 dirty 时阻断或确认丢弃；取消导航不改 draft，确认导航同步清理 quote 编辑派生状态。公开页 `pagehide` 对 persisted BFCache 不做破坏性 cleanup。
 - 窄屏 FCL 三列按需求、CostSell、利润/文件顺序堆叠；桌面保持三列。
+
+## FCL.13c 实施说明
+
+13c 只把已交付 FCL HTTP action 接入既有 `freightclaw workspace` CLI，并扩展现有 OpenAPI 生成器；不新增业务服务、权限算法、REST 别名或 MCP 写入口。
+
+### FCL.13c.1 CLI
+
+人员命令固定为 `workspace fcl <canonical-action>`，路径复用 `/console/api/v1/fcl/<action>`，request/response Schema 直接使用 `fclHttpRequestSchemas` 与 `fclHttpResponseSchemas`。public 命令固定为 `workspace fcl inquiry session|submit|exchange|get|supplement|logout`，不复用 `/console` person session，也不提供旧 `workspace inquiry` 别名。
+
+public 命令使用独立 `--inquiry-session-file` 私有文件。该文件绑定单一 origin、匿名 cookie/CSRF 和单一 ticket，权限为 0600、拒绝 symlink，并以同目录临时文件、完整写入、fsync、原子替换更新。session bootstrap 只在明确 `ENOENT` 时创建；已有、损坏、过期或权限错误文件 fail closed，不静默建立新身份。读取到写回期间使用有界私有锁；并发写入返回 `inquiry_session_locked`。
+
+submit 显式要求 `--idempotency-key`，发送前持久保存 key、canonical request digest 和 body snapshot。网络未知结果保留原 session/key/body；same-key 重试仍调用服务端 idempotent replay，不用本地缓存替代当前 session、receiver 或 credential 校验。成功后先持久 ticket recovery，再输出脱敏摘要；credential 不进入 argv、query、env、stdout 或日志。exchange 可从同一私有文件读取已保存 credential，或从 0600 文件/受限 stdin 读取 `{inquiry_id,credential}`，从而恢复 Web 已签发的本票；跨票 inquiry_id 拒绝。logout 成功后把文件改为无 cookie tombstone，旧授权不能复用。
+
+人员 FCL 命令复用既有 device flow 与 0600 person session file，只调用 FCL private receiver action；`organization=null`，API Key 不替代 person identity，也不扩大组织或配置权限。写命令要求显式 key，CLI 不自动重试、不自动 confirmed、不选最低来源、不补 FX、不填零。
+
+### FCL.13c.2 PDF 与 OpenAPI
+
+`document-export` 必须提供 `--file`，使用响应上限 40 MiB 以外的实际 FCL response limit 读取，按闭合 Schema 校验后检查 `%PDF-`、decoded byte length、8 MiB 上限和真实 SHA-256。文件用 `wx`、0600 创建，不覆盖已有文件；stdout 移除 `content_base64`，保留 metadata、客户合计、trace 和本地 filename。历史导出必须满足 `historical=true`、`valid_now=false`。renderer 等待上限为 120 秒，其他 FCL action 为 15 秒。
+
+OpenAPI 生成器同时更新 `apps/console/openapi.json` 与 `docs/integrations/openapi.json`，包含全部 28 个 staff action 和 6 个 public action、PortalSession/InquirySession cookie、POST CSRF、显式 idempotency、闭合 request/response Schema、五状态错误、request/response byte limits、PDF 字段及 `rate-preview` 的 GET `release_id` query。FCL 人员能力不加入机器 API Key 文档。
+
+### FCL.13c.3 边界与被替代描述
+
+本节不表示生产已启用。真实部署仍缺可信 FCL receiver authority adapter、真实 IdP authority、真实邮件和运营验收；生产 FCL 默认关闭，API/CLI 存在不等于 `pilot_verified` 或 `deployed`。13c 不修改 MCP 工具合同、不新增静态工具，也不进入 Booking/SO/邮件订舱。
+
+`docs/rfcs/2026-09-20-fcl-main-loop.schema.json` 是实施前 proposal，不被运行时读取；当前运行合同是 `fcl-http-contracts.ts` 及其生成 Schema。审计文档和早期节点中的“CLI/UI/HTTP 未实现”描述不再代表 13c 完成后的全局状态。

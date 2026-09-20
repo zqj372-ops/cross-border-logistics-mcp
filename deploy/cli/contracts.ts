@@ -6,7 +6,7 @@ import api from "../../apps/console/openapi.json";
 type Schema = Record<string, unknown>;
 type Operation = { requestBody: { content: { "application/json": { schema: Schema } } }; responses: Record<string, { content: { "application/json": { schema: Schema } } }> };
 const paths = api.paths as unknown as Record<string, { post: Operation }>;
-const components = api.components.schemas as unknown as Record<string, Schema>;
+const components = (api as unknown as { components: { schemas: Record<string, Schema> } }).components.schemas;
 export interface Command { name: string; description: string; path: string; kind: "tool" | "business"; responseVersion: string }
 export const commands: readonly Command[] = [
   { name: "cargo calculate", description: "货物体积、重量与分泡计算", path: "/api/v2/tools/cargo.calculate", kind: "tool", responseVersion: "2026-08-11.v1" },

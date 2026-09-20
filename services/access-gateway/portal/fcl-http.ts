@@ -3,7 +3,6 @@ import {z} from 'zod';
 import {PortalError,type PortalContext,type PortalIdentity} from './contracts';
 import {
   fclCaseInputSchema,
-  fclCaseCustomerSupplementSchema,
   fclCasePublicSummarySchema,
   fclCaseSubmissionSchema,
 } from './case-contracts';
@@ -11,6 +10,9 @@ import {
   fclHttpOutputSchemas,
   fclHttpRequestSchemas,
   FCL_HTTP_VERSION,
+  fclPublicExchangeRequestSchema,
+  fclPublicGetRequestSchema,
+  fclPublicSupplementRequestSchema,
   type FclHttpAction,
 } from './fcl-http-contracts';
 import type {CaseService} from './cases';
@@ -20,9 +22,6 @@ import type {DocumentWorkflowService} from '../../quote-documents/workflow';
 const publicCookieName='fc_fcl_public';
 const publicCookiePath='/inquiry';
 const publicCookieTtlMs=30*24*60*60_000;
-const publicGetRequestSchema=z.object({inquiry_id:z.string().uuid()}).strict();
-const publicSupplementRequestSchema=fclCaseCustomerSupplementSchema.extend({inquiry_id:z.string().uuid()});
-
 type FclCasePort=Pick<CaseService,'listFclCases'|'getFclCase'|'updateFclCaseStatus'|'supplementFclCaseAsStaff'|'confirmFclCase'|'submitFclInquiry'|'getFclCustomerView'|'supplementFclCase'>;
 type FclRatePort=Pick<NativeAdminService,'get'|'save'|'preview'|'publish'|'disable'|'rollback'|'getFclNotification'|'saveFclNotification'>;
 type FclDocumentPort=Pick<DocumentWorkflowService,
@@ -214,7 +213,7 @@ export class FclHttpService{
       return {status:'success',data:fclCaseSubmissionSchema.parse(result),reason_codes:[],setCookie:ensured.setCookie};
     }
     if(action==='exchange'){
-      const value=parse(z.object({inquiry_id:z.string().uuid(),credential:z.string().min(32).max(256)}).strict(),input,'fcl_input_invalid');
+      const value=parse(fclPublicExchangeRequestSchema,input,'fcl_input_invalid');
       this.dependencies.caseService.getFclCustomerView(value.inquiry_id,value.credential);
       const exchanged=this.publicSessions.exchange(cookieHeader,value.inquiry_id,value.credential);
       return {status:'success',data:{inquiry_id:value.inquiry_id},reason_codes:[],setCookie:exchanged.setCookie};
@@ -222,12 +221,12 @@ export class FclHttpService{
     if(action==='logout')return {status:'success',data:null,reason_codes:[],setCookie:this.publicSessions.clearCookie()};
     if(!current?.inquiryId||!current.credential)throw new PortalError('fcl_not_found');
     if(action==='get'){
-      const value=parse(publicGetRequestSchema,input,'fcl_input_invalid');
+      const value=parse(fclPublicGetRequestSchema,input,'fcl_input_invalid');
       if(value.inquiry_id!==current.inquiryId)throw new PortalError('fcl_ticket_mismatch');
       return {status:'success',data:fclCasePublicSummarySchema.parse(this.dependencies.caseService.getFclCustomerView(current.inquiryId,current.credential)),reason_codes:[]};
     }
     if(action!=='supplement')throw new PortalError('fcl_input_invalid');
-    const wrapped=parse(publicSupplementRequestSchema,input,'fcl_input_invalid');
+    const wrapped=parse(fclPublicSupplementRequestSchema,input,'fcl_input_invalid');
     const {inquiry_id,...body}=wrapped;
     if(inquiry_id!==current.inquiryId)throw new PortalError('fcl_ticket_mismatch');
     const result=this.dependencies.caseService.supplementFclCase(current.inquiryId,current.credential,body,key());

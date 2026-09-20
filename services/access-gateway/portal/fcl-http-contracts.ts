@@ -1,6 +1,8 @@
 import {z} from 'zod';
 import {
   fclCaseConfirmationSchema,
+  fclCaseCustomerSupplementSchema,
+  fclCaseInputSchema,
   fclCaseInternalViewSchema,
   fclCaseListQuerySchema,
   fclCaseListSchema,
@@ -88,6 +90,42 @@ export const fclHttpActions=[
   'notification-save',
 ] as const;
 export type FclHttpAction=typeof fclHttpActions[number];
+
+export const FCL_STAFF_ACTION_METHODS:Readonly<Record<FclHttpAction,'GET'|'POST'>>=Object.freeze({
+  'case-list':'GET',
+  'case-get':'POST',
+  'case-status':'POST',
+  'case-staff-supplement':'POST',
+  'case-confirm':'POST',
+  'rate-get':'GET',
+  'rate-save':'POST',
+  'rate-preview':'GET',
+  'rate-publish':'POST',
+  'rate-disable':'POST',
+  'rate-rollback':'POST',
+  'quote-match':'POST',
+  'quote-save':'POST',
+  'quote-get':'POST',
+  'quote-list':'POST',
+  'issuer-config':'GET',
+  'issuer-config-save':'POST',
+  'document-save':'POST',
+  'document-get':'POST',
+  'document-list':'POST',
+  'document-review':'POST',
+  'document-approve':'POST',
+  'document-reject':'POST',
+  'document-export':'POST',
+  'handoff-save':'POST',
+  'handoff-get':'POST',
+  'notification-get':'GET',
+  'notification-save':'POST',
+});
+export const FCL_STAFF_WRITE_ACTIONS=[
+  'case-status','case-staff-supplement','case-confirm','rate-save','rate-publish','rate-disable','rate-rollback',
+  'quote-save','issuer-config-save','document-save','document-approve','document-reject','document-export',
+  'handoff-save','notification-save',
+] as const satisfies readonly FclHttpAction[];
 
 export const FCL_HTTP_BODY_LIMITS:Record<FclHttpAction,number>={
   'case-list':16*1024,
@@ -271,3 +309,25 @@ export const fclPublicOutputSchemas={
   supplement:fclPublicViewResponseSchema,
   logout:publicResponseSchema(z.null()),
 } as const;
+
+export const fclPublicGetRequestSchema=z.object({inquiry_id:z.string().uuid()}).strict();
+export const fclPublicExchangeRequestSchema=z.object({inquiry_id:z.string().uuid(),credential:z.string().min(32).max(256)}).strict();
+export const fclPublicSupplementRequestSchema=fclCaseCustomerSupplementSchema.extend({inquiry_id:z.string().uuid()}).strict();
+export const fclPublicRequestSchemas={
+  session:fclEmptyRequestSchema,
+  submit:fclCaseInputSchema,
+  exchange:fclPublicExchangeRequestSchema,
+  get:fclPublicGetRequestSchema,
+  supplement:fclPublicSupplementRequestSchema,
+  logout:fclEmptyRequestSchema,
+} as const;
+
+export const FCL_PUBLIC_ROUTES=Object.freeze({
+  session:{path:'/inquiry/api/v1/session',method:'GET'},
+  submit:{path:'/inquiry/api/v1/fcl/submit',method:'POST'},
+  exchange:{path:'/inquiry/api/v1/fcl/credential/exchange',method:'POST'},
+  get:{path:'/inquiry/api/v1/fcl',method:'GET'},
+  supplement:{path:'/inquiry/api/v1/fcl/supplement',method:'POST'},
+  logout:{path:'/inquiry/api/v1/logout',method:'POST'},
+} as const);
+export type FclPublicAction=keyof typeof FCL_PUBLIC_ROUTES;

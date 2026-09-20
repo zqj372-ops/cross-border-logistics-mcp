@@ -12,8 +12,10 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  const paths=document.paths as Record<string,{post?:{requestBody:{content:{"application/json":{schema:unknown}}}}}>;
  // New personnel routes must not silently become machine/API-Key capabilities.
  const personnel=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/quote-documents/')||path.startsWith('/console/api/v1/cases/')||path.startsWith('/console/api/v1/admin/customs-packages')||path.startsWith('/console/api/v1/admin/sailing-schedules')||path.startsWith('/console/api/v1/admin/terminal-efficiency')||path.startsWith('/console/api/v1/maritime/'));
- expect(Object.keys(paths).filter(path=>!personnel.includes(path))).toHaveLength(17);
+ const fclStaff=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/fcl/')),publicFcl=Object.keys(paths).filter(path=>path.startsWith('/inquiry/api/v1'));
+ expect(Object.keys(paths).filter(path=>!personnel.includes(path)&&!fclStaff.includes(path)&&!publicFcl.includes(path))).toHaveLength(17);
  expect(personnel).toHaveLength(31);
+ expect(fclStaff).toHaveLength(28);expect(publicFcl).toHaveLength(6);
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
   for(const [method,operation] of Object.entries(methods)){
@@ -21,6 +23,17 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
    if(method==='post')expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'X-CSRF-Token',required:true})]));
    if(/\/(?:save|config-save|approve|reject|import|publish|disable|rollback)$/u.test(path))expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'Idempotency-Key',required:true})]));
   }
+ }
+ for(const path of fclStaff){
+  const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
+  for(const [method,operation] of Object.entries(methods)){
+   expect(operation.security,path).toEqual([{PortalSession:[]}]);
+   if(method==='post')expect(operation.parameters,path).toEqual(expect.arrayContaining([expect.objectContaining({name:'X-CSRF-Token',required:true})]));
+  }
+ }
+ for(const path of publicFcl){
+  const operation=Object.values(paths[path] as Record<string,{security:unknown}>)[0]!;
+  expect(operation.security,path).toEqual(path==='/inquiry/api/v1/session'?[]:[{InquirySession:[]}]);
  }
  const caseRead=(paths['/console/api/v1/cases/{case_id}'] as unknown as {get:{parameters:{name:string;required?:boolean;schema:Record<string,unknown>}[];responses:Record<string,{content:{'application/json':{schema:unknown}}}>}}).get;
  expect(caseRead.parameters.find(parameter=>parameter.name==='contract_version')?.schema).toEqual({const:'inquiry-quote-link@2026-09-13.v1'});
