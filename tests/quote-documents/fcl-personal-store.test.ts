@@ -74,6 +74,24 @@ function enterpriseDraft(){
   };
 }
 
+function createRealV4Fixture(path:string,metadata:'4'|'3'|'missing'){
+  const documentStore=new DocumentStore(path);
+  const workflowStore=new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,ownershipMode:'fresh-fixture'});
+  workflowStore.ensureWritable();
+  const secret=workflowStore.signingSecret,revisionId=randomUUID(),documentId=randomUUID(),pdf=Buffer.from('%PDF-1.7\n'+'.'.repeat(120));
+  documentStore.db.prepare("INSERT INTO document_configs(org,version,input) VALUES('org-v4',1,'{\"company_name\":\"V4\"}')").run();
+  documentStore.db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,documentId,'org-v4','owner-v4',1,'draft',3,'{}','a'.repeat(64),'b'.repeat(64),null,null,null,'owner-v4','2026-09-20T00:00:00.000Z');
+  documentStore.db.prepare('INSERT INTO document_current_revisions(document_id,org,owner,revision_id,version,schema_version,projection_digest,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(documentId,'org-v4','owner-v4',revisionId,1,3,'a'.repeat(64),'2026-09-20T00:00:00.000Z');
+  documentStore.db.prepare('INSERT INTO document_audit(id,org,actor,action,digest,created) VALUES(?,?,?,?,?,?)').run(randomUUID(),'org-v4','owner-v4','create','c'.repeat(64),'2026-09-20T00:00:00.000Z');
+  documentStore.db.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(documentId,1,createHash('sha256').update(pdf).digest('hex'),pdf);
+  (workflowStore as unknown as {migrateV4Tables:()=>void}).migrateV4Tables();
+  if(metadata==='missing')documentStore.db.prepare("DELETE FROM document_store_metadata WHERE key='schema_version'").run();
+  else documentStore.db.prepare("INSERT INTO document_store_metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(metadata);
+  documentStore.db.exec('PRAGMA user_version=4;');
+  documentStore.close();
+  return {secret,revisionId,documentId,pdf};
+}
+
 function service(
   documentStore:DocumentStore,
   options:FclDocumentWorkflowOptions= {receiverUserId:receiverId,receiverIsActive:()=>true,now:()=> '2026-09-20T12:00:00.000Z'},
@@ -363,6 +381,22 @@ describe('personal FCL document configuration',()=>{
     expect(documentStore.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fcl_quote_revisions'").get()).toEqual({name:'fcl_quote_revisions'});
     documentStore.close();
     expect(()=>openPortalProductionDatabase(path,'freightclaw-quote-documents',4)).toThrow('portal_database_version_unsupported');
+  });
+
+  it.each(['missing','3'] as const)('rejects a real v4 layout with %s metadata without rewriting it',metadata=>{
+    const dir=root(),path=join(dir,'documents.sqlite'),fixture=createRealV4Fixture(path,metadata);
+    const documentStore=new DocumentStore(path,verifiedFcl);
+    expect(()=>new DocumentWorkflowStore(documentStore,{...verifiedFcl,externalHandleProbe:()=>undefined})).toThrow('workflow_metadata_invalid');
+    expect(documentStore.db.prepare('PRAGMA user_version').get()).toEqual({user_version:4});
+    expect(documentStore.db.prepare("SELECT value FROM document_store_metadata WHERE key='schema_version'").get()).toEqual(metadata==='missing'?undefined:{value:'3'});
+    expect(documentStore.db.prepare("SELECT value FROM document_store_metadata WHERE key='workflow_signing_secret'").get()).toEqual({value:fixture.secret});
+    expect(documentStore.db.prepare("SELECT version,input FROM document_configs WHERE org='org-v4'").get()).toEqual({version:1,input:'{"company_name":"V4"}'});
+    expect(documentStore.db.prepare('SELECT revision_id,payload FROM document_revisions WHERE document_id=?').get(fixture.documentId)).toEqual({revision_id:fixture.revisionId,payload:'{}'});
+    const pdf=documentStore.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=1').get(fixture.documentId) as {sha256:string;bytes:Uint8Array};
+    expect(pdf.sha256).toBe(createHash('sha256').update(fixture.pdf).digest('hex'));
+    expect(Buffer.from(pdf.bytes)).toEqual(fixture.pdf);
+    expect(documentStore.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fcl_quote_revisions'").get()).toBeUndefined();
+    documentStore.close();
   });
 
   it('validates generated personal FCL schemas as closed Draft 2020-12 contracts',()=>{

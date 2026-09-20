@@ -654,7 +654,7 @@ CREATE INDEX fcl_quote_revisions_case ON fcl_quote_revisions(personal_owner_id,c
         db.exec('PRAGMA user_version=4;');
         this.assertV4Schema();
       }else{
-        this.assertKnownV4Schema();
+        this.assertV4Schema();
       }
       this.createV5Tables();
       db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','5');
