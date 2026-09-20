@@ -8,6 +8,7 @@ const isLegacyHash = () => location.hash === '#business' || location.hash === '#
 let legacyMode = isLegacyHash();
 let fclController = null;
 let fclModulePromise = null;
+let lastHash = location.hash;
 const drafts = { shipping: createDraft(), business: createDraft('business') };
 let mode = location.hash === '#business' ? 'business' : 'shipping';
 let step = 1;
@@ -240,6 +241,12 @@ document.querySelector('.skip-link').addEventListener('click', event => {
   event.preventDefault(); root.focus(); root.scrollIntoView({ block: 'start' });
 });
 window.addEventListener('hashchange', () => {
+  const nextHash = location.hash;
+  if (!legacyMode && fclController && typeof fclController.canLeave === 'function' && !fclController.canLeave()) {
+    window.history.replaceState(null, '', `${location.pathname}${location.search}${lastHash}`);
+    return;
+  }
+  lastHash = nextHash;
   void syncMode({ focus: true });
 });
 if (legacyMode) render();

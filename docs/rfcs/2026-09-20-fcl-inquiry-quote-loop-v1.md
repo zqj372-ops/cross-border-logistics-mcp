@@ -613,3 +613,15 @@ FCL.13a 的 `rate-preview` 只预览当前草稿，而既有 `NativeAdminService
 精确测试覆盖公开补充 change projection、报价 `needs_input` → 同 quote update、历史 release preview → rollback、个人/企业跨 scope 拒绝、query 严格解析、PDF hash/文件名校验以及真实 loopback HTTP 全链。浏览器 fixture 使用 `PORTAL_FIXTURE_FCL_PERSONAL=true` 和既有 `start-portal-fixture.ts --fixtures`，从公开三步提交、staff confirm、rate publish、needs_input quote update、Document review/approve 跑到正式 PDF 与 Handoff；本机若缺少可用 sandbox，只允许把结果标为 `partial`，不得声称 PDF/Handoff 已通过。
 
 FCL.13b 不修改 MCP 工具合同、不新增 REST 别名、不进入 FCL.13c OpenAPI/CLI 扩展。13c 如启用 CLI/OpenAPI，必须复用同一 `fcl-http-contracts.ts` request/response map 和 `rate-preview` 可选 release_id 合同。
+
+### FCL.13b.4 R1 收口说明
+
+R1 只修正 13b 已授权 UI 和既有 HTTP 合同内的交互边界，不新增实体、权限或后台算法：
+
+- 公开补充保存完整字段和 message raw draft；未知结果后不换 payload/key，成功前保留用户输入并在同 snapshot 上重试。
+- Handoff 备注进入受控 draft；未知结果重试沿用同一请求和 idempotency key，只有成功后清理；交接按钮在前置条件不满足时 disabled 并显示原因。
+- Quote/Document 历史面板对同一对象提供 `1..current_version` 有界版本选择；旧金额、source、scope、条款和状态只读展示，历史 PDF 下载由所选 target version 交给既有 history 接口判定，不依赖当前最新版状态。
+- Web 人工费用编辑保留 `template_ref` 和 `quantity_conditions`，并提供已配置标准费用项目引用选择；选择项目只写引用，不自动编造成本、售价或 FX。
+- 完整原始 Inquiry 和当前需求使用同一只读 17 字段摘要；独立 review 明确展示 Document 绑定的 Case projection、客户 scope、报价日期/有效期和出具人版本。
+- FCL 内部路由和 Case 切换在 dirty 时阻断或确认丢弃；取消导航不改 draft，确认导航同步清理 quote 编辑派生状态。公开页 `pagehide` 对 persisted BFCache 不做破坏性 cleanup。
+- 窄屏 FCL 三列按需求、CostSell、利润/文件顺序堆叠；桌面保持三列。

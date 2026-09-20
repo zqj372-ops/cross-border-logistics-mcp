@@ -522,7 +522,13 @@ document.addEventListener('toggle', (event) => { fcl.toggle(event); }, true);
 document.addEventListener('input', (event) => { if (maritime.input(event)) return; if (quoteDocuments.input(event)) return; if (fcl.input(event)) return; business.input(event); if (nativeAdmin.input(event)) return; if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });
 dialog.addEventListener('cancel', () => closeSecret());
 dialog.addEventListener('close', () => closeSecret());
-window.addEventListener('hashchange', () => { clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 }); });
+let previousConsoleHash = location.hash;
+window.addEventListener('hashchange', () => {
+  const nextHash = location.hash;
+  if (typeof fcl.canLeave === 'function' && !fcl.canLeave()) { window.history.replaceState(null, '', `${location.pathname}${location.search}${previousConsoleHash}`); return; }
+  previousConsoleHash = nextHash;
+  clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 });
+});
 document.addEventListener('keydown', (event) => {
   if (maritime.keydown(event)) return;
   if (event.key === 'Escape' && document.querySelector('#account-menu')?.hidden === false) { event.preventDefault(); closeAccount(true); return; }

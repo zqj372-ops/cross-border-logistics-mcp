@@ -25,8 +25,9 @@ const checks = [];
 const pageErrors = [];
 const fclRequests = [];
 const fclResponses = [];
+let dialogMode = 'accept';
 page.on('pageerror', error => pageErrors.push(error.message));
-page.on('dialog', dialog => void dialog.accept('本地验收确认'));
+page.on('dialog', dialog => { void (dialogMode === 'dismiss' ? dialog.dismiss() : dialog.accept('本地验收确认')); });
 page.on('request', request => { if (request.url().includes('/console/api/v1/fcl/')) fclRequests.push({method: request.method(), path: new URL(request.url()).pathname}); });
 page.on('response', response => {
   if (!response.url().includes('/console/api/v1/fcl/')) return;
@@ -48,6 +49,9 @@ async function responseJson(response) {
 async function openCaseOperations() {
   const details = page.locator('details.fcl-operations');
   if (await details.getAttribute('open') === null) await details.locator('summary').click();
+}
+async function openDetails(details) {
+  await details.evaluate(node => { if (!node.open) node.open = true; });
 }
 
 try {
@@ -84,6 +88,11 @@ try {
   await page.getByRole('heading', {name: '中国 → 加拿大 · FCL整柜询价', exact: true}).waitFor();
   await page.getByText(firstInquiryNo, {exact: false}).waitFor();
   checks.push('public FCL to legacy and back to FCL remounts without losing the ticket');
+  await page.goto(`${base}/inquiry/details/`, {waitUntil: 'domcontentloaded'});
+  await page.goBack({waitUntil: 'domcontentloaded'});
+  await page.getByRole('heading', {name: '中国 → 加拿大 · FCL整柜询价', exact: true}).waitFor();
+  await page.getByText(firstInquiryNo, {exact: false}).waitFor();
+  checks.push('public FCL page remains operable after browser back');
 
   const sessionResponse = await context.request.get(`${base}/console/api/v1/session`);
   const sessionBody = await responseJson(sessionResponse);
@@ -103,6 +112,15 @@ try {
   await page.locator('.case-card').first().waitFor();
   await page.locator('.case-card').first().click();
   await page.getByRole('heading', {name: 'FCL 报价工作区', exact: true}).waitFor();
+  await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('Unsaved reason must survive cancelled navigation.');
+  dialogMode = 'dismiss';
+  await page.evaluate(() => { location.hash = 'fcl/rates'; });
+  await page.waitForFunction(() => location.hash.startsWith('#fcl/case/'));
+  assert.equal(new URL(page.url()).hash, `#fcl/case/${firstCaseId}`);
+  assert.equal(await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').inputValue(), 'Unsaved reason must survive cancelled navigation.');
+  dialogMode = 'accept';
+  await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('');
+  checks.push('dirty internal navigation cancellation keeps the current draft');
   await openCaseOperations();
   const staffSupplementCountBefore = fclRequests.filter(request => request.path.endsWith('/case-staff-supplement')).length;
   await page.locator('[data-fcl-form="staff-supplement"] button[type="submit"]').click();
@@ -113,7 +131,9 @@ try {
   await page.locator('[data-fcl-form="case-status"] select[name="status"]').selectOption('needs_input');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/case-status'));
   await page.locator('[data-fcl-form="case-status"] button[type="submit"]').click();
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
+  const statusUpdated = await responseJson(await responsePromise);
+  assert.equal(statusUpdated.status, 'success');
+  const supplementExpectedVersion = statusUpdated.data.case_version;
 
   await page.goto(`${base}/inquiry/`, {waitUntil: 'networkidle'});
   await page.locator('[data-fcl-supplement]').waitFor();
@@ -142,9 +162,10 @@ try {
   await page.locator('[data-fcl-supplement] button[type="submit"]').click();
   const supplementPayload = (await supplementRequest).postDataJSON();
   assert.ok(supplementPayload.fields.changes.length >= 10);
+  assert.equal(supplementPayload.expected_version, supplementExpectedVersion);
   const supplemented = await responseJson(await responsePromise);
   assert.equal(supplemented.status, 'success');
-  assert.equal(supplemented.data.case_version, 3);
+  assert.equal(supplemented.data.case_version, supplementExpectedVersion + 1);
   checks.push('public supplement before/after and persisted customer event');
 
   await page.goto(`${base}/console/#fcl`, {waitUntil: 'networkidle'});
@@ -177,12 +198,12 @@ try {
   await rate.locator('[name="fcl-rate-0-source"]').fill('synthetic:browser-rate');
   await rate.locator('[name="fcl-rate-0-source-version"]').fill('v1');
   await rate.locator('[name="fcl-rate-0-40HQ-price"]').fill('3200');
+  dialogMode = 'dismiss';
   await page.evaluate(() => { location.hash = 'fcl'; });
-  await page.locator('.case-card').first().waitFor();
-  await page.evaluate(() => { location.hash = 'fcl/rates'; });
-  await page.locator('[name="fcl-rate-label"]').waitFor();
+  await page.waitForFunction(() => location.hash === '#fcl/rates');
   assert.equal(await page.locator('[name="fcl-rate-label"]').inputValue(), 'FCL browser fixture rates');
   assert.equal(await page.locator('[name="fcl-rate-0-40HQ-price"]').inputValue(), '3200');
+  dialogMode = 'accept';
   await page.locator('[data-action="fcl-rate-preview"]').click();
   await page.getByText('请先保存运价草稿，再预览服务器版本。', {exact: true}).waitFor();
   assert.equal(await page.locator('[name="fcl-rate-0-40HQ-price"]').inputValue(), '3200');
@@ -276,10 +297,47 @@ try {
   await quoteHistoryDetails.locator('summary').waitFor();
   await quoteHistoryDetails.locator('summary').click();
   await page.locator('[data-action="fcl-quote-open-history"]').first().waitFor();
+  await page.locator(`[data-fcl-quote-version="${partial.data.quote_ref}"]`).selectOption('1');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-get'));
   await page.locator('[data-action="fcl-quote-open-history"]').first().click();
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
-  await page.getByText('历史报价 v2', {exact: true}).waitFor();
+  const oldQuote = await responseJson(await responsePromise);
+  assert.ok(['success', 'manual_review'].includes(oldQuote.status));
+  assert.equal(oldQuote.data.version, 1);
+  await page.getByText('历史报价 v1', {exact: true}).waitFor();
+  await page.locator('[data-action="fcl-edit-quote"]').click();
+  await page.getByRole('button', {name: '添加人工费用', exact: true}).click();
+  const manualRow = page.locator('[data-fcl-manual-row]').first();
+  await manualRow.locator('[name="template_ref"]').selectOption({index: 1});
+  await manualRow.locator('[name="name"]').fill('Synthetic documentation fee');
+  await manualRow.locator('[name="unit"]').selectOption('SHIPMENT');
+  await manualRow.locator('[name="quantity"]').fill('1');
+  await manualRow.locator('[name="cost_price"]').fill('15');
+  await manualRow.locator('[name="sell_price"]').fill('25');
+  await manualRow.locator('[name="currency"]').selectOption('CAD');
+  await manualRow.locator('[name="evidence_ref"]').fill('fixture:manual-documentation');
+  await manualRow.locator('[name="evidence_version"]').fill('v1');
+  await manualRow.locator('[name="quantity_conditions"]').fill('One confirmation cycle per shipment.');
+  await page.locator('[name="CAD"]').fill('5.2');
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
+  await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
+  const metadataQuote = await responseJson(await responsePromise);
+  assert.equal(metadataQuote.status, 'success');
+  const metadataRow = metadataQuote.data.cost_rows.find(row => row.source_kind === 'manual');
+  assert.ok(metadataRow.template_ref);
+  assert.equal(metadataRow.quantity_conditions, 'One confirmation cycle per shipment.');
+  checks.push('Web manual fee preserves template_ref and quantity_conditions');
+  await page.locator('[data-action="fcl-edit-quote"]').click();
+  await page.locator('#fcl-quote-remark').fill('This draft is discarded on confirmed navigation.');
+  dialogMode = 'accept';
+  await page.evaluate(() => { location.hash = 'fcl/rates'; });
+  await page.getByRole('heading', {name: '个人 FCL 运价', exact: true}).waitFor();
+  const reloadedQuoteAfterDiscard = page.waitForResponse(response => response.url().endsWith('/quote-get'));
+  await page.evaluate(id => { location.hash = `fcl/case/${id}`; }, firstCaseId);
+  await page.getByRole('heading', {name: 'FCL 报价工作区', exact: true}).waitFor();
+  await reloadedQuoteAfterDiscard;
+  await page.locator('[data-action="fcl-edit-quote"]').waitFor();
+  assert.equal(await page.locator('[data-fcl-form="quote-save"]').count(), 0);
+  checks.push('confirmed dirty navigation discards FCL drafts');
 
   await page.locator('#fcl-doc-quote-no').fill('FCL-BROWSER-001');
   await page.locator('#fcl-doc-remark').fill('Document display edited before approval.');
@@ -309,13 +367,43 @@ try {
   await page.locator('[data-fcl-supplement]').waitFor();
   await page.locator('#supply-cargo_ready_date').fill('2026-10-28');
   await page.locator('#supply-notes').fill('Customer confirmed the revised cargo date after document rejection.');
+  await page.locator('#supply-message').fill('Retry the same committed supplement after an unknown response.');
+  let unknownSupplementRequest;
+  let unknownSupplementData;
+  let abortSupplementOnce = true;
+  await page.route('**/inquiry/api/v1/fcl/supplement', async route => {
+    if (abortSupplementOnce) {
+      abortSupplementOnce = false;
+      unknownSupplementRequest = {body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key']};
+      const response = await route.fetch();
+      assert.equal(response.status(), 200);
+      unknownSupplementData = await response.json();
+      await route.abort('failed');
+      return;
+    }
+    await route.continue();
+  });
+  const failedSupplementRequest = page.waitForEvent('requestfailed', {predicate: request => request.url().endsWith('/inquiry/api/v1/fcl/supplement')});
+  await page.locator('[data-fcl-supplement] button[type="submit"]').click();
+  await failedSupplementRequest;
+  await page.waitForFunction(() => document.querySelector('[data-fcl-supplement] button[type="submit"]')?.disabled === false);
+  assert.equal(await page.locator('#supply-message').inputValue(), 'Retry the same committed supplement after an unknown response.');
+  assert.equal(await page.locator('#supply-cargo_ready_date').inputValue(), '2026-10-28');
+  assert.equal(await page.locator('#supply-notes').inputValue(), 'Customer confirmed the revised cargo date after document rejection.');
+  await page.unroute('**/inquiry/api/v1/fcl/supplement');
+  const retryRequest = page.waitForRequest(request => request.url().endsWith('/inquiry/api/v1/fcl/supplement'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/inquiry/api/v1/fcl/supplement'));
   await page.locator('[data-fcl-supplement] button[type="submit"]').click();
+  const retry = await retryRequest;
+  assert.deepEqual(retry.postDataJSON(), unknownSupplementRequest.body);
+  assert.equal(retry.headers()['idempotency-key'], unknownSupplementRequest.key);
   const secondSupplement = await responseJson(await responsePromise);
   assert.equal(secondSupplement.status, 'success');
+  assert.equal(secondSupplement.data.case_version, unknownSupplementData.data.case_version);
   assert.equal(secondSupplement.data.input.containers.find(container => container.type === '40HQ').quantity, 2);
   assert.equal(secondSupplement.data.input.final_destination, 'Montreal');
   assert.equal(secondSupplement.data.input.contact.email, 'updated-shipper@example.test');
+  checks.push('unknown supplement response retries same payload/key without losing fields or message');
   await page.goto(`${base}/console/#fcl`, {waitUntil: 'networkidle'});
   await page.locator('.case-card').first().click();
   await page.getByRole('heading', {name: 'FCL 报价工作区', exact: true}).waitFor();
@@ -361,10 +449,35 @@ try {
   responsePromise = page.waitForResponse(response => response.url().endsWith('/document-review'));
   await page.locator('[data-action="fcl-doc-review"]').click();
   assert.equal((await responseJson(await responsePromise)).status, 'success');
+  const relatedAfterApproval = page.waitForResponse(response => response.url().endsWith('/document-get'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/document-approve'));
   await page.locator('[data-action="fcl-doc-approve"]').click();
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
+  const approvedDocument = await responseJson(await responsePromise);
+  assert.equal(approvedDocument.status, 'success');
+  const approvedDocumentVersion = approvedDocument.data.version;
+  await relatedAfterApproval;
   checks.push('document save/review, edit invalidation, refresh review and approval');
+  const documentHistoryDetails = page.locator('details.panel', {hasText: '报价单历史'});
+  await documentHistoryDetails.locator('summary').waitFor();
+  await openDetails(documentHistoryDetails);
+  const documentVersionSelect = page.locator(`[data-fcl-doc-version="${approvedDocument.data.document_id}"]`);
+  await documentVersionSelect.selectOption('1');
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/document-get'));
+  await page.locator('[data-action="fcl-doc-open-history"]').first().click();
+  const oldDocument = await responseJson(await responsePromise);
+  assert.equal(oldDocument.data.version, 1);
+  assert.equal(oldDocument.data.historical, true);
+  assert.equal(await page.locator('[data-action="fcl-doc-export-history"]').count() > 0, true);
+  await openDetails(documentHistoryDetails);
+  await documentVersionSelect.selectOption(String(approvedDocumentVersion));
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/document-get'));
+  await page.locator('[data-action="fcl-doc-open-history"]').first().click();
+  const currentDocument = await responseJson(await responsePromise);
+  assert.equal(currentDocument.data.version, approvedDocumentVersion);
+  assert.equal(currentDocument.data.state, 'approved');
+  assert.equal(await page.locator('[data-action="fcl-handoff"]').isDisabled(), true);
+  await page.getByText('请先导出并校验当前正式 PDF。', {exact: true}).waitFor();
+  checks.push('quote and document version selectors read bounded old revisions');
 
   if (!stopAfterApproval) {
     const downloadPromise = page.waitForEvent('download');
@@ -379,14 +492,43 @@ try {
     assert.equal(pdf.byteLength, exported.data.byte_length);
     assert.equal(createHash('sha256').update(pdf).digest('hex'), exported.data.sha256);
     await rm(downloadPath, {force: true});
+    assert.equal(await page.locator('[data-action="fcl-handoff"]').isDisabled(), false);
     checks.push('formal PDF schema, hash, bytes, safe filename and browser download');
 
     await page.locator('[name="fcl-handoff-note"]').fill('Synthetic browser handoff.');
+    let unknownHandoffRequest;
+    let unknownHandoffData;
+    let abortHandoffOnce = true;
+    await page.route('**/console/api/v1/fcl/handoff-save', async route => {
+      if (abortHandoffOnce) {
+        abortHandoffOnce = false;
+        unknownHandoffRequest = {body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key']};
+        const response = await route.fetch();
+        assert.equal(response.status(), 200);
+        unknownHandoffData = await response.json();
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    });
+    const failedHandoffRequest = page.waitForEvent('requestfailed', {predicate: request => request.url().endsWith('/handoff-save')});
+    await page.locator('[data-action="fcl-handoff"]').click();
+    await failedHandoffRequest;
+    await page.waitForFunction(() => document.querySelector('[data-action="fcl-handoff"]')?.disabled === false);
+    await page.waitForFunction(() => document.querySelector('#notification')?.textContent?.trim().length > 0);
+    assert.equal(await page.locator('[name="fcl-handoff-note"]').inputValue(), 'Synthetic browser handoff.');
+    await page.unroute('**/console/api/v1/fcl/handoff-save');
+    const retryHandoffRequest = page.waitForRequest(request => request.url().endsWith('/handoff-save'));
     responsePromise = page.waitForResponse(response => response.url().endsWith('/handoff-save'));
     await page.locator('[data-action="fcl-handoff"]').click();
+    const retriedHandoffRequest = await retryHandoffRequest;
+    assert.deepEqual(retriedHandoffRequest.postDataJSON(), unknownHandoffRequest.body);
+    assert.equal(retriedHandoffRequest.headers()['idempotency-key'], unknownHandoffRequest.key);
     const handoff = await responseJson(await responsePromise);
+    assert.equal(handoff.data.current?.request_digest, unknownHandoffData.data.current?.request_digest);
     assert.equal(handoff.status, 'success');
     assert.equal(handoff.data.status, 'handed_off');
+    assert.equal(handoff.data.replay.replayed, true);
     checks.push('handoff recorded without Booking or SO');
   } else {
     responsePromise = page.waitForResponse(response => response.url().endsWith('/document-export'));

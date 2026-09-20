@@ -746,6 +746,7 @@ code, pre { font-family: var(--font-code); }
 
 .customer-shell .console-context { padding-inline:48px; }
 @media(max-width:800px) { .case-workspace > div:first-child { order:2; } .customer-shell .console-context { padding-inline:20px; } }
+@media(max-width:800px) { .fcl-case-workspace > div:first-child { order:0; } .fcl-case-workspace > div:nth-child(2) { order:1; } .fcl-case-workspace > div:nth-child(3) { order:2; } }
 
 .case-arrow svg,.case-back svg { width:20px; height:20px; flex:none; }
 .case-back { display:inline-flex; align-items:center; gap:8px; }

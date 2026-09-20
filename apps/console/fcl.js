@@ -79,18 +79,26 @@ export async function verifyPdfOutput(value, cryptoApi = globalThis.crypto) {
 }
 
 export function createFclWorkspace({api, mutate, model, esc, head, panel, empty, note, field, actions, formError, icon, rerender, notify}) {
-  let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', rateView = null, rateDraft = null, rateError = '', ratePreview = null, rateDirty = false, configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
-  const isDirty = () => rateDirty || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty;
+  let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', rateView = null, rateDraft = null, rateError = '', ratePreview = null, rateDirty = false, configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
+  const isDirty = () => rateDirty || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty || handoffDirty;
+  const discardDrafts = () => {
+    rateDraft = clone(rateView?.draft) || rateDraft; rateDirty = false;
+    issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false;
+    matchResult = null; editingQuoteRef = null; quoteDraft = null; quoteDirty = false; reviewView = null; exportView = null;
+    documentDisplayDraft = null; documentDisplayDirty = false;
+    caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false;
+    handoffDraft = ''; handoffDirty = false;
+  };
   const sync = () => {
     const current = JSON.stringify([model().sessionGeneration, model().session?.identity?.user_id, model().session?.organization_id, model().session?.fcl_capability?.fcl_personal]);
     if (current !== scope) { scope = current; reset(); }
   };
   const reset = () => {
     epoch += 1; activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = ''; rateView = null; rateDraft = null; rateError = ''; ratePreview = null; rateDirty = false;
-    configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
+    configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const clearCaseDependents = () => {
-    matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
+    matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const resetCaseWorkspace = () => {
     detail = null; detailError = ''; clearCaseDependents(); message = '';
@@ -312,16 +320,18 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (!changes.length) return '';
     return `<details class="case-diff"><summary>查看 ${changes.length} 项 before / after</summary><dl>${changes.map(change => `<div><dt>${esc(change.field)}</dt><dd><span>变更前：${esc(JSON.stringify(change.before))}</span><span>变更后：${esc(JSON.stringify(change.after))}</span></dd></div>`).join('')}</dl></details>`;
   };
+  const inquiryReadonlySummary = (value) => `<dl class="case-details"><div><dt>起运城市</dt><dd>${esc(value.origin_city || '待确认')}</dd></div><div><dt>起运港 POL</dt><dd>${esc(value.pol || '待确认')}</dd></div><div><dt>目的港 POD</dt><dd>${esc(value.pod || '待确认')}</dd></div><div><dt>最终目的地</dt><dd>${esc(value.final_destination || '待确认')}</dd></div><div><dt>柜型</dt><dd>${esc(value.containers.map(item=>`${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待确认')}</dd></div><div><dt>货物</dt><dd>${esc(value.cargo_name || '待确认')} · ${esc(value.cargo_type || '属性待确认')} · ${esc(value.estimated_weight ? `${value.estimated_weight.value} ${value.estimated_weight.unit}` : '重量待确认')}</dd></div><div><dt>Ready / Incoterm</dt><dd>${esc(value.cargo_ready_date || '待确认')} · ${esc(value.incoterm || '待确认')}${value.incoterm_other ? ` · ${esc(value.incoterm_other)}` : ''}</dd></div><div><dt>服务</dt><dd>${esc(value.selected_services.map(id=>serviceLabels[id]||id).join('、') || '待确认')}</dd></div><div><dt>联系人</dt><dd>${esc(value.contact.name || '待确认')} · ${esc(value.contact.company || '公司待确认')}</dd></div><div><dt>邮箱</dt><dd>${esc(value.contact.email || '待确认')}</dd></div><div><dt>电话</dt><dd>${esc(value.contact.phone || '待确认')}</dd></div><div><dt>说明</dt><dd>${esc(value.notes || '无')}</dd></div></dl>`;
 
   const detailPage = (id) => {
     selectCase(id);
     void loadDetail(id);
     void loadRate();
     if (detail?.case_id === id && activeCaseId === id) void loadRelated(id);
-    const heading = head('FCL 报价工作区', detail ? `Inquiry ${detail.inquiry_no} · Case v${detail.case_version}` : '读取 Case 需求', `<a class="button" href="#fcl">返回受理列表</a>`);
+    let heading = head('FCL 报价工作区', detail ? `Inquiry ${detail.inquiry_no} · Case v${detail.case_version}` : '读取 Case 需求', `<a class="button" href="#fcl">返回受理列表</a>`);
     if (detailError) return heading + note(fclError({code: detailError}), 'error');
     if (!detail) return heading + '<p role="status">正在读取 Case…</p>';
     const inputValue = detail.current_input, originalValue = detail.original_input;
+    heading += `<details class="panel"><summary>完整当前需求摘要</summary><div class="panel-body">${inquiryReadonlySummary(inputValue)}</div></details><details class="panel"><summary>完整原始 Inquiry</summary><div class="panel-body">${inquiryReadonlySummary(originalValue)}</div></details>`;
     const events = detail.events || [];
     const sourceRows = inputValue.containers.map(row => `<tr><td>${esc(row.type)}</td><td>${esc(row.quantity ?? '待确认')}</td></tr>`).join('');
     const eventRows = events.map(event => `<li><div class="case-event-head"><strong>${esc(event.actor_kind)}</strong><time>${esc(new Date(event.created_at).toLocaleString('zh-CN'))}</time></div><p>${esc(event.message)}</p><small>${esc(event.kind)}</small>${eventDiff(event)}</li>`).join('');
@@ -367,13 +377,28 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     else body += '<p class="muted">先匹配来源，再填写 CostSell；服务器计算完成后会在右侧显示利润。</p>';
     return panel('CostSell 报价输入', '来源成本只读；售价、人工费用、服务范围、FX 与备注由人员确认。', `<div class="panel-body">${body}</div>`);
   };
+  const manualTemplateRefs = () => {
+    const selection = configView?.input?.standard_fee_template_v1;
+    const configured = (selection?.items || []).map(item => ({ template_id: selection.template_id, template_version: selection.template_version, item_key: item.item_key, name: item.name }));
+    const catalog = configView?.catalog?.groups?.flatMap(group => group.items.map(item => ({ template_id: configView.catalog.template_id, template_version: configView.catalog.template_version, item_key: item.item_key, name: item.name }))) || [];
+    const values = configured.length ? configured : catalog;
+    return values.filter((item, index) => values.findIndex(candidate => candidate.item_key === item.item_key && candidate.template_id === item.template_id && candidate.template_version === item.template_version) === index);
+  };
+  const manualTemplateSelect = (fee, index) => {
+    const refs = manualTemplateRefs();
+    const current = fee.template_ref ? JSON.stringify(fee.template_ref) : '';
+    const saved = fee.template_ref && !refs.some(ref => JSON.stringify({ template_id: ref.template_id, template_version: ref.template_version, item_key: ref.item_key }) === current)
+      ? `<option value="${esc(current)}" selected>${esc(fee.template_ref.item_key)}</option>` : '';
+    return field('标准费用项目', `fcl-manual-template-${index}`, `<select id="fcl-manual-template-${index}" name="template_ref"><option value="">不引用</option>${saved}${refs.map(ref => { const value = JSON.stringify({ template_id: ref.template_id, template_version: ref.template_version, item_key: ref.item_key }); return `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(ref.name || ref.item_key)}</option>`; }).join('')}</select>`);
+  };
   const quoteHistoryPanel = () => {
     if (!quoteList?.items?.length) return '';
-    return `<details class="panel"><summary>报价历史（${quoteList.items.length}）</summary><div class="panel-body">${quoteList.items.map(item => `<div class="field-grid"><div><strong>v${item.version}</strong><small>${item.complete ? '完整' : '待补'} · ${item.currentness.valid_now ? '当前有效' : '当前性失效'} · ${esc(item.created_at)}</small></div><button class="button" data-action="fcl-quote-open-history" data-quote="${esc(item.quote_ref)}" data-version="${item.version}">查看只读金额</button></div>`).join('')}</div></details>`;
+    return `<details class="panel"><summary>报价历史（${quoteList.items.length}）</summary><div class="panel-body">${quoteList.items.map(item => { const versions = Array.from({length:Math.min(item.current_version,1000)},(_,index)=>index+1); return `<div class="field-grid"><div><strong>v${item.version}</strong><small>${item.complete ? '完整' : '待补'} · ${item.currentness.valid_now ? '当前有效' : '当前性失效'} · ${esc(item.created_at)}</small></div><div class="field"><label for="fcl-quote-version-${esc(item.quote_ref)}">查看版本</label><select id="fcl-quote-version-${esc(item.quote_ref)}" data-fcl-quote-version="${esc(item.quote_ref)}">${versions.map(version=>`<option value="${version}"${version===item.version?' selected':''}>v${version}</option>`).join('')}</select></div><button class="button" data-action="fcl-quote-open-history" data-quote="${esc(item.quote_ref)}" data-version="${item.version}">读取</button></div>`; }).join('')}</div></details>`;
   };
   const quoteHistorySnapshot = () => {
     if (!quoteHistoryView) return '';
-    return `<section class="panel"><div class="panel-body"><h3>历史报价 v${quoteHistoryView.version}</h3>${calculationPanel(quoteHistoryView)}<p class="muted">来源：${esc(quoteHistoryView.source_snapshot.rate_id)} · release v${quoteHistoryView.source_snapshot.release_version} · ${esc(quoteHistoryView.source_snapshot.valid_from)} → ${esc(quoteHistoryView.source_snapshot.valid_until)}</p></div></section>`;
+    const scope = quoteHistoryView.service_coverage.map(row => `${serviceLabels[row.service] || row.service}:${row.disposition}`).join('、');
+    return `<section class="panel"><div class="panel-body"><h3>历史报价 v${quoteHistoryView.version}</h3><dl class="case-details"><div><dt>Case</dt><dd>${esc(quoteHistoryView.case_binding.case_ref)} v${quoteHistoryView.case_binding.case_version}</dd></div><div><dt>客户范围</dt><dd>${esc(scope || '待确认')}</dd></div><div><dt>服务覆盖</dt><dd>${esc(quoteHistoryView.service_coverage.length ? '已读取只读快照' : '无')}</dd></div><div><dt>FX</dt><dd>USD ${esc(quoteHistoryView.exchange_rates.USD ?? '未填')} · CAD ${esc(quoteHistoryView.exchange_rates.CAD ?? '未填')}</dd></div></dl>${calculationPanel(quoteHistoryView)}<p class="muted">来源：${esc(quoteHistoryView.source_snapshot.rate_id)} · release v${quoteHistoryView.source_snapshot.release_version} · ${esc(quoteHistoryView.source_snapshot.valid_from)} → ${esc(quoteHistoryView.source_snapshot.valid_until)}</p>${quoteHistoryView.remark ? `<p>${esc(quoteHistoryView.remark)}</p>` : ''}</div></section>`;
   };
   const quoteResultPanel = () => {
     let body = '';
@@ -401,7 +426,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       const currency = rateRow ? rateRow.currency : fee?.currency;
       return `<div class="field-grid" data-fcl-source-price data-key="${esc(row.row_key)}"><div><strong>${esc(label)}</strong><small>来源成本 ${esc(cost ?? '缺价')} ${esc(currency ?? '')} · 只读</small><input type="hidden" name="source_key" value="${esc(row.row_key)}"></div>${valueField('客户售价', `fcl-source-sell-${index}`, row.sell_price || '', `name="fcl-source-sell-${index}" inputmode="decimal"`)}${valueField('客户备注', `fcl-source-note-${index}`, row.customer_note || '', `name="fcl-source-note-${index}"`)}</div>`;
     }).join('');
-    const manualRows = quoteDraft.manual_fees.map((fee, index) => `<div class="panel" data-fcl-manual-row data-id="${esc(fee.id)}"><div class="panel-body"><div class="field-grid">${valueField('人工费用名称', `fcl-manual-name-${index}`, fee.name || '', 'name="name"')}${field('服务', `fcl-manual-service-${index}`, `<select id="fcl-manual-service-${index}" name="service">${Object.entries(serviceLabels).map(([id, label]) => `<option value="${id}"${fee.service === id ? ' selected' : ''}>${label}</option>`).join('')}</select>`)}${field('分组', `fcl-manual-group-${index}`, `<select id="fcl-manual-group-${index}" name="group">${['A','B','C'].map(group => `<option value="${group}"${fee.group === group ? ' selected' : ''}>${group}</option>`).join('')}</select>`)}${field('单位', `fcl-manual-unit-${index}`, `<select id="fcl-manual-unit-${index}" name="unit"><option value="SHIPMENT"${fee.unit === 'SHIPMENT' ? ' selected' : ''}>SHIPMENT</option><option value="CNTR"${fee.unit === 'CNTR' ? ' selected' : ''}>CNTR</option></select>`)}${field('柜型', `fcl-manual-container-${index}`, `<select id="fcl-manual-container-${index}" name="container_type">${containerTypes.map(type => `<option value="${type}"${fee.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}${valueField('数量', `fcl-manual-quantity-${index}`, fee.quantity || '', 'name="quantity" inputmode="decimal"')}${valueField('成本价', `fcl-manual-cost-${index}`, fee.cost_price || '', 'name="cost_price" inputmode="decimal"')}${valueField('售价', `fcl-manual-sell-${index}`, fee.sell_price || '', 'name="sell_price" inputmode="decimal"')}${field('币种', `fcl-manual-currency-${index}`, `<select id="fcl-manual-currency-${index}" name="currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${fee.currency === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`)}${valueField('证据引用', `fcl-manual-evidence-${index}`, fee.evidence_ref || '', 'name="evidence_ref"')}${valueField('证据版本', `fcl-manual-evidence-version-${index}`, fee.evidence_version || '', 'name="evidence_version"')}</div><div class="field"><label>内部备注</label><input name="internal_note" value="${esc(fee.internal_note || '')}"></div><div class="field"><label>客户备注</label><input name="customer_note" value="${esc(fee.customer_note || '')}"></div><button type="button" class="text-button" data-action="fcl-manual-remove" data-index="${index}">删除人工费用</button></div></div>`).join('');
+    const manualRows = quoteDraft.manual_fees.map((fee, index) => `<div class="panel" data-fcl-manual-row data-id="${esc(fee.id)}" data-template-ref="${esc(JSON.stringify(fee.template_ref))}" data-quantity-conditions="${esc(JSON.stringify(fee.quantity_conditions))}"><div class="panel-body"><div class="field-grid">${valueField('人工费用名称', `fcl-manual-name-${index}`, fee.name || '', 'name="name"')}${field('服务', `fcl-manual-service-${index}`, `<select id="fcl-manual-service-${index}" name="service">${Object.entries(serviceLabels).map(([id, label]) => `<option value="${id}"${fee.service === id ? ' selected' : ''}>${label}</option>`).join('')}</select>`)}${field('分组', `fcl-manual-group-${index}`, `<select id="fcl-manual-group-${index}" name="group">${['A','B','C'].map(group => `<option value="${group}"${fee.group === group ? ' selected' : ''}>${group}</option>`).join('')}</select>`)}${field('单位', `fcl-manual-unit-${index}`, `<select id="fcl-manual-unit-${index}" name="unit"><option value="SHIPMENT"${fee.unit === 'SHIPMENT' ? ' selected' : ''}>SHIPMENT</option><option value="CNTR"${fee.unit === 'CNTR' ? ' selected' : ''}>CNTR</option></select>`)}${field('柜型', `fcl-manual-container-${index}`, `<select id="fcl-manual-container-${index}" name="container_type">${containerTypes.map(type => `<option value="${type}"${fee.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}${manualTemplateSelect(fee, index)}${valueField('数量', `fcl-manual-quantity-${index}`, fee.quantity || '', 'name="quantity" inputmode="decimal"')}${valueField('成本价', `fcl-manual-cost-${index}`, fee.cost_price || '', 'name="cost_price" inputmode="decimal"')}${valueField('售价', `fcl-manual-sell-${index}`, fee.sell_price || '', 'name="sell_price" inputmode="decimal"')}${field('币种', `fcl-manual-currency-${index}`, `<select id="fcl-manual-currency-${index}" name="currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${fee.currency === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`)}${valueField('证据引用', `fcl-manual-evidence-${index}`, fee.evidence_ref || '', 'name="evidence_ref"')}${valueField('证据版本', `fcl-manual-evidence-version-${index}`, fee.evidence_version || '', 'name="evidence_version"')}</div><div class="field"><label>数量条件</label><textarea name="quantity_conditions" rows="2" maxlength="2000">${esc(fee.quantity_conditions || '')}</textarea></div><div class="field"><label>内部备注</label><input name="internal_note" value="${esc(fee.internal_note || '')}"></div><div class="field"><label>客户备注</label><input name="customer_note" value="${esc(fee.customer_note || '')}"></div><button type="button" class="text-button" data-action="fcl-manual-remove" data-index="${index}">删除人工费用</button></div></div>`).join('');
     const manualRefs = quoteDraft.manual_fees.map(fee => `manual:${fee.id}`);
     const availableRefs = [...quoteDraft.source_sell_prices.map(row => row.row_key), ...manualRefs];
     const scopes = Object.entries(serviceLabels).map(([id, label]) => {
@@ -456,21 +481,25 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const totals = reviewView.quote.calculation.by_currency;
     const quote = reviewView.quote;
     const rows = quote.cost_rows.map(row => `<tr><td>${esc(row.name)}</td><td>${esc(row.quantity)} ${esc(row.unit)}</td><td>${esc(row.cost_price ?? '待补')} ${esc(row.currency)}</td><td>${esc(row.sell_price ?? '待补')} ${esc(row.currency)}</td><td>${esc(row.cost_amount ?? '待补')}</td><td>${esc(row.sell_amount ?? '待补')}</td></tr>`).join('');
-    return `<section class="panel"><div class="panel-body"><h3>独立核对结果</h3><p>Document v${reviewView.version} · 有效期至 ${esc(new Date(reviewView.review_expires_at).toLocaleString('zh-CN'))}</p><dl class="case-details"><div><dt>Case</dt><dd>${esc(quote.case_binding.case_ref)} v${quote.case_binding.case_version}</dd></div><div><dt>Quote</dt><dd>${esc(quote.quote_ref)} v${quote.version}</dd></div><div><dt>来源</dt><dd>${esc(quote.source_snapshot.source_ref)} / ${esc(quote.source_snapshot.source_version)}</dd></div><div><dt>Rate/release</dt><dd>${esc(quote.source_snapshot.rate_id)} · v${quote.source_snapshot.release_version}</dd></div><div><dt>来源有效期</dt><dd>${esc(quote.source_snapshot.valid_from)} → ${esc(quote.source_snapshot.valid_until)}</dd></div><div><dt>FX</dt><dd>USD ${esc(quote.exchange_rates.USD ?? '未填')} · CAD ${esc(quote.exchange_rates.CAD ?? '未填')}</dd></div></dl><div class="table-wrap"><table><thead><tr><th>费用</th><th>数量/单位</th><th>成本</th><th>售价</th><th>Cost</th><th>Revenue</th></tr></thead><tbody>${rows}</tbody></table></div><div class="table-wrap"><table><thead><tr><th>币种</th><th>Cost</th><th>Revenue</th><th>GP</th><th>Margin</th></tr></thead><tbody>${Object.entries(totals).map(([currency, row]) => `<tr><td>${currency}</td><td>${esc(row.cost_subtotal ?? '待补')}</td><td>${esc(row.revenue_subtotal ?? '待补')}</td><td>${esc(row.gp_subtotal ?? '待补')}</td><td>${esc(row.margin ?? '—')}</td></tr>`).join('')}</tbody></table></div><p class="muted">统一利润 ${esc(quote.calculation.unified_profit.gp_subtotal ?? '待补')} CNY · 条款：${esc(reviewView.document.template.terms)}</p><p class="muted"><code>${esc(reviewView.review_hash.slice(0, 16))}…</code></p></div></section>`;
+    const projection = quote.case_projection;
+    const customerScope = reviewView.document.customer_scope.map(row => `${serviceLabels[row.service] || row.service}:${row.disposition}`).join('、');
+    return `<section class="panel"><div class="panel-body"><h3>独立核对结果</h3><p>Document v${reviewView.version} · 有效期至 ${esc(new Date(reviewView.review_expires_at).toLocaleString('zh-CN'))}</p><dl class="case-details"><div><dt>Case</dt><dd>${esc(quote.case_binding.case_ref)} v${quote.case_binding.case_version}</dd></div><div><dt>Quote</dt><dd>${esc(quote.quote_ref)} v${quote.version}</dd></div><div><dt>来源</dt><dd>${esc(quote.source_snapshot.source_ref)} / ${esc(quote.source_snapshot.source_version)}</dd></div><div><dt>Rate/release</dt><dd>${esc(quote.source_snapshot.rate_id)} · v${quote.source_snapshot.release_version}</dd></div><div><dt>来源有效期</dt><dd>${esc(quote.source_snapshot.valid_from)} → ${esc(quote.source_snapshot.valid_until)}</dd></div><div><dt>FX</dt><dd>USD ${esc(quote.exchange_rates.USD ?? '未填')} · CAD ${esc(quote.exchange_rates.CAD ?? '未填')}</dd></div></dl><div class="table-wrap"><table><thead><tr><th>费用</th><th>数量/单位</th><th>成本</th><th>售价</th><th>Cost</th><th>Revenue</th></tr></thead><tbody>${rows}</tbody></table></div><div class="table-wrap"><table><thead><tr><th>币种</th><th>Cost</th><th>Revenue</th><th>GP</th><th>Margin</th></tr></thead><tbody>${Object.entries(totals).map(([currency, row]) => `<tr><td>${currency}</td><td>${esc(row.cost_subtotal ?? '待补')}</td><td>${esc(row.revenue_subtotal ?? '待补')}</td><td>${esc(row.gp_subtotal ?? '待补')}</td><td>${esc(row.margin ?? '—')}</td></tr>`).join('')}</tbody></table></div><p class="muted">统一利润 ${esc(quote.calculation.unified_profit.gp_subtotal ?? '待补')} CNY · 条款：${esc(reviewView.document.template.terms)}</p><p class="muted">报价日期/有效期：${esc(reviewView.document.customer_input.quote_date || '待确认')} → ${esc(reviewView.document.customer_input.valid_until || '待确认')} · 出具人版本 v${reviewView.document.template_version}</p><p class="muted">绑定需求投影：${esc(projection.containers.map(item=>`${item.type}×${item.quantity}`).join('、') || '待确认')} · ${esc(projection.services.map(id=>serviceLabels[id]||id).join('、') || '待确认')} · ${esc(projection.incoterm || 'Incoterm待确认')} · 客户 scope：${esc(customerScope || '待确认')}</p><p class="muted"><code>${esc(reviewView.review_hash.slice(0, 16))}…</code></p></div></section>`;
   };
   const documentSnapshotPanel = () => {
     if (!documentView) return '';
     const display = documentView.customer_input || {};
-    return `<details class="panel"${documentView.historical ? ' open' : ''}><summary>报价单快照 v${documentView.version}${documentView.historical ? '（历史）' : ''}</summary><div class="panel-body"><dl class="case-details"><div><dt>编号</dt><dd>${esc(display.quote_no || '待确认')}</dd></div><div><dt>日期</dt><dd>${esc(display.quote_date || '待确认')} → ${esc(display.valid_until || '待确认')}</dd></div><div><dt>Case/Quote</dt><dd>${esc(documentView.case_binding.case_ref)} v${documentView.case_binding.case_version} · quote v${documentView.quote_binding.quote_version}</dd></div><div><dt>Source release</dt><dd>${esc(documentView.source_binding.source_ref)} · ${esc(documentView.source_binding.source_version)} · v${documentView.source_binding.release_version}</dd></div><div><dt>来源窗口</dt><dd>${esc(documentView.source_binding.valid_from)} → ${esc(documentView.source_binding.valid_until)}</dd></div><div><dt>客户合计</dt><dd>USD ${esc(documentView.customer_totals.by_currency.USD)} · CAD ${esc(documentView.customer_totals.by_currency.CAD)} · CNY ${esc(documentView.customer_totals.by_currency.CNY)}</dd></div><div><dt>状态</dt><dd>${esc(documentView.state)} · ${documentView.currentness.valid_now ? '当前有效' : '当前性失效'}</dd></div></dl>${display.remark ? `<p>${esc(display.remark)}</p>` : ''}</div></details>`;
+    return `<details class="panel"${documentView.historical ? ' open' : ''}><summary>报价单快照 v${documentView.version}${documentView.historical ? '（历史）' : ''}</summary><div class="panel-body"><dl class="case-details"><div><dt>编号</dt><dd>${esc(display.quote_no || '待确认')}</dd></div><div><dt>日期</dt><dd>${esc(display.quote_date || '待确认')} → ${esc(display.valid_until || '待确认')}</dd></div><div><dt>Case/Quote</dt><dd>${esc(documentView.case_binding.case_ref)} v${documentView.case_binding.case_version} · quote v${documentView.quote_binding.quote_version}</dd></div><div><dt>Source release</dt><dd>${esc(documentView.source_binding.source_ref)} · ${esc(documentView.source_binding.source_version)} · v${documentView.source_binding.release_version}</dd></div><div><dt>来源窗口</dt><dd>${esc(documentView.source_binding.valid_from)} → ${esc(documentView.source_binding.valid_until)}</dd></div><div><dt>客户合计</dt><dd>USD ${esc(documentView.customer_totals.by_currency.USD)} · CAD ${esc(documentView.customer_totals.by_currency.CAD)} · CNY ${esc(documentView.customer_totals.by_currency.CNY)}</dd></div><div><dt>客户 scope</dt><dd>${esc(documentView.customer_scope.map(row => `${serviceLabels[row.service] || row.service}:${row.disposition}`).join('、') || '待确认')}</dd></div><div><dt>出具人版本</dt><dd>${documentView.template_version}</dd></div><div><dt>状态</dt><dd>${esc(documentView.state)} · ${documentView.currentness.valid_now ? '当前有效' : '当前性失效'}</dd></div></dl><p class="muted">条款：${esc(documentView.template.terms)}</p>${display.remark ? `<p>${esc(display.remark)}</p>` : ''}</div></details>`;
   };
   const documentHistoryPanel = () => {
     if (!documentList?.items?.length) return '';
-    return `<details class="panel"><summary>报价单历史（${documentList.items.length}）</summary><div class="panel-body">${documentList.items.map(item => `<div class="field-grid"><div><strong>v${item.version}</strong><small>${esc(item.state)} · quote v${item.quote_version} · ${item.currentness.valid_now ? '当前有效' : '当前性失效'}</small></div><button class="button" data-action="fcl-doc-open-history" data-document="${esc(item.document_id)}" data-version="${item.version}">查看</button>${item.state === 'approved' ? `<button class="button" data-action="fcl-doc-export-history" data-document="${esc(item.document_id)}" data-version="${item.version}" data-current-version="${item.current_version}">下载历史 PDF</button>` : ''}</div>`).join('')}</div></details>`;
+    return `<details class="panel"><summary>报价单历史（${documentList.items.length}）</summary><div class="panel-body">${documentList.items.map(item => { const versions = Array.from({length:Math.min(item.current_version,1000)},(_,index)=>index+1); return `<div class="field-grid"><div><strong>v${item.version}</strong><small>${esc(item.state)} · quote v${item.quote_version} · ${item.currentness.valid_now ? '当前有效' : '当前性失效'}</small></div><div class="field"><label for="fcl-doc-version-${esc(item.document_id)}">查看版本</label><select id="fcl-doc-version-${esc(item.document_id)}" data-fcl-doc-version="${esc(item.document_id)}">${versions.map(version=>`<option value="${version}"${version===item.version?' selected':''}>v${version}</option>`).join('')}</select></div><button class="button" data-action="fcl-doc-open-history" data-document="${esc(item.document_id)}" data-version="${item.version}">读取</button><button class="button" data-action="fcl-doc-export-history" data-document="${esc(item.document_id)}" data-version="${item.version}" data-current-version="${item.current_version}">下载所选历史 PDF</button></div>`; }).join('')}</div></details>`;
   };
   const handoffPanel = () => {
     if (!handoffView) return '';
     const current = handoffView.current;
-    return `<section class="panel"><div class="panel-body"><h3>运营交接</h3><p>状态：${esc(handoffView.status)} · ${esc(handoffView.reason_codes.join('、') || '无阻断')}</p>${current ? `<dl class="case-details"><div><dt>报价单</dt><dd>v${current.document_version}</dd></div><div><dt>报价</dt><dd>${esc(current.quote_ref)} v${current.quote_version}</dd></div><div><dt>PDF</dt><dd><code>${esc(current.pdf_sha256.slice(0, 16))}…</code> · ${current.pdf_byte_length} bytes</dd></div><div><dt>交接人</dt><dd>${esc(current.actor)}</dd></div></dl>` : ''}<div class="field"><label for="fcl-handoff-note">本次交接备注</label><textarea id="fcl-handoff-note" name="fcl-handoff-note" rows="2" maxlength="2000" placeholder="仅在内部事件中保留"></textarea></div><button class="button primary" data-action="fcl-handoff">确认交接</button>${handoffView.history.length ? `<details><summary>历史交接（${handoffView.history.length}）</summary><ul>${handoffView.history.map(item => `<li>${esc(item.recorded_at)} · quote v${item.quote_version} · doc v${item.document_version} · <code>${esc(item.pdf_sha256.slice(0, 12))}…</code></li>`).join('')}</ul></details>` : ''}<p class="muted">此动作只记录报价交接，不创建 Booking、Shipment 或 SO。</p></div></section>`;
+    const ready = Boolean(quoteView && documentView?.state === 'approved' && exportView && exportView.document_id === documentView.document_id && exportView.version === documentView.version && exportView.valid_now === true && !quoteDirty && !documentDisplayDirty);
+    const reason = !quoteView ? '尚无已保存报价。' : !documentView || documentView.state !== 'approved' ? '尚无当前已批准报价单。' : !exportView || exportView.document_id !== documentView.document_id || exportView.version !== documentView.version ? '请先导出并校验当前正式 PDF。' : quoteDirty || documentDisplayDirty ? '存在未保存的报价或报价单修改。' : '';
+    return `<section class="panel"><div class="panel-body"><h3>运营交接</h3><p>状态：${esc(handoffView.status)} · ${esc(handoffView.reason_codes.join('、') || '无阻断')}</p>${current ? `<dl class="case-details"><div><dt>报价单</dt><dd>v${current.document_version}</dd></div><div><dt>报价</dt><dd>${esc(current.quote_ref)} v${current.quote_version}</dd></div><div><dt>PDF</dt><dd><code>${esc(current.pdf_sha256.slice(0, 16))}…</code> · ${current.pdf_byte_length} bytes</dd></div><div><dt>交接人</dt><dd>${esc(current.actor)}</dd></div></dl>` : ''}<form data-fcl-form="handoff-note"><div class="field"><label for="fcl-handoff-note">本次交接备注</label><textarea id="fcl-handoff-note" name="fcl-handoff-note" rows="2" maxlength="2000" placeholder="仅在内部事件中保留">${esc(handoffDraft)}</textarea></div></form><button class="button primary" data-action="fcl-handoff"${ready ? '' : ' disabled'} title="${esc(reason || '交接前置条件已满足')}">确认交接</button>${reason ? `<p class="muted">${esc(reason)}</p>` : ''}${handoffView.history.length ? `<details><summary>历史交接（${handoffView.history.length}）</summary><ul>${handoffView.history.map(item => `<li>${esc(item.recorded_at)} · quote v${item.quote_version} · doc v${item.document_version} · <code>${esc(item.pdf_sha256.slice(0, 12))}…</code></li>`).join('')}</ul></details>` : ''}<p class="muted">此动作只记录报价交接，不创建 Booking、Shipment 或 SO。</p></div></section>`;
   };
 
   const ratePage = () => {
@@ -529,6 +558,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (invalid) throw Object.assign(new Error('fcl_rate_input_invalid'), { code: 'fcl_rate_input_invalid' });
   };
   const captureQuoteForm = (form) => {
+    if (!quoteDraft) return;
     quoteDraft.source_sell_prices = [...form.querySelectorAll('[data-fcl-source-price]')].map(row => {
       const key = row.dataset.key;
       const index = [...form.querySelectorAll('[data-fcl-source-price]')].indexOf(row);
@@ -536,7 +566,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     });
     quoteDraft.manual_fees = [...form.querySelectorAll('[data-fcl-manual-row]')].map(row => ({
       id: row.dataset.id || crypto.randomUUID(),
-      template_ref: null,
+      template_ref: (() => { try { const raw = row.querySelector('[name="template_ref"]')?.value; return raw ? JSON.parse(raw) : null; } catch { return null; } })(),
       name: row.querySelector('[name="name"]')?.value.trim() || '',
       group: row.querySelector('[name="group"]')?.value || 'C',
       service: row.querySelector('[name="service"]')?.value || 'delivery',
@@ -550,7 +580,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       customer_note: row.querySelector('[name="customer_note"]')?.value.trim() || null,
       evidence_ref: row.querySelector('[name="evidence_ref"]')?.value.trim() || null,
       evidence_version: row.querySelector('[name="evidence_version"]')?.value.trim() || null,
-      quantity_conditions: null,
+      quantity_conditions: row.querySelector('[name="quantity_conditions"]')?.value.trim() || null,
     }));
     quoteDraft.service_scopes = [...form.querySelectorAll('[data-fcl-scope]')].flatMap(row => {
       const disposition = row.querySelector('[name="disposition"]')?.value;
@@ -645,6 +675,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       reviewView = null;
       exportView = null;
       document.querySelectorAll('[data-action="fcl-doc-approve"],[data-action="fcl-handoff"]').forEach(button => { button.disabled = true; });
+      return;
+    }
+    if (type === 'handoff-note') {
+      handoffDraft = raw('fcl-handoff-note');
+      handoffDirty = true;
       return;
     }
     if (type === 'staff-supplement') {
@@ -825,7 +860,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       matchResult = response; quoteDraft = null; editingQuoteRef = quoteView?.case_binding.case_ref === detail.case_id && response.status === 'success' ? quoteView.quote_ref : null; message = response.status === 'success' ? '已按所选来源匹配，请核对客户售价。' : `所选来源仍无法完成匹配：${response.reason_codes.join('、') || '请人工复核'}`; rerender(); return true;
     }
     if (name === 'fcl-edit-quote') { beginQuoteEdit(); quoteDirty = false; message = '正在编辑服务器上的当前报价；再次保存会更新同一 quote_ref。'; rerender(); return true; }
-    if (name === 'fcl-quote-open-history') { const response = await call('quote-get', { contract_version: DOCUMENT_VERSION, quote_ref: button.dataset.quote, version: Number(button.dataset.version) }); if (e !== epoch) return true; if (response.data) { quoteHistoryView = response.data; message = `正在只读查看报价 v${quoteHistoryView.version}。`; rerender(); } else { message = responseMessage(response, '', ''); rerender(); } return true; }
+    if (name === 'fcl-quote-open-history') { const target = Number(document.querySelector(`[data-fcl-quote-version="${button.dataset.quote}"]`)?.value || button.dataset.version); const response = await call('quote-get', { contract_version: DOCUMENT_VERSION, quote_ref: button.dataset.quote, version: target }); if (e !== epoch) return true; if (response.data) { quoteHistoryView = response.data; message = `正在只读查看报价 v${quoteHistoryView.version}。`; rerender(); } else { message = responseMessage(response, '', ''); rerender(); } return true; }
     if (['fcl-doc-save','fcl-doc-review','fcl-doc-approve','fcl-doc-reject','fcl-doc-export','fcl-handoff'].includes(name) && blockUnsavedQuote()) return true;
     if (blockUnsavedDocumentDisplay(name)) return true;
     if (name === 'fcl-doc-save') {
@@ -870,14 +905,16 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       rerender(); return true;
     }
     if (name === 'fcl-doc-open-history') {
-      const response = await call('document-get', { contract_version: DOCUMENT_VERSION, document_id: button.dataset.document, version: Number(button.dataset.version) });
+      const target = Number(document.querySelector(`[data-fcl-doc-version="${button.dataset.document}"]`)?.value || button.dataset.version);
+      const response = await call('document-get', { contract_version: DOCUMENT_VERSION, document_id: button.dataset.document, version: target });
       if (e !== epoch) return true;
       if (response.data) { documentView = response.data; reviewView = null; exportView = null; message = `正在查看报价单 v${documentView.version}${documentView.historical ? '（历史版本）' : ''}。`; rerender(); }
       else { message = responseMessage(response, '', ''); rerender(); }
       return true;
     }
     if (name === 'fcl-doc-export-history') {
-      const response = await write('document-export', { contract_version: DOCUMENT_VERSION, mode: 'history', document_id: button.dataset.document, target_version: Number(button.dataset.version), expected_current_version: Number(button.dataset.currentVersion) });
+      const target = Number(document.querySelector(`[data-fcl-doc-version="${button.dataset.document}"]`)?.value || button.dataset.version);
+      const response = await write('document-export', { contract_version: DOCUMENT_VERSION, mode: 'history', document_id: button.dataset.document, target_version: target, expected_current_version: Number(button.dataset.currentVersion) });
       if (e !== epoch) return true;
       if (response.status !== 'success' || !response.data) { message = responseMessage(response, '', ''); rerender(); return true; }
       const bytes = await verifyPdfOutput(response.data);
@@ -886,13 +923,15 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       message = `历史 PDF v${response.data.version} 已校验并开始下载。`; rerender(); return true;
     }
     if (name === 'fcl-handoff') {
-      const noteValue = document.querySelector('[name="fcl-handoff-note"]')?.value.trim();
+      const handoffForm = document.querySelector('[data-fcl-form="handoff-note"]');
+      if (handoffForm) captureFormDraft(handoffForm);
+      const noteValue = handoffDraft.trim();
       if (!noteValue) { message = '请填写内部交接备注。'; rerender(); return true; }
       if (!exportView || !documentView || !quoteView) { message = '请先导出并校验当前正式 PDF。'; rerender(); return true; }
       if (exportView.document_id !== documentView.document_id || exportView.version !== documentView.version || exportView.valid_now !== true || documentView.state !== 'approved') { message = '当前正式 PDF 与已批准报价单不一致，请重新导出。'; rerender(); return true; }
       const response = await write('handoff-save', { contract_version: HANDOFF_VERSION, case_ref: detail.case_id, expected_case_version: detail.case_version, expected_customer_supplement_ref: detail.review_context.latest_customer_supplement_ref, quote_ref: quoteView.quote_ref, expected_quote_version: quoteView.version, expected_quote_digest: quoteView.content_digest, document_id: documentView.document_id, expected_document_version: documentView.version, expected_pdf_sha256: exportView.sha256, confirmed: true, note: noteValue });
       if (e !== epoch) return true;
-      if (response.data) { handoffView = response.data; requestRelatedRefresh(); }
+      if (response.data) { handoffView = response.data; handoffDraft = ''; handoffDirty = false; requestRelatedRefresh(); }
       message = responseMessage(response, '交接事件已记录，未创建 Booking/SO。', '交接仍待人工处理。'); rerender(); return true;
     }
     return false;
@@ -920,5 +959,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       return false;
     },
     isDirty,
+    canLeave: () => {
+      if (!isDirty()) return true;
+      if (!window.confirm('当前 FCL 有未保存修改，确定丢弃并离开吗？')) return false;
+      discardDrafts();
+      return true;
+    },
   };
 }

@@ -113,7 +113,7 @@ function summaryPanel(draft) {
 
 export function mountFclInquiry(root) {
   let draft = createFclInquiryDraft();
-  let step = 1, errors = {}, busy = false, generation = 0, ticketEpoch = 0, session = null, sessionPromise = null, submission = null, ticket = null, notice = '', ticketLoading = false, ticketBusy = false, accessLink = '', ticketDraft = null, newInquiryIntent = false;
+  let step = 1, errors = {}, busy = false, generation = 0, ticketEpoch = 0, session = null, sessionPromise = null, submission = null, ticket = null, notice = '', ticketLoading = false, ticketBusy = false, accessLink = '', ticketDraft = null, ticketMessageDraft = '', newInquiryIntent = false;
   const keys = new Map();
   const lifecycle = new AbortController();
   const cleanup = () => {
@@ -251,7 +251,7 @@ export function mountFclInquiry(root) {
   };
   const supplementForm = (value) => {
     const input = ticketDraft ? { ...value.input, ...ticketDraft, contact: { ...value.input.contact, ...ticketDraft.contact } } : value.input;
-    return `<section class="panel"><div class="panel-body"><h2>补充本票资料</h2><p>提交后追加客户补充事件，原 Inquiry 不会被覆盖；未修改字段保持原值。</p><form data-fcl-supplement><div class="field-grid">${field('中国起运城市', 'supply-origin_city', input.origin_city || '', { optional: true })}${field('起运港 POL', 'supply-pol', input.pol || '', { optional: true })}</div><div class="field-grid">${field('目的港 POD', 'supply-pod', input.pod || '', { optional: true })}${field('最终目的地', 'supply-final_destination', input.final_destination || '', { optional: true })}</div><fieldset class="fcl-container-grid"><legend>柜型与柜数</legend>${containerTypes.map(type => { const row = input.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="supply-container-${type}">${containerLabels[type]}</label><label class="check-small"><input type="checkbox" name="supply-container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>柜数待确认</label><input id="supply-container-${type}" name="supply-container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${field('货物品名', 'supply-cargo_name', input.cargo_name || '', { optional: true })}${field('货物属性', 'supply-cargo_type', input.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div><div class="field-grid">${field('预计毛重 kg', 'supply-estimated_weight', input.estimated_weight?.value || '', { optional: true })}${field('备货日期', 'supply-cargo_ready_date', input.cargo_ready_date || '', { optional: true, type: 'date' })}</div><div class="field-grid">${field('贸易条款', 'supply-incoterm', input.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value])] })}${field('其他条款说明', 'supply-incoterm_other', input.incoterm_other || '', { optional: true })}</div><div class="field-grid">${field('联系人', 'supply-contact-name', input.contact?.name || '', { optional: true })}${field('邮箱', 'supply-contact-email', input.contact?.email || '', { optional: true, type: 'email' })}</div><div class="field-grid">${field('公司', 'supply-contact-company', input.contact?.company || '', { optional: true })}${field('电话', 'supply-contact-phone', input.contact?.phone || '', { optional: true, type: 'tel' })}</div><div class="field"><label for="supply-notes">补充说明</label><textarea id="supply-notes" name="supply-notes" rows="3" maxlength="4000">${esc(input.notes || '')}</textarea></div><fieldset class="fcl-service-grid"><legend>服务范围</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${input.selected_services?.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset><div data-fcl-supplement-diff>${supplementDiff(value.input, ticketDraft || value.input)}</div><div class="field"><label for="supply-message">补充说明消息</label><textarea id="supply-message" name="supply-message" rows="2" maxlength="2000"></textarea></div><button class="button primary" type="submit"${ticketBusy ? ' disabled' : ''}>提交客户补充</button></form></div></section>`;
+    return `<section class="panel"><div class="panel-body"><h2>补充本票资料</h2><p>提交后追加客户补充事件，原 Inquiry 不会被覆盖；未修改字段保持原值。</p><form data-fcl-supplement><div class="field-grid">${field('中国起运城市', 'supply-origin_city', input.origin_city || '', { optional: true })}${field('起运港 POL', 'supply-pol', input.pol || '', { optional: true })}</div><div class="field-grid">${field('目的港 POD', 'supply-pod', input.pod || '', { optional: true })}${field('最终目的地', 'supply-final_destination', input.final_destination || '', { optional: true })}</div><fieldset class="fcl-container-grid"><legend>柜型与柜数</legend>${containerTypes.map(type => { const row = input.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="supply-container-${type}">${containerLabels[type]}</label><label class="check-small"><input type="checkbox" name="supply-container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>柜数待确认</label><input id="supply-container-${type}" name="supply-container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${field('货物品名', 'supply-cargo_name', input.cargo_name || '', { optional: true })}${field('货物属性', 'supply-cargo_type', input.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div><div class="field-grid">${field('预计毛重 kg', 'supply-estimated_weight', input.estimated_weight?.value || '', { optional: true })}${field('备货日期', 'supply-cargo_ready_date', input.cargo_ready_date || '', { optional: true, type: 'date' })}</div><div class="field-grid">${field('贸易条款', 'supply-incoterm', input.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value])] })}${field('其他条款说明', 'supply-incoterm_other', input.incoterm_other || '', { optional: true })}</div><div class="field-grid">${field('联系人', 'supply-contact-name', input.contact?.name || '', { optional: true })}${field('邮箱', 'supply-contact-email', input.contact?.email || '', { optional: true, type: 'email' })}</div><div class="field-grid">${field('公司', 'supply-contact-company', input.contact?.company || '', { optional: true })}${field('电话', 'supply-contact-phone', input.contact?.phone || '', { optional: true, type: 'tel' })}</div><div class="field"><label for="supply-notes">补充说明</label><textarea id="supply-notes" name="supply-notes" rows="3" maxlength="4000">${esc(input.notes || '')}</textarea></div><fieldset class="fcl-service-grid"><legend>服务范围</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${input.selected_services?.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset><div data-fcl-supplement-diff>${supplementDiff(value.input, ticketDraft || value.input)}</div><div class="field"><label for="supply-message">补充说明消息</label><textarea id="supply-message" name="supply-message" rows="2" maxlength="2000">${esc(ticketMessageDraft)}</textarea></div><button class="button primary" type="submit"${ticketBusy ? ' disabled' : ''}>提交客户补充</button></form></div></section>`;
   };
 
   const supplementDiff = (current, next) => {
@@ -331,7 +331,7 @@ export function mountFclInquiry(root) {
     } catch {
       ticketLoading = false; notice = reasonMessage('fcl_public_session_invalid'); render(); return;
     }
-    ticket = null; submission = null; ticketDraft = null;
+    ticket = null; submission = null; ticketDraft = null; ticketMessageDraft = '';
     ticketLoading = true; render();
     try {
       await ensureSession();
@@ -353,7 +353,8 @@ export function mountFclInquiry(root) {
     const next = captureSupplement(form);
     ticketDraft = next;
     const changes = buildFclSupplementChanges(ticket.input, next);
-    const message = String(data.get('supply-message') || '').trim() || null;
+    ticketMessageDraft = String(data.get('supply-message') || '');
+    const message = ticketMessageDraft.trim() || null;
     if (!changes.length && !message) { notice = '没有检测到需要提交的变化。'; render(); return; }
     ticketBusy = true; render();
     try {
@@ -363,7 +364,7 @@ export function mountFclInquiry(root) {
       if (!result.response.ok || result.body.status !== 'success') throw Object.assign(new Error(result.body.reason_codes?.[0] || 'fcl_unavailable'), { code: result.body.reason_codes?.[0] });
       const parsed = fclPublicOutputSchemas.supplement.safeParse(result.body);
       if (!parsed.success) throw Object.assign(new Error('fcl_response_invalid'), { code: 'fcl_response_invalid' });
-      ticket = parsed.data.data; ticketDraft = null; ticketBusy = false; notice = '补充已保存并生成新的客户补充事件。'; render();
+      ticket = parsed.data.data; ticketDraft = null; ticketMessageDraft = ''; ticketBusy = false; notice = '补充已保存并生成新的客户补充事件。'; render();
     } catch (error) {
       if (attempt !== ticketEpoch || !isFclMode()) return;
       ticketBusy = false; notice = reasonMessage(error.code || error.message); render();
@@ -378,7 +379,7 @@ export function mountFclInquiry(root) {
     if (button.dataset.action === 'fcl-back') { capture(); step = Math.max(1, step - 1); render(); return; }
     if (button.dataset.action === 'fcl-copy-link' && accessLink) { await navigator.clipboard.writeText(accessLink); notice = '个人访问链接已复制。'; render(); return; }
     if (button.dataset.action === 'fcl-open-ticket' && submission) { const id = submission.inquiry_id; const attempt = ++ticketEpoch; submission = null; await loadTicket(id, attempt); return; }
-    if (button.dataset.action === 'fcl-new') { generation++; ticketEpoch++; keys.clear(); ticket = null; ticketDraft = null; newInquiryIntent = true; draft = createFclInquiryDraft(); step = 1; errors = {}; notice = ''; accessLink = ''; window.history.replaceState(null, '', `${location.pathname}${location.search}`); render(); }
+    if (button.dataset.action === 'fcl-new') { generation++; ticketEpoch++; keys.clear(); ticket = null; ticketDraft = null; ticketMessageDraft = ''; newInquiryIntent = true; draft = createFclInquiryDraft(); step = 1; errors = {}; notice = ''; accessLink = ''; window.history.replaceState(null, '', `${location.pathname}${location.search}`); render(); }
   }, { signal: lifecycle.signal });
   root.addEventListener('submit', async (event) => {
     const form = event.target.closest('form');
@@ -392,6 +393,7 @@ export function mountFclInquiry(root) {
     const supplementElement = event.target.closest('form[data-fcl-supplement]');
     if (supplementElement && ticket) {
       ticketDraft = captureSupplement(supplementElement);
+      ticketMessageDraft = String(new FormData(supplementElement).get('supply-message') || '');
       const diff = supplementElement.querySelector('[data-fcl-supplement-diff]');
       if (diff) diff.innerHTML = supplementDiff(ticket.input, ticketDraft);
       return;
@@ -403,7 +405,7 @@ export function mountFclInquiry(root) {
     generation += 1;
     if (/^#fcl-ticket\//u.test(location.hash)) void openTicket();
   }, { signal: lifecycle.signal });
-  window.addEventListener('pagehide', cleanup, { once: true, signal: lifecycle.signal });
+  window.addEventListener('pagehide', (event) => { if (!event.persisted) cleanup(); }, { signal: lifecycle.signal });
   render();
   if (/^#fcl-ticket\//u.test(location.hash)) void openTicket();
   else {
