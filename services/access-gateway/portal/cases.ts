@@ -32,6 +32,7 @@ import {
   fclCaseStaffSupplementSchema,
   fclCaseStatusUpdateSchema,
   fclCaseSubmissionSchema,
+  fclHandoffPayloadSchema,
   type FCL_NOTIFICATION_STATUSES,
   type CaseStatus,
 } from './case-contracts';
@@ -66,6 +67,8 @@ export {
   fclCasePublicEventSchema,
   fclCaseReviewContextSchema,
   fclCaseListSchema,
+  FCL_HANDOFF_VERSION,
+  fclHandoffPayloadSchema,
   fclCaseSuccessEnvelopeSchema,
   fclCaseErrorEnvelopeSchema,
 } from './case-contracts';
@@ -156,6 +159,7 @@ type FclCaseInternalView = z.infer<typeof fclCaseInternalViewSchema>;
 type FclCaseListItem = z.infer<typeof fclCaseListItemSchema>;
 type FclCasePublicSummary = z.infer<typeof fclCasePublicSummarySchema>;
 type FclCasePublicEvent = z.infer<typeof fclCasePublicEventSchema>;
+type FclHandoffPayload = z.infer<typeof fclHandoffPayloadSchema>;
 
 const CASE_SCHEMA_VERSION = 2;
 const parse = <T>(schema: z.ZodType<T>, input: unknown, code = 'case_input_invalid'): T => {
@@ -164,6 +168,12 @@ const parse = <T>(schema: z.ZodType<T>, input: unknown, code = 'case_input_inval
   return result.data;
 };
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+const stableUuid = (value: string) => {
+  const hex = sha256(value).slice(0, 32).split('');
+  hex[12] = '5'; hex[16] = '8';
+  return `${hex.slice(0, 8).join('')}-${hex.slice(8, 12).join('')}-${hex.slice(12, 16).join('')}-${hex.slice(16, 20).join('')}-${hex.slice(20, 32).join('')}`;
+};
+const fclHandoffEventMessage = 'FCL quotation handed off.';
 const validEmail = (value: string) => z.email().max(254).safeParse(value).success;
 const validIdempotencyKey = (value: string) => /^[A-Za-z0-9_.:-]{8,128}$/u.test(value);
 const validSessionId = (value: string) => /^[A-Za-z0-9_.:-]{8,128}$/u.test(value);
@@ -859,6 +869,142 @@ export class CaseService {
     const row = this.fclRowByCase(caseId);
     if (!row || row.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
     return this.fclInternalView(row);
+  }
+  withFclHandoffTransaction<T>(ctx: PortalContext, operation: (commit:()=>void)=>T): T {
+    this.requireFclReceiver(ctx);
+    if (Object.prototype.toString.call(operation) === '[object AsyncFunction]') throw new PortalError('fcl_handoff_async_forbidden');
+    const db = this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed = false;
+    try {
+      const result = operation(() => {
+        if (committed) throw new PortalError('fcl_handoff_commit_twice');
+        db.exec('COMMIT');
+        committed = true;
+      });
+      if (!committed) throw new PortalError('fcl_handoff_commit_required');
+      if (result !== null && typeof result === 'object' && 'then' in result) throw new PortalError('fcl_handoff_async_forbidden');
+      return result;
+    } catch (error) {
+      if (!committed) { try { db.exec('ROLLBACK'); } catch { /* Preserve the handoff failure. */ } }
+      throw error;
+    }
+  }
+  private fclHandoffPayloadEquivalent(left: FclHandoffPayload, right: FclHandoffPayload, ignoreRecordedAt = false): boolean {
+    const normalize = (payload: FclHandoffPayload) => {
+      if (!ignoreRecordedAt) return payload;
+      const { recorded_at: _recordedAt, ...rest } = payload;
+      void _recordedAt;
+      return rest;
+    };
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+  }
+  private fclHandoffEventRow(eventId: string, caseId: string): FclEventRow & { case_id: string } {
+    const row = this.store.db.prepare(`SELECT event_id,case_id,version,status,message,visibility,actor_label,created_at,actor_id,event_kind,payload_json
+      FROM business_case_events WHERE event_id=? AND case_id=?`).get(eventId, caseId) as (FclEventRow & { case_id: string }) | undefined;
+    if (!row) throw new PortalError('fcl_handoff_readback_failed');
+    return row;
+  }
+  private parseFclHandoffEvent(row: FclEventRow & { case_id: string }): FclHandoffPayload {
+    let payload: FclHandoffPayload;
+    try { payload = fclHandoffPayloadSchema.parse(JSON.parse(row.payload_json)); }
+    catch { throw new PortalError('fcl_handoff_readback_failed'); }
+    if (row.event_kind !== 'fcl_handoff_recorded' || row.visibility !== 'internal' || row.message !== fclHandoffEventMessage ||
+      !z.string().min(1).max(80).safeParse(row.actor_label).success ||
+      row.case_id !== payload.case_id || row.version !== payload.case_version || row.actor_id !== payload.actor || row.created_at !== payload.recorded_at) {
+      throw new PortalError('fcl_handoff_readback_failed');
+    }
+    return payload;
+  }
+  private assertFclHandoffCommitted(input: {
+    eventId: string;
+    scope: string;
+    key: string;
+    expected: FclHandoffPayload;
+    expectedStatus?: CaseStatus;
+    actorLabel?: string;
+    ignoreRecordedAt?: boolean;
+  }): FclHandoffPayload {
+    const row = this.fclHandoffEventRow(input.eventId, input.expected.case_id), payload = this.parseFclHandoffEvent(row);
+    if ((input.expectedStatus !== undefined && row.status !== input.expectedStatus) || row.status === 'closed' || row.status === 'cancelled' ||
+      (input.actorLabel !== undefined && row.actor_label !== input.actorLabel) ||
+      !this.fclHandoffPayloadEquivalent(payload, input.expected, input.ignoreRecordedAt === true)) {
+      throw new PortalError('fcl_handoff_readback_failed');
+    }
+    const idempotency = this.store.db.prepare('SELECT digest,case_id FROM business_case_idempotency WHERE scope=? AND key=?')
+      .get(input.scope, input.key) as { digest: string; case_id: string } | undefined;
+    if (!idempotency || idempotency.digest !== payload.request_digest || idempotency.case_id !== payload.case_id) {
+      throw new PortalError('fcl_handoff_readback_failed');
+    }
+    return payload;
+  }
+  findFclHandoffByKey(ctx: PortalContext, key: string, expected: { caseId: string; requestDigest: string }): FclHandoffPayload | null {
+    this.requireFclReceiver(ctx);
+    if (!/^[A-Za-z0-9._:-]{16,128}$/u.test(key)) throw new PortalError('idempotency_key_invalid');
+    const scope = JSON.stringify(['fcl-handoff', ctx.identity.userId]);
+    const prior = this.store.db.prepare('SELECT digest,case_id FROM business_case_idempotency WHERE scope=? AND key=?').get(scope, key) as { digest: string; case_id: string } | undefined;
+    if (!prior) return null;
+    if (prior.digest !== expected.requestDigest || prior.case_id !== expected.caseId) throw new PortalError('idempotency_conflict');
+    const eventId = stableUuid(`${scope}:${key}:${prior.digest}`);
+    const payload = this.parseFclHandoffEvent(this.fclHandoffEventRow(eventId, prior.case_id));
+    return this.assertFclHandoffCommitted({
+      eventId,
+      scope,
+      key,
+      expected: payload,
+      ignoreRecordedAt: true,
+    });
+  }
+  private fclHandoffRevisionExists(caseId: string, candidate: FclHandoffPayload): boolean {
+    const rows = this.store.db.prepare(`SELECT event_id,case_id,version,status,message,visibility,actor_label,created_at,actor_id,event_kind,payload_json
+      FROM business_case_events WHERE case_id=? AND event_kind='fcl_handoff_recorded' ORDER BY rowid`).all(caseId) as Array<FclEventRow & { case_id: string }>;
+    return rows.some(row => {
+      const payload = this.parseFclHandoffEvent(row);
+      return payload.document_id === candidate.document_id && payload.document_revision_id === candidate.document_revision_id &&
+        payload.document_version === candidate.document_version && payload.approved_revision_id === candidate.approved_revision_id &&
+        payload.approved_version === candidate.approved_version && payload.pdf_sha256 === candidate.pdf_sha256;
+    });
+  }
+  recordFclHandoffInTransaction(ctx: PortalContext, input: unknown, key: string): FclHandoffPayload {
+    this.requireFclReceiver(ctx);
+    if (!(this.store.db as DatabaseSync & { isTransaction: boolean }).isTransaction) throw new PortalError('fcl_handoff_transaction_required');
+    if (!/^[A-Za-z0-9._:-]{16,128}$/u.test(key)) throw new PortalError('idempotency_key_invalid');
+    const payload = fclHandoffPayloadSchema.parse(input);
+    if (payload.actor !== ctx.identity.userId) throw new PortalError('fcl_handoff_actor_mismatch');
+    const fclRow = this.fclRowByCase(payload.case_id);
+    const caseRow = this.store.db.prepare('SELECT * FROM business_cases WHERE case_id=?').get(payload.case_id) as Row | undefined;
+    if (!fclRow || fclRow.receiver_user_id !== ctx.identity.userId || !caseRow || caseRow.owner_id !== ctx.identity.userId || caseRow.organization_id !== null) {
+      throw new PortalError('fcl_not_found');
+    }
+    const scope = JSON.stringify(['fcl-handoff', ctx.identity.userId]), eventId = stableUuid(`${scope}:${key}:${payload.request_digest}`), db = this.store.db;
+    const prior = db.prepare('SELECT digest,case_id FROM business_case_idempotency WHERE scope=? AND key=?').get(scope, key) as { digest: string; case_id: string } | undefined;
+    if (prior) {
+      if (prior.digest !== payload.request_digest || prior.case_id !== payload.case_id) throw new PortalError('idempotency_conflict');
+      return this.assertFclHandoffCommitted({ eventId, scope, key, expected: payload, ignoreRecordedAt: true });
+    }
+    if (fclRow.inquiry_no !== payload.inquiry_no || caseRow.version !== payload.case_version || this.latestCustomerSupplementRef(payload.case_id) !== payload.latest_customer_supplement_ref) throw new PortalError('fcl_handoff_case_changed');
+    if (caseRow.status === 'closed' || caseRow.status === 'cancelled') throw new PortalError('fcl_handoff_case_changed');
+    const historyCount = (db.prepare("SELECT COUNT(*) AS n FROM business_case_events WHERE case_id=? AND event_kind='fcl_handoff_recorded'").get(payload.case_id) as { n: number }).n;
+    if (historyCount >= 100) throw new PortalError('fcl_handoff_history_limit_exceeded');
+    const caseRowBefore = JSON.stringify(caseRow), fclRowBefore = JSON.stringify(fclRow);
+    if (this.fclHandoffRevisionExists(payload.case_id, payload)) throw new PortalError('fcl_handoff_already_recorded');
+    db.prepare('INSERT INTO business_case_events(event_id,case_id,version,status,message,visibility,actor_label,created_at,actor_id,event_kind,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(eventId, payload.case_id, payload.case_version, caseRow.status, fclHandoffEventMessage, 'internal', ctx.identity.displayName, payload.recorded_at, ctx.identity.userId, 'fcl_handoff_recorded', JSON.stringify(payload));
+    db.prepare('INSERT INTO business_case_idempotency(scope,key,digest,case_id) VALUES(?,?,?,?)').run(scope, key, payload.request_digest, payload.case_id);
+    const committed = this.assertFclHandoffCommitted({ eventId, scope, key, expected: payload, expectedStatus: caseRow.status, actorLabel: ctx.identity.displayName });
+    const caseRowAfter = this.store.db.prepare('SELECT * FROM business_cases WHERE case_id=?').get(payload.case_id) as Row | undefined;
+    const fclRowAfter = this.fclRowByCase(payload.case_id);
+    if (!caseRowAfter || !fclRowAfter || JSON.stringify(caseRowAfter) !== caseRowBefore || JSON.stringify(fclRowAfter) !== fclRowBefore) throw new PortalError('fcl_handoff_case_changed');
+    return committed;
+  }
+  listFclHandoffs(ctx: PortalContext, caseId: string): FclHandoffPayload[] {
+    this.requireFclReceiver(ctx);
+    const row = this.fclRowByCase(caseId);
+    if (!row || row.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
+    const rows = this.store.db.prepare(`SELECT event_id,case_id,version,status,message,visibility,actor_label,created_at,actor_id,event_kind,payload_json
+      FROM business_case_events WHERE case_id=? AND event_kind='fcl_handoff_recorded' ORDER BY rowid LIMIT 101`).all(caseId) as Array<FclEventRow & { case_id: string }>;
+    if (rows.length > 100) throw new PortalError('fcl_handoff_history_limit_exceeded');
+    return rows.map(event => this.parseFclHandoffEvent(event));
   }
   withFclReadLock<T>(ctx: PortalContext, operation: () => T extends Promise<unknown> ? never : T): T {
     this.requireFclReceiver(ctx);

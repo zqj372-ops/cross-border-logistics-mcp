@@ -71,3 +71,13 @@ it('ships closed linked FCL document schemas',()=>{
  expect(save(base)).toBe(true);
  expect(save({...base,cost_price:'3200'})).toBe(false);
 });
+it('ships closed FCL handoff schemas with explicit replay state',()=>{
+ const handoff=files(/^fcl-handoff-.*\.schema\.json$/);
+ expect(handoff).toHaveLength(3);
+ for(const file of handoff){const schema=read(file);expect(()=>compile(file)).not.toThrow();assertClosed(schema,file);}
+ const output=compile('fcl-handoff-output.schema.json');
+ const payload={contract_version:'fcl-handoff@2026-09-21.v1',inquiry_no:'FCL-20261008-0001',case_id:'00000000-0000-4000-8000-000000000001',case_version:2,latest_customer_supplement_ref:null,quote_ref:'00000000-0000-4000-8000-000000000002',quote_version:1,quote_digest:'a'.repeat(64),document_id:'00000000-0000-4000-8000-000000000003',document_revision_id:'00000000-0000-4000-8000-000000000004',document_version:2,approved_revision_id:'00000000-0000-4000-8000-000000000004',approved_version:2,pdf_sha256:'b'.repeat(64),pdf_byte_length:128,customer_name:'Synthetic Customer',pol:'Yantian',pod:'Vancouver',containers:[{type:'40HQ',quantity:'2'}],approved_at:'2026-10-08T12:00:00.000Z',handoff_status:'handed_off',handoff_note:'Internal note',actor:'receiver',recorded_at:'2026-10-08T12:00:00.000Z',request_digest:'c'.repeat(64)};
+ expect(output({contract_version:'fcl-handoff@2026-09-21.v1',case_ref:payload.case_id,status:'pending',reason_codes:['fcl_handoff_not_recorded'],current:null,history:[],replay:{replayed:false,submitted_request_digest:null,submitted_current:false}})).toBe(true);
+ expect(output({contract_version:'fcl-handoff@2026-09-21.v1',case_ref:payload.case_id,status:'handed_off',reason_codes:[],current:payload,history:[],replay:{replayed:true,submitted_request_digest:payload.request_digest,submitted_current:true}})).toBe(true);
+ expect(output({contract_version:'fcl-handoff@2026-09-21.v1',case_ref:payload.case_id,status:'handed_off',reason_codes:[],current:payload,history:[],replay:{replayed:true,submitted_request_digest:null,submitted_current:true},extra:true})).toBe(false);
+});

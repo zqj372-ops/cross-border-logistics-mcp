@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { fclInquiryFieldDiffSchema, fclInquiryPatchSchema, fclInquirySchema } from '../../../apps/inquiry/fcl-model';
+import { FCL_CONTAINER_TYPES, fclInquiryFieldDiffSchema, fclInquiryPatchSchema, fclInquirySchema } from '../../../apps/inquiry/fcl-model';
 import { createDraft, validateStep, type Draft } from '../../../apps/inquiry/model';
 
 export const CASE_VERSION = 'portal-cases@2026-09-07.v1';
@@ -91,6 +91,34 @@ const fclCaseSupplementPayloadSchema = z.object({
   changed_fields:z.array(z.string().min(1).max(80)).max(17),
   field_changes:z.array(fclInquiryFieldDiffSchema).max(17),
 }).strict();
+export const FCL_HANDOFF_VERSION='fcl-handoff@2026-09-21.v1' as const;
+export const fclHandoffPayloadSchema=z.object({
+  contract_version:z.literal(FCL_HANDOFF_VERSION),
+  inquiry_no:z.string().min(1).max(80),
+  case_id:z.string().uuid(),
+  case_version:z.number().int().positive(),
+  latest_customer_supplement_ref:z.string().uuid().nullable(),
+  quote_ref:z.string().uuid(),
+  quote_version:z.number().int().positive(),
+  quote_digest:z.string().regex(/^[a-f0-9]{64}$/u),
+  document_id:z.string().uuid(),
+  document_revision_id:z.string().uuid(),
+  document_version:z.number().int().positive(),
+  approved_revision_id:z.string().uuid(),
+  approved_version:z.number().int().positive(),
+  pdf_sha256:z.string().regex(/^[a-f0-9]{64}$/u),
+  pdf_byte_length:z.number().int().min(100).max(8388608),
+  customer_name:z.string().min(1).max(200),
+  pol:z.string().max(200).nullable(),
+  pod:z.string().max(200).nullable(),
+  containers:z.array(z.object({type:z.enum(FCL_CONTAINER_TYPES),quantity:z.string().regex(/^(?:0|[1-9]\d{0,9})(?:\.\d{1,6})?$/u)}).strict()).max(4),
+  approved_at:z.iso.datetime(),
+  handoff_status:z.literal('handed_off'),
+  handoff_note:safeText(2000).refine(value=>value.trim().length>0),
+  actor:z.string().min(1).max(200),
+  recorded_at:z.iso.datetime(),
+  request_digest:z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
 export const fclCaseEventSchema = z.discriminatedUnion('kind', [
   z.object({
     ...fclCaseEventBase,
@@ -140,6 +168,11 @@ export const fclCaseEventSchema = z.discriminatedUnion('kind', [
     ...fclCaseEventBase,
     kind:z.literal('fcl_internal_note'),
     payload:z.object({ note:safeText(2000).refine((value) => value.trim().length > 0) }).strict(),
+  }).strict(),
+  z.object({
+    ...fclCaseEventBase,
+    kind:z.literal('fcl_handoff_recorded'),
+    payload:fclHandoffPayloadSchema,
   }).strict(),
 ]);
 export const fclCaseSubmissionSchema = z.object({

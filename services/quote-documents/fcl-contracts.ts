@@ -1,8 +1,10 @@
 import {z} from 'zod';
 import {FCL_CONTAINER_TYPES,FCL_INCOTERMS,FCL_SERVICE_IDS} from '../../apps/inquiry/fcl-model';
+import {FCL_HANDOFF_VERSION,fclHandoffPayloadSchema} from '../access-gateway/portal/case-contracts';
 import {fclQuoteSnapshotSchema} from '../quote-native/fcl-contracts';
 import {draftDocumentSchema,FCL_DOCUMENT_WORKFLOW_VERSION,feeTemplateSchema,feeTemplateSelectionSchema,fclCurrentnessSchema} from './workflow-contracts';
 export {FCL_DOCUMENT_WORKFLOW_VERSION} from './workflow-contracts';
+export {FCL_HANDOFF_VERSION,fclHandoffPayloadSchema} from '../access-gateway/portal/case-contracts';
 
 const issuerText=(max:number)=>z.string().trim().max(max);
 
@@ -44,6 +46,8 @@ export type FclDocumentDecision=z.infer<typeof fclDocumentDecisionSchema>;
 export type FclDocumentReviewView=z.infer<typeof fclDocumentReviewViewSchema>;
 export type FclDocumentExportRequest=z.infer<typeof fclDocumentExportRequestSchema>;
 export type FclDocumentExportOutput=z.infer<typeof fclDocumentExportOutputSchema>;
+export type FclHandoffView=z.infer<typeof fclHandoffViewSchema>;
+export type FclHandoffPayload=z.infer<typeof fclHandoffPayloadSchema>;
 export type FclDocumentPdfBinding=z.infer<typeof fclDocumentPdfBindingSchema>;
 
 export const fclDocumentCaseBindingSchema=z.object({
@@ -305,6 +309,37 @@ export const fclDocumentPdfBindingSchema=z.object({
   created_at:z.iso.datetime(),
   signature:z.string().regex(/^[a-f0-9]{64}$/u),
 }).strict();
+export const fclHandoffRequestSchema=z.object({
+  contract_version:z.literal(FCL_HANDOFF_VERSION),
+  case_ref:z.string().uuid(),
+  expected_case_version:z.number().int().positive(),
+  expected_customer_supplement_ref:z.string().uuid().nullable(),
+  quote_ref:z.string().uuid(),
+  expected_quote_version:z.number().int().positive(),
+  expected_quote_digest:z.string().regex(/^[a-f0-9]{64}$/u),
+  document_id:z.string().uuid(),
+  expected_document_version:z.number().int().positive(),
+  expected_pdf_sha256:z.string().regex(/^[a-f0-9]{64}$/u),
+  confirmed:z.literal(true),
+  note:z.string().trim().min(1).max(2000),
+}).strict();
+export const fclHandoffGetRequestSchema=z.object({
+  contract_version:z.literal(FCL_HANDOFF_VERSION),
+  case_ref:z.string().uuid(),
+}).strict();
+export const fclHandoffViewSchema=z.object({
+  contract_version:z.literal(FCL_HANDOFF_VERSION),
+  case_ref:z.string().uuid(),
+  status:z.enum(['pending','handed_off']),
+  reason_codes:z.array(z.string().min(1).max(120)).max(32),
+  current:fclHandoffPayloadSchema.nullable(),
+  history:z.array(fclHandoffPayloadSchema).max(100),
+  replay:z.object({
+    replayed:z.boolean(),
+    submitted_request_digest:z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+    submitted_current:z.boolean(),
+  }).strict(),
+}).strict();
 
 export const fclDocumentSchemas:Record<string,z.ZodType>={
   ...fclConfigSchemas,
@@ -319,4 +354,7 @@ export const fclDocumentSchemas:Record<string,z.ZodType>={
   'linked-reject-request':fclDocumentRejectRequestSchema,
   'linked-export-request':fclDocumentExportRequestSchema,
   'linked-export-output':fclDocumentExportOutputSchema,
+  'handoff-request':fclHandoffRequestSchema,
+  'handoff-get-request':fclHandoffGetRequestSchema,
+  'handoff-output':fclHandoffViewSchema,
 };

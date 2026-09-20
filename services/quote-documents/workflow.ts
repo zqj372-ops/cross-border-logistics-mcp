@@ -31,9 +31,14 @@ import {z} from 'zod';
 import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema,type QuoteDocument,type QuoteTemplate} from './contracts';
 import {
   FCL_DOCUMENT_WORKFLOW_VERSION,
+  FCL_HANDOFF_VERSION,
   fclConfigSaveSchema,
   fclConfigViewSchema,
   fclDocumentGetRequestSchema,
+  fclHandoffGetRequestSchema,
+  fclHandoffPayloadSchema,
+  fclHandoffRequestSchema,
+  fclHandoffViewSchema,
   fclDocumentApproveRequestSchema,
   fclDocumentRejectRequestSchema,
   fclDocumentReviewRequestSchema,
@@ -54,6 +59,8 @@ import {
   type FclDocumentExportOutput,
   type FclDocumentPdfBinding,
   type FclDocumentView,
+  type FclHandoffPayload,
+  type FclHandoffView,
 } from './fcl-contracts';
 import {
   buildFclCostSellSnapshot,
@@ -171,6 +178,7 @@ export interface FclQuoteWorkflowDependencies{
   readonly caseLock:Pick<CaseService,'withFclReadLock'>;
   readonly rateLock:Pick<NativeAdminService,'withFclReadLock'>;
   readonly rateReader:Pick<NativeAdminService,'get'>;
+  readonly handoff?:Pick<CaseService,'withFclHandoffTransaction'|'recordFclHandoffInTransaction'|'listFclHandoffs'|'findFclHandoffByKey'>;
 }
 
 type NormalizedFclDocumentWorkflowOptions={
@@ -1344,6 +1352,185 @@ export class DocumentWorkflowService{
       return fclDocumentListSchema.parse({items:page.map(row=>{const read=this.readFclDocument(options.receiverUserId,row.document_id,row.version);return {document_id:row.document_id,version:row.version,current_version:read.currentVersion,state:read.payload.state,case_ref:read.payload.case_binding.case_ref,quote_ref:read.payload.quote_binding.quote_ref,quote_version:read.payload.quote_binding.quote_version,source_release_id:read.payload.source_binding.release_id,customer_name:read.payload.case_projection.customer_name,quote_no:read.payload.customer_input.quote_no!,quote_date:read.payload.customer_input.quote_date!,valid_until:read.payload.customer_input.valid_until!,currentness:this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options),created_at:row.updated_at};}),next_cursor:rows.length>request.limit&&page.at(-1)?Buffer.from(JSON.stringify({case_ref:request.case_ref,updated_at:page.at(-1)!.updated_at,document_id:page.at(-1)!.document_id})).toString('base64url'):null});
     });
   }
+  private fclHandoffDependency():NonNullable<FclQuoteWorkflowDependencies['handoff']>{
+    const handoff=this.fclQuoteDependencies().handoff;
+    if(!handoff)throw new PortalError('fcl_handoff_unavailable');
+    return handoff;
+  }
+  private fclHandoffPayloadEqual(left:FclHandoffPayload,right:FclHandoffPayload):boolean{
+    return JSON.stringify(left)===JSON.stringify(right);
+  }
+  private fclHandoffCaseSnapshot(value:ReturnType<CaseService['getFclCase']>):string{
+    return canonicalHash({
+      ...value,
+      events:value.events.filter(event=>event.kind!=='fcl_handoff_recorded'),
+    });
+  }
+  private buildFclHandoffPayload(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:z.infer<typeof fclHandoffRequestSchema>):FclHandoffPayload{
+    const prepared=this.prepareFormalFclPdf(ctx,options,{document_id:request.document_id,expected_version:request.expected_document_version});
+    const document=prepared.payload,decision=document.decision;
+    if(!prepared.bytes)throw new PortalError('fcl_handoff_pdf_unavailable');
+    if(document.case_binding.case_ref!==request.case_ref||document.case_binding.case_version!==request.expected_case_version||document.case_binding.latest_customer_supplement_ref!==request.expected_customer_supplement_ref)throw new PortalError('fcl_handoff_case_changed');
+    if(document.quote_binding.quote_ref!==request.quote_ref||document.quote_binding.quote_version!==request.expected_quote_version||document.quote_binding.quote_digest!==request.expected_quote_digest)throw new PortalError('fcl_handoff_quote_changed');
+    if(document.version!==request.expected_document_version)throw new PortalError('fcl_handoff_document_changed');
+    if(document.state!=='approved'||!decision||decision.kind!=='approved'||decision.approved_revision_id===null||decision.approved_version===null||decision.approved_revision_id!==document.revision_id||decision.approved_version!==document.version)throw new PortalError('fcl_handoff_approved_proof_missing');
+    const pdfSha256=createHash('sha256').update(prepared.bytes).digest('hex');
+    if(pdfSha256!==request.expected_pdf_sha256)throw new PortalError('fcl_handoff_pdf_changed');
+    return fclHandoffPayloadSchema.parse({
+      contract_version:FCL_HANDOFF_VERSION,
+      inquiry_no:prepared.metadata.inquiry_no,
+      case_id:document.case_binding.case_ref,
+      case_version:document.case_binding.case_version,
+      latest_customer_supplement_ref:document.case_binding.latest_customer_supplement_ref,
+      quote_ref:document.quote_binding.quote_ref,
+      quote_version:document.quote_binding.quote_version,
+      quote_digest:document.quote_binding.quote_digest,
+      document_id:document.document_id,
+      document_revision_id:document.revision_id,
+      document_version:document.version,
+      approved_revision_id:decision.approved_revision_id,
+      approved_version:decision.approved_version,
+      pdf_sha256:pdfSha256,
+      pdf_byte_length:prepared.bytes.length,
+      customer_name:document.case_projection.customer_name,
+      pol:document.case_projection.pol,
+      pod:document.case_projection.pod,
+      containers:document.case_projection.containers.map(container=>({type:container.type,quantity:container.quantity})),
+      approved_at:decision.at,
+      handoff_status:'handed_off',
+      handoff_note:request.note,
+      actor:ctx.identity.userId,
+      recorded_at:this.fclTimestamp(options),
+      request_digest:canonicalHash(request),
+    });
+  }
+  private fclHandoffReasonCode(reason:string):string{
+    if(reason.startsWith('fcl_quote_case_'))return 'fcl_handoff_case_changed';
+    if(reason==='fcl_quote_not_current_version'||reason==='fcl_document_quote_changed'||reason==='fcl_document_quote_unavailable')return 'fcl_handoff_quote_changed';
+    if(reason==='fcl_document_not_current_version')return 'fcl_handoff_document_changed';
+    return 'fcl_handoff_source_changed';
+  }
+  private fclHandoffReasonCodes(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,payload:FclHandoffPayload):string[]{
+    const reasons=new Set<string>(),dependencies=this.fclQuoteDependencies();
+    let caseView:ReturnType<CaseService['getFclCase']>;
+    try{caseView=dependencies.caseReader.getFclCase(ctx,payload.case_id);}catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_readback_failed')throw error;
+      return ['fcl_handoff_case_changed'];
+    }
+    if(caseView.case_version!==payload.case_version||caseView.review_context.latest_customer_supplement_ref!==payload.latest_customer_supplement_ref||caseView.case_status==='closed'||caseView.case_status==='cancelled'||caseView.review_context.review_required)reasons.add('fcl_handoff_case_changed');
+    let quote:{snapshot:ReturnType<typeof validateFclQuoteSnapshot>;currentVersion:number};
+    try{quote=this.readFclQuote(options.receiverUserId,payload.quote_ref,payload.quote_version);}catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_quote_readback_failed')throw error;
+      reasons.add('fcl_handoff_quote_changed');
+      return [...reasons].slice(0,32);
+    }
+    if(quote.currentVersion!==payload.quote_version||quote.snapshot.content_digest!==payload.quote_digest||quote.snapshot.case_binding.case_ref!==payload.case_id||quote.snapshot.case_binding.case_version!==payload.case_version||quote.snapshot.case_binding.latest_customer_supplement_ref!==payload.latest_customer_supplement_ref)reasons.add('fcl_handoff_quote_changed');
+    let document:{payload:FclDocumentPayload;currentVersion:number};
+    try{document=this.readFclDocument(options.receiverUserId,payload.document_id,payload.document_version);}catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_document_readback_failed')throw error;
+      reasons.add('fcl_handoff_document_changed');
+      return [...reasons].slice(0,32);
+    }
+    const documentPayload=document.payload,decision=documentPayload.decision;
+    if(document.currentVersion!==payload.document_version||documentPayload.revision_id!==payload.document_revision_id||documentPayload.version!==payload.document_version||documentPayload.state!=='approved'||!decision||decision.kind!=='approved'||decision.approved_revision_id!==payload.approved_revision_id||decision.approved_version!==payload.approved_version||decision.at!==payload.approved_at||canonicalHash(documentPayload.case_binding)!==canonicalHash({case_ref:payload.case_id,case_version:payload.case_version,latest_customer_supplement_ref:payload.latest_customer_supplement_ref})||documentPayload.quote_binding.quote_ref!==payload.quote_ref||documentPayload.quote_binding.quote_version!==payload.quote_version||documentPayload.quote_binding.quote_digest!==payload.quote_digest||documentPayload.case_projection.customer_name!==payload.customer_name||documentPayload.case_projection.pol!==payload.pol||documentPayload.case_projection.pod!==payload.pod||canonicalHash(documentPayload.case_projection.containers)!==canonicalHash(payload.containers))reasons.add('fcl_handoff_document_changed');
+    if(reasons.size===0)try{
+      const currentness=this.fclDocumentCurrentness(ctx,documentPayload,document.currentVersion,options);
+      currentness.reason_codes.forEach(reason=>reasons.add(this.fclHandoffReasonCode(reason)));
+    }catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_document_readback_failed')throw error;
+      reasons.add('fcl_handoff_source_changed');
+    }
+    if(reasons.size===0)try{
+      const prepared=this.prepareFormalFclPdf(ctx,options,{document_id:payload.document_id,expected_version:payload.document_version});
+      if(!prepared.bytes)throw new PortalError('fcl_handoff_pdf_unavailable');
+      const sha256=createHash('sha256').update(prepared.bytes).digest('hex');
+      if(sha256!==payload.pdf_sha256||prepared.bytes.length!==payload.pdf_byte_length)throw new PortalError('fcl_handoff_pdf_unavailable');
+    }catch(error){
+      if(error instanceof PortalError&&['fcl_document_pdf_binding_missing','fcl_document_history_bytes_missing','document_pdf_invalid','document_readback_failed','fcl_handoff_pdf_unavailable'].includes(error.code))reasons.add('fcl_handoff_pdf_unavailable');
+      else if(error instanceof PortalError&&['fcl_document_not_approved','fcl_document_not_current'].includes(error.code))reasons.add('fcl_handoff_source_changed');
+      else throw error;
+    }
+    return [...reasons].slice(0,32);
+  }
+  private fclHandoffViewFromState(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,caseRef:string):FclHandoffView{
+    const dependencies=this.fclQuoteDependencies(),handoff=this.fclHandoffDependency();
+    dependencies.caseReader.getFclCase(ctx,caseRef);
+    const events=handoff.listFclHandoffs(ctx,caseRef);
+    const replay={replayed:false,submitted_request_digest:null,submitted_current:false} as const;
+    if(events.length===0)return fclHandoffViewSchema.parse({contract_version:FCL_HANDOFF_VERSION,case_ref:caseRef,status:'pending',reason_codes:['fcl_handoff_not_recorded'],current:null,history:[],replay});
+    let currentIndex=-1;
+    for(let index=events.length-1;index>=0;index--){
+      const candidate=events[index]!;
+      if(this.fclHandoffReasonCodes(ctx,options,candidate).length===0){currentIndex=index;break;}
+    }
+    if(currentIndex>=0)return fclHandoffViewSchema.parse({
+      contract_version:FCL_HANDOFF_VERSION,
+      case_ref:caseRef,
+      status:'handed_off',
+      reason_codes:[],
+      current:events[currentIndex]!,
+      history:events.filter((_,index)=>index!==currentIndex),
+      replay,
+    });
+    const newest=events.at(-1)!;
+    return fclHandoffViewSchema.parse({
+      contract_version:FCL_HANDOFF_VERSION,
+      case_ref:caseRef,
+      status:'pending',
+      reason_codes:this.fclHandoffReasonCodes(ctx,options,newest),
+      current:null,
+      history:events,
+      replay,
+    });
+  }
+  private fclHandoffReplayView(current:FclHandoffView,replayed:FclHandoffPayload):FclHandoffView{
+    const inHistory=current.history.some(event=>this.fclHandoffPayloadEqual(event,replayed));
+    const isCurrent=current.current!==null&&this.fclHandoffPayloadEqual(current.current,replayed);
+    if(!inHistory&&!isCurrent)throw new PortalError('fcl_handoff_readback_failed');
+    return fclHandoffViewSchema.parse({
+      ...current,
+      replay:{
+        replayed:true,
+        submitted_request_digest:replayed.request_digest,
+        submitted_current:current.current!==null&&this.fclHandoffPayloadEqual(current.current,replayed),
+      },
+    });
+  }
+  saveFclHandoff(ctx:PortalContext,input:unknown,key:string):FclHandoffView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),handoff=this.fclHandoffDependency();
+    const request=parse(fclHandoffRequestSchema,input,'fcl_handoff_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    return handoff.withFclHandoffTransaction(ctx,commitCase=>{
+      return dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentWriteGuard(()=>{
+        const replayed=handoff.findFclHandoffByKey(ctx,key,{caseId:request.case_ref,requestDigest:canonicalHash(request)});
+        if(replayed){
+          const view=this.fclHandoffReplayView(this.fclHandoffViewFromState(ctx,options,request.case_ref),replayed);
+          commitCase();
+          return view;
+        }
+        const before=dependencies.caseReader.getFclCase(ctx,request.case_ref);
+        const payload=this.buildFclHandoffPayload(ctx,options,request);
+        const recorded=handoff.recordFclHandoffInTransaction(ctx,payload,key);
+        commitCase();
+        const committed=handoff.findFclHandoffByKey(ctx,key,{caseId:request.case_ref,requestDigest:canonicalHash(request)});
+        if(!committed||!this.fclHandoffPayloadEqual(committed,recorded))throw new PortalError('fcl_handoff_readback_failed');
+        const after=dependencies.caseReader.getFclCase(ctx,request.case_ref);
+        if(this.fclHandoffCaseSnapshot(before)!==this.fclHandoffCaseSnapshot(after))throw new PortalError('fcl_handoff_case_changed');
+        const view=this.fclHandoffViewFromState(ctx,options,request.case_ref);
+        if(view.status!=='handed_off'||!view.current||!this.fclHandoffPayloadEqual(view.current,recorded))throw new PortalError('fcl_handoff_readback_failed');
+        return view;
+      }));
+    });
+  }
+  getFclHandoff(ctx:PortalContext,input:unknown):FclHandoffView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();
+    const request=parse(fclHandoffGetRequestSchema,input,'fcl_handoff_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentReadWindow(()=>{
+      const view=this.fclHandoffViewFromState(ctx,options,request.case_ref);
+      if(view.current!==null&&view.current.case_id!==request.case_ref)throw new PortalError('fcl_handoff_readback_failed');
+      return view;
+    })));
+  }
   private fclDocumentReviewHash(input:{personalOwnerId:string;actor:string;documentId:string;revisionId:string;version:number;contentDigest:string;payload:FclDocumentPayload;expiresAt:string}):string{
     return createHmac('sha256',this.secret).update(canonicalJson({
       domain:'fcl-document-review',
@@ -1473,6 +1660,22 @@ export class DocumentWorkflowService{
   private fclPdfBindingKey(documentId:string,version:number):string{return `pdf:${documentId}:${version}`;}
   private fclPdfBindingSignature(binding:Omit<FclDocumentPdfBinding,'signature'>):string{
     return createHmac('sha256',this.secret).update(canonicalJson({domain:'fcl-document-pdf-binding',binding})).digest('hex');
+  }
+  private withFclDocumentWriteGuard<T>(operation:()=>T):T{
+    this.store.ensureWritable();
+    const db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const result=operation();
+      if(result!==null&&typeof result==='object'&&'then' in result)throw new PortalError('fcl_handoff_async_forbidden');
+      db.exec('COMMIT');
+      committed=true;
+      return result;
+    }catch(error){
+      if(!committed){try{db.exec('ROLLBACK');}catch{/* Preserve the operation or commit failure. */}}
+      throw error;
+    }
   }
   private withFclDocumentReadWindow<T>(operation:()=>T):T{
     const db=this.store.db;
