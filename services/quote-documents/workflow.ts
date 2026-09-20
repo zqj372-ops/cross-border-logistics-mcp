@@ -1402,6 +1402,7 @@ export class DocumentWorkflowService{
   }
   private idempotentFclDocumentDecision(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:{document_id:string},key:string,action:string,write:()=>FclDocumentPayload):FclDocumentView{
     if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
     const partition=JSON.stringify(['v5-doc-personal',options.receiverUserId,ctx.identity.userId,action,request.document_id]),requestDigest=canonicalHash(request),db=this.store.db;
     db.exec('BEGIN IMMEDIATE');
     let committed=false;
