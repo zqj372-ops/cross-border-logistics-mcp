@@ -5,7 +5,8 @@ import {join} from 'node:path';
 import {expect,it} from 'vitest';
 import {createFclInquiryDraft} from '../../apps/inquiry/fcl-model';
 import {createPortalHttpHandler} from '../../services/access-gateway/portal/http';
-import {fclHttpResponseSchemas,fclPublicOutputSchemas} from '../../services/access-gateway/portal/fcl-http-contracts';
+import {FCL_HTTP_RESPONSE_LIMITS,FCL_RATE_RESPONSE_BYTES,fclHttpResponseSchemas,fclPublicOutputSchemas} from '../../services/access-gateway/portal/fcl-http-contracts';
+import {FclHttpService} from '../../services/access-gateway/portal/fcl-http';
 import {FixturePortalIdentityProvider} from '../../services/access-gateway/portal/identity';
 import {InMemoryPortalSessionStore,PortalSessionManager} from '../../services/access-gateway/portal/session';
 import {CaseService,CaseStore} from '../../services/access-gateway/portal/cases';
@@ -78,10 +79,13 @@ it('binds public cookies to one ticket and rejects cross-tab or credential-query
     const a=await submit('fcl-http-ticket-a-submit-01'),b=await submit('fcl-http-ticket-b-submit-01');
     f.caseService.updateFclCaseStatus(receiver,a.case_id,{expected_version:1,status:'needs_input',public_note:'Need input',internal_note:''},'fcl-http-ticket-a-status-01');
     const exchange=async(ticket:{inquiry_id:string;credential:string},key:string)=>{const response=await fetch(f.origin+'/inquiry/api/v1/fcl/credential/exchange',{method:'POST',headers:{cookie,origin:f.origin,'x-csrf-token':csrf,'idempotency-key':key,'content-type':'application/json'},body:JSON.stringify({inquiry_id:ticket.inquiry_id,credential:ticket.credential})});return response;};
+    const missingKey=await fetch(f.origin+'/inquiry/api/v1/fcl/credential/exchange',{method:'POST',headers:{cookie,origin:f.origin,'x-csrf-token':csrf,'content-type':'application/json'},body:JSON.stringify({inquiry_id:a.inquiry_id,credential:a.credential})});expect(missingKey.status).toBe(400);expect((await missingKey.json() as {reason_codes:string[]}).reason_codes).toEqual(['idempotency_key_invalid']);
+    expect((await exchange(a,'short')).status).toBe(400);
     const aExchange=await exchange(a,'fcl-http-ticket-a-exchange-01');expect(aExchange.status).toBe(200);const acookie=aExchange.headers.get('set-cookie')!.split(';')[0]!;
     const supplied=await fetch(f.origin+'/inquiry/api/v1/fcl/supplement',{method:'POST',headers:{cookie:acookie,origin:f.origin,'x-csrf-token':csrf,'idempotency-key':'fcl-http-ticket-a-supplement-01','content-type':'application/json'},body:JSON.stringify({inquiry_id:a.inquiry_id,expected_version:2,fields:{changes:[{field:'pod',value:'Vancouver'}]},message:'Customer supplied POD'})});expect(supplied.status).toBe(200);expect((await supplied.json() as {data:{case_version:number}}).data.case_version).toBe(3);
     expect((await fetch(`${f.origin}/inquiry/api/v1/fcl?inquiry_id=${a.inquiry_id}`,{headers:{cookie:acookie}})).status).toBe(200);
     const bExchange=await exchange(b,'fcl-http-ticket-b-exchange-01');expect(bExchange.status).toBe(200);const bcookie=bExchange.headers.get('set-cookie')!.split(';')[0]!;
+    const logoutMissing=await fetch(f.origin+'/inquiry/api/v1/logout',{method:'POST',headers:{cookie:acookie,origin:f.origin,'x-csrf-token':csrf,'content-type':'application/json'},body:'{}'});expect(logoutMissing.status).toBe(400);expect((await logoutMissing.json() as {reason_codes:string[]}).reason_codes).toEqual(['idempotency_key_invalid']);
     const mismatch=await fetch(`${f.origin}/inquiry/api/v1/fcl?inquiry_id=${a.inquiry_id}`,{headers:{cookie:bcookie}});expect(mismatch.status).toBe(403);expect((await mismatch.json() as {reason_codes:string[]}).reason_codes).toEqual(['fcl_ticket_mismatch']);
     const supplement=await fetch(f.origin+'/inquiry/api/v1/fcl/supplement',{method:'POST',headers:{cookie:bcookie,origin:f.origin,'x-csrf-token':csrf,'idempotency-key':'fcl-http-ticket-a-supplement-01','content-type':'application/json'},body:JSON.stringify({inquiry_id:a.inquiry_id,expected_version:2,fields:{changes:[]},message:'Mismatch'})});expect(supplement.status).toBe(403);expect((await supplement.json() as {reason_codes:string[]}).reason_codes).toEqual(['fcl_ticket_mismatch']);
     const own=await fetch(`${f.origin}/inquiry/api/v1/fcl?inquiry_id=${b.inquiry_id}`,{headers:{cookie:bcookie}});expect(own.status).toBe(200);
@@ -218,4 +222,24 @@ it('keeps success response data non-null while allowing domain evidence only on 
   expect(fclPublicOutputSchemas.session.safeParse({schema_version:'fcl-http@2026-09-21.v1',status:'success',data:null,reason_codes:[]}).success).toBe(false);
   expect(fclHttpResponseSchemas['quote-match'].safeParse({schema_version:'fcl-http@2026-09-21.v1',status:'success',data:null,reason_codes:[]}).success).toBe(false);
   expect(fclHttpResponseSchemas['quote-match'].safeParse({schema_version:'fcl-http@2026-09-21.v1',status:'manual_review',data:null,reason_codes:['fcl_manual_review']}).success).toBe(true);
+  expect(FCL_RATE_RESPONSE_BYTES).toBe(40*1024*1024);
+  expect(FCL_HTTP_RESPONSE_LIMITS['rate-get']).toBeGreaterThan(2*16*1024*1024);
+});
+
+it('bounds public attempt keys and restores new keys after the window expires',()=>{
+  let now=1_000;
+  const service=new FclHttpService({caseService:{} as never,nativeAdmin:{} as never,documentWorkflow:{} as never,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08',publicAttemptLimit:1,publicAttemptWindowMs:1_000,publicAttemptKeyLimit:2,now:()=>now});
+  expect(()=>service.consumePublicAttempt('a')).not.toThrow();
+  expect(()=>service.consumePublicAttempt('b')).not.toThrow();
+  expect(()=>service.consumePublicAttempt('c')).toThrow('fcl_rate_limited');
+  now=2_001;
+  expect(()=>service.consumePublicAttempt('c')).not.toThrow();
+});
+
+it('validates the public key closure inside exchange and logout service paths',async()=>{
+  const service=new FclHttpService({caseService:{} as never,nativeAdmin:{} as never,documentWorkflow:{} as never,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08'});
+  const cookie=service.publicSessions.ensure(null).setCookie.split(';')[0]!;
+  const invalidKey=()=>{throw new Error('idempotency_key_invalid');};
+  await expect(service.executePublic({} as never,'exchange',{},invalidKey,cookie)).rejects.toThrow('idempotency_key_invalid');
+  await expect(service.executePublic({} as never,'logout',{},invalidKey,cookie)).rejects.toThrow('idempotency_key_invalid');
 });

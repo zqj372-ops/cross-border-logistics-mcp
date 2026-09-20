@@ -22,7 +22,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import { PORTAL_CAPABILITIES, PortalError, PORTAL_SCHEMA_VERSION, type Membership, type PortalCapabilityId, type PortalContext, type PortalMutation } from "./contracts";
 import {FclHttpService,fclHttpFailure,type FclHttpDependencies} from "./fcl-http";
-import {FCL_HTTP_BODY_LIMITS,FCL_HTTP_VERSION,FCL_PUBLIC_BODY_LIMITS,fclHttpActions,fclHttpResponseSchemas,fclPublicOutputSchemas,type FclHttpAction} from "./fcl-http-contracts";
+import {FCL_HTTP_BODY_LIMITS,FCL_HTTP_RESPONSE_LIMITS,FCL_HTTP_VERSION,FCL_PUBLIC_BODY_LIMITS,fclHttpActions,fclHttpResponseSchemas,fclPublicOutputSchemas,type FclHttpAction} from "./fcl-http-contracts";
 import type { PortalIdentityProvider } from "./identity";
 import type { PortalSession, PortalSessionManager } from "./session";
 import { parsePortalSessionCookie } from "./session";
@@ -462,6 +462,7 @@ async function handleStaffFcl(request:IncomingMessage,response:ServerResponse,ur
     }
     const result=await fclHttp.executeStaff(ctx,route.action,input,()=>idempotency(request));
     const responseBody=fclHttpResponseSchemas[route.action].parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:[...result.reason_codes]});
+    if(Buffer.byteLength(JSON.stringify(responseBody))>FCL_HTTP_RESPONSE_LIMITS[route.action]){json(response,503,{schema_version:FCL_HTTP_VERSION,status:'unavailable',data:null,reason_codes:['fcl_response_too_large']},undefined,true);return true;}
     json(response,200,responseBody,undefined,true);
     return true;
   }catch(error){

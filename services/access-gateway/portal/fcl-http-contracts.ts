@@ -120,6 +120,10 @@ export const FCL_HTTP_BODY_LIMITS:Record<FclHttpAction,number>={
 };
 
 export const FCL_HTTP_MAX_RESPONSE_BYTES=12*1024*1024;
+export const FCL_RATE_RESPONSE_BYTES=40*1024*1024;
+export const FCL_HTTP_RESPONSE_LIMITS:Record<FclHttpAction,number>=Object.fromEntries(
+  fclHttpActions.map(action=>[action,action.startsWith('rate-')?FCL_RATE_RESPONSE_BYTES:FCL_HTTP_MAX_RESPONSE_BYTES]),
+) as Record<FclHttpAction,number>;
 export const FCL_PUBLIC_BODY_LIMITS={
   session:1024,
   submit:1024*1024,

@@ -40,6 +40,8 @@ export interface FclHttpDependencies{
   readonly secureCookie?:boolean;
   readonly publicAttemptLimit?:number;
   readonly publicAttemptWindowMs?:number;
+  readonly publicAttemptKeyLimit?:number;
+  readonly now?:()=>number;
 }
 
 export interface FclPublicSession{
@@ -112,14 +114,14 @@ export class FclPublicSessionManager{
 
 class FclPublicAttemptLimiter{
   private readonly attempts=new Map<string,{windowStarted:number;count:number}>();
-  constructor(private readonly limit:number,private readonly windowMs:number,private readonly now:()=>number=Date.now){
-    if(!Number.isInteger(limit)||limit<1||limit>10_000||!Number.isInteger(windowMs)||windowMs<1_000||windowMs>86_400_000)throw new Error('fcl_public_attempt_limit_invalid');
+  constructor(private readonly limit:number,private readonly windowMs:number,private readonly keyLimit:number,private readonly now:()=>number=Date.now){
+    if(!Number.isInteger(limit)||limit<1||limit>10_000||!Number.isInteger(keyLimit)||keyLimit<1||keyLimit>100_000||!Number.isInteger(windowMs)||windowMs<1_000||windowMs>86_400_000)throw new Error('fcl_public_attempt_limit_invalid');
   }
   allow(key:string):boolean{
     const now=this.now();
     for(const [candidate,value] of this.attempts)if(value.windowStarted+this.windowMs<=now)this.attempts.delete(candidate);
     const current=this.attempts.get(key);
-    if(!current&&this.attempts.size>=4096)return false;
+    if(!current&&this.attempts.size>=this.keyLimit)return false;
     if(!current||current.windowStarted+this.windowMs<=now){this.attempts.set(key,{windowStarted:now,count:1});return true;}
     if(current.count>=this.limit)return false;
     current.count+=1;return true;
@@ -134,8 +136,9 @@ export class FclHttpService{
   readonly publicSessions:FclPublicSessionManager;
   private readonly publicAttempts:FclPublicAttemptLimiter;
   constructor(private readonly dependencies:FclHttpDependencies){
-    this.publicSessions=new FclPublicSessionManager(dependencies.publicSessionSecret,Date.now,dependencies.secureCookie===true);
-    this.publicAttempts=new FclPublicAttemptLimiter(dependencies.publicAttemptLimit??60,dependencies.publicAttemptWindowMs??60_000);
+    const now=dependencies.now??Date.now;
+    this.publicSessions=new FclPublicSessionManager(dependencies.publicSessionSecret,now,dependencies.secureCookie===true);
+    this.publicAttempts=new FclPublicAttemptLimiter(dependencies.publicAttemptLimit??60,dependencies.publicAttemptWindowMs??60_000,dependencies.publicAttemptKeyLimit??10_000,now);
   }
   consumePublicAttempt(key:string):void{if(!this.publicAttempts.allow(key))throw new PortalError('fcl_rate_limited');}
   capability(identity:PortalIdentity):{fcl_personal:boolean;receiver_user_id:string|null;business_date:string}{
@@ -204,6 +207,7 @@ export class FclHttpService{
   }
   async executePublicAction(ctx:PortalContext,action:'submit'|'exchange'|'get'|'supplement'|'logout',input:unknown,key:()=>string,cookieHeader:string|undefined|null):Promise<{status:FclHttpResult['status'];data:unknown;reason_codes:readonly string[];setCookie?:string}>{
     const current=this.publicSessions.read(cookieHeader);
+    if(action==='exchange'||action==='logout')key();
     if(action==='submit'){
       const ensured=this.publicSessions.ensure(cookieHeader),payload=parse(fclCaseInputSchema,input,'fcl_input_invalid');
       const result=await this.dependencies.caseService.submitFclInquiry(ensured.session.sessionId,key(),payload);

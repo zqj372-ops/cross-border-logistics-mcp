@@ -519,7 +519,7 @@ POST notification-save
 
 `fcl-http-contracts.ts` 用现有 service Zod Schema 生成每个 action 的闭合 request/response map；response 成功态绑定对应 data Schema，`blocked/unavailable` 的 error data 为 `null`，`quote-match` 保留 matcher 的 MatchData 证据。CLI/OpenAPI 必须复用该 map，不复制第二套字段。生成的 FCL HTTP response schema 会对实际序列化 envelope 再验证。
 
-`fcl-http-contracts.ts` 同时导出 `FCL_HTTP_BODY_LIMITS`、公开 action body limits 和 `FCL_HTTP_MAX_RESPONSE_BYTES`，作为 CLI/OpenAPI 的统一 transport 限制。`rate-save` 允许 16 MiB 的合法 Rate dataset，其余 Quote/Case/Document/Notification 请求使用按合同收紧的有界上限；超过上限返回 HTTP 413、`needs_input`、`body_too_large`，不会伪装成服务不可用。该字节上限是领域 Schema 之外额外请求限制，超长备注或大批量数据应缩减后拆分提交。
+`fcl-http-contracts.ts` 同时导出 `FCL_HTTP_BODY_LIMITS`、`FCL_HTTP_RESPONSE_LIMITS`、公开 action body limits 和 response limit，作为 CLI/OpenAPI 的统一 transport 限制。`rate-save` 允许 16 MiB 的合法 Rate dataset，rate 相关响应允许 40 MiB 以覆盖 draft+active 两份数据，其余 Quote/Case/Document/Notification 使用 12 MiB 响应上限；超过请求上限返回 HTTP 413、`needs_input`、`body_too_large`，不会伪装成服务不可用。该字节上限是领域 Schema 之外额外限制；超长备注或大批量数据应缩减备注/条目后重新保存完整 dataset。当前 save 是替换而不是追加，不得把数据拆成多次 save 以免覆盖丢失。
 
 ### FCL.13a.2 Public inquiry HTTP 与本票 session
 
@@ -540,7 +540,7 @@ POST /inquiry/api/v1/logout
 
 `GET /inquiry/api/v1/fcl` 只允许 `inquiry_id` query，必须等于 cookie 绑定票；`supplement` 的薄 wrapper 显式包含同一 `inquiry_id`，去除该字段后才调用既有 Case 客户补料 Schema。跨票、跨标签页或 credential query 一律拒绝，不把 A 票操作发送到 B 票。每次 CaseService 读取仍重新校验 credential 到期。
 
-公开响应使用同一 FCL HTTP version 和裸五状态 envelope；submit/exchange/get/supplement 的成功 data 非空，logout 成功 data 为 null，错误 data 为 null。公开 session 只返回公开 allowlist，不返回内部 Case/Cost/Sell/GP、审核原因、handoff 备注或 receiver 信息。内存中有界 per-IP attempt limiter 限制 bootstrap/exchange 滥用；它不复用海关 20 次公共配额，也不建立新 Quota 业务平台。
+公开响应使用同一 FCL HTTP version 和裸五状态 envelope；submit/exchange/get/supplement 的成功 data 非空，logout 成功 data 为 null，错误 data 为 null。公开 session 只返回公开 allowlist，不返回内部 Case/Cost/Sell/GP、审核原因、handoff 备注或 receiver 信息。内存中有界 per-IP attempt limiter 限制 bootstrap/exchange 滥用；key 总量固定为 10,000，清理到期项后仍满则对新 key 返回 429，不驱逐仍有效旧 key。它不复用海关 20 次公共配额，也不建立新 Quota 业务平台。exchange/logout 与其他公开写一样验证现有 `Idempotency-Key` 头，但不新增业务幂等表。
 
 ### FCL.13a.3 Notification 配置与提交行为
 
