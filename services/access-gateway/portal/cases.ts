@@ -886,7 +886,11 @@ export class CaseService {
       if (result !== null && typeof result === 'object' && 'then' in result) throw new PortalError('fcl_handoff_async_forbidden');
       return result;
     } catch (error) {
-      if (!committed) { try { db.exec('ROLLBACK'); } catch { /* Preserve the handoff failure. */ } }
+      if (!committed) {
+        let transactionOpen = true;
+        try { transactionOpen = (this.store.db as DatabaseSync & { isTransaction: boolean }).isTransaction; } catch { /* Preserve the handoff failure. */ }
+        if (transactionOpen) { try { db.exec('ROLLBACK'); } catch { /* Preserve the handoff failure. */ } }
+      }
       throw error;
     }
   }

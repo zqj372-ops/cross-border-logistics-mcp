@@ -381,3 +381,97 @@ node --import tsx/esm deploy/scripts/generate-native-schemas.ts
 - renderer 只接收显式 customer input、template 和 FCL 客户 metadata。手续费仅使用 sell 投影，客户 scope 使用人类可读 service/范围名称；sentinel 成本、GP、供应商、source 原文和 internal note 不进入 HTML/PDF。filename 由服务端按文档 ID/version 生成。
 
 FCL.11-R1 进一步将 FCL 客户表格固定为 7 列（费用项目、数量、单位、单价、币种、小计、说明），把客户备注扩展到 33% 宽度并维持 A4、分页和旧企业 8 列输出不变。FCL 只显示实际提供的换算率与可计算换算结果，单 USD 无 FX 时只显示原币合计；history 在既无 PDF bytes 也无 binding 时返回 `fcl_document_history_bytes_missing`，有 PDF 但无 binding 继续 fail closed。
+
+## FCL.12 实施说明
+
+本节点只实现隔离服务层的已批准报价交接，不新增 Handoff 服务、Booking、Shipment、Order 或数据库表。交接权威仍是既有 `business_case_events` 与 `business_case_idempotency`；事件固定为 `kind=fcl_handoff_recorded`、`visibility=internal`。内部事件不进入公开 Case event allowlist，客户可见 Case 摘要不包含 `handoff_note`。
+
+### FCL.12.1 实际服务 API 与闭合 DTO
+
+实现入口为现有 `DocumentWorkflowService` 的两个同步方法：
+
+```text
+saveFclHandoff(ctx, input, key): FclHandoffView
+getFclHandoff(ctx, input): FclHandoffView
+```
+
+`saveFclHandoff` 的闭合请求为 `fcl-handoff@2026-09-21.v1`：
+
+```json
+{
+  "contract_version":"fcl-handoff@2026-09-21.v1",
+  "case_ref":"<uuid>",
+  "expected_case_version":2,
+  "expected_customer_supplement_ref":"<uuid|null>",
+  "quote_ref":"<uuid>",
+  "expected_quote_version":1,
+  "expected_quote_digest":"<sha256-hex>",
+  "document_id":"<uuid>",
+  "expected_document_version":2,
+  "expected_pdf_sha256":"<sha256-hex>",
+  "confirmed":true,
+  "note":"<trimmed 1..2000 characters>"
+}
+```
+
+客户端不能提交客户名称、地址、成本、售价、Rate、审批人、actor、事件 ID、时间或持久化 owner；这些字段全部由服务端从当前 Case、Quote、Document 和已验证 PDF binding 派生。
+
+`getFclHandoff` 的闭合请求只有：
+
+```json
+{
+  "contract_version":"fcl-handoff@2026-09-21.v1",
+  "case_ref":"<uuid>"
+}
+```
+
+两个方法共用闭合输出：
+
+```json
+{
+  "contract_version":"fcl-handoff@2026-09-21.v1",
+  "case_ref":"<uuid>",
+  "status":"pending|handed_off",
+  "reason_codes":["<bounded reason>"],
+  "current":null,
+  "history":[],
+  "replay":{
+    "replayed":false,
+    "submitted_request_digest":null,
+    "submitted_current":false
+  }
+}
+```
+
+`current` 和 `history` 的每一项是闭合 Handoff payload，只保存 Case/Quote/Document/approved revision/PDF 的 opaque refs、digest、客户路由/柜型投影、批准时间、内部交接备注、actor/time 和 `request_digest`；不复制 Cost/Sell/Rate 权威表，也不生成第二份报价或审批对象。无事件时返回 `pending` 和 `fcl_handoff_not_recorded`；当前 Case、Quote、Rate、模板、日期、Document 或 PDF 变化时，旧事件只进入 `history`，当前状态返回 `pending`。
+
+### FCL.12.2 冲突、重放和容量
+
+- `saveFclHandoff` 要求 Quote 当前、Document 已批准、审批 decision/HMAC 有效且正式 PDF binding 与 bytes 均已存在。不会为 handoff 自动渲染 PDF、自动审批、发邮件或写入 Booking。
+- 同一 `key`、同一请求 `request_digest` 重放时，使用固定 `scope/key/request_digest` 重新定位原 event，不按当前 Case/Quote/Document 新版本门禁拒绝历史恢复，也不重复插入 event 或 idempotency。
+- 重放输出显式设置 `replay.replayed=true`、`replay.submitted_request_digest=<原请求摘要>` 和 `replay.submitted_current`。该字段只在原 event 仍通过当前 Case/Quote/Rate/模板/Document/PDF currentness 时为 `true`；变化时为 `false`，并返回派生出的 `pending/current=null` 视图，不把历史事件伪装成当前交接。
+- 同一 Document approved revision、approved version 和 PDF digest 使用不同 key 时返回 `fcl_handoff_already_recorded`，不追加第二个歧义事件。
+- Handoff 历史最多 100 条。写入前在 Case 事务提交前校验容量，已有 100 条时第 101 条返回 `fcl_handoff_history_limit_exceeded`，不会先提交再让后续读取永久失败。读取侧也明确检测超过 100 条而不是静默截断。
+
+### FCL.12.3 锁顺序与唯一 Case 业务写
+
+保存路径固定使用以下同步顺序：
+
+```text
+Case BEGIN IMMEDIATE
+  -> Native Rate BEGIN IMMEDIATE
+  -> Document BEGIN IMMEDIATE
+  -> 验证 Case/Quote/Document/PDF 并构造服务端 payload
+  -> 写 Case event 与 Case idempotency
+  -> COMMIT Case
+  -> 完成 event/idempotency 读回
+  -> 释放 Document，再释放 Rate
+```
+
+Document 写 guard 保持到 Case COMMIT 和提交后读回完成；它不是 FCL.11 的只读 snapshot。Native/Document 尚未提交或验证失败时仍按其正常 guard 回滚，不禁止其既有安全回滚。Case event 与 idempotency 仍是唯一 Handoff 写入；`recordFclHandoffInTransaction` 要求真实活动事务，不能独立自动提交半写。
+
+插入前后会核对完整的 `business_cases` row 与不可变 FCL Inquiry 原件；插入后在同一 Case 事务和 COMMIT 后分别核对 event metadata、payload、idempotency key/digest/case 绑定。若数据库已实际完成 `COMMIT` 后才发生 transport 异常，catch 先读取真实 `isTransaction` 状态；事务已结束时不发无效 `ROLLBACK`，保留原异常。相同 key 重试仍恢复原事件且不重复写入。
+
+### FCL.12.4 未交付入口
+
+CLI、HTTP、UI 和 MCP 暴露仍待 FCL.13；本节点没有新增 route、没有新增 MCP tool、没有改变现有 Case/Quote/Document 公共合同。FCL.12 只交付上述服务层方法和生成 Schema，部署、真实连接、外部邮件、Booking/SO 及生产业务验收均不在本节点范围内。

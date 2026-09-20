@@ -352,13 +352,14 @@ it('rolls back event and idempotency when handoff readback evidence is tampered'
   }finally{closeFixture(caseTamper);}
 });
 
-it('recovers a committed handoff exactly once after a post-COMMIT transport failure',async()=>{
+it('recovers a committed handoff exactly once without an invalid rollback after post-COMMIT transport failure',async()=>{
   const f=await readyFixture();
   try{
     const request=handoffRequest(f),db=f.caseStore.db as unknown as {exec:(sql:string)=>unknown},original=db.exec.bind(db);
-    let fired=false;
-    db.exec=(sql:string)=>{const result=original(sql);if(sql==='COMMIT'&&!fired){fired=true;throw new Error('post_commit_transport');}return result;};
-    expect(()=>f.workflow.saveFclHandoff(receiver,request,'fcl-handoff-postcommit-0001')).toThrow('post_commit_transport');
+    let fired=false,rollbacks=0;
+    db.exec=(sql:string)=>{if(sql==='ROLLBACK')rollbacks++;const result=original(sql);if(sql==='COMMIT'&&!fired){fired=true;throw new Error('local_actual_commit_exception');}return result;};
+    expect(()=>f.workflow.saveFclHandoff(receiver,request,'fcl-handoff-postcommit-0001')).toThrow('local_actual_commit_exception');
+    expect(rollbacks).toBe(0);
     db.exec=original;
     f.setClock('2026-10-08T12:01:00.000Z');
     const replay=f.workflow.saveFclHandoff(receiver,request,'fcl-handoff-postcommit-0001');
