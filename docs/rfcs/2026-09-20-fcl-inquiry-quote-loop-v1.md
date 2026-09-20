@@ -290,3 +290,15 @@ npx --no-install vitest run tests/e2e/shipper-inquiry.test.ts tests/access-gatew
 - 写事务在 idempotency INSERT 前执行语义 readback，核对预期 version/status/input、事件 payload/actual actor 和原件 digest；失败会回滚 Case、event 和 idempotency。提交后再次读回。
 - `listFclCases` 接受闭合 limit/status/cursor 查询，返回稳定的 newest-first cursor 分页。列表项由 internal view 显式 omit 原件、完整 event 历史、receiver 元数据和通知元数据；详情读取才返回完整内部视图。
 - 客户可见摘要只投影 `visibility=customer` 的提交、补充和 status 事件。内部确认理由、internal note、receiver ID、凭据 hash 和匿名 session hash 不进入公共响应。
+
+## FCL.5 实施说明
+
+本节点复用 `NativeAdminStore` 现有四表，只为 FCL 增加显式 kind/scope/合同，不创建新表或第二套发布仓库。
+
+- FCL dataset 固定 `fcl-rate-dataset@2026-09-20.v1`，覆盖 supplier/source/version、有效日期、柜型海运费和 additional fees。金额使用非负 decimal string；CNTR/SHIPMENT 的 container 条件由 closed discriminated union 表达，跨 item 的 container 关系由共享 service validator 执行。
+- `NativeAdminStore` 默认仍是 v2。FCL 需要显式 `fresh_fixture` 或 `exclusive_verified` 升级到 v3；前者只在四张 native 表都为空时允许，后者必须执行服务端同步 exclusive callback。旧 reader 对 v3 拒绝打开。
+- FCL scope 固定为 `fcl-person:<receiver user id>`，只接受已验证、无组织且 userId 等于配置 receiver 的 context。每次 read/write/replay 都重新验证 receiver callback；其他个人、组织角色和 platform operator 无回退权限。
+- `get/preview/save/publish/disable/rollback` 共用既有 CAS、preview hash、reviewed confirmation、audit 和 idempotency。FCL active release 读取闭合校验 row id、release id、positive version、ISO published_at、完整 dataset、digest 和 scope/kind。
+- 保存 draft 允许保留有效期已过但结构/来源/币种完整的资料；本节点不按当前日期阻断发布，真实 Ready/签发日期约束留给后续报价节点。
+- FCL rollback 不改 active 指向旧 release，而是以旧内容创建新的 release id 和新 version。测试覆盖 R2 → R4 → 回滚生成 R6，R6 内容匹配 R2 但 release id 不同，旧报价来源不会被重新恢复为当前 release。
+- FCL 写事务在 COMMIT 前执行 draft/active/release/version/audit exact readback，并比较完整 expected release。任何失败回滚业务表和 audit；COMMIT 后的读取错误不再触发二次 ROLLBACK。
