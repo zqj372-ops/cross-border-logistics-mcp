@@ -41,9 +41,9 @@ export function renderHtml(d:QuoteDocument,t:QuoteTemplate,approved:boolean,fclM
  const legacyRows=visible.map(f=>`<tr><td>${e(f.group)} · ${e(f.name)}</td><td>${e(f.description)}</td><td class="num">${e(f.quantity)}</td><td>${e(f.unit)}</td><td class="num">${e(f.unit_price)}</td><td>${f.currency}</td><td class="num strong">${f.amount}</td><td>${e(f.note)}</td></tr>`).join('')+[...merged.values()].map(f=>`<tr><td colspan="5">${e(f.name)}</td><td>${f.currency}</td><td class="num strong">${f.amount.toFixed(2)}</td><td></td></tr>`).join('');
  const fclRows=visible.map(f=>`<tr><td>${e(f.group)} · ${e(f.name)}</td><td class="num">${e(f.quantity)}</td><td>${e(f.unit)}</td><td class="num">${e(f.unit_price)}</td><td>${f.currency}</td><td class="num strong">${f.amount}</td><td>${e(f.note)}</td></tr>`).join('')+[...merged.values()].map(f=>`<tr><td colspan="5">${e(f.name)}</td><td>${f.currency}</td><td class="num strong">${f.amount.toFixed(2)}</td></tr>`).join('');
  const rows=fclMetadata?fclRows:legacyRows;
- const hasNonUsd=result.by_currency.CAD!=='0.00'||result.by_currency.CNY!=='0.00';
- const fclRateParts=(['USD','CAD'] as const).flatMap(currency=>d.exchange_rates[currency]===null?[]:[`1 ${currency} = ${d.exchange_rates[currency]} CNY`]);
- const fclConversionCards=`${result.total_cny!==null?`<div class="total-card"><h3>折算人民币</h3><strong>${result.total_cny} CNY</strong></div>`:''}${hasNonUsd&&result.total_usd!==null?`<div class="total-card"><h3>折算美元</h3><strong>${result.total_usd} USD</strong></div>`:''}`;
+ const hasNonCny=result.by_currency.USD!=='0.00'||result.by_currency.CAD!=='0.00',hasNonUsd=result.by_currency.CAD!=='0.00'||result.by_currency.CNY!=='0.00';
+ const fclConversionCards=`${hasNonCny&&result.total_cny!==null?`<div class="total-card"><h3>折算人民币</h3><strong>${result.total_cny} CNY</strong></div>`:''}${hasNonUsd&&result.total_usd!==null?`<div class="total-card"><h3>折算美元</h3><strong>${result.total_usd} USD</strong></div>`:''}`;
+ const fclRateParts=fclConversionCards===''?[]:(['USD','CAD'] as const).flatMap(currency=>result.by_currency[currency]==='0.00'||d.exchange_rates[currency]===null?[]:[`1 ${currency} = ${d.exchange_rates[currency]} CNY`]);
  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:"><title>${e(d.quote_no)}</title><style>
   @page { size: A4; margin: 14mm; }
   * { box-sizing: border-box; }
