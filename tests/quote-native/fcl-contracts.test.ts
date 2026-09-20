@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
   FCL_RATE_DATASET_VERSION,
+  fclQuoteSchemas,
   fclRateDatasetSchema,
   validateFclRateDataset,
 } from '../../services/quote-native/fcl-contracts';
@@ -133,5 +135,17 @@ describe('FCL rate dataset contract', () => {
     const longNote = dataset();
     longNote.rates[0]!.note = 'x'.repeat(2001);
     expect(fclRateDatasetSchema.safeParse(longNote).success).toBe(false);
+  });
+
+  it('keeps generated FCL quote schemas synchronized and Draft 2020-12 compilable', () => {
+    const ajv = new Ajv2020({ strict: false });
+    addFormats(ajv);
+    for (const [name, schema] of Object.entries(fclQuoteSchemas)) {
+      const generated = JSON.parse(
+        readFileSync(`schemas/admin-control/quote-documents/fcl-quote-${name}.schema.json`, 'utf8'),
+      ) as unknown;
+      expect(generated).toEqual(z.toJSONSchema(schema, { target: 'draft-2020-12' }));
+      expect(() => ajv.compile(generated as object)).not.toThrow();
+    }
   });
 });

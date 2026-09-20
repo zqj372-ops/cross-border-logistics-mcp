@@ -302,3 +302,16 @@ npx --no-install vitest run tests/e2e/shipper-inquiry.test.ts tests/access-gatew
 - 保存 draft 允许保留有效期已过但结构/来源/币种完整的资料；本节点不按当前日期阻断发布，真实 Ready/签发日期约束留给后续报价节点。
 - FCL rollback 不改 active 指向旧 release，而是以旧内容创建新的 release id 和新 version。测试覆盖 R2 → R4 → 回滚生成 R6，R6 内容匹配 R2 但 release id 不同，旧报价来源不会被重新恢复为当前 release。
 - FCL 写事务在 COMMIT 前执行 draft/active/release/version/audit exact readback，并比较完整 expected release。任何失败回滚业务表和 audit；COMMIT 后的读取错误不再触发二次 ROLLBACK。
+
+## FCL.6 实施说明
+
+本节点只实现服务层精确匹配，不保存报价、审核结果、正式文件或 HTTP 路由。
+
+- 新 `FclQuoteService` 只依赖 `CaseService.getFclCase` 和 `NativeAdminService.get(ctx,'fcl')` 的已授权读回，不直接访问数据库，也不接受客户端提供的 Case payload、Rate、价格、owner 或 source。
+- 请求固定 `fcl-quote-workflow@2026-09-20.v1`，只允许 case binding、expected version/ref 和可选 selected rate id；未知字段拒绝。
+- 匹配只接受精确 POL、POD、全部柜型覆盖且 Ready Date 位于同一 Rate header 的有效期。不会推断深圳/盐田、Vancouver/Prince Rupert、40HQ/40GP 或跨多个 Rate 拼接柜型。
+- Case version、expected customer supplement ref 和终态先于候选计算检查。随后先返回缺字段 `needs_input`，再处理字段齐全但未确认/需复核的 `manual_review`；来源读取失败不得遮盖 Case 缺项。stale binding 和 closed/cancelled 为 `blocked`。
+- 无 active FCL release、发布损坏或读取失败为 `unavailable`；零候选为 `manual_review`；多候选未指定为 `manual_review` 并列出全部候选；显式 selected id 必须在候选集合中并重新满足全部条件，非候选 id 为 `blocked`。
+- 选中快照保存完整 Rate、rate/release id、release version、dataset digest、source ref/version、有效期、selected_at、Case version/latest supplement ref 和匹配 trace。该结果不等于审核、批准或正式报价。
+- 当前 clock 只用于 selected_at，不替代 cargo_ready_date；clock 必须是严格 ISO datetime，否则统一 `fcl_quote_clock_unavailable`。future Rate window 可作为成本候选，正式签发门禁仍留 FCL.9。
+- 生成 `fcl-quote-request.schema.json` 和 `fcl-quote-response.schema.json`；未知字段、五状态和来源快照均有闭合 Draft 2020-12 合同。

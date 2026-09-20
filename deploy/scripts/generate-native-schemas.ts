@@ -2,6 +2,7 @@ import {maritimeDatasetSchema,maritimeQuerySchema,maritimeResponseSchema} from '
 import {packageSchemas} from '../../services/customs-native/package-contracts';
 import {quoteDocumentSchemas,outputSchemas,quoteDocumentSchemasV2,linkedResponseSchemas,linkedErrorEnvelopeSchema} from '../../services/quote-documents/contracts';
 import {workflowRequestSchemas,workflowOutputSchemas,workflowErrorEnvelopeSchema} from '../../services/quote-documents/workflow-contracts';
+import {fclQuoteSchemas} from '../../services/quote-native/fcl-contracts';
 import { z } from 'zod';
 import { writeFileSync,mkdirSync } from 'node:fs';
 import { nativeSchemas } from '../../services/access-gateway/portal/native-admin-contracts';
@@ -13,6 +14,7 @@ mkdirSync('schemas/admin-control/quote-documents',{recursive:true});
 for(const [name,schema] of Object.entries({...quoteDocumentSchemas,...Object.fromEntries(Object.entries(outputSchemas).map(([key,value])=>[key+'-output',value]))}))writeFileSync(`schemas/admin-control/quote-documents/${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 for(const [name,schema] of Object.entries({...quoteDocumentSchemasV2,...Object.fromEntries(Object.entries(linkedResponseSchemas).map(([key,value])=>[key+'-v2-response',value])),'linked-error-v2-response':linkedErrorEnvelopeSchema}))writeFileSync(`schemas/admin-control/quote-documents/${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 for(const [name,schema] of Object.entries({...Object.fromEntries(Object.entries(workflowRequestSchemas).map(([key,value])=>[`${key}-v3-request`,value])),...Object.fromEntries(Object.entries(workflowOutputSchemas).map(([key,value])=>[`${key}-v3-output`,value])),'workflow-error-v3-response':workflowErrorEnvelopeSchema}))writeFileSync(`schemas/admin-control/quote-documents/${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
+for(const [name,schema] of Object.entries(fclQuoteSchemas))writeFileSync(`schemas/admin-control/quote-documents/fcl-quote-${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 
 mkdirSync('schemas/admin-control/customs-packages',{recursive:true});for(const [name,schema] of Object.entries(packageSchemas))writeFileSync(`schemas/admin-control/customs-packages/${name}.schema.json`,JSON.stringify(z.toJSONSchema(schema,{target:'draft-2020-12'}),null,2)+'\n');
 

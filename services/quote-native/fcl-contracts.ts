@@ -36,7 +36,7 @@ const fclAdditionalFeeSchema = z.discriminatedUnion('unit', [
   z.object({ ...fclAdditionalFeeBase, unit: z.literal('SHIPMENT'), container_type: z.null() }).strict(),
 ]);
 
-const fclRateSchema = z.object({
+export const fclRateSchema = z.object({
   rate_id: z.string().uuid(),
   supplier_label: identifier(),
   pol: identifier(),
@@ -105,3 +105,70 @@ export function validateFclRateDataset(input: unknown): string[] {
   }
   return ['fcl_rate_dataset_structure_invalid'];
 }
+
+export const FCL_QUOTE_WORKFLOW_VERSION = 'fcl-quote-workflow@2026-09-20.v1' as const;
+
+export const fclQuoteMatchRequestSchema = z.object({
+  contract_version: z.literal(FCL_QUOTE_WORKFLOW_VERSION),
+  case_ref: z.string().uuid(),
+  expected_case_version: z.number().int().positive(),
+  expected_customer_supplement_ref: z.string().uuid().nullable(),
+  selected_rate_id: z.string().uuid().nullable(),
+}).strict();
+
+export const fclQuoteCaseBindingSchema = z.object({
+  case_ref: z.string().uuid(),
+  case_version: z.number().int().positive(),
+  latest_customer_supplement_ref: z.string().uuid().nullable(),
+}).strict();
+
+export const fclQuoteSourceRefSchema = z.object({
+  rate_id: z.string().uuid(),
+  release_id: z.string().uuid(),
+  release_version: z.number().int().positive(),
+  dataset_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  source_ref: identifier(),
+  source_version: identifier(),
+  valid_from: date(),
+  valid_until: date(),
+}).strict();
+
+export const fclQuoteCandidateSchema = fclQuoteSourceRefSchema.extend({
+  rate: fclRateSchema,
+}).strict();
+
+export const fclQuoteSelectedSnapshotSchema = fclQuoteCandidateSchema.extend({
+  selected_at: z.iso.datetime(),
+  case_ref: z.string().uuid(),
+  case_version: z.number().int().positive(),
+  latest_customer_supplement_ref: z.string().uuid().nullable(),
+}).strict();
+
+export const fclQuoteTraceStepSchema = z.object({
+  step: z.string().min(1).max(120),
+  detail: z.string().min(1).max(1000),
+}).strict();
+
+export const fclQuoteMatchDataSchema = z.object({
+  case_binding: fclQuoteCaseBindingSchema,
+  candidates: z.array(fclQuoteCandidateSchema).max(500),
+  selected: fclQuoteSelectedSnapshotSchema.nullable(),
+  missing_fields: z.array(z.string().min(1).max(200)).max(32),
+  source_refs: z.array(fclQuoteSourceRefSchema).max(500),
+  assumptions: z.array(z.string().max(1000)).max(50),
+  warnings: z.array(z.string().max(1000)).max(50),
+  blockers: z.array(z.string().max(1000)).max(50),
+  calculation_trace: z.array(fclQuoteTraceStepSchema).max(200),
+}).strict();
+
+export const fclQuoteResponseSchema = z.object({
+  contract_version: z.literal(FCL_QUOTE_WORKFLOW_VERSION),
+  status: z.enum(['success', 'needs_input', 'manual_review', 'blocked', 'unavailable']),
+  data: fclQuoteMatchDataSchema,
+  reason_codes: z.array(z.string().min(1).max(120)).max(32),
+}).strict();
+
+export const fclQuoteSchemas = {
+  request: fclQuoteMatchRequestSchema,
+  response: fclQuoteResponseSchema,
+} as const;

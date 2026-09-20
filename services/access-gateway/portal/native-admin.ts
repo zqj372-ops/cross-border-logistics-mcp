@@ -31,6 +31,14 @@ const LEGACY_SCHEMA_VERSION = 2;
 type NativeInput = CustomsDataset | ResidentialRates | MaritimeDataset | FclRateDataset;
 interface Row { scope: string; kind: NativeKind; version: number; draft: string; active: string | null }
 export interface NativePublication<T = NativeInput> { release_id: string; version: number; input: T; published_at: string; digest: string }
+export interface FclRateHistoryItem { release_id: string; version: number; label: string; published_at: string; digest: string }
+export interface FclRateAdminView {
+  kind: 'fcl';
+  version: number;
+  draft: FclRateDataset | null;
+  active_release: FclRatePublication | null;
+  history: FclRateHistoryItem[];
+}
 
 export type NativeAdminStoreOptions = {
   fcl?:
@@ -228,7 +236,7 @@ export class NativeAdminService {
     if (!row) throw new PortalError('native_release_not_found');
     return this.parseFclRelease(row.id, row.payload);
   }
-  private fclGet(scope: string) {
+  private fclGet(scope: string): FclRateAdminView {
     const row = this.row(scope, 'fcl');
     let draft: FclRateDataset | null;
     try {
