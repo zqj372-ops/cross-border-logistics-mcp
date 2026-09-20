@@ -204,15 +204,18 @@ describe('personal FCL document configuration',()=>{
     documentStore.close();
   });
 
-  it('blocks a second same-process handle and an external process handle before v4 migration',async()=>{
+  it('blocks a second same-process handle before v4 migration',()=>{
     const dir=root(),path=join(dir,'documents.sqlite');
-    let documentStore=new DocumentStore(path,freshFcl);
+    const documentStore=new DocumentStore(path,freshFcl);
     const second=new DocumentStore(path,freshFcl);
     expect(()=>service(documentStore)).toThrow('fcl_upgrade_old_writer_open');
     second.close();
     documentStore.close();
+  });
 
-    documentStore=new DocumentStore(path,freshFcl);
+  it.skipIf(process.platform!=='linux')('blocks an external process handle before v4 migration',async()=>{
+    const dir=root(),path=join(dir,'documents.sqlite');
+    const documentStore=new DocumentStore(path,freshFcl);
     const alias=join(dir,'documents-link.sqlite');
     linkSync(path,alias);
     const child=spawn(process.execPath,['--input-type=module','-e',"import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('PRAGMA journal_mode=WAL;');console.log('ready');setInterval(()=>{},1000);",alias],{stdio:['ignore','pipe','inherit']});
@@ -228,7 +231,13 @@ describe('personal FCL document configuration',()=>{
     }
   });
 
-  it('fails closed when external handles cannot be inspected',()=>{
+  it.skipIf(process.platform==='linux')('fails closed when /proc external handle inspection is unavailable',()=>{
+    const dir=root(),path=join(dir,'documents.sqlite'),documentStore=new DocumentStore(path,freshFcl);
+    expect(()=>assertNoExternalSqliteHandles(path)).toThrow('document_v3_upgrade_ownership_unverified');
+    documentStore.close();
+  });
+
+  it('fails closed when the exclusive ownership callback cannot verify the database',()=>{
     const dir=root(),path=join(dir,'documents.sqlite'),documentStore=new DocumentStore(path,verifiedFcl);
     expect(()=>service(documentStore,undefined,{fcl:{mode:'exclusive_verified',authorized:true,oldWritersStopped:true,assertExclusive:()=>{throw new Error('unverified');}}})).toThrow('fcl_upgrade_ownership_unverified');
     documentStore.close();
