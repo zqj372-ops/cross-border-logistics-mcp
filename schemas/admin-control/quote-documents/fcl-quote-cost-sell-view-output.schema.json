@@ -1,0 +1,1385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "fcl-document-workflow@2026-09-20.v1"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "fcl-cost-sell-snapshot@2026-09-20.v1"
+    },
+    "quote_ref": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "version": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "case_binding": {
+      "type": "object",
+      "properties": {
+        "case_ref": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "case_version": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "latest_customer_supplement_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "case_ref",
+        "case_version",
+        "latest_customer_supplement_ref"
+      ],
+      "additionalProperties": false
+    },
+    "source_snapshot": {
+      "type": "object",
+      "properties": {
+        "rate_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "release_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "release_version": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dataset_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "source_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "rate": {
+          "type": "object",
+          "properties": {
+            "rate_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "supplier_label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "pol": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "pod": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "valid_from": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            "valid_until": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            "source_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "source_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2000,
+                  "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "items": {
+              "minItems": 1,
+              "maxItems": 4,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "container_type": {
+                    "type": "string",
+                    "enum": [
+                      "20GP",
+                      "40GP",
+                      "40HQ",
+                      "45HQ"
+                    ]
+                  },
+                  "ocean_freight": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "USD",
+                      "CAD",
+                      "CNY"
+                    ]
+                  }
+                },
+                "required": [
+                  "container_type",
+                  "ocean_freight",
+                  "currency"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additional_fees": {
+              "maxItems": 30,
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+                      },
+                      "group": {
+                        "type": "string",
+                        "enum": [
+                          "A",
+                          "B",
+                          "C"
+                        ]
+                      },
+                      "service": {
+                        "type": "string",
+                        "enum": [
+                          "pickup",
+                          "export_customs",
+                          "ocean_freight",
+                          "canada_customs",
+                          "devanning_storage",
+                          "delivery"
+                        ]
+                      },
+                      "cost_price": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD",
+                          "CAD",
+                          "CNY"
+                        ]
+                      },
+                      "note": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 2000,
+                            "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "type": "string",
+                        "const": "CNTR"
+                      },
+                      "container_type": {
+                        "type": "string",
+                        "enum": [
+                          "20GP",
+                          "40GP",
+                          "40HQ",
+                          "45HQ"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "group",
+                      "service",
+                      "cost_price",
+                      "currency",
+                      "note",
+                      "unit",
+                      "container_type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+                      },
+                      "group": {
+                        "type": "string",
+                        "enum": [
+                          "A",
+                          "B",
+                          "C"
+                        ]
+                      },
+                      "service": {
+                        "type": "string",
+                        "enum": [
+                          "pickup",
+                          "export_customs",
+                          "ocean_freight",
+                          "canada_customs",
+                          "devanning_storage",
+                          "delivery"
+                        ]
+                      },
+                      "cost_price": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD",
+                          "CAD",
+                          "CNY"
+                        ]
+                      },
+                      "note": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 2000,
+                            "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "type": "string",
+                        "const": "SHIPMENT"
+                      },
+                      "container_type": {
+                        "type": "null"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "group",
+                      "service",
+                      "cost_price",
+                      "currency",
+                      "note",
+                      "unit",
+                      "container_type"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "rate_id",
+            "supplier_label",
+            "pol",
+            "pod",
+            "valid_from",
+            "valid_until",
+            "source_ref",
+            "source_version",
+            "note",
+            "items",
+            "additional_fees"
+          ],
+          "additionalProperties": false
+        },
+        "selected_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        "case_ref": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "case_version": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "latest_customer_supplement_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "rate_id",
+        "release_id",
+        "release_version",
+        "dataset_digest",
+        "source_ref",
+        "source_version",
+        "valid_from",
+        "valid_until",
+        "rate",
+        "selected_at",
+        "case_ref",
+        "case_version",
+        "latest_customer_supplement_ref"
+      ],
+      "additionalProperties": false
+    },
+    "case_projection": {
+      "type": "object",
+      "properties": {
+        "containers": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "20GP",
+                  "40GP",
+                  "40HQ",
+                  "45HQ"
+                ]
+              },
+              "quantity": {
+                "type": "string",
+                "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+              }
+            },
+            "required": [
+              "type",
+              "quantity"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "services": {
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "pickup",
+              "export_customs",
+              "ocean_freight",
+              "canada_customs",
+              "devanning_storage",
+              "delivery"
+            ]
+          }
+        },
+        "incoterm": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "containers",
+        "services",
+        "incoterm"
+      ],
+      "additionalProperties": false
+    },
+    "cost_rows": {
+      "maxItems": 120,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "row_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[a-z][A-Za-z0-9_:-]*$"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "ocean_freight",
+              "rate_fee",
+              "manual"
+            ]
+          },
+          "template_ref": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "template_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{2,63}$"
+                  },
+                  "template_version": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "item_key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{2,63}$"
+                  }
+                },
+                "required": [
+                  "template_id",
+                  "template_version",
+                  "item_key"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+          },
+          "group": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "enum": [
+              "pickup",
+              "export_customs",
+              "ocean_freight",
+              "canada_customs",
+              "devanning_storage",
+              "delivery"
+            ]
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "CNTR",
+              "SHIPMENT"
+            ]
+          },
+          "container_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "20GP",
+                  "40GP",
+                  "40HQ",
+                  "45HQ"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sell_price": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD",
+              "CAD",
+              "CNY"
+            ]
+          },
+          "internal_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quantity_conditions": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sell_amount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fully_priced": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "row_key",
+          "source_kind",
+          "template_ref",
+          "source_ref",
+          "source_version",
+          "name",
+          "group",
+          "service",
+          "quantity",
+          "unit",
+          "container_type",
+          "cost_price",
+          "sell_price",
+          "currency",
+          "internal_note",
+          "customer_note",
+          "evidence_ref",
+          "evidence_version",
+          "quantity_conditions",
+          "cost_amount",
+          "sell_amount",
+          "fully_priced"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "service_coverage": {
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "enum": [
+              "pickup",
+              "export_customs",
+              "ocean_freight",
+              "canada_customs",
+              "devanning_storage",
+              "delivery"
+            ]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "priced",
+              "included",
+              "free",
+              "out_of_scope"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "included_row_refs": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[a-z][A-Za-z0-9_:-]*$"
+            }
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "service",
+          "disposition",
+          "note",
+          "included_row_refs",
+          "actor",
+          "confirmed_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "exchange_rates": {
+      "type": "object",
+      "properties": {
+        "USD": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "CAD": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "USD",
+        "CAD"
+      ],
+      "additionalProperties": false
+    },
+    "remark": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 2000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "completeness": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "missing_fields": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        }
+      },
+      "required": [
+        "complete",
+        "partial",
+        "missing_fields"
+      ],
+      "additionalProperties": false
+    },
+    "calculation": {
+      "type": "object",
+      "properties": {
+        "calculation_version": {
+          "type": "string",
+          "const": "fcl-cost-sell-decimal-v1"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "by_currency": {
+          "type": "object",
+          "properties": {
+            "USD": {
+              "type": "object",
+              "properties": {
+                "cost_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revenue_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "gp_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "margin": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,6})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "complete": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "cost_subtotal",
+                "revenue_subtotal",
+                "gp_subtotal",
+                "margin",
+                "complete"
+              ],
+              "additionalProperties": false
+            },
+            "CAD": {
+              "type": "object",
+              "properties": {
+                "cost_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revenue_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "gp_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "margin": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,6})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "complete": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "cost_subtotal",
+                "revenue_subtotal",
+                "gp_subtotal",
+                "margin",
+                "complete"
+              ],
+              "additionalProperties": false
+            },
+            "CNY": {
+              "type": "object",
+              "properties": {
+                "cost_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revenue_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "gp_subtotal": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "margin": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,6})?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "complete": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "cost_subtotal",
+                "revenue_subtotal",
+                "gp_subtotal",
+                "margin",
+                "complete"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "USD",
+            "CAD",
+            "CNY"
+          ],
+          "additionalProperties": false
+        },
+        "unified_profit": {
+          "type": "object",
+          "properties": {
+            "currency": {
+              "type": "string",
+              "const": "CNY"
+            },
+            "cost_subtotal": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revenue_subtotal": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "gp_subtotal": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,2})?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "margin": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^-?(?:0|[1-9]\\d{0,31})(?:\\.\\d{1,6})?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "missing_fx": {
+              "maxItems": 2,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "USD",
+                  "CAD"
+                ]
+              }
+            }
+          },
+          "required": [
+            "currency",
+            "cost_subtotal",
+            "revenue_subtotal",
+            "gp_subtotal",
+            "margin",
+            "complete",
+            "missing_fx"
+          ],
+          "additionalProperties": false
+        },
+        "source_refs": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "case",
+                  "rate",
+                  "manual"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "ref",
+              "version",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "assumptions": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "warnings": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "blockers": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "calculation_trace": {
+          "maxItems": 300,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": [
+              "step",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "calculation_version",
+        "complete",
+        "partial",
+        "by_currency",
+        "unified_profit",
+        "source_refs",
+        "assumptions",
+        "warnings",
+        "blockers",
+        "calculation_trace"
+      ],
+      "additionalProperties": false
+    },
+    "content_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "actor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "current_version": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "historical": {
+      "type": "boolean"
+    },
+    "replay": {
+      "type": "object",
+      "properties": {
+        "replayed": {
+          "type": "boolean"
+        },
+        "submitted_version": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "replayed",
+        "submitted_version",
+        "current"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "contract_version",
+    "schema_version",
+    "quote_ref",
+    "version",
+    "case_binding",
+    "source_snapshot",
+    "case_projection",
+    "cost_rows",
+    "service_coverage",
+    "exchange_rates",
+    "remark",
+    "completeness",
+    "calculation",
+    "content_digest",
+    "actor",
+    "created_at",
+    "current_version",
+    "historical",
+    "replay"
+  ],
+  "additionalProperties": false
+}

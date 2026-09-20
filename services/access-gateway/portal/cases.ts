@@ -860,6 +860,23 @@ export class CaseService {
     if (!row || row.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
     return this.fclInternalView(row);
   }
+  withFclReadLock<T>(ctx: PortalContext, operation: () => T extends Promise<unknown> ? never : T): T {
+    this.requireFclReceiver(ctx);
+    if (Object.prototype.toString.call(operation) === '[object AsyncFunction]') throw new PortalError('fcl_read_lock_async_forbidden');
+    const db = this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = operation();
+      if (result !== null && typeof result === 'object' && 'then' in result) {
+        throw new PortalError('fcl_read_lock_async_forbidden');
+      }
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch { /* Preserve the operation or commit error. */ }
+      throw error;
+    }
+  }
   listFclCases(ctx: PortalContext, input: unknown = undefined) {
     const options = this.requireFclReceiver(ctx);
     const defaults = { limit: 25, status: null, cursor: null };

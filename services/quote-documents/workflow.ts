@@ -3,6 +3,8 @@ import {readdirSync,statSync} from 'node:fs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
+import type {CaseService} from '../access-gateway/portal/cases';
+import type {NativeAdminService} from '../access-gateway/portal/native-admin';
 import type {DocumentFclStoreOptions,DocumentService,DocumentStore} from './service';
 import {calculate,renderHtml} from './engine';
 import {renderPdf} from './renderer';
@@ -33,6 +35,19 @@ import {
   fclConfigViewSchema,
   type FclConfigView,
 } from './fcl-contracts';
+import {
+  buildFclCostSellSnapshot,
+  FCL_QUOTE_WORKFLOW_VERSION,
+  fclQuoteGetRequestSchema,
+  fclQuoteListSchema,
+  fclQuoteListRequestSchema,
+  fclQuoteReferenceSchema,
+  fclQuoteSaveRequestSchema,
+  fclQuoteViewSchema,
+  validateFclQuoteSnapshot,
+  type FclQuoteService,
+  type FclQuoteView,
+} from '../quote-native/fcl';
 
 const parse=<T>(schema:z.ZodType<T>,input:unknown,code='document_input_invalid'):T=>{
   const parsed=schema.safeParse(input);
@@ -120,6 +135,13 @@ export interface FclDocumentWorkflowOptions{
   readonly receiverUserId:string;
   readonly receiverIsActive:(userId:string)=>boolean;
   readonly now?:()=>string;
+}
+
+export interface FclQuoteWorkflowDependencies{
+  readonly quoteService:Pick<FclQuoteService,'match'>;
+  readonly caseReader:Pick<CaseService,'getFclCase'>;
+  readonly caseLock:Pick<CaseService,'withFclReadLock'>;
+  readonly rateLock:Pick<NativeAdminService,'withFclReadLock'>;
 }
 
 type NormalizedFclDocumentWorkflowOptions={
@@ -382,6 +404,26 @@ const v4Indexes:Record<string,ExpectedIndex[]> = {
   document_current_revisions:[...v3Indexes.document_current_revisions!,{name:'document_current_personal',columns:[{name:'personal_owner_id',desc:false},{name:'updated_at',desc:true}],unique:false}],
   document_audit:[{name:'document_audit_personal',columns:[{name:'personal_owner_id',desc:false},{name:'created',desc:true}],unique:false}],
 };
+const v5TableLayouts:Record<string,ExpectedColumn[]>={
+  ...v4TableLayouts,
+  fcl_quote_revisions:[
+    {name:'quote_id',type:'TEXT',notnull:1,pk:true},
+    {name:'version',type:'INTEGER',notnull:1,pk:true},
+    {name:'personal_owner_id',type:'TEXT',notnull:1,pk:false},
+    {name:'case_ref',type:'TEXT',notnull:1,pk:false},
+    {name:'payload',type:'TEXT',notnull:1,pk:false},
+    {name:'content_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'actor',type:'TEXT',notnull:1,pk:false},
+    {name:'created_at',type:'TEXT',notnull:1,pk:false},
+  ],
+};
+const v5Indexes:Record<string,ExpectedIndex[]>={
+  ...v4Indexes,
+  fcl_quote_revisions:[
+    {name:'fcl_quote_revisions_owner',columns:[{name:'personal_owner_id',desc:false},{name:'created_at',desc:true},{name:'quote_id',desc:true}],unique:false},
+    {name:'fcl_quote_revisions_case',columns:[{name:'personal_owner_id',desc:false},{name:'case_ref',desc:false},{name:'quote_id',desc:false},{name:'version',desc:true}],unique:false},
+  ],
+};
 export interface DocumentWorkflowStoreOptions{
   readonly oldWritersStopped?:boolean;
   readonly readOnly?:boolean;
@@ -394,6 +436,7 @@ export class DocumentWorkflowStore{
   readonly signingSecret:string;
   private schemaReady=false;
   private fclReady=false;
+  private quoteReady=false;
   private readonly oldWritersStopped:boolean;
   private readonly ownershipMode:'existing-database'|'fresh-fixture';
   private readonly externalHandleProbe:(path:string)=>void;
@@ -411,8 +454,17 @@ export class DocumentWorkflowStore{
     const fclRequested=this.fclStoreOptions!==undefined||store.fclEnabled;
     if(fclRequested){
       if(!store.fclEnabled)throw new Error('document_fcl_open_required');
-      if(version>4)throw new Error('workflow_schema_incompatible');
-      if(version===4){
+      if(version>5)throw new Error('workflow_schema_incompatible');
+      if(version===5){
+        this.signingSecret=this.readSigningSecret();
+        this.assertV5Schema();
+        this.schemaReady=true;
+        this.fclReady=true;
+        this.quoteReady=true;
+        if(this.readOnly)db.exec('PRAGMA query_only=ON;');
+        return;
+      }
+      if(version===4&&(this.readOnly||this.fclStoreOptions?.mode==='reopen')){
         this.signingSecret=this.readSigningSecret();
         this.assertV4Schema();
         this.schemaReady=true;
@@ -421,8 +473,8 @@ export class DocumentWorkflowStore{
         return;
       }
       if(this.readOnly)throw new Error('workflow_read_only_requires_v4');
-      this.signingSecret=version===3?this.readSigningSecret():randomBytes(32).toString('hex');
-      this.migrateToV4(version);
+      this.signingSecret=version>=3?this.readSigningSecret():randomBytes(32).toString('hex');
+      this.migrateToV5(version);
       return;
     }
     if(version>3)throw new Error('workflow_schema_incompatible');
@@ -463,6 +515,10 @@ export class DocumentWorkflowStore{
     const indexes=this.db.prepare(`PRAGMA index_list('${table}')`).all() as Array<{name:string;unique:number}>;
     if(!indexes.some(index=>index.unique===1&&this.indexColumns(index.name).every((column,position)=>column.name===columns[position])&&this.indexColumns(index.name).length===columns.length))throw new Error('workflow_schema_unsupported');
   }
+  private assertPrimaryColumns(table:string,columns:string[]):void{
+    const rows=(this.db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{name:string;pk:number}>).filter(row=>row.pk>0).sort((left,right)=>left.pk-right.pk);
+    if(rows.length!==columns.length||rows.some((row,index)=>row.name!==columns[index]))throw new Error('workflow_schema_unsupported');
+  }
   private assertKnownSchema(layouts:Record<string,ExpectedColumn[]>,indexes:Record<string,ExpectedIndex[]>):void{
     for(const [table,expected] of Object.entries(layouts)){
       this.assertTableLayout(table,expected);
@@ -496,13 +552,20 @@ export class DocumentWorkflowStore{
     this.assertKnownSchema(v4TableLayouts,v4Indexes);
     this.assertV4OwnerConstraints();
   }
+  private assertV5Schema():void{
+    const metadata=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('schema_version') as {value:string}|undefined;
+    if(metadata?.value!=='5')throw new Error('workflow_metadata_invalid');
+    this.assertKnownSchema(v5TableLayouts,v5Indexes);
+    this.assertV4OwnerConstraints();
+    this.assertPrimaryColumns('fcl_quote_revisions',['quote_id','version']);
+  }
   private assertV4Schema():void{
     const metadata=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('schema_version') as {value:string}|undefined;
     if(metadata?.value!=='4')throw new Error('workflow_metadata_invalid');
     this.assertKnownV4Schema();
   }
   private assertFreshFixtureEmpty():void{
-    const tables=['document_configs','quote_documents','document_idempotency','document_audit','document_pdfs','document_revisions','document_current_revisions','document_revision_events','document_native_prepare_credentials'];
+    const tables=['document_configs','quote_documents','document_idempotency','document_audit','document_pdfs','document_revisions','document_current_revisions','document_revision_events','document_native_prepare_credentials','fcl_quote_revisions'];
     for(const table of tables){
       const exists=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
       if(exists&&this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())throw new PortalError('fcl_upgrade_fresh_fixture_not_empty');
@@ -561,15 +624,20 @@ CREATE INDEX document_current_org ON document_current_revisions(org,updated_at D
 CREATE INDEX document_current_personal ON document_current_revisions(personal_owner_id,updated_at DESC);
 CREATE INDEX document_audit_personal ON document_audit(personal_owner_id,created DESC);`);
   }
-  private migrateToV4(initialVersion:number):void{
+  private createV5Tables():void{
+    this.db.exec(`CREATE TABLE fcl_quote_revisions(quote_id TEXT NOT NULL,version INTEGER NOT NULL,personal_owner_id TEXT NOT NULL,case_ref TEXT NOT NULL,payload TEXT NOT NULL,content_digest TEXT NOT NULL,actor TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(quote_id,version));
+CREATE INDEX fcl_quote_revisions_owner ON fcl_quote_revisions(personal_owner_id,created_at DESC,quote_id DESC);
+CREATE INDEX fcl_quote_revisions_case ON fcl_quote_revisions(personal_owner_id,case_ref,quote_id,version DESC);`);
+  }
+  private migrateToV5(initialVersion:number):void{
     this.assertV4UpgradeOwnership();
     const db=this.db;
     db.exec('BEGIN EXCLUSIVE');
     try{
       const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
       if(version!==initialVersion)throw new Error('workflow_upgrade_ownership_conflict');
-      if(version>4)throw new Error('workflow_schema_incompatible');
-      if(version===4)throw new Error('workflow_upgrade_ownership_conflict');
+      if(version>5)throw new Error('workflow_schema_incompatible');
+      if(version===5)throw new Error('workflow_upgrade_ownership_conflict');
       if(version<3){
         this.createV3Tables();
         db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','3');
@@ -579,15 +647,24 @@ CREATE INDEX document_audit_personal ON document_audit(personal_owner_id,created
         const existing=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
         if(!existing||existing.value!==this.signingSecret)throw new Error('workflow_upgrade_ownership_conflict');
       }
-      this.assertKnownV3Schema();
-      this.migrateV4Tables();
-      db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','4');
+      if(version<4){
+        this.assertKnownV3Schema();
+        this.migrateV4Tables();
+        db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','4');
+        db.exec('PRAGMA user_version=4;');
+        this.assertV4Schema();
+      }else{
+        this.assertKnownV4Schema();
+      }
+      this.createV5Tables();
+      db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','5');
       db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('workflow_signing_secret',this.signingSecret);
-      db.exec('PRAGMA user_version=4;');
-      this.assertV4Schema();
+      db.exec('PRAGMA user_version=5;');
+      this.assertV5Schema();
       db.exec('COMMIT');
       this.schemaReady=true;
       this.fclReady=true;
+      this.quoteReady=true;
     }catch(error){
       db.exec('ROLLBACK');
       throw error;
@@ -638,6 +715,7 @@ CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(or
   close(){void this.store;}
   isV3(){return this.schemaReady;}
   isV4(){return this.fclReady;}
+  isV5(){return this.quoteReady;}
   ensureWritable(){if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');this.upgrade();}
   health(){try{const version=Number((this.store.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);if(version<=2)return true;this.store.db.prepare('SELECT revision_id FROM document_revisions LIMIT 1').get();return true;}catch{return false;}}
 }
@@ -646,16 +724,20 @@ export class DocumentWorkflowService{
   private readonly secret;
   private readonly reviews=new Map<string,{id:string;version:number;revision_id:string|null;content_digest:string;expires:number;actor:string}>();
   private readonly fcl:NormalizedFclDocumentWorkflowOptions|null;
+  private readonly fclQuote:FclQuoteWorkflowDependencies|null;
   constructor(
     readonly store:DocumentWorkflowStore,
     private readonly legacy:DocumentService,
     private readonly portal:Pick<PortalService,'getState'>,
     private readonly renderer:(html:string)=>Promise<Buffer>=renderPdf,
     fclOptions?:FclDocumentWorkflowOptions,
+    fclQuote?:FclQuoteWorkflowDependencies,
   ){
     this.secret=store.signingSecret;
     this.fcl=fclOptions?this.normalizeFclOptions(fclOptions):null;
     if(this.fcl)this.assertFclStartup(this.fcl);
+    this.fclQuote=fclQuote??null;
+    if(this.fclQuote&&!this.store.isV5())throw new Error('fcl_quote_upgrade_not_authorized');
   }
 
   private normalizeFclOptions(options:FclDocumentWorkflowOptions):NormalizedFclDocumentWorkflowOptions{
@@ -680,7 +762,7 @@ export class DocumentWorkflowService{
     const owners=this.store.db.prepare(`SELECT personal_owner_id AS owner_id FROM document_configs WHERE personal_owner_id IS NOT NULL
       UNION SELECT personal_owner_id FROM document_revisions WHERE personal_owner_id IS NOT NULL
       UNION SELECT personal_owner_id FROM document_current_revisions WHERE personal_owner_id IS NOT NULL
-      UNION SELECT personal_owner_id FROM document_audit WHERE personal_owner_id IS NOT NULL`).all() as Array<{owner_id:string}>;
+      UNION SELECT personal_owner_id FROM document_audit WHERE personal_owner_id IS NOT NULL${this.store.isV5()?' UNION SELECT personal_owner_id FROM fcl_quote_revisions WHERE personal_owner_id IS NOT NULL':''}`).all() as Array<{owner_id:string}>;
     if(owners.some(row=>row.owner_id!==options.receiverUserId))throw new Error('fcl_receiver_configuration_mismatch');
   }
   private fclOptions():NormalizedFclDocumentWorkflowOptions{
@@ -762,6 +844,170 @@ export class DocumentWorkflowService{
       if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');
       throw error;
     }
+  }
+  private fclQuoteDependencies():FclQuoteWorkflowDependencies{
+    if(!this.fclQuote||!this.store.isV5())throw new PortalError('fcl_quote_unavailable');
+    return this.fclQuote;
+  }
+  private readFclQuote(personalOwnerId:string,quoteRef:string,requestedVersion:number|null):{snapshot:ReturnType<typeof validateFclQuoteSnapshot>;currentVersion:number}{
+    const current=this.store.db.prepare('SELECT MAX(version) AS version FROM fcl_quote_revisions WHERE personal_owner_id=? AND quote_id=?').get(personalOwnerId,quoteRef) as {version:number|null}|undefined;
+    if(!current?.version)throw new PortalError('fcl_quote_not_found');
+    const version=requestedVersion??current.version;
+    const row=this.store.db.prepare('SELECT quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at FROM fcl_quote_revisions WHERE personal_owner_id=? AND quote_id=? AND version=?').get(personalOwnerId,quoteRef,version) as {quote_id:string;version:number;personal_owner_id:string;case_ref:string;payload:string;content_digest:string;actor:string;created_at:string}|undefined;
+    if(!row)throw new PortalError('fcl_quote_not_found');
+    let snapshot:ReturnType<typeof validateFclQuoteSnapshot>;
+    try{snapshot=validateFclQuoteSnapshot(JSON.parse(row.payload));}catch{throw new PortalError('fcl_quote_readback_failed');}
+    if(snapshot.quote_ref!==row.quote_id||snapshot.version!==row.version||row.quote_id!==quoteRef||row.version!==version||row.personal_owner_id!==personalOwnerId||row.case_ref!==snapshot.case_binding.case_ref||row.content_digest!==snapshot.content_digest||row.actor!==snapshot.actor||row.created_at!==snapshot.created_at)throw new PortalError('fcl_quote_readback_failed');
+    return {snapshot,currentVersion:current.version};
+  }
+  private fclQuoteView(snapshot:ReturnType<typeof validateFclQuoteSnapshot>,currentVersion:number,replay:{replayed:boolean;submittedVersion:number|null}):FclQuoteView{
+    return fclQuoteViewSchema.parse({
+      ...snapshot,
+      current_version:currentVersion,
+      historical:snapshot.version<currentVersion,
+      replay:{replayed:replay.replayed,submitted_version:replay.submittedVersion,current:snapshot.version===currentVersion},
+    });
+  }
+  private assertFclQuoteMatch(
+    status:'success'|'needs_input'|'manual_review'|'blocked'|'unavailable',
+    selected:{rate_id:string;release_id:string;release_version:number;dataset_digest:string}|null,
+    expected:{selected_rate_id:string;expected_release_id:string;expected_release_version:number;expected_dataset_digest:string},
+  ):void{
+    if(status!=='success'||!selected){
+      if(status==='blocked')throw new PortalError('fcl_quote_binding_conflict');
+      if(status==='needs_input')throw new PortalError('fcl_quote_case_incomplete');
+      throw new PortalError('fcl_quote_source_unavailable');
+    }
+    if(selected.rate_id!==expected.selected_rate_id||selected.release_id!==expected.expected_release_id||selected.release_version!==expected.expected_release_version||selected.dataset_digest!==expected.expected_dataset_digest)throw new PortalError('fcl_quote_source_changed');
+  }
+  private assertFclQuoteCommitted(input:{personalOwnerId:string;quoteRef:string;version:number;contentDigest:string;actor:string;createdAt:string;auditId:string;partition:string;key:string;requestDigest:string}):void{
+    const read=this.readFclQuote(input.personalOwnerId,input.quoteRef,input.version);
+    const snapshot=read.snapshot;
+    if(snapshot.content_digest!==input.contentDigest||snapshot.actor!==input.actor||snapshot.created_at!==input.createdAt)throw new PortalError('fcl_quote_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.actor||audit.action!==`fcl-quote-${snapshot.version===1?'create':'update'}`||audit.digest!==input.requestDigest||audit.created!==input.createdAt)throw new PortalError('fcl_quote_readback_failed');
+    const idempotency=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!idempotency||idempotency.digest!==input.requestDigest)throw new PortalError('fcl_quote_readback_failed');
+    try{
+      const result=fclQuoteReferenceSchema.parse(JSON.parse(idempotency.result));
+      if(result.quote_ref!==input.quoteRef||result.version!==input.version)throw new Error('mismatch');
+    }catch{throw new PortalError('fcl_quote_readback_failed');}
+  }
+  private saveFclQuoteLocked(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,input:unknown,key:string):FclQuoteView{
+    const request=parse(fclQuoteSaveRequestSchema,input,'fcl_quote_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    const dependencies=this.fclQuoteDependencies();
+    const action=`fcl-quote-${request.operation}`;
+    const target=request.operation==='update'?request.quote_ref:'create';
+    const partition=JSON.stringify(['v5-personal',options.receiverUserId,ctx.identity.userId,action,target]);
+    const requestDigest=canonicalHash(request),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==requestDigest)throw new PortalError('idempotency_conflict');
+        let submitted:{quote_ref:string;version:number};
+        try{submitted=fclQuoteReferenceSchema.parse(JSON.parse(old.result));}catch{throw new PortalError('fcl_quote_readback_failed');}
+        this.requireFclReceiver(ctx);
+        db.exec('COMMIT');
+        committed=true;
+        const read=this.readFclQuote(options.receiverUserId,submitted.quote_ref,submitted.version);
+        dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
+        return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:true,submittedVersion:submitted.version});
+      }
+      let quoteRef:string,version:number,selected;
+      let caseBinding,caseProjection,caseView;
+      if(request.operation==='create'){
+        quoteRef=randomUUID();version=1;
+        caseView=dependencies.caseReader.getFclCase(ctx,request.case_ref);
+        if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');
+        const match=dependencies.quoteService.match(ctx,{contract_version:FCL_QUOTE_WORKFLOW_VERSION,case_ref:request.case_ref,expected_case_version:request.expected_case_version,expected_customer_supplement_ref:request.expected_customer_supplement_ref,selected_rate_id:request.selected_rate_id});
+        this.assertFclQuoteMatch(match.status,match.data.selected,request);
+        selected=match.data.selected!;
+        caseBinding={case_ref:request.case_ref,case_version:request.expected_case_version,latest_customer_supplement_ref:request.expected_customer_supplement_ref};
+      }else{
+        const existing=this.readFclQuote(options.receiverUserId,request.quote_ref,null);
+        if(existing.snapshot.version!==request.expected_version)throw new PortalError('version_conflict');
+        const caseRef=existing.snapshot.case_binding.case_ref;
+        caseView=dependencies.caseReader.getFclCase(ctx,caseRef);
+        if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');
+        quoteRef=request.quote_ref;version=request.expected_version+1;
+        if(request.source_binding.mode==='retain'){
+          selected=existing.snapshot.source_snapshot;
+          caseBinding=existing.snapshot.case_binding;
+          caseProjection=existing.snapshot.case_projection;
+        }else{
+          const match=dependencies.quoteService.match(ctx,{contract_version:FCL_QUOTE_WORKFLOW_VERSION,case_ref:caseRef,expected_case_version:request.source_binding.expected_case_version,expected_customer_supplement_ref:request.source_binding.expected_customer_supplement_ref,selected_rate_id:request.source_binding.selected_rate_id});
+          this.assertFclQuoteMatch(match.status,match.data.selected,request.source_binding);
+          selected=match.data.selected!;
+          caseBinding={case_ref:caseRef,case_version:request.source_binding.expected_case_version,latest_customer_supplement_ref:request.source_binding.expected_customer_supplement_ref};
+        }
+      }
+      const createdAt=this.fclTimestamp(options);
+      const snapshot=buildFclCostSellSnapshot({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:quoteRef,version,actor:ctx.identity.userId,created_at:createdAt,caseView,selected,input:request.input,...(caseBinding===undefined?{}:{case_binding:caseBinding}),...(caseProjection===undefined?{}:{case_projection:caseProjection})});
+      db.prepare('INSERT INTO fcl_quote_revisions(quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at) VALUES(?,?,?,?,?,?,?,?)').run(quoteRef,version,options.receiverUserId,snapshot.case_binding.case_ref,JSON.stringify(snapshot),snapshot.content_digest,ctx.identity.userId,createdAt);
+      const auditId=randomUUID();
+      db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,`fcl-quote-${request.operation}`,requestDigest,createdAt);
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,requestDigest,JSON.stringify({quote_ref:quoteRef,version}));
+      this.assertFclQuoteCommitted({personalOwnerId:options.receiverUserId,quoteRef,version,contentDigest:snapshot.content_digest,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest});
+      this.requireFclReceiver(ctx);
+      db.exec('COMMIT');
+      committed=true;
+      this.assertFclQuoteCommitted({personalOwnerId:options.receiverUserId,quoteRef,version,contentDigest:snapshot.content_digest,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest});
+      const read=this.readFclQuote(options.receiverUserId,quoteRef,version);
+      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null});
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('fcl_quote_readback_failed');
+      throw error;
+    }
+  }
+  saveFclQuote(ctx:PortalContext,input:unknown,key:string):FclQuoteView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();
+    this.store.ensureWritable();
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.saveFclQuoteLocked(ctx,options,input,key)));
+  }
+  getFclQuote(ctx:PortalContext,input:unknown):FclQuoteView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclQuoteGetRequestSchema,input,'fcl_quote_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>{
+      const read=this.readFclQuote(options.receiverUserId,request.quote_ref,request.version);
+      dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
+      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null});
+    });
+  }
+  listFclQuotes(ctx:PortalContext,input:unknown){
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclQuoteListRequestSchema,input,'fcl_quote_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>{
+      dependencies.caseReader.getFclCase(ctx,request.case_ref);
+      let cursor:{case_ref:string;at:string;quote_ref:string}|null=null;
+      if(request.cursor){
+        try{
+          cursor=z.object({case_ref:z.string().uuid(),at:z.iso.datetime(),quote_ref:z.string().uuid()}).strict().parse(JSON.parse(Buffer.from(request.cursor,'base64url').toString('utf8')));
+        }catch{throw new PortalError('fcl_quote_input_invalid');}
+        if(cursor.case_ref!==request.case_ref)throw new PortalError('fcl_quote_input_invalid');
+      }
+      const rows=this.store.db.prepare(`SELECT q.quote_id,q.version,q.created_at FROM fcl_quote_revisions q WHERE q.personal_owner_id=? AND q.case_ref=? AND q.version=(SELECT MAX(m.version) FROM fcl_quote_revisions m WHERE m.quote_id=q.quote_id AND m.personal_owner_id=q.personal_owner_id) AND (? IS NULL OR q.created_at<? OR (q.created_at=? AND q.quote_id<?)) ORDER BY q.created_at DESC,q.quote_id DESC LIMIT ?`).all(options.receiverUserId,request.case_ref,cursor?.at??null,cursor?.at??'',cursor?.at??'',cursor?.quote_ref??'',request.limit+1) as Array<{quote_id:string;version:number;created_at:string}>;
+      const page=rows.slice(0,request.limit);
+      return fclQuoteListSchema.parse({
+        items:page.map(row=>{
+          const read=this.readFclQuote(options.receiverUserId,row.quote_id,row.version);
+          return {
+            quote_ref:row.quote_id,
+            version:row.version,
+            current_version:read.currentVersion,
+            case_ref:request.case_ref,
+            case_version:read.snapshot.case_binding.case_version,
+            rate_id:read.snapshot.source_snapshot.rate_id,
+            release_id:read.snapshot.source_snapshot.release_id,
+            complete:read.snapshot.completeness.complete,
+            by_currency:read.snapshot.calculation.by_currency,
+            created_at:row.created_at,
+          };
+        }),
+        next_cursor:rows.length>request.limit&&page.at(-1)?Buffer.from(JSON.stringify({case_ref:request.case_ref,at:page.at(-1)!.created_at,quote_ref:page.at(-1)!.quote_id})).toString('base64url'):null,
+      });
+    });
   }
   private scope(ctx:PortalContext,manage=false):Scope{
     if(!ctx.identity.emailVerified||!ctx.organizationId)throw new PortalError('document_organization_required');

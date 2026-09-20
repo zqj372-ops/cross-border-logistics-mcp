@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "template_ref": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "template_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{2,63}$"
+            },
+            "template_version": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "item_key": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{2,63}$"
+            }
+          },
+          "required": [
+            "template_id",
+            "template_version",
+            "item_key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "group": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "C"
+      ]
+    },
+    "service": {
+      "type": "string",
+      "enum": [
+        "pickup",
+        "export_customs",
+        "ocean_freight",
+        "canada_customs",
+        "devanning_storage",
+        "delivery"
+      ]
+    },
+    "quantity": {
+      "type": "string",
+      "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "CNTR",
+        "SHIPMENT"
+      ]
+    },
+    "container_type": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "20GP",
+            "40GP",
+            "40HQ",
+            "45HQ"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cost_price": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sell_price": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "currency": {
+      "type": "string",
+      "enum": [
+        "USD",
+        "CAD",
+        "CNY"
+      ]
+    },
+    "internal_note": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 2000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "customer_note": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 500,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_version": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "quantity_conditions": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 2000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "template_ref",
+    "name",
+    "group",
+    "service",
+    "quantity",
+    "unit",
+    "container_type",
+    "cost_price",
+    "sell_price",
+    "currency",
+    "internal_note",
+    "customer_note",
+    "evidence_ref",
+    "evidence_version",
+    "quantity_conditions"
+  ],
+  "additionalProperties": false
+}

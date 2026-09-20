@@ -279,6 +279,23 @@ export class NativeAdminService {
       history,
     };
   }
+  withFclReadLock<T>(ctx: PortalContext, operation: () => T extends Promise<unknown> ? never : T): T {
+    this.scope(ctx, false, 'fcl');
+    if (Object.prototype.toString.call(operation) === '[object AsyncFunction]') throw new PortalError('fcl_read_lock_async_forbidden');
+    const db = this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = operation();
+      if (result !== null && typeof result === 'object' && 'then' in result) {
+        throw new PortalError('fcl_read_lock_async_forbidden');
+      }
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch { /* Preserve the operation or commit error. */ }
+      throw error;
+    }
+  }
   preview(ctx: PortalContext, kind: NativeKind, releaseId?: string) {
     const scope = this.scope(ctx, false, kind), row = this.row(scope, kind);
     if (!row) throw new PortalError('native_draft_missing');

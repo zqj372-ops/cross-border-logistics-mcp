@@ -1,8 +1,8 @@
 // Adapted from quote-pdf-builder 0b6e439: A4 layout and fee visibility semantics.
 // Monetary arithmetic, explicit rates, draft state and server contracts are FreightClaw-owned.
-import Decimal from 'decimal.js';
+import type Decimal from 'decimal.js';
 import {documentSchema,type QuoteDocument,type QuoteTemplate} from './contracts';
-const D=Decimal.clone({precision:48,rounding:Decimal.ROUND_HALF_UP});
+import {D} from './money';
 export const escapeHtml=(v:string|number|null|undefined)=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const currencies=['USD','CAD','CNY'] as const;
 export function calculate(input:QuoteDocument){

@@ -335,3 +335,17 @@ node --import tsx/esm deploy/scripts/generate-native-schemas.ts
 - 选中快照保存完整 Rate、rate/release id、release version、dataset digest、source ref/version、有效期、selected_at、Case version/latest supplement ref 和匹配 trace。该结果不等于审核、批准或正式报价。
 - 当前 clock 只用于 selected_at，不替代 cargo_ready_date；clock 必须是严格 ISO datetime，否则统一 `fcl_quote_clock_unavailable`。future Rate window 可作为成本候选，正式签发门禁仍留 FCL.9。
 - 生成 `fcl-quote-request.schema.json` 和 `fcl-quote-response.schema.json`；未知字段、五状态和来源快照均有闭合 Draft 2020-12 合同。
+
+## FCL.7b–8 实施说明
+
+本节点只追加服务层 Cost/Sell 报价快照，不审核、不导出、不提供 HTTP/UI/CLI，也不改变旧企业 Quote Documents 合同。
+
+- Document DB 目标 schema 为 v5，仅新增 `fcl_quote_revisions(quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at)`，复合主键为 `(quote_id,version)`，并增加 owner/case 索引。v3/v4 升级到 v5 在同一 `BEGIN EXCLUSIVE` 事务内完成，保留旧 schema、数据、PDF bytes 与 signing secret；旧 max4 reader 对 v5 返回版本不支持。
+- `saveFclQuote/getFclQuote/listFclQuotes` 复用 7a FCL receiver 授权、`document_idempotency` 和 `document_audit`。每次读取、写入、幂等重放都验证个人身份、receiver active、Case 可见性和 quote owner；历史版本在 Case 关闭后仍可由本人读取。
+- Case 与 Native 服务只新增同步 `withFclReadLock` guard：它先验证本人和 active，再 `BEGIN IMMEDIATE`，拒绝 AsyncFunction/thenable，固定 Case → Rate → Document 顺序；三层数据库不是同一原子事务，锁只覆盖读取到 Document commit 的窗口。
+- 创建和 replace 必须重新调用既有 FclQuote matcher，严格核对 Case version/ref、selected rate、release id/version/digest；retain 只使用已保存的完整来源快照，更新人工售价、附费、scope、FX 和备注，不刷新旧来源成本。
+- Rate 来源行由服务端派生：O/F 按 Case 柜型和数量，Rate 附费仅使用已选 service，CNTR 使用对应柜型数量，SHIPMENT=1；客户端不能上传 Rate/Case/来源 cost。手工行的 CNTR/SHIPMENT 数量和柜型必须与 Case 数值匹配，最多与来源行合计 60 行，以兼容现有文档 60 个 fee_items 上限。
+- 每个 `cost_price`/`sell_price` 显式保留 `0` 和 `null`，禁止补零或把 scope 说明当成费用。Scope 无完整 priced 行时为 pending；已有完整 priced 行自动记为 priced；`included` 指向同 quote 的真实完整 priced row（不强绑同 service）；`free` 可保留 sell=0 的真实成本和负 GP，但拒绝正 Sell；`out_of_scope` 不得与实际收费行并存。
+- 金额使用共享 precision 48 / HALF_UP：逐行 quantity×price 先 round2，再按 USD/CAD/CNY 汇总；Revenue、Cost、GP、Margin 均保留独立可解释 trace。单币种原币利润不要求 CNY FX；混合贡献币种缺必要 USD/CAD→CNY FX 时 quote completeness 标记缺失，CNY 折算值和统一利润为 null，不自动取行情或补 1。
+- 新 Cost/Sell Schema 为闭合 Draft 2020-12；正 decimal 上限为 10 位整数、6 位小数，计算金额和 Ratio 使用足以容纳合法输入乘积/负利润的十进制范围。`customer_note` 对齐旧文档 500 字符，模板引用复用现有 `templateRefSchema`，模板不提供价格权威。
+- 保存事务对 payload、内容 digest、row metadata、audit 和 idempotency 做同事务读回；触发器替换为合法 JSON 也必须回滚。提交后读回失败不回滚已提交版本；外层锁释放失败时，同一幂等 key 重试必须读取已有 quote，不重复 quote/audit。

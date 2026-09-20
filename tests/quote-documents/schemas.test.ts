@@ -55,3 +55,10 @@ it('ships closed FCL personal configuration schemas with a real email format',()
  expect(request({...requestBody,extra:true})).toBe(false);
  expect(response({contract_version:'fcl-document-workflow@2026-09-20.v1',version:0,input:null,catalog:null})).toBe(false);
 });
+it('ships closed Cost/Sell FCL quote schemas with bounded decimal formats',()=>{
+ const costSell=files(/^fcl-quote-cost-sell-.*\.schema\.json$/);
+ expect(costSell).toHaveLength(8);
+ for(const file of costSell){const schema=read(file);expect(()=>compile(file)).not.toThrow();assertClosed(schema,file);}
+ const save=compile('fcl-quote-cost-sell-save-request.schema.json');
+ expect(save({contract_version:'fcl-document-workflow@2026-09-20.v1',operation:'create',case_ref:'00000000-0000-4000-8000-000000000001',expected_case_version:1,expected_customer_supplement_ref:null,selected_rate_id:'00000000-0000-4000-8000-000000000002',expected_release_id:'00000000-0000-4000-8000-000000000003',expected_release_version:1,expected_dataset_digest:'a'.repeat(64),input:{source_sell_prices:[],manual_fees:[],service_scopes:[],exchange_rates:{USD:'10000000000',CAD:null},remark:null}})).toBe(false);
+});

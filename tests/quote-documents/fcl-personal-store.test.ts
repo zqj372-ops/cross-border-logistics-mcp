@@ -20,6 +20,7 @@ import {
 } from '../../services/quote-documents/fcl-contracts';
 import type {PortalContext} from '../../services/access-gateway/portal/contracts';
 import type {PortalService} from '../../services/access-gateway/portal/service';
+import {openPortalProductionDatabase} from '../../services/access-gateway/portal/production-persistence';
 import {template} from './fixtures';
 
 const roots:string[]=[];
@@ -177,7 +178,7 @@ describe('personal FCL document configuration',()=>{
     expect(documentStore.db.prepare('SELECT document_id,org,owner,revision_id,version,schema_version,projection_digest,updated_at FROM document_current_revisions WHERE document_id=?').get(document.id)).toEqual(beforeCurrent);
     expect(documentStore.db.prepare('SELECT id,org,actor,action,digest,created FROM document_audit ORDER BY id').all()).toEqual(beforeAudit);
     expect(documentStore.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=1').get(document.id)).toEqual(beforePdf);
-    expect(documentStore.db.prepare('PRAGMA user_version').get()).toEqual({user_version:4});
+    expect(documentStore.db.prepare('PRAGMA user_version').get()).toEqual({user_version:5});
     documentStore.close();
   });
 
@@ -308,7 +309,7 @@ describe('personal FCL document configuration',()=>{
     documentStore.close();
     documentStore=new DocumentStore(path,verifiedFcl);
     expect(()=>new DocumentWorkflowStore(documentStore,verifiedFcl)).toThrow('workflow_schema_unsupported');
-    expect(documentStore.db.prepare('PRAGMA user_version').get()).toEqual({user_version:4});
+    expect(documentStore.db.prepare('PRAGMA user_version').get()).toEqual({user_version:5});
     documentStore.close();
   });
 
@@ -332,6 +333,36 @@ describe('personal FCL document configuration',()=>{
     new DocumentWorkflowStore(documentStore,freshFcl);
     documentStore.close();
     expect(()=>new DocumentStore(path)).toThrow('portal_database_version_unsupported');
+  });
+
+  it('upgrades a real v4 schema to v5, preserves data and rejects an old max4 reader',()=>{
+    const dir=root(),path=join(dir,'documents.sqlite');
+    let documentStore=new DocumentStore(path);
+    const workflowStore=new DocumentWorkflowStore(documentStore,{oldWritersStopped:true,ownershipMode:'fresh-fixture'});
+    workflowStore.ensureWritable();
+    const secret=workflowStore.signingSecret,revisionId=randomUUID(),documentId=randomUUID(),pdf=Buffer.from('%PDF-1.7\n'+'.'.repeat(120));
+    documentStore.db.prepare("INSERT INTO document_configs(org,version,input) VALUES('org-v4',1,'{\"company_name\":\"V4\"}')").run();
+    documentStore.db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,documentId,'org-v4','owner-v4',1,'draft',3,'{}','a'.repeat(64),'b'.repeat(64),null,null,null,'owner-v4','2026-09-20T00:00:00.000Z');
+    documentStore.db.prepare('INSERT INTO document_current_revisions(document_id,org,owner,revision_id,version,schema_version,projection_digest,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(documentId,'org-v4','owner-v4',revisionId,1,3,'a'.repeat(64),'2026-09-20T00:00:00.000Z');
+    documentStore.db.prepare('INSERT INTO document_audit(id,org,actor,action,digest,created) VALUES(?,?,?,?,?,?)').run(randomUUID(),'org-v4','owner-v4','create','c'.repeat(64),'2026-09-20T00:00:00.000Z');
+    documentStore.db.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(documentId,1,createHash('sha256').update(pdf).digest('hex'),pdf);
+    (workflowStore as unknown as {migrateV4Tables:()=>void}).migrateV4Tables();
+    documentStore.db.prepare("INSERT INTO document_store_metadata(key,value) VALUES('schema_version','4') ON CONFLICT(key) DO UPDATE SET value='4'").run();
+    documentStore.db.exec('PRAGMA user_version=4;');
+    documentStore.close();
+
+    documentStore=new DocumentStore(path,verifiedFcl);
+    const upgraded=new DocumentWorkflowStore(documentStore,{...verifiedFcl,externalHandleProbe:()=>undefined});
+    expect(upgraded.signingSecret).toBe(secret);
+    expect(documentStore.db.prepare('PRAGMA user_version').get()).toEqual({user_version:5});
+    expect(documentStore.db.prepare("SELECT version,input FROM document_configs WHERE org='org-v4'").get()).toEqual({version:1,input:'{"company_name":"V4"}'});
+    expect(documentStore.db.prepare('SELECT revision_id,payload FROM document_revisions WHERE document_id=?').get(documentId)).toEqual({revision_id:revisionId,payload:'{}'});
+    const migratedPdf=documentStore.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=1').get(documentId) as {sha256:string;bytes:Uint8Array};
+    expect(migratedPdf.sha256).toBe(createHash('sha256').update(pdf).digest('hex'));
+    expect(Buffer.from(migratedPdf.bytes)).toEqual(pdf);
+    expect(documentStore.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fcl_quote_revisions'").get()).toEqual({name:'fcl_quote_revisions'});
+    documentStore.close();
+    expect(()=>openPortalProductionDatabase(path,'freightclaw-quote-documents',4)).toThrow('portal_database_version_unsupported');
   });
 
   it('validates generated personal FCL schemas as closed Draft 2020-12 contracts',()=>{

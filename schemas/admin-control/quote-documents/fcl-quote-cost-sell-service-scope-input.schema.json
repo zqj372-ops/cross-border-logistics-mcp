@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "service": {
+      "type": "string",
+      "enum": [
+        "pickup",
+        "export_customs",
+        "ocean_freight",
+        "canada_customs",
+        "devanning_storage",
+        "delivery"
+      ]
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "included",
+        "free",
+        "out_of_scope"
+      ]
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "included_row_refs": {
+      "maxItems": 60,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160,
+        "pattern": "^[a-z][A-Za-z0-9_:-]*$"
+      }
+    }
+  },
+  "required": [
+    "service",
+    "disposition",
+    "note",
+    "included_row_refs"
+  ],
+  "additionalProperties": false
+}

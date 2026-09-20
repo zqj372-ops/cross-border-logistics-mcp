@@ -33,7 +33,7 @@ export class DocumentStore{
  constructor(readonly path:string,options:DocumentStoreOptions={}){
   const fclEnabled=options.fcl!==undefined;
   this.fclEnabled=fclEnabled;
-  this.db=openPortalProductionDatabase(path,'freightclaw-quote-documents',fclEnabled?4:3);
+  this.db=openPortalProductionDatabase(path,'freightclaw-quote-documents',fclEnabled?5:3);
   const version=(this.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version;
   if(version<4)this.db.exec(`CREATE TABLE IF NOT EXISTS document_configs(org TEXT PRIMARY KEY,version INTEGER NOT NULL,input TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS quote_documents(id TEXT PRIMARY KEY,org TEXT NOT NULL,owner TEXT NOT NULL,payload TEXT NOT NULL);
