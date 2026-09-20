@@ -1640,7 +1640,11 @@ export class DocumentWorkflowService{
           if(target.payload.state!=='approved')throw new PortalError('fcl_document_not_approved');
           if(current.currentVersion!==request.expected_current_version)throw new PortalError('version_conflict');
           dependencies.caseReader.getFclCase(ctx,target.payload.case_binding.case_ref);
-          const artifact=this.readFclPdfArtifact(options.receiverUserId,request.document_id,request.target_version);
+          let artifact:{binding:FclDocumentPdfBinding;bytes:Buffer};
+          try{artifact=this.readFclPdfArtifact(options.receiverUserId,request.document_id,request.target_version);}catch(error){
+            if(error instanceof PortalError&&error.code==='fcl_document_pdf_binding_missing')throw new PortalError(this.fclPdfCache(request.document_id,request.target_version)?'document_readback_failed':'fcl_document_history_bytes_missing');
+            throw error;
+          }
           if(artifact.binding.revision_id!==target.payload.revision_id||artifact.binding.content_digest!==target.payload.content_digest)throw new PortalError('document_readback_failed');
           return this.fclPdfOutput(target.payload,artifact.bytes,current.currentVersion,'history',{replayed:false,submitted_version:null,current:false});
         });

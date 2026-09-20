@@ -379,3 +379,5 @@ node --import tsx/esm deploy/scripts/generate-native-schemas.ts
 - 首次正式导出在 Case→Native→Document 一致读取窗口中取得 approved payload，释放锁后调用现有 renderer；完成后重新取得相同锁顺序和 Document 写事务，复核 revision/content digest、currentness 和缓存，再写 PDF/audit/idempotency。
 - `document_pdfs` 仍是唯一 bytes 权威。另以现有 `document_idempotency` 存储带 HMAC 的 PDF binding，绑定 owner/document/revision/version/content digest/sha/length/生成 audit；每个下载 key 只引用已验证 binding，缓存 bytes 或 sha 被同时替换、binding digest/audit 被替换均 fail closed。历史下载只读，不要求 writable store。
 - renderer 只接收显式 customer input、template 和 FCL 客户 metadata。手续费仅使用 sell 投影，客户 scope 使用人类可读 service/范围名称；sentinel 成本、GP、供应商、source 原文和 internal note 不进入 HTML/PDF。filename 由服务端按文档 ID/version 生成。
+
+FCL.11-R1 进一步将 FCL 客户表格固定为 7 列（费用项目、数量、单位、单价、币种、小计、说明），把客户备注扩展到 33% 宽度并维持 A4、分页和旧企业 8 列输出不变。FCL 只显示实际提供的换算率与可计算换算结果，单 USD 无 FX 时只显示原币合计；history 在既无 PDF bytes 也无 binding 时返回 `fcl_document_history_bytes_missing`，有 PDF 但无 binding 继续 fail closed。
