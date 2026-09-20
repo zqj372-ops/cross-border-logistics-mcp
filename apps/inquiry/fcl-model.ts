@@ -134,6 +134,79 @@ export const fclInquirySchema = fclInquiryDraftObjectSchema
 export type FclInquiryDraft = z.infer<typeof fclInquiryDraftSchema>;
 export type FclInquiryInput = z.infer<typeof fclInquirySchema>;
 
+const fclInquiryFieldChangeSchema = z.discriminatedUnion('field', [
+  z.object({ field: z.literal('origin_city'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('pol'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('pod'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('final_destination'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('containers'), value: z.array(fclContainerSchema).max(FCL_CONTAINER_TYPES.length) }).strict(),
+  z.object({ field: z.literal('cargo_name'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('cargo_type'), value: z.union([z.enum(FCL_CARGO_TYPES), z.null()]) }).strict(),
+  z.object({ field: z.literal('estimated_weight'), value: z.union([fclEstimatedWeightSchema, z.null()]) }).strict(),
+  z.object({ field: z.literal('cargo_ready_date'), value: z.union([
+    z.string().regex(DATE_PATTERN).refine(isRealCalendarDate, { message: 'invalid_calendar_date' }),
+    z.null(),
+  ]) }).strict(),
+  z.object({ field: z.literal('incoterm'), value: z.union([z.enum(FCL_INCOTERMS), z.null()]) }).strict(),
+  z.object({ field: z.literal('incoterm_other'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('selected_services'), value: z.array(z.enum(FCL_SERVICE_IDS)).max(FCL_SERVICE_IDS.length) }).strict(),
+  z.object({ field: z.literal('contact.name'), value: nullableSingleLineText(80) }).strict(),
+  z.object({ field: z.literal('contact.company'), value: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('contact.email'), value: z.union([emailAddress(), z.null()]) }).strict(),
+  z.object({ field: z.literal('contact.phone'), value: nullableSingleLineText(80) }).strict(),
+  z.object({ field: z.literal('notes'), value: z.union([z.string().max(4000).regex(MULTILINE_NOTES_PATTERN), z.null()]) }).strict(),
+]);
+
+export const fclInquiryPatchSchema = z
+  .object({ changes: z.array(fclInquiryFieldChangeSchema).max(17) })
+  .strict()
+  .superRefine((patch, context) => {
+    const seen = new Set<string>();
+    patch.changes.forEach((change, index) => {
+      if (seen.has(change.field)) {
+        context.addIssue({ code: 'custom', path: ['changes', index, 'field'], message: 'duplicate_field' });
+      }
+      seen.add(change.field);
+    });
+  });
+
+export type FclInquiryPatch = z.infer<typeof fclInquiryPatchSchema>;
+
+export const fclInquiryFieldDiffSchema = z.discriminatedUnion('field', [
+  z.object({ field: z.literal('origin_city'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('pol'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('pod'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('final_destination'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('containers'), before: z.array(fclContainerSchema).max(FCL_CONTAINER_TYPES.length), after: z.array(fclContainerSchema).max(FCL_CONTAINER_TYPES.length) }).strict(),
+  z.object({ field: z.literal('cargo_name'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('cargo_type'), before: z.union([z.enum(FCL_CARGO_TYPES), z.null()]), after: z.union([z.enum(FCL_CARGO_TYPES), z.null()]) }).strict(),
+  z.object({ field: z.literal('estimated_weight'), before: z.union([fclEstimatedWeightSchema, z.null()]), after: z.union([fclEstimatedWeightSchema, z.null()]) }).strict(),
+  z.object({ field: z.literal('cargo_ready_date'), before: z.union([
+    z.string().regex(DATE_PATTERN).refine(isRealCalendarDate, { message: 'invalid_calendar_date' }),
+    z.null(),
+  ]), after: z.union([
+    z.string().regex(DATE_PATTERN).refine(isRealCalendarDate, { message: 'invalid_calendar_date' }),
+    z.null(),
+  ]) }).strict(),
+  z.object({ field: z.literal('incoterm'), before: z.union([z.enum(FCL_INCOTERMS), z.null()]), after: z.union([z.enum(FCL_INCOTERMS), z.null()]) }).strict(),
+  z.object({ field: z.literal('incoterm_other'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('selected_services'), before: z.array(z.enum(FCL_SERVICE_IDS)).max(FCL_SERVICE_IDS.length), after: z.array(z.enum(FCL_SERVICE_IDS)).max(FCL_SERVICE_IDS.length) }).strict(),
+  z.object({ field: z.literal('contact.name'), before: nullableSingleLineText(80), after: nullableSingleLineText(80) }).strict(),
+  z.object({ field: z.literal('contact.company'), before: nullableSingleLineText(200), after: nullableSingleLineText(200) }).strict(),
+  z.object({ field: z.literal('contact.email'), before: z.union([emailAddress(), z.null()]), after: z.union([emailAddress(), z.null()]) }).strict(),
+  z.object({ field: z.literal('contact.phone'), before: nullableSingleLineText(80), after: nullableSingleLineText(80) }).strict(),
+  z.object({ field: z.literal('notes'), before: z.union([z.string().max(4000).regex(MULTILINE_NOTES_PATTERN), z.null()]), after: z.union([z.string().max(4000).regex(MULTILINE_NOTES_PATTERN), z.null()]) }).strict(),
+]);
+
+export function isFclInquiryComplete(input: FclInquiryDraft): boolean {
+  return Boolean(
+    input.pol && input.pod && input.cargo_name &&
+    input.containers.length > 0 && input.containers.every((container) => container.quantity !== null) &&
+    input.cargo_type && input.estimated_weight && input.cargo_ready_date && input.incoterm &&
+    input.selected_services.length > 0 && (input.incoterm !== 'Other' || Boolean(input.incoterm_other)),
+  );
+}
+
 export type FclInquirySummary = {
   state: 'draft';
   route: {

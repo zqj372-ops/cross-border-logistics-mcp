@@ -277,3 +277,16 @@ npx --no-install vitest run tests/e2e/shipper-inquiry.test.ts tests/access-gatew
 - 已升级数据库只通过 `reopen` 模式重新打开；未升级的旧 writer 因 `user_version=2` 拒绝打开。
 - `submitFclInquiry` 使用同一 `BEGIN IMMEDIATE` 保存 Inquiry、Case、两条类型化初始事件和幂等记录。首次提交在提交前与提交后各执行一次初始读回；幂等重放读取不可变原件与当前合法 Case 状态，不强制 Case 仍为 v1。
 - 通知失败、超时、禁用或配置缺失不回滚业务保存，不重发；`complete` 只表示基本询价需求完整，不表示 Rate、费用、审核或正式报价完整。
+
+## FCL.4 实施说明
+
+本节点仍是隔离服务层实现，不启用 HTTP、UI、CLI、Rate、Quote、Document 或 MCP。
+
+- `updateFclCaseStatus`、`supplementFclCase`、`supplementFclCaseAsStaff` 和 `confirmFclCase` 共用关闭的字段 diff/patch 模型。只允许已接受 FCL 字段，未知字段、`contract_version`、`transport_mode`、`consent`、owner/org/source/price 均拒绝。
+- 字段 patch 的每一项显式包含 field/value；事件用同一字段 union 保存 before/after。柜型、service 和最终合并仍调用共享 final validator，不允许猜测或跳过语义校验。
+- 客户补充只允许在 `needs_input` 状态使用本票凭据；staff 代录、状态更新和确认只允许当前固定 receiver。closed/cancelled 阻断新的补充、确认和状态变更。
+- 客户补充和 staff 代录都产生新 Case version 和类型化事件。只有 `fcl_customer_supplement` 能成为 `latest_customer_supplement_ref`；staff 事件不会冒充 customer。
+- 确认事件保存 reviewed customer ref、确认前后 version、理由及实际字段 before/after。内部 `review_context` 区分最新客户补充、最后确认 version/ref，以及是否需要重新核对。
+- 写事务在 idempotency INSERT 前执行语义 readback，核对预期 version/status/input、事件 payload/actual actor 和原件 digest；失败会回滚 Case、event 和 idempotency。提交后再次读回。
+- `listFclCases` 接受闭合 limit/status/cursor 查询，返回稳定的 newest-first cursor 分页。列表项由 internal view 显式 omit 原件、完整 event 历史、receiver 元数据和通知元数据；详情读取才返回完整内部视图。
+- 客户可见摘要只投影 `visibility=customer` 的提交、补充和 status 事件。内部确认理由、internal note、receiver ID、凭据 hash 和匿名 session hash 不进入公共响应。

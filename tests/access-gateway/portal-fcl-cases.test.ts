@@ -166,7 +166,9 @@ it('atomically persists an immutable personal FCL inquiry and returns a restorab
     const publicView = service.getFclCustomerView(first.inquiry_id, first.credential);
     expect(fclCasePublicSummarySchema.parse(publicView)).toEqual(publicView);
     expect(publicView.inquiry_no).toBe(first.inquiry_no);
-    expect(JSON.stringify(publicView)).not.toContain('events');
+    expect(publicView.events).toHaveLength(1);
+    expect(publicView.events[0]?.kind).toBe('fcl_inquiry_submitted');
+    expect(JSON.stringify(publicView)).not.toContain('original_input');
 
     const replay = await service.submitFclInquiry('anonymous-session-1', 'fcl-submit-key-0001', input);
     expect(replay.replay).toBe(true);

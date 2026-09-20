@@ -4,9 +4,15 @@ import { FCL_INQUIRY_SCHEMA_ID, fclInquirySchema } from '../../apps/inquiry/fcl-
 import { caseInputSchema, caseUpdateSchema, caseReplySchema, caseListSchema, caseResponseSchema, caseResponseV2Schema } from '../../services/access-gateway/portal/cases';
 import {
   fclCaseErrorEnvelopeSchema,
+  fclCaseCustomerSupplementSchema,
+  fclCaseConfirmationSchema,
   fclCaseInputSchema,
   fclCaseInternalViewSchema,
+  fclCaseListQuerySchema,
+  fclCaseListSchema,
   fclCasePublicSummarySchema,
+  fclCaseStaffSupplementSchema,
+  fclCaseStatusUpdateSchema,
   fclCaseSubmissionSchema,
   fclCaseSuccessEnvelopeSchema,
 } from '../../services/access-gateway/portal/case-contracts';
@@ -21,6 +27,12 @@ for(const [name,schema] of Object.entries({
   submission:fclCaseSubmissionSchema,
   'internal-view':fclCaseInternalViewSchema,
   'public-summary':fclCasePublicSummarySchema,
+  'customer-supplement':fclCaseCustomerSupplementSchema,
+  'staff-supplement':fclCaseStaffSupplementSchema,
+  confirmation:fclCaseConfirmationSchema,
+  'status-update':fclCaseStatusUpdateSchema,
+  'list-query':fclCaseListQuerySchema,
+  list:fclCaseListSchema,
   success:fclCaseSuccessEnvelopeSchema,
   error:fclCaseErrorEnvelopeSchema,
 })) {

@@ -4,7 +4,10 @@ import { z } from 'zod';
 import {
   buildFclInquirySummary,
   fclInquirySchema,
+  isFclInquiryComplete,
+  type FclInquiryDraft,
   type FclInquiryInput,
+  type FclInquiryPatch,
 } from '../../../apps/inquiry/fcl-model';
 import type { Draft } from '../../../apps/inquiry/model';
 import { PortalError, type PortalContext } from './contracts';
@@ -16,10 +19,18 @@ import {
   caseReplySchema,
   caseListSchema,
   fclCaseEventSchema,
+  fclCaseCustomerSupplementSchema,
+  fclCaseConfirmationSchema,
   fclCaseInternalViewSchema,
   fclCaseListSchema,
+  fclCaseListItemSchema,
+  fclCaseListQuerySchema,
   fclCaseNotificationSchema,
   fclCasePublicSummarySchema,
+  fclCasePublicEventSchema,
+  fclCaseReviewContextSchema,
+  fclCaseStaffSupplementSchema,
+  fclCaseStatusUpdateSchema,
   fclCaseSubmissionSchema,
   type FCL_NOTIFICATION_STATUSES,
   type CaseStatus,
@@ -42,10 +53,18 @@ export {
   FCL_NOTIFICATION_STATUSES,
   fclCaseInputSchema,
   fclCaseEventSchema,
+  fclCaseCustomerSupplementSchema,
+  fclCaseStaffSupplementSchema,
+  fclCaseConfirmationSchema,
+  fclCaseStatusUpdateSchema,
+  fclCaseListQuerySchema,
   fclCaseNotificationSchema,
   fclCaseSubmissionSchema,
   fclCaseInternalViewSchema,
+  fclCaseListItemSchema,
   fclCasePublicSummarySchema,
+  fclCasePublicEventSchema,
+  fclCaseReviewContextSchema,
   fclCaseListSchema,
   fclCaseSuccessEnvelopeSchema,
   fclCaseErrorEnvelopeSchema,
@@ -134,7 +153,9 @@ type NormalizedFclOptions = {
 };
 type FclCaseSubmission = z.infer<typeof fclCaseSubmissionSchema>;
 type FclCaseInternalView = z.infer<typeof fclCaseInternalViewSchema>;
+type FclCaseListItem = z.infer<typeof fclCaseListItemSchema>;
 type FclCasePublicSummary = z.infer<typeof fclCasePublicSummarySchema>;
+type FclCasePublicEvent = z.infer<typeof fclCasePublicEventSchema>;
 
 const CASE_SCHEMA_VERSION = 2;
 const parse = <T>(schema: z.ZodType<T>, input: unknown, code = 'case_input_invalid'): T => {
@@ -146,6 +167,28 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 const validEmail = (value: string) => z.email().max(254).safeParse(value).success;
 const validIdempotencyKey = (value: string) => /^[A-Za-z0-9_.:-]{8,128}$/u.test(value);
 const validSessionId = (value: string) => /^[A-Za-z0-9_.:-]{8,128}$/u.test(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const fclPatchFieldValue = (input: FclInquiryDraft, field: FclInquiryPatch['changes'][number]['field']): unknown => {
+  switch (field) {
+    case 'origin_city': return input.origin_city;
+    case 'pol': return input.pol;
+    case 'pod': return input.pod;
+    case 'final_destination': return input.final_destination;
+    case 'containers': return input.containers;
+    case 'cargo_name': return input.cargo_name;
+    case 'cargo_type': return input.cargo_type;
+    case 'estimated_weight': return input.estimated_weight;
+    case 'cargo_ready_date': return input.cargo_ready_date;
+    case 'incoterm': return input.incoterm;
+    case 'incoterm_other': return input.incoterm_other;
+    case 'selected_services': return input.selected_services;
+    case 'contact.name': return input.contact.name;
+    case 'contact.company': return input.contact.company;
+    case 'contact.email': return input.contact.email;
+    case 'contact.phone': return input.contact.phone;
+    case 'notes': return input.notes;
+  }
+};
 
 export class CaseStore {
   readonly db: DatabaseSync;
@@ -403,6 +446,290 @@ export class CaseService {
       this.event(row, reply.message.trim(), 'customer', '客户', scope.user); return id;
     });
   }
+  private applyFclPatch(current: FclInquiryInput, patch: FclInquiryPatch) {
+    const next: FclInquiryDraft = {
+      ...current,
+      containers: current.containers.map((container) => ({ ...container })),
+      selected_services: [...current.selected_services],
+      contact: { ...current.contact },
+    };
+    for (const change of patch.changes) {
+      switch (change.field) {
+        case 'origin_city': next.origin_city = change.value; break;
+        case 'pol': next.pol = change.value; break;
+        case 'pod': next.pod = change.value; break;
+        case 'final_destination': next.final_destination = change.value; break;
+        case 'containers': next.containers = change.value.map((container) => ({ ...container })); break;
+        case 'cargo_name': next.cargo_name = change.value; break;
+        case 'cargo_type': next.cargo_type = change.value; break;
+        case 'estimated_weight': next.estimated_weight = change.value === null ? null : { ...change.value }; break;
+        case 'cargo_ready_date': next.cargo_ready_date = change.value; break;
+        case 'incoterm': next.incoterm = change.value; break;
+        case 'incoterm_other': next.incoterm_other = change.value; break;
+        case 'selected_services': next.selected_services = [...change.value]; break;
+        case 'contact.name': next.contact.name = change.value; break;
+        case 'contact.company': next.contact.company = change.value; break;
+        case 'contact.email': next.contact.email = change.value; break;
+        case 'contact.phone': next.contact.phone = change.value; break;
+        case 'notes': next.notes = change.value; break;
+      }
+    }
+    const changedFields = patch.changes
+      .filter((change) => JSON.stringify(fclPatchFieldValue(current, change.field)) !== JSON.stringify(fclPatchFieldValue(next, change.field)))
+      .map((change) => change.field);
+    const fieldChanges = patch.changes.map((change) => ({
+      field: change.field,
+      before: fclPatchFieldValue(current, change.field),
+      after: fclPatchFieldValue(next, change.field),
+    }));
+    return {
+      input: parse(fclInquirySchema, next, 'fcl_input_invalid'),
+      changedFields,
+      fieldChanges,
+    };
+  }
+  private fclCaseRow(caseId: string): Row {
+    const row = this.store.db.prepare('SELECT * FROM business_cases WHERE case_id=?').get(caseId) as Row | undefined;
+    if (!row) throw new PortalError('fcl_readback_failed');
+    return row;
+  }
+  private currentFclInput(caseId: string): FclInquiryInput {
+    return parse(fclInquirySchema, JSON.parse(this.fclCaseRow(caseId).input_json), 'fcl_readback_failed');
+  }
+  private latestFclEvent(caseId: string, kind: string) {
+    const events = this.fclEvents(caseId);
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index];
+      if (event?.kind === kind) return event;
+    }
+    return undefined;
+  }
+  private assertFclOriginalDigest(row: FclRow) {
+    if (sha256(row.original_payload_json) !== row.original_payload_digest) throw new PortalError('fcl_readback_failed');
+  }
+  private fclCredentialRow(inquiryId: string, credential: string): FclRow {
+    const options = this.fclOptions();
+    const row = this.fclRowById(inquiryId);
+    if (!row || Date.parse(row.credential_expires_at) <= Date.parse(options.now()) || !this.credentialMatches(row, credential)) {
+      throw new PortalError('fcl_not_found');
+    }
+    return row;
+  }
+  private fclMutation<T>(
+    partition: string,
+    key: string,
+    input: unknown,
+    caseId: string,
+    write: () => void,
+    verify: () => void,
+    read: () => T,
+  ): T {
+    if (!validIdempotencyKey(key)) throw new PortalError('idempotency_key_invalid');
+    const digest = sha256(JSON.stringify(input));
+    const db = this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const prior = db.prepare('SELECT digest,case_id FROM business_case_idempotency WHERE scope=? AND key=?').get(partition, key) as { digest: string; case_id: string } | undefined;
+      if (prior) {
+        if (prior.digest !== digest || prior.case_id !== caseId) throw new PortalError('fcl_idempotency_conflict');
+      } else {
+        write();
+        verify();
+        read();
+        db.prepare('INSERT INTO business_case_idempotency VALUES(?,?,?,?)').run(partition, key, digest, caseId);
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    return read();
+  }
+  updateFclCaseStatus(ctx: PortalContext, caseId: string, input: unknown, key: string) {
+    this.requireFclReceiver(ctx);
+    const change = parse(fclCaseStatusUpdateSchema, input, 'fcl_input_invalid');
+    const fclRow = this.fclRowByCase(caseId);
+    if (!fclRow || fclRow.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
+    let fromStatus: CaseStatus | null = null;
+    let toVersion = 0;
+    return this.fclMutation(`fcl-status:${caseId}`, key, change, caseId, () => {
+      const caseRow = this.fclCaseRow(caseId);
+      if (caseRow.version !== change.expected_version) throw new PortalError('fcl_version_conflict');
+      const transitions: Record<CaseStatus, readonly CaseStatus[]> = {
+        submitted: ['in_review','needs_input','closed','cancelled'],
+        in_review: ['in_review','needs_input','closed','cancelled'],
+        needs_input: ['in_review','needs_input','closed','cancelled'],
+        closed: [],
+        cancelled: [],
+      };
+      if (!transitions[caseRow.status].includes(change.status) || caseRow.version >= 500) throw new PortalError('fcl_state_conflict');
+      fromStatus = caseRow.status;
+      caseRow.status = change.status;
+      caseRow.version++;
+      toVersion = caseRow.version;
+      caseRow.updated_at = this.fclOptions().now();
+      this.store.db.prepare('UPDATE business_cases SET status=?,version=?,updated_at=? WHERE case_id=?').run(caseRow.status, caseRow.version, caseRow.updated_at, caseId);
+      this.event(caseRow, change.public_note.trim(), 'customer', ctx.identity.displayName, ctx.identity.userId, 'fcl_case_status_updated', {
+        from_status: fromStatus,
+        to_status: caseRow.status,
+        from_version: change.expected_version,
+        to_version: caseRow.version,
+        public_note: change.public_note.trim(),
+      });
+      if (change.internal_note.trim()) {
+        this.event(caseRow, change.internal_note.trim(), 'internal', ctx.identity.displayName, ctx.identity.userId, 'fcl_internal_note', {
+          note: change.internal_note.trim(),
+        });
+      }
+    }, () => {
+      const currentRow = this.fclRowByCase(caseId);
+      const caseRow = this.fclCaseRow(caseId);
+      const event = this.latestFclEvent(caseId, 'fcl_case_status_updated');
+      if (!currentRow || caseRow.version !== toVersion || caseRow.status !== change.status || fromStatus === null) throw new PortalError('fcl_readback_failed');
+      if (event?.kind !== 'fcl_case_status_updated' || event.actor_ref !== ctx.identity.userId || event.payload.from_status !== fromStatus || event.payload.to_status !== change.status || event.payload.from_version !== change.expected_version || event.payload.to_version !== toVersion) {
+        throw new PortalError('fcl_readback_failed');
+      }
+      this.assertFclOriginalDigest(currentRow);
+    }, () => this.fclInternalView(this.fclRowByCase(caseId)!));
+  }
+  supplementFclCase(inquiryId: string, credential: string, input: unknown, key: string) {
+    const credentialRow = this.fclCredentialRow(inquiryId, credential);
+    const supplement = parse(fclCaseCustomerSupplementSchema, input, 'fcl_input_invalid');
+    const actorRef = `customer:${credentialRow.credential_hash.slice(0, 24)}`;
+    let expectedInputJson = '';
+    let expectedVersion = 0;
+    let expectedChangedFields: string[] = [];
+    let expectedFieldChanges: unknown[] = [];
+    return this.fclMutation(`fcl-customer-supplement:${credentialRow.credential_hash}`, key, supplement, credentialRow.case_id, () => {
+      const row = this.fclCredentialRow(inquiryId, credential);
+      const caseRow = this.fclCaseRow(row.case_id);
+      if (caseRow.version !== supplement.expected_version) throw new PortalError('fcl_version_conflict');
+      if (caseRow.status !== 'needs_input') throw new PortalError('fcl_state_conflict');
+      const current = this.currentFclInput(row.case_id);
+      const { input: next, changedFields, fieldChanges } = this.applyFclPatch(current, supplement.fields);
+      if (supplement.fields.changes.length === 0 && supplement.message === null) throw new PortalError('fcl_input_invalid');
+      if (JSON.stringify(next) === JSON.stringify(current) && supplement.message === null) throw new PortalError('fcl_no_change');
+      const fromVersion = caseRow.version;
+      caseRow.input_json = JSON.stringify(next);
+      expectedInputJson = caseRow.input_json;
+      caseRow.status = 'in_review';
+      caseRow.version++;
+      expectedVersion = caseRow.version;
+      expectedChangedFields = changedFields;
+      expectedFieldChanges = fieldChanges;
+      caseRow.updated_at = this.fclOptions().now();
+      this.store.db.prepare('UPDATE business_cases SET status=?,version=?,input_json=?,updated_at=? WHERE case_id=?').run(caseRow.status, caseRow.version, caseRow.input_json, caseRow.updated_at, row.case_id);
+      this.event(caseRow, supplement.message ?? 'Customer supplied structured FCL fields.', 'customer', 'Customer', actorRef, 'fcl_customer_supplement', {
+        fields: supplement.fields,
+        message: supplement.message,
+        from_version: fromVersion,
+        to_version: caseRow.version,
+        changed_fields: changedFields,
+        field_changes: fieldChanges,
+      });
+    }, () => {
+      const row = this.fclRowByCase(credentialRow.case_id);
+      const caseRow = this.fclCaseRow(credentialRow.case_id);
+      const event = this.latestFclEvent(credentialRow.case_id, 'fcl_customer_supplement');
+      if (!row || caseRow.version !== expectedVersion || caseRow.status !== 'in_review' || caseRow.input_json !== expectedInputJson) throw new PortalError('fcl_readback_failed');
+      if (event?.kind !== 'fcl_customer_supplement' || event.actor_ref !== actorRef || JSON.stringify(event.payload.changed_fields) !== JSON.stringify(expectedChangedFields) || JSON.stringify(event.payload.field_changes) !== JSON.stringify(expectedFieldChanges)) {
+        throw new PortalError('fcl_readback_failed');
+      }
+      this.assertFclOriginalDigest(row);
+    }, () => this.fclPublicSummary(this.fclRowByCase(credentialRow.case_id)!, this.currentFclInput(credentialRow.case_id)));
+  }
+  supplementFclCaseAsStaff(ctx: PortalContext, caseId: string, input: unknown, key: string) {
+    this.requireFclReceiver(ctx);
+    const supplement = parse(fclCaseStaffSupplementSchema, input, 'fcl_input_invalid');
+    const fclRow = this.fclRowByCase(caseId);
+    if (!fclRow || fclRow.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
+    let expectedInputJson = '';
+    let expectedVersion = 0;
+    let expectedChangedFields: string[] = [];
+    let expectedFieldChanges: unknown[] = [];
+    return this.fclMutation(`fcl-staff-supplement:${caseId}`, key, supplement, caseId, () => {
+      const caseRow = this.fclCaseRow(caseId);
+      if (caseRow.version !== supplement.expected_version) throw new PortalError('fcl_version_conflict');
+      if (caseRow.status === 'closed' || caseRow.status === 'cancelled') throw new PortalError('fcl_state_conflict');
+      const current = this.currentFclInput(caseId);
+      const { input: next, changedFields, fieldChanges } = this.applyFclPatch(current, supplement.fields);
+      if (supplement.fields.changes.length === 0 && supplement.message === null) throw new PortalError('fcl_input_invalid');
+      if (JSON.stringify(next) === JSON.stringify(current) && supplement.message === null) throw new PortalError('fcl_no_change');
+      const fromVersion = caseRow.version;
+      caseRow.input_json = JSON.stringify(next);
+      expectedInputJson = caseRow.input_json;
+      caseRow.status = 'in_review';
+      caseRow.version++;
+      expectedVersion = caseRow.version;
+      expectedChangedFields = changedFields;
+      expectedFieldChanges = fieldChanges;
+      caseRow.updated_at = this.fclOptions().now();
+      this.store.db.prepare('UPDATE business_cases SET status=?,version=?,input_json=?,updated_at=? WHERE case_id=?').run(caseRow.status, caseRow.version, caseRow.input_json, caseRow.updated_at, caseId);
+      this.event(caseRow, supplement.message ?? 'Staff recorded an offline structured supplement.', 'customer', ctx.identity.displayName, ctx.identity.userId, 'fcl_staff_supplement', {
+        fields: supplement.fields,
+        message: supplement.message,
+        from_version: fromVersion,
+        to_version: caseRow.version,
+        changed_fields: changedFields,
+        field_changes: fieldChanges,
+        recorded_by_staff: true,
+      });
+    }, () => {
+      const current = this.fclRowByCase(caseId);
+      const caseRow = this.fclCaseRow(caseId);
+      const event = this.latestFclEvent(caseId, 'fcl_staff_supplement');
+      if (!current || caseRow.version !== expectedVersion || caseRow.status !== 'in_review' || caseRow.input_json !== expectedInputJson) throw new PortalError('fcl_readback_failed');
+      if (event?.kind !== 'fcl_staff_supplement' || event.actor_ref !== ctx.identity.userId || JSON.stringify(event.payload.changed_fields) !== JSON.stringify(expectedChangedFields) || JSON.stringify(event.payload.field_changes) !== JSON.stringify(expectedFieldChanges)) {
+        throw new PortalError('fcl_readback_failed');
+      }
+      this.assertFclOriginalDigest(current);
+    }, () => this.fclInternalView(this.fclRowByCase(caseId)!));
+  }
+  confirmFclCase(ctx: PortalContext, caseId: string, input: unknown, key: string) {
+    this.requireFclReceiver(ctx);
+    const confirmation = parse(fclCaseConfirmationSchema, input, 'fcl_input_invalid');
+    const fclRow = this.fclRowByCase(caseId);
+    if (!fclRow || fclRow.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
+    let expectedInputJson = '';
+    let expectedVersion = 0;
+    let expectedFieldChanges: unknown[] = [];
+    return this.fclMutation(`fcl-confirmation:${caseId}`, key, confirmation, caseId, () => {
+      const caseRow = this.fclCaseRow(caseId);
+      if (caseRow.version !== confirmation.expected_version) throw new PortalError('fcl_version_conflict');
+      if (caseRow.status === 'closed' || caseRow.status === 'cancelled') throw new PortalError('fcl_state_conflict');
+      const latestRef = this.latestCustomerSupplementRef(caseId);
+      if (latestRef !== confirmation.expected_customer_supplement_ref) throw new PortalError('fcl_supplement_stale');
+      const current = this.currentFclInput(caseId);
+      const { input: next, fieldChanges } = this.applyFclPatch(current, confirmation.confirmed_fields);
+      const fromVersion = caseRow.version;
+      caseRow.input_json = JSON.stringify(next);
+      expectedInputJson = caseRow.input_json;
+      caseRow.status = 'in_review';
+      caseRow.version++;
+      expectedVersion = caseRow.version;
+      expectedFieldChanges = fieldChanges;
+      caseRow.updated_at = this.fclOptions().now();
+      this.store.db.prepare('UPDATE business_cases SET status=?,version=?,input_json=?,updated_at=? WHERE case_id=?').run(caseRow.status, caseRow.version, caseRow.input_json, caseRow.updated_at, caseId);
+      this.event(caseRow, confirmation.reason.trim(), 'internal', ctx.identity.displayName, ctx.identity.userId, 'fcl_staff_confirmation', {
+        confirmed_fields: confirmation.confirmed_fields,
+        reason: confirmation.reason.trim(),
+        reviewed_customer_supplement_ref: confirmation.expected_customer_supplement_ref,
+        from_version: fromVersion,
+        to_version: caseRow.version,
+        confirmed_case_version: caseRow.version,
+        field_changes: fieldChanges,
+      });
+    }, () => {
+      const current = this.fclRowByCase(caseId);
+      const caseRow = this.fclCaseRow(caseId);
+      const event = this.latestFclEvent(caseId, 'fcl_staff_confirmation');
+      if (!current || caseRow.version !== expectedVersion || caseRow.status !== 'in_review' || caseRow.input_json !== expectedInputJson) throw new PortalError('fcl_readback_failed');
+      if (event?.kind !== 'fcl_staff_confirmation' || event.actor_ref !== ctx.identity.userId || event.payload.reviewed_customer_supplement_ref !== confirmation.expected_customer_supplement_ref || event.payload.confirmed_case_version !== expectedVersion || JSON.stringify(event.payload.field_changes) !== JSON.stringify(expectedFieldChanges)) {
+        throw new PortalError('fcl_readback_failed');
+      }
+      this.assertFclOriginalDigest(current);
+    }, () => this.fclInternalView(this.fclRowByCase(caseId)!));
+  }
   private fclRowByCase(caseId: string): FclRow | undefined {
     return this.store.db.prepare('SELECT * FROM fcl_inquiries WHERE case_id=?').get(caseId) as FclRow | undefined;
   }
@@ -418,7 +745,7 @@ export class CaseService {
   }
   private fclEvents(caseId: string) {
     const rows = this.store.db.prepare(`SELECT event_id,version,status,message,visibility,actor_label,created_at,event_kind,payload_json,actor_id
-      FROM business_case_events WHERE case_id=? AND event_kind IN ('fcl_inquiry_submitted','fcl_receiver_assigned') ORDER BY version,rowid`).all(caseId) as FclEventRow[];
+      FROM business_case_events WHERE case_id=? AND event_kind LIKE 'fcl_%' ORDER BY version,rowid`).all(caseId) as FclEventRow[];
     return rows.map((row) => fclCaseEventSchema.parse({
       event_id: row.event_id,
       version: row.version,
@@ -426,12 +753,55 @@ export class CaseService {
       message: row.message,
       visibility: row.visibility,
       actor_label: row.actor_label,
-      actor_kind: row.event_kind === 'fcl_inquiry_submitted' ? 'anonymous_customer' : 'system',
+      actor_kind: row.event_kind === 'fcl_inquiry_submitted' || row.event_kind === 'fcl_customer_supplement'
+        ? 'anonymous_customer'
+        : row.event_kind === 'fcl_receiver_assigned'
+          ? 'system'
+          : 'staff',
       actor_ref: row.actor_id,
       created_at: row.created_at,
       kind: row.event_kind,
       payload: JSON.parse(row.payload_json) as unknown,
     }));
+  }
+  private latestCustomerSupplementRef(caseId: string): string | null {
+    const row = this.store.db.prepare(`SELECT event_id FROM business_case_events
+      WHERE case_id=? AND event_kind='fcl_customer_supplement' AND visibility='customer'
+      ORDER BY version DESC,rowid DESC LIMIT 1`).get(caseId) as { event_id: string } | undefined;
+    return row?.event_id ?? null;
+  }
+  private fclReviewContext(caseRow: Row) {
+    const latest = this.latestCustomerSupplementRef(caseRow.case_id);
+    const confirmation = this.store.db.prepare(`SELECT payload_json FROM business_case_events
+      WHERE case_id=? AND event_kind='fcl_staff_confirmation' ORDER BY version DESC,rowid DESC LIMIT 1`).get(caseRow.case_id) as { payload_json: string } | undefined;
+    if (!confirmation) {
+      return fclCaseReviewContextSchema.parse({
+        latest_customer_supplement_ref: latest,
+        last_confirmed_case_version: null,
+        last_confirmed_customer_supplement_ref: null,
+        review_required: true,
+      });
+    }
+    const payload = JSON.parse(confirmation.payload_json) as { confirmed_case_version: number; reviewed_customer_supplement_ref: string | null };
+    return fclCaseReviewContextSchema.parse({
+      latest_customer_supplement_ref: latest,
+      last_confirmed_case_version: payload.confirmed_case_version,
+      last_confirmed_customer_supplement_ref: payload.reviewed_customer_supplement_ref,
+      review_required: payload.confirmed_case_version !== caseRow.version || payload.reviewed_customer_supplement_ref !== latest,
+    });
+  }
+  private fclPublicEvents(caseId: string): FclCasePublicEvent[] {
+    const allowed = new Set(['fcl_inquiry_submitted','fcl_customer_supplement','fcl_staff_supplement','fcl_case_status_updated']);
+    return this.fclEvents(caseId)
+      .filter((event) => event.visibility === 'customer' && allowed.has(event.kind))
+      .map((event) => fclCasePublicEventSchema.parse({
+        event_id: event.event_id,
+        version: event.version,
+        kind: event.kind,
+        message: event.message,
+        actor_label: event.actor_label,
+        created_at: event.created_at,
+      }));
   }
   private fclInternalView(row: FclRow): FclCaseInternalView {
     const caseRow = this.store.db.prepare('SELECT * FROM business_cases WHERE case_id=?').get(row.case_id) as Row | undefined;
@@ -450,15 +820,27 @@ export class CaseService {
       updated_at: caseRow.updated_at,
       notification: this.notification(row),
       events: this.fclEvents(row.case_id),
+      review_context: this.fclReviewContext(caseRow),
+    });
+  }
+  private fclListItem(row: FclRow): FclCaseListItem {
+    const caseRow = this.store.db.prepare('SELECT * FROM business_cases WHERE case_id=?').get(row.case_id) as Row | undefined;
+    if (!caseRow) throw new PortalError('fcl_readback_failed');
+    return fclCaseListItemSchema.parse({
+      contract_version: 'fcl-case@2026-09-20.v1',
+      inquiry_id: row.fcl_inquiry_id,
+      inquiry_no: row.inquiry_no,
+      case_id: row.case_id,
+      current_input: JSON.parse(caseRow.input_json) as unknown,
+      case_status: caseRow.status,
+      case_version: caseRow.version,
+      created_at: row.created_at,
+      updated_at: caseRow.updated_at,
+      review_context: this.fclReviewContext(caseRow),
     });
   }
   private fclPublicSummary(row: FclRow, input: FclInquiryInput): FclCasePublicSummary {
-    const complete = Boolean(
-      input.pol && input.pod && input.cargo_name &&
-      input.containers.length > 0 && input.containers.every((container) => container.quantity !== null) &&
-      input.cargo_type && input.estimated_weight && input.cargo_ready_date && input.incoterm &&
-      input.selected_services.length > 0 && (input.incoterm !== 'Other' || Boolean(input.incoterm_other)),
-    );
+    const complete = isFclInquiryComplete(input);
     return fclCasePublicSummarySchema.parse({
       contract_version: 'fcl-case@2026-09-20.v1',
       inquiry_id: row.fcl_inquiry_id,
@@ -469,6 +851,7 @@ export class CaseService {
       credential_expires_at: row.credential_expires_at,
       complete,
       input,
+      events: this.fclPublicEvents(row.case_id),
     });
   }
   getFclCase(ctx: PortalContext, caseId: string): FclCaseInternalView {
@@ -477,10 +860,29 @@ export class CaseService {
     if (!row || row.receiver_user_id !== ctx.identity.userId) throw new PortalError('fcl_not_found');
     return this.fclInternalView(row);
   }
-  listFclCases(ctx: PortalContext) {
+  listFclCases(ctx: PortalContext, input: unknown = undefined) {
     const options = this.requireFclReceiver(ctx);
-    const rows = this.store.db.prepare('SELECT * FROM fcl_inquiries WHERE receiver_user_id=? ORDER BY created_at DESC,fcl_inquiry_id DESC LIMIT 50').all(options.receiverUserId) as FclRow[];
-    return fclCaseListSchema.parse({ items: rows.map((row) => this.fclInternalView(row)) });
+    const defaults = { limit: 25, status: null, cursor: null };
+    const queryInput = input === undefined ? defaults : isRecord(input) ? { ...defaults, ...input } : input;
+    const query = parse(fclCaseListQuerySchema, queryInput);
+    const where = ['receiver_user_id=?'];
+    const params: (string | number | null)[] = [options.receiverUserId];
+    if (query.status !== null) { where.push('(SELECT status FROM business_cases c WHERE c.case_id=fcl_inquiries.case_id)=?'); params.push(query.status); }
+    if (query.cursor !== null) {
+      let cursor: { at: string; id: string };
+      try { cursor = z.object({ at: z.string().datetime(), id: z.string().uuid() }).strict().parse(JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8'))); }
+      catch { throw new PortalError('case_input_invalid'); }
+      where.push('(created_at < ? OR (created_at=? AND fcl_inquiry_id<?))');
+      params.push(cursor.at, cursor.at, cursor.id);
+    }
+    params.push(query.limit + 1);
+    const rows = this.store.db.prepare(`SELECT * FROM fcl_inquiries WHERE ${where.join(' AND ')} ORDER BY created_at DESC,fcl_inquiry_id DESC LIMIT ?`).all(...params) as FclRow[];
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
+    return fclCaseListSchema.parse({
+      items: page.map((row) => this.fclListItem(row)),
+      next_cursor: rows.length > query.limit && last ? Buffer.from(JSON.stringify({ at: last.created_at, id: last.fcl_inquiry_id })).toString('base64url') : null,
+    });
   }
   getFclCustomerView(inquiryId: string, credential: string): FclCasePublicSummary {
     const options = this.fclOptions();
