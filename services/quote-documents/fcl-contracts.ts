@@ -42,6 +42,9 @@ export type FclDocumentView=z.infer<typeof fclDocumentViewSchema>;
 export type FclDocumentSaveRequest=z.infer<typeof fclDocumentSaveRequestSchema>;
 export type FclDocumentDecision=z.infer<typeof fclDocumentDecisionSchema>;
 export type FclDocumentReviewView=z.infer<typeof fclDocumentReviewViewSchema>;
+export type FclDocumentExportRequest=z.infer<typeof fclDocumentExportRequestSchema>;
+export type FclDocumentExportOutput=z.infer<typeof fclDocumentExportOutputSchema>;
+export type FclDocumentPdfBinding=z.infer<typeof fclDocumentPdfBindingSchema>;
 
 export const fclDocumentCaseBindingSchema=z.object({
   case_ref:z.string().uuid(),
@@ -249,6 +252,59 @@ export const fclDocumentRejectRequestSchema=z.object({
   expected_version:z.number().int().positive(),
   reason:z.string().trim().min(1).max(2000),
 }).strict();
+export const fclDocumentExportRequestSchema=z.discriminatedUnion('mode',[
+  z.object({
+    contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+    mode:z.literal('formal'),
+    document_id:z.string().uuid(),
+    expected_version:z.number().int().positive(),
+  }).strict(),
+  z.object({
+    contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+    mode:z.literal('history'),
+    document_id:z.string().uuid(),
+    target_version:z.number().int().positive(),
+    expected_current_version:z.number().int().positive(),
+  }).strict(),
+]);
+export const fclDocumentExportOutputSchema=z.object({
+  contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+  document_id:z.string().uuid(),
+  version:z.number().int().positive(),
+  revision_id:z.string().uuid(),
+  current_version:z.number().int().positive(),
+  mode:z.enum(['formal','history']),
+  historical:z.boolean(),
+  valid_now:z.boolean(),
+  filename:z.string().regex(/^fcl-[a-f0-9-]+-v[0-9]+\.pdf$/u),
+  sha256:z.string().regex(/^[a-f0-9]{64}$/u),
+  byte_length:z.number().int().min(100).max(8388608),
+  content_base64:z.string().max(11184812).regex(/^[A-Za-z0-9+/]+={0,2}$/u),
+  customer_totals:fclDocumentCustomerTotalsSchema,
+  trace_refs:z.array(z.string().min(1).max(500)).max(50),
+  replay:z.object({replayed:z.boolean(),submitted_version:z.number().int().positive().nullable(),current:z.boolean()}).strict(),
+}).strict();
+export const fclDocumentPdfReferenceSchema=z.object({
+  document_id:z.string().uuid(),
+  version:z.number().int().positive(),
+  sha256:z.string().regex(/^[a-f0-9]{64}$/u),
+  audit_id:z.string().uuid(),
+}).strict();
+export const fclDocumentPdfBindingSchema=z.object({
+  contract_version:z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
+  personal_owner_id:z.string().min(1).max(200),
+  document_id:z.string().uuid(),
+  revision_id:z.string().uuid(),
+  version:z.number().int().positive(),
+  content_digest:z.string().regex(/^[a-f0-9]{64}$/u),
+  sha256:z.string().regex(/^[a-f0-9]{64}$/u),
+  byte_length:z.number().int().min(100).max(8388608),
+  audit_id:z.string().uuid(),
+  request_digest:z.string().regex(/^[a-f0-9]{64}$/u),
+  actor:z.string().min(1).max(200),
+  created_at:z.iso.datetime(),
+  signature:z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
 
 export const fclDocumentSchemas:Record<string,z.ZodType>={
   ...fclConfigSchemas,
@@ -261,4 +317,6 @@ export const fclDocumentSchemas:Record<string,z.ZodType>={
   'linked-review-output':fclDocumentReviewViewSchema,
   'linked-approve-request':fclDocumentApproveRequestSchema,
   'linked-reject-request':fclDocumentRejectRequestSchema,
+  'linked-export-request':fclDocumentExportRequestSchema,
+  'linked-export-output':fclDocumentExportOutputSchema,
 };

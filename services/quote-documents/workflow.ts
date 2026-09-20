@@ -6,7 +6,7 @@ import type {PortalService} from '../access-gateway/portal/service';
 import type {CaseService} from '../access-gateway/portal/cases';
 import type {NativeAdminService} from '../access-gateway/portal/native-admin';
 import type {DocumentFclStoreOptions,DocumentService,DocumentStore} from './service';
-import {calculate,renderHtml} from './engine';
+import {calculate,renderHtml,type FclRenderMetadata} from './engine';
 import {renderPdf} from './renderer';
 import {
   DRAFT_VERSION,
@@ -28,7 +28,7 @@ import {
   type WorkflowDocumentView,
 } from './workflow-contracts';
 import {z} from 'zod';
-import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema} from './contracts';
+import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema,type QuoteDocument,type QuoteTemplate} from './contracts';
 import {
   FCL_DOCUMENT_WORKFLOW_VERSION,
   fclConfigSaveSchema,
@@ -38,6 +38,10 @@ import {
   fclDocumentRejectRequestSchema,
   fclDocumentReviewRequestSchema,
   fclDocumentReviewViewSchema,
+  fclDocumentExportRequestSchema,
+  fclDocumentExportOutputSchema,
+  fclDocumentPdfReferenceSchema,
+  fclDocumentPdfBindingSchema,
   fclDocumentListRequestSchema,
   fclDocumentListSchema,
   fclDocumentPayloadSchema,
@@ -47,6 +51,8 @@ import {
   type FclConfigView,
   type FclDocumentPayload,
   type FclDocumentReviewView,
+  type FclDocumentExportOutput,
+  type FclDocumentPdfBinding,
   type FclDocumentView,
 } from './fcl-contracts';
 import {
@@ -1458,6 +1464,195 @@ export class DocumentWorkflowService{
       const at=this.fclTimestamp(options);
       return this.fclDocumentDecisionPayload(current.payload,{state:'rejected',actor:ctx.identity.userId,at,reviewHash:null,reviewedAt:null,reviewExpiresAt:null,reason:request.reason,newRevisionId:randomUUID()});
     }));
+  }
+  private fclPdfCache(documentId:string,version:number):{sha256:string;bytes:Uint8Array}|null{
+    const row=this.store.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=?').get(documentId,version) as {sha256:string;bytes:Uint8Array}|undefined;
+    return row??null;
+  }
+  private fclPdfBindingPartition(personalOwnerId:string):string{return JSON.stringify(['v5-doc-personal',personalOwnerId,'fcl-document-pdf-binding']);}
+  private fclPdfBindingKey(documentId:string,version:number):string{return `pdf:${documentId}:${version}`;}
+  private fclPdfBindingSignature(binding:Omit<FclDocumentPdfBinding,'signature'>):string{
+    return createHmac('sha256',this.secret).update(canonicalJson({domain:'fcl-document-pdf-binding',binding})).digest('hex');
+  }
+  private withFclDocumentReadWindow<T>(operation:()=>T):T{
+    const db=this.store.db;
+    db.exec('BEGIN');
+    let committed=false;
+    try{const result=operation();db.exec('COMMIT');committed=true;return result;}catch(error){if(!committed){try{db.exec('ROLLBACK');}catch{/* Preserve the original failure. */}}throw error;}
+  }
+  private readFclPdfArtifact(personalOwnerId:string,documentId:string,version:number):{binding:FclDocumentPdfBinding;bytes:Buffer}{
+    const partition=this.fclPdfBindingPartition(personalOwnerId),key=this.fclPdfBindingKey(documentId,version);
+    const row=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+    if(!row)throw new PortalError('fcl_document_pdf_binding_missing');
+    let binding:FclDocumentPdfBinding;
+    try{binding=fclDocumentPdfBindingSchema.parse(JSON.parse(row.result));}catch{throw new PortalError('document_readback_failed');}
+    const unsigned=Object.fromEntries(Object.entries(binding).filter(([key])=>key!=='signature')) as Omit<FclDocumentPdfBinding,'signature'>,expected=this.fclPdfBindingSignature(unsigned);
+    if(row.digest!==binding.signature||binding.signature!==expected||binding.personal_owner_id!==personalOwnerId||binding.document_id!==documentId||binding.version!==version)throw new PortalError('document_readback_failed');
+    const cached=this.fclPdfCache(documentId,version),bytes=this.validateFclPdf(cached);
+    if(binding.sha256!==cached?.sha256||binding.byte_length!==bytes.length||createHash('sha256').update(bytes).digest('hex')!==binding.sha256)throw new PortalError('document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(binding.audit_id) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==personalOwnerId||audit.actor!==binding.actor||audit.action!=='fcl-document-export'||audit.digest!==binding.request_digest||audit.created!==binding.created_at)throw new PortalError('document_readback_failed');
+    return {binding,bytes};
+  }
+  private validateFclPdf(cached:{sha256:string;bytes:Uint8Array}|null):Buffer{
+    if(!cached)throw new PortalError('fcl_document_history_bytes_missing');
+    const bytes=Buffer.from(cached.bytes);
+    if(bytes.length<100||bytes.length>8388608||bytes.subarray(0,5).toString()!=='%PDF-'||createHash('sha256').update(bytes).digest('hex')!==cached.sha256)throw new PortalError('document_pdf_invalid');
+    return bytes;
+  }
+  private fclDocumentRenderData(payload:FclDocumentPayload,quote:ReturnType<typeof validateFclQuoteSnapshot>,caseView:ReturnType<CaseService['getFclCase']>){
+    const document=renderDocument(payload.customer_input),totals=calculate(document);
+    if((['USD','CAD','CNY'] as const).some(currency=>totals.by_currency[currency]!==payload.customer_totals.by_currency[currency]))throw new PortalError('fcl_pdf_amount_mismatch');
+    const rowNames=new Map(quote.cost_rows.map(row=>[row.row_key,row.name]));
+    const metadata:FclRenderMetadata={
+      inquiry_no:caseView.inquiry_no,
+      case_ref:payload.case_binding.case_ref,
+      quote_ref:payload.quote_binding.quote_ref,
+      rate_id:payload.source_binding.rate_id,
+      release_id:payload.source_binding.release_id,
+      case_version:payload.case_binding.case_version,
+      quote_version:payload.quote_binding.quote_version,
+      document_version:payload.version,
+      pol:payload.case_projection.pol,
+      pod:payload.case_projection.pod,
+      final_destination:payload.case_projection.final_destination,
+      containers:payload.case_projection.containers,
+      incoterm:payload.case_projection.incoterm,
+      incoterm_other:payload.case_projection.incoterm_other,
+      scope:payload.customer_scope.map(item=>({service:item.service,disposition:item.disposition,note:item.note,included_names:item.included_row_refs.flatMap(ref=>rowNames.has(ref)?[rowNames.get(ref)!]:[])})),
+    };
+    return {document,metadata};
+  }
+  private fclPdfOutput(payload:FclDocumentPayload,bytes:Buffer,currentVersion:number,mode:'formal'|'history',replay:{replayed:boolean;submitted_version:number|null;current:boolean}={replayed:false,submitted_version:null,current:payload.version===currentVersion}):FclDocumentExportOutput{
+    return fclDocumentExportOutputSchema.parse({
+      contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+      document_id:payload.document_id,
+      version:payload.version,
+      revision_id:payload.revision_id,
+      current_version:currentVersion,
+      mode,
+      historical:mode==='history',
+      valid_now:mode==='formal',
+      filename:`fcl-${payload.document_id}-v${payload.version}.pdf`,
+      sha256:createHash('sha256').update(bytes).digest('hex'),
+      byte_length:bytes.length,
+      content_base64:bytes.toString('base64'),
+      customer_totals:payload.customer_totals,
+      trace_refs:[payload.case_binding.case_ref,payload.quote_binding.quote_ref,payload.source_binding.release_id,payload.source_binding.rate_id],
+      replay,
+    });
+  }
+  private prepareFormalFclPdf(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:{document_id:string;expected_version:number}):{payload:FclDocumentPayload;document:QuoteDocument;template:QuoteTemplate;metadata:FclRenderMetadata;bytes:Buffer|null}{
+    const dependencies=this.fclQuoteDependencies(),read=this.readFclDocument(options.receiverUserId,request.document_id,null);
+    if(read.payload.state!=='approved'||read.payload.version!==request.expected_version)throw new PortalError('fcl_document_not_approved');
+    const currentness=this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options);
+    if(!currentness.valid_now)throw new PortalError('fcl_document_not_current');
+    const quote=this.readFclQuote(options.receiverUserId,read.payload.quote_binding.quote_ref,read.payload.quote_binding.quote_version);
+    if(quote.currentVersion!==read.payload.quote_binding.quote_version||quote.snapshot.content_digest!==read.payload.quote_binding.quote_digest||!quote.snapshot.completeness.complete||!quote.snapshot.calculation.complete)throw new PortalError('fcl_document_not_current');
+    const caseView=dependencies.caseReader.getFclCase(ctx,read.payload.case_binding.case_ref);
+    const rendered=this.fclDocumentRenderData(read.payload,quote.snapshot,caseView);
+    let bytes:Buffer|null=null;
+    try{bytes=this.readFclPdfArtifact(options.receiverUserId,read.payload.document_id,read.payload.version).bytes;}catch(error){
+      if(!(error instanceof PortalError&&error.code==='fcl_document_pdf_binding_missing'))throw error;
+      if(this.fclPdfCache(read.payload.document_id,read.payload.version))throw new PortalError('document_readback_failed');
+    }
+    return {...rendered,template:{...read.payload.template,fee_items:[]},payload:read.payload,bytes};
+  }
+  private assertFclPdfCommitted(input:{personalOwnerId:string;documentId:string;revisionId:string;version:number;contentDigest:string;sha256:string;bytes:Buffer;auditId:string;partition:string;key:string;requestDigest:string}):void{
+    const artifact=this.readFclPdfArtifact(input.personalOwnerId,input.documentId,input.version);
+    if(artifact.binding.revision_id!==input.revisionId||artifact.binding.content_digest!==input.contentDigest||artifact.binding.sha256!==input.sha256||artifact.binding.byte_length!==input.bytes.length||artifact.bytes.length!==input.bytes.length||!artifact.bytes.equals(input.bytes))throw new PortalError('document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    const idem=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.personalOwnerId||audit.action!=='fcl-document-export'||audit.digest!==artifact.binding.request_digest||audit.created!==artifact.binding.created_at||!idem||idem.digest!==input.requestDigest)throw new PortalError('document_readback_failed');
+    let ref:{document_id:string;version:number;sha256:string;audit_id:string};
+    try{ref=fclDocumentPdfReferenceSchema.parse(JSON.parse(idem.result));}catch{throw new PortalError('document_readback_failed');}
+    if(ref.document_id!==input.documentId||ref.version!==input.version||ref.sha256!==input.sha256||ref.audit_id!==input.auditId)throw new PortalError('document_readback_failed');
+  }
+  private writeFclPdf(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:{document_id:string;expected_version:number},key:string,bytes:Buffer,payload:FclDocumentPayload):FclDocumentExportOutput{
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
+    const partition=JSON.stringify(['v5-doc-personal',options.receiverUserId,ctx.identity.userId,'fcl-document-export',request.document_id]),requestDigest=canonicalHash(request),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');let committed=false;
+    try{
+      this.requireFclReceiver(ctx);
+      const prepared=this.prepareFormalFclPdf(ctx,options,request);
+      if(prepared.payload.revision_id!==payload.revision_id||prepared.payload.content_digest!==payload.content_digest)throw new PortalError('version_conflict');
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==requestDigest)throw new PortalError('idempotency_conflict');
+        let ref:{document_id:string;version:number;sha256:string;audit_id:string};
+        try{ref=fclDocumentPdfReferenceSchema.parse(JSON.parse(old.result));}catch{throw new PortalError('document_readback_failed');}
+        if(ref.document_id!==prepared.payload.document_id||ref.version!==prepared.payload.version)throw new PortalError('document_readback_failed');
+        const artifact=this.readFclPdfArtifact(options.receiverUserId,prepared.payload.document_id,prepared.payload.version);
+        if(ref.sha256!==artifact.binding.sha256||ref.audit_id!==artifact.binding.audit_id)throw new PortalError('document_readback_failed');
+        this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId:artifact.binding.audit_id,partition,key,requestDigest});
+        db.exec('COMMIT');committed=true;
+        this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId:artifact.binding.audit_id,partition,key,requestDigest});
+        return this.fclPdfOutput(prepared.payload,artifact.bytes,prepared.payload.version,'formal',{replayed:true,submitted_version:ref.version,current:ref.version===prepared.payload.version});
+      }
+      let artifact:{binding:FclDocumentPdfBinding;bytes:Buffer};
+      const existing=this.fclPdfCache(prepared.payload.document_id,prepared.payload.version);
+      let auditId:string,created:string;
+      if(existing){
+        artifact=this.readFclPdfArtifact(options.receiverUserId,prepared.payload.document_id,prepared.payload.version);
+        auditId=artifact.binding.audit_id;created=artifact.binding.created_at;
+      }else{
+        auditId=randomUUID();created=this.fclTimestamp(options);
+        db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,'fcl-document-export',requestDigest,created);
+        const expectedSha=createHash('sha256').update(bytes).digest('hex');
+        db.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(prepared.payload.document_id,prepared.payload.version,expectedSha,bytes);
+        const unsignedBinding={
+          contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+          personal_owner_id:options.receiverUserId,
+          document_id:prepared.payload.document_id,
+          revision_id:prepared.payload.revision_id,
+          version:prepared.payload.version,
+          content_digest:prepared.payload.content_digest,
+          sha256:expectedSha,
+          byte_length:bytes.length,
+          audit_id:auditId,
+          request_digest:requestDigest,
+          actor:ctx.identity.userId,
+          created_at:created,
+        };
+        const binding=fclDocumentPdfBindingSchema.parse({...unsignedBinding,signature:this.fclPdfBindingSignature(unsignedBinding)});
+        db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(this.fclPdfBindingPartition(options.receiverUserId),this.fclPdfBindingKey(prepared.payload.document_id,prepared.payload.version),binding.signature,JSON.stringify(binding));
+        artifact=this.readFclPdfArtifact(options.receiverUserId,prepared.payload.document_id,prepared.payload.version);
+        if(artifact.binding.sha256!==expectedSha||artifact.bytes.length!==bytes.length||!artifact.bytes.equals(bytes))throw new PortalError('document_readback_failed');
+      }
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,requestDigest,JSON.stringify({document_id:prepared.payload.document_id,version:prepared.payload.version,sha256:artifact.binding.sha256,audit_id:auditId}));
+      this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId,partition,key,requestDigest});
+      db.exec('COMMIT');committed=true;
+      this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId,partition,key,requestDigest});
+      return this.fclPdfOutput(prepared.payload,artifact.bytes,prepared.payload.version,'formal',{replayed:false,submitted_version:null,current:true});
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');
+      throw error;
+    }
+  }
+  async exportFclDocument(ctx:PortalContext,input:unknown,key:string):Promise<FclDocumentExportOutput>{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentExportRequestSchema,input,'fcl_document_input_invalid');
+    if(request.mode==='history'){
+      return dependencies.caseLock.withFclReadLock(ctx,()=>{
+        return this.withFclDocumentReadWindow(()=>{
+          const target=this.readFclDocument(options.receiverUserId,request.document_id,request.target_version),current=this.readFclDocument(options.receiverUserId,request.document_id,null);
+          if(target.payload.state!=='approved')throw new PortalError('fcl_document_not_approved');
+          if(current.currentVersion!==request.expected_current_version)throw new PortalError('version_conflict');
+          dependencies.caseReader.getFclCase(ctx,target.payload.case_binding.case_ref);
+          const artifact=this.readFclPdfArtifact(options.receiverUserId,request.document_id,request.target_version);
+          if(artifact.binding.revision_id!==target.payload.revision_id||artifact.binding.content_digest!==target.payload.content_digest)throw new PortalError('document_readback_failed');
+          return this.fclPdfOutput(target.payload,artifact.bytes,current.currentVersion,'history',{replayed:false,submitted_version:null,current:false});
+        });
+      });
+    }
+    this.store.ensureWritable();
+    const first=dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentReadWindow(()=>this.prepareFormalFclPdf(ctx,options,request))));
+    if(first.bytes)return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.writeFclPdf(ctx,options,request,key,first.bytes!,first.payload)));
+    let bytes:Buffer;
+    try{bytes=await this.renderer(renderHtml(first.document,first.template,true,first.metadata));}catch{throw new PortalError('document_renderer_unavailable');}
+    if(bytes.length<100||bytes.length>8388608||bytes.subarray(0,5).toString()!=='%PDF-')throw new PortalError('document_pdf_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.writeFclPdf(ctx,options,request,key,bytes,first.payload)));
   }
   private scope(ctx:PortalContext,manage=false):Scope{
     if(!ctx.identity.emailVerified||!ctx.organizationId)throw new PortalError('document_organization_required');

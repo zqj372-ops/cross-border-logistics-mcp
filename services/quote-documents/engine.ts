@@ -15,8 +15,27 @@ export function calculate(input:QuoteDocument){
  const total_usd=sums.CAD.isZero()&&sums.CNY.isZero()?sums.USD.toFixed(2):total_cny!==null&&d.exchange_rates.USD?new D(total_cny).div(d.exchange_rates.USD).toFixed(2):null;
  return {rows,by_currency,total_cny,total_usd,warnings:rows.some(f=>f.display==='hiddenIncluded')?['合计包含隐藏计入费用，请核对客户展示。']:[],calculation_version:'quote-documents-decimal-v1'};
 }
-export function renderHtml(d:QuoteDocument,t:QuoteTemplate,approved:boolean){
+export interface FclRenderMetadata{
+  inquiry_no:string|null;
+  case_ref:string;
+  quote_ref:string;
+  rate_id:string;
+  release_id:string;
+  case_version:number;
+  quote_version:number;
+  document_version:number;
+  pol:string|null;
+  pod:string|null;
+  final_destination:string|null;
+  containers:Array<{type:string;quantity:string}>;
+  incoterm:string|null;
+  incoterm_other:string|null;
+  scope:Array<{service:string;disposition:string;note:string|null;included_names:string[]}>;
+}
+export function renderHtml(d:QuoteDocument,t:QuoteTemplate,approved:boolean,fclMetadata?:FclRenderMetadata){
  const result=calculate(d),e=escapeHtml,visible=result.rows.filter(f=>f.display==='detail');
+ const serviceLabels:Record<string,string>={pickup:'提货',export_customs:'出口报关',ocean_freight:'海运费',canada_customs:'加拿大清关',devianning_storage:'拆柜/仓储',devanning_storage:'拆柜/仓储',delivery:'派送'};
+ const scopeLabels:Record<string,string>={priced:'已计价',included:'已包含',free:'免费',out_of_scope:'不在本次范围',pending:'待确认'};
  const merged=new Map<string,{name:string;currency:string;amount:Decimal}>();
  for(const f of result.rows.filter(f=>f.display==='merged')){const key=JSON.stringify([f.merge_name,f.currency]),prior=merged.get(key);merged.set(key,{name:f.merge_name,currency:f.currency,amount:(prior?.amount??new D(0)).add(f.amount)});}
  const rows=visible.map(f=>`<tr><td>${e(f.group)} · ${e(f.name)}</td><td>${e(f.description)}</td><td class="num">${e(f.quantity)}</td><td>${e(f.unit)}</td><td class="num">${e(f.unit_price)}</td><td>${f.currency}</td><td class="num strong">${f.amount}</td><td>${e(f.note)}</td></tr>`).join('')+[...merged.values()].map(f=>`<tr><td colspan="5">${e(f.name)}</td><td>${f.currency}</td><td class="num strong">${f.amount.toFixed(2)}</td><td></td></tr>`).join('');
@@ -53,9 +72,10 @@ export function renderHtml(d:QuoteDocument,t:QuoteTemplate,approved:boolean){
 </style></head><body>
  ${approved?'':'<div class="draft">草稿 · 待核对 / DRAFT - NOT A FORMAL QUOTE</div>'}
  <div class="header"><div class="brand"><div><div class="brand-name">${e(t.company_name)}</div><div class="brand-meta">${e(t.company_address)}</div><div class="brand-meta">${e(t.company_phone)} ${e(t.company_email)}</div></div></div><div class="doc-title"><strong>报价单 / Quotation</strong><div>${e(d.quote_no)}</div><div>报价日期 ${d.quote_date}</div><div>有效期 ${d.valid_until}</div></div></div>
- <h2>客户与运输信息</h2><div class="info">${[['客户',d.customer_name],['线路',d.route_name],['起运地',d.origin],['目的地',d.destination],['单号',d.job_no],['SO 号',d.so_no],['柜号',d.container_no]].map(([k,v])=>`<div><span class="label">${k}</span><span class="value">${e(v||'—')}</span></div>`).join('')}</div>
+ <h2>客户与运输信息</h2><div class="info">${([['客户',d.customer_name],['线路',d.route_name],['起运地',d.origin],['目的地',d.destination],['单号',d.job_no],['SO 号',d.so_no],['柜号',d.container_no]] as Array<[string,string|null|undefined]>).filter(([label,value])=>fclMetadata===undefined||(!['单号','SO 号','柜号'].includes(label)&&Boolean(value))).map(([k,v])=>`<div><span class="label">${k}</span><span class="value">${e(v||'—')}</span></div>`).join('')}</div>
+ ${fclMetadata?`<h2>FCL 报价信息</h2><div class="info">${[['询价编号',fclMetadata.inquiry_no],['Case 版本',fclMetadata.case_version],['Quote 版本',fclMetadata.quote_version],['文档版本',fclMetadata.document_version],['POL',fclMetadata.pol],['POD',fclMetadata.pod],['最终目的地',fclMetadata.final_destination],['Incoterm',fclMetadata.incoterm],['Incoterm 说明',fclMetadata.incoterm_other],['柜型数量',fclMetadata.containers.map(c=>`${c.type} × ${c.quantity}`).join(', ')]].map(([k,v])=>`<div><span class="label">${k}</span><span class="value">${e(v??'—')}</span></div>`).join('')}</div>${fclMetadata.scope.length>0?`<h2>服务范围</h2><div class="remark">${fclMetadata.scope.map(item=>e(`${serviceLabels[item.service]??item.service}: ${scopeLabels[item.disposition]??item.disposition}${item.disposition!=='priced'&&item.note?` — ${item.note}`:''}${item.included_names.length>0?` (${item.included_names.join(', ')})`:''}`)).join('<br>')}</div>`:''}<div class="brand-meta">追溯：Case ${e(fclMetadata.case_ref)} · Quote ${e(fclMetadata.quote_ref)} · Rate ${e(fclMetadata.rate_id)} · Release ${e(fclMetadata.release_id)}</div>`:''}
  <h2>费用明细</h2><table><thead><tr><th style="width:17%">费用项目</th><th style="width:16%">说明</th><th>数量</th><th>单位</th><th style="width:12%">单价</th><th>币种</th><th style="width:13%">小计</th><th>备注</th></tr></thead><tbody>${rows}</tbody></table>
- <h2>费用合计 / Summary</h2><div class="totals"><div class="total-card"><h3>原币种合计</h3>${currencies.map(c=>`<div class="total-line"><span>${c}</span><strong>${result.by_currency[c]}</strong></div>`).join('')}</div><div class="total-card"><h3>折算人民币</h3><strong>${result.total_cny===null?'未填写完整汇率':result.total_cny+' CNY'}</strong></div><div class="total-card"><h3>折算美元</h3><strong>${result.total_usd===null?'未填写完整汇率':result.total_usd+' USD'}</strong></div></div>
+ <h2>费用合计 / Summary</h2><div class="totals"><div class="total-card"><h3>原币种合计</h3>${currencies.map(c=>`<div class="total-line"><span>${c}</span><strong>${result.by_currency[c]}</strong></div>`).join('')}</div>${fclMetadata?`${result.total_cny!==null?`<div class="total-card"><h3>折算人民币</h3><strong>${result.total_cny} CNY</strong></div>`:''}${result.total_usd!==null?`<div class="total-card"><h3>折算美元</h3><strong>${result.total_usd} USD</strong></div>`:''}`:`<div class="total-card"><h3>折算人民币</h3><strong>${result.total_cny===null?'未填写完整汇率':result.total_cny+' CNY'}</strong></div><div class="total-card"><h3>折算美元</h3><strong>${result.total_usd===null?'未填写完整汇率':result.total_usd+' USD'}</strong></div>`}</div>
  <p>填写汇率：1 USD = ${e(d.exchange_rates.USD??'未填写')} CNY；1 CAD = ${e(d.exchange_rates.CAD??'未填写')} CNY</p>
  ${d.remark?`<h2>备注</h2><div class="remark">${e(d.remark)}</div>`:''}<h2>报价条款</h2><div class="terms">${e(t.terms)}</div></body></html>`;
 }

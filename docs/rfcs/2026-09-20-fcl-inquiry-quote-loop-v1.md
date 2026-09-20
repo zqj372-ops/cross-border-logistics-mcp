@@ -370,3 +370,12 @@ node --import tsx/esm deploy/scripts/generate-native-schemas.ts
 - `rejectFclDocument` 是纠正动作，只要求当前 draft、个人权限、CAS、非空 reason 和 Case→Document 顺序；不读取 active Rate 或 quote currentness。拒绝只写内部 decision/reject event，不把 reason 注入 public Case event。
 - draft 普通 refresh 保留；rejected 使用显式 `resubmit`，允许同一 Quote 仅修正展示字段；approved 使用显式 `re_quote`，要求 Quote ref/version 或个人模板版本发生变化。重提/re_quote 生成新 draft，清除旧 decision，保留旧 approved/rejected revision。
 - decision 为 payload 可选字段；旧 draft 无 decision 时仍保持原签名/digest 可读。approved/rejected 强制 decision 完整、前驱 revision 为真实 draft 且 HMAC/digest 有效；读取同时核对 row source/review/rejection、current pointer、event/audit 和 idempotency reference。
+
+## FCL.11 实施说明
+
+本节点只导出当前 approved FCL customer PDF 或读取既存历史 bytes，不新增 PDF 引擎、表、审批对象或生产发布。
+
+- `exportFclDocument` 使用闭合 formal/history 请求。formal 只在 Case/Quote/active Rate/template/date/currentness 和已保存 approval decision 全部有效时生成或复用 PDF；history 只读取已有 approved 版本缓存，不使用当前数据重建。
+- 首次正式导出在 Case→Native→Document 一致读取窗口中取得 approved payload，释放锁后调用现有 renderer；完成后重新取得相同锁顺序和 Document 写事务，复核 revision/content digest、currentness 和缓存，再写 PDF/audit/idempotency。
+- `document_pdfs` 仍是唯一 bytes 权威。另以现有 `document_idempotency` 存储带 HMAC 的 PDF binding，绑定 owner/document/revision/version/content digest/sha/length/生成 audit；每个下载 key 只引用已验证 binding，缓存 bytes 或 sha 被同时替换、binding digest/audit 被替换均 fail closed。历史下载只读，不要求 writable store。
+- renderer 只接收显式 customer input、template 和 FCL 客户 metadata。手续费仅使用 sell 投影，客户 scope 使用人类可读 service/范围名称；sentinel 成本、GP、供应商、source 原文和 internal note 不进入 HTML/PDF。filename 由服务端按文档 ID/version 生成。
