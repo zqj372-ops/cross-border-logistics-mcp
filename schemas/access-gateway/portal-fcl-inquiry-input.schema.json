@@ -234,9 +234,9 @@
         },
         "email": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 254,
-          "pattern": "^[^\\s@<>\\u0000-\\u001f\\u007f]+@[^\\s@<>\\u0000-\\u001f\\u007f]+\\.[^\\s@<>\\u0000-\\u001f\\u007f]+$"
+          "format": "email",
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
         },
         "phone": {
           "anyOf": [

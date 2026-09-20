@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -183,6 +184,19 @@ describe('FCL inquiry shared input contract', () => {
     expect(submitIssuePaths(input)).toContain('contact.email');
   });
 
+  it('rejects consecutive dots in the final delivery email across parser and shared validator', () => {
+    for (const email of ['a..b@example.test', 'fixture@example..test']) {
+      const input = completeInput();
+      input.contact.email = email;
+
+      expect(submitIssuePaths(input), email).toContain('contact.email');
+      expect(() => parseFclInquiry(input), email).toThrow(FclInquiryValidationError);
+    }
+
+    expect(submitIssuePaths(completeInput())).toEqual([]);
+    expect(parseFclInquiry(completeInput()).contact.email).toBe('shipper@example.test');
+  });
+
   it('keeps the public parser on the final submission contract rather than the draft contract', () => {
     expect(() => parseFclInquiry(createFclInquiryDraft())).toThrow(FclInquiryValidationError);
     expect(parseFclInquiry(completeInput()).consent).toBe(true);
@@ -235,6 +249,7 @@ describe('FCL inquiry shared input contract', () => {
     expect(schema.properties.consent.const).toBe(true);
 
     const ajv = new Ajv2020({ strict: true });
+    addFormats(ajv);
     const validateSchema = ajv.compile(checkedIn);
     const duplicateSemantics = {
       ...completeInput(),
@@ -255,6 +270,16 @@ describe('FCL inquiry shared input contract', () => {
       }),
     ).toBe(false);
     expect(validateSchema({ ...completeInput(), consent: false })).toBe(false);
+    for (const email of ['a..b@example.test', 'fixture@example..test']) {
+      expect(
+        validateSchema({
+          ...completeInput(),
+          contact: { ...completeInput().contact, email },
+        }),
+        email,
+      ).toBe(false);
+    }
+    expect(validateSchema(completeInput())).toBe(true);
     expect(validateFclInquiryDraft(createFclInquiryDraft())).toEqual([]);
   });
 });

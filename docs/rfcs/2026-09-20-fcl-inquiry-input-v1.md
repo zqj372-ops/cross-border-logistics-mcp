@@ -1,7 +1,7 @@
 # RFC: FCL Inquiry 输入合同 v1
 
 Status: FCL.2 input-only implementation candidate, pending merge review.
-Revision: FCL.2-R1, adding explicit draft/final schemas and final email control-character rejection.
+Revision: FCL.2-R1, adding explicit draft/final schemas and stricter final email validation.
 
 日期：2026-09-20
 合同版本：`fcl-inquiry@2026-09-20.v1`
@@ -45,7 +45,8 @@ Case 持久化、身份、权限、数据库、运价、报价单、PDF、MCP �
   作为待补说明。
 - `selected_services` 最多六项且不得重复；`notes` 最多 4000 字符，允许换行和 tab。
 - `contact` 固定包含 `name`、`company`、`email`、`phone`；新草稿允许联系人未填，
-  最终提交要求有效姓名、邮箱和 `consent=true`。邮箱显式拒绝控制字符。
+  最终提交要求有效姓名、邮箱和 `consent=true`。邮箱复用 Zod email 校验并限制 254 字符，
+  拒绝控制字符和连续点号地址。
 - 根对象和嵌套对象都拒绝未知字段，包括 `owner`、`tenant`、`org`、`reviewer` 和 `price`，
   不通过 strip 后继续解析。
 
@@ -70,7 +71,7 @@ Case 持久化、身份、权限、数据库、运价、报价单、PDF、MCP �
 
 生成器从最终提交的 `fclInquirySchema` 输出
 `schemas/access-gateway/portal-fcl-inquiry-input.schema.json`。Draft 2020-12 负责闭合对象、
-required、类型、枚举、上下界、字符串 pattern 和数组长度。
+required、类型、枚举、上下界、字符串 pattern、`email` format 和数组长度。
 
 Zod refinement 表达但 JSON Schema 不完整表达的规则包括真实日历日期、柜型唯一和 service
 唯一。导出的 `fclInquirySchema`、`validateFclInquiry`、`validateFclInquiryStep` 和

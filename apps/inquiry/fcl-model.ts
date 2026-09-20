@@ -28,11 +28,10 @@ const SINGLE_LINE_TEXT_PATTERN = /^(?=[\s\S]*\S)[^\u0000-\u001f\u007f]+$/u;
 const MULTILINE_NOTES_PATTERN = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/u;
 const POSITIVE_DECIMAL_PATTERN = /^(?=[\s\S]*[1-9])\d{1,10}(?:\.\d{1,6})?$/u;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
-// eslint-disable-next-line no-control-regex
-const EMAIL_PATTERN = /^[^\s@<>\u0000-\u001f\u007f]+@[^\s@<>\u0000-\u001f\u007f]+\.[^\s@<>\u0000-\u001f\u007f]+$/u;
 
 const singleLineText = (max: number) => z.string().min(1).max(max).regex(SINGLE_LINE_TEXT_PATTERN);
 const nullableSingleLineText = (max: number) => z.union([singleLineText(max), z.null()]);
+const emailAddress = () => z.email().max(254);
 
 function isRealCalendarDate(value: string) {
   const date = new Date(`${value}T00:00:00Z`);
@@ -57,14 +56,14 @@ const fclContactDraftSchema = z
   .object({
     name: nullableSingleLineText(80),
     company: nullableSingleLineText(200),
-    email: z.union([z.string().min(1).max(254).regex(EMAIL_PATTERN), z.null()]),
+    email: z.union([emailAddress(), z.null()]),
     phone: nullableSingleLineText(80),
   })
   .strict();
 
 const fclContactSubmitSchema = fclContactDraftSchema.extend({
   name: singleLineText(80),
-  email: z.string().min(1).max(254).regex(EMAIL_PATTERN),
+  email: emailAddress(),
 });
 
 function validateCrossFieldSemantics(
