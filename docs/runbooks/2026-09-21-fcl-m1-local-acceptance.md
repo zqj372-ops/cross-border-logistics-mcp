@@ -102,13 +102,17 @@ node dist/src/logistics_mcp/server/portal-fixture.mjs --fixtures
 http://127.0.0.1:8891
 ```
 
-在另一个终端设置：
+在另一个终端重新设置（shell 的 `export` 不会跨终端继承）：
 
 ```sh
+export FCL_ACCEPTANCE_ROOT="$HOME/.local/state/freightclaw-fcl-acceptance-20260921"
+export FCL_ACCEPTANCE_PORT=8891
 export FCL_BASE_URL="http://127.0.0.1:$FCL_ACCEPTANCE_PORT"
 ```
 
 该模式应显示或读回 zero organizations / zero memberships。不要切换到 `org_fixture`，不要把平台 operator 当成 FCL 个人 receiver，也不要用 API Key 代替 person identity。
+
+Case、Rate、Quote 和 Document 使用固定业务时钟 `2026-10-08T12:00:00Z`；人工输入的 `cargo_ready_date`、Rate `valid_from/valid_until`、Quote 日期和 Document 有效期必须围绕该合成时钟构造，否则窗口不匹配会正确进入 `needs_input`/`manual_review`。登录 session 和 CLI auth TTL 仍使用真实时钟。
 
 ## 4. 页面入口与合成身份
 
@@ -290,18 +294,18 @@ node "$FL" workspace fcl rate-publish --session-file "$FCL_STAFF_SESSION" \
 
 首次 Cost/Sell 必须：
 
-1. 用 `operation=create` 保存同一 `quote_ref`；
+1. 首次用 `operation=create` 创建报价；响应返回 `quote_ref`；
 2. 缺售价、缺 FX 或服务范围不完整时返回 `needs_input`，保留 data 和版本；
-3. 不补 0；在同 quote_ref 用 `operation=update` 提交售价、人工费用、服务范围和 FX；
+3. 不补 0；后续用同一 `quote_ref` 和 `operation=update` 提交售价、人工费用、服务范围和 FX；
 4. 保存后只展示服务器计算的 Cost、Sell、GP 和 Margin。
 
 本机最终合成验收使用了：
 
 - 海运费：40HQ × 2，成本 USD 3,200/柜，售价 USD 3,500/柜；
-- 人工费用：CAD 180；
-- FX 快照：USD→CNY 7.2，CAD→CNY 5.2；
+- 人工费用：成本 CAD 120，销售 CAD 180；
+- FX 快照：USD→CNY 7.2，CAD→CNY 5.1；
 - 客户金额读回：USD 7,000、CAD 180；
-- 统一 CNY 利润读回：CNY 4,626。
+- 统一 CNY 读回：成本 CNY 46,692、销售 CNY 51,318、利润 CNY 4,626。
 
 这不是固定生产报价，只是本地合成料号/路线/速率/费用的验收断言。缺 FX 的第一版可以是 `needs_input`，但必须在同一 `quote_ref` 更新，不能伪造统一利润。
 
@@ -362,7 +366,7 @@ node "$FL" workspace fcl handoff-save --session-file "$FCL_STAFF_SESSION" \
 
 模板或报价变更后：
 
-1. 新建新 Document 并重新 review/approve；
+1. 对同一 `document_id` 使用 `operation=re_quote` 创建新版本（按状态也可使用 refresh/resubmit），再重新 review/approve；不需要新建独立 Document；
 2. 旧 Document 的历史 PDF 仍按原版本读回，不随新模板变化；
 3. 第二次 Handoff 只能指向新 approved 版本，不能把旧交接当当前成功；
 4. original Inquiry、Case、旧 Quote、旧 Document 和旧 Handoff 均可追溯。
@@ -390,8 +394,10 @@ node "$FL" workspace fcl handoff-save --session-file "$FCL_STAFF_SESSION" \
 | 全仓测试 | 261 file pass / 2 skip；2,288 test pass / 10 skip；102 秒 |
 | 真实 Edge Web | 21 项 PASS；zero org/memberships；无 pageerror |
 | PDF | 6 张最终 PDF 逐页目检，无裁切重叠 |
-| Web/CLI | 公开提交（commit 后丢响应同 key 恢复）→ 个人 device flow → Case 补料/确认 → Rate 发布 → 缺 FX 保存并同一 Quote 更新 → USD 7,000/CAD 180、CNY 4,626 利润读回 → review/approve → Edge PDF → Handoff → 模板更新新 Doc/历史 PDF 不变/第二交接 → 进程重启同一 DB 同票 Web/CLI 读回 |
+| Web/CLI | 公开提交（commit 后丢响应同 key 恢复）→ 个人 device flow → Case 补料/确认 → Rate 发布 → 缺 FX 保存并同一 Quote 更新 → USD 7,000/CAD 180、CNY 4,626 利润读回 → review/approve → Edge PDF → Handoff → 模板变更后同 document_id re_quote 新版本/历史 PDF 不变/第二交接 → 进程重启同一 DB 同票 Web/CLI 读回 |
 | 外部证据 | `/Users/autumn/Documents/Codex/outputs/fcl-m1-20260921`（只作外部主机证据引用，不复制私有 DB） |
+
+全仓测试的 2 个 skipped files / 10 skipped tests 包含未启用专门 PostgreSQL 环境的检查，以及当前主机不执行的 Linux 专用检查；这些项目不能算作已通过，也不能据此声明专门 PostgreSQL 或 Linux 环境已经验收。
 
 仓库相对可复现脚本：
 
@@ -422,7 +428,7 @@ root 的独立 demo helper 不属于仓库自带能力，也不作为复现依�
 除完整 21 项 Edge 流外，root 还完成了以下独立本地检查：
 
 - bundled CLI 公开提交了字段不完整的合成询价；`pol`、`cargo_ready_date` 和 `40HQ.quantity` 的 `null` 原样保留，`get.complete=false`，没有被 CLI 或服务端补 0、猜港口或自动填数量。
-- exchange 后使用同一 key/body 再次提交，真实 server replay 返回同一 `inquiry_id`；演示库总票数为 2（既有验收票和新 demo 票），没有为同一 key 再建一票。
+- exchange 后使用同一 key/body 再次提交，真实 server replay 返回同一 `inquiry_id`；同一批数据共有 2 票，分别是完整验收票和不完整验收票，随后被复制到独立 demo 环境；独立 demo 没有新建第三票，也没有为 same key 再建票。
 - 进程重启前旧 person session 继续调用返回 CLI exit 5（blocked）；重启后必须重新走 device flow，不能把旧 session 当当前授权。
 - 演示读回仍为 0 organizations、0 memberships。
 - root 还从 6 个关闭后的 DB/secret 私有副本启动 built portal fixture，`/inquiry/` 与 `/console/` 均返回 HTTP 200；该独立演示写入不影响原验收数据。
