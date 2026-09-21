@@ -22,6 +22,12 @@ describe('FCL business-facing presentation', () => {
     expect(fclEventMessage('FCL inquiry submitted by anonymous customer.')).toBe('客户已提交整柜询价。');
     expect(fclEventMessage('客户要求 10 月 8 日提货')).toBe('客户要求 10 月 8 日提货');
   });
+  it('explains historical quotation validity in business language', () => {
+    expect(fclIssue('fcl_quote_case_closed')).toBe('本票已结束或取消，历史报价仅供查看');
+    expect(fclIssue('fcl_quote_case_version_changed')).toBe('客户需求已更新，这份报价基于较早资料');
+    expect(fclIssue('fcl_quote_case_review_required')).toBe('当前需求尚未核对确认');
+    expect(fclIssue('fcl_document_quote_changed')).toBe('报价金额或内容已更新，请重新生成并审核报价单');
+  });
   it('identifies incomplete quote fields and retains unknown diagnostics', () => {
     expect(fclIssue('/cost_rows/0/sell_price')).toBe('第 1 项费用：请填写客户单价');
     expect(fclIssue('/exchange_rates/CAD')).toBe('请填写 CAD 对人民币的汇率');
