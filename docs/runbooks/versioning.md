@@ -1,6 +1,6 @@
 # 版本号规则
 
-当前对外版本：`0.003`，对应内部 npm semver `0.0.3`。本次发布包含整柜报价工作台简化、UI 调整和固定受理人的 COSCO 船期查询。
+当前对外版本：`0.004`，对应内部 npm semver `0.0.4`。本次发布收紧基础费用编辑与列表，并支持按费用名称、目的地和柜型筛选。
 
 ## 递增规则
 
@@ -18,8 +18,8 @@ npm 不允许 `0.002` 这种带前导零的 semver，因此版本同时保留两
 
 | 用途 | 当前值 | 下一版 | 权威位置 |
 | --- | --- | --- | --- |
-| 对外产品版本 | `0.003` | `0.004` | `src/logistics_mcp/version.ts` |
-| npm 包版本 | `0.0.3` | `0.0.4` | `package.json`、`deploy/cli/package.json` |
+| 对外产品版本 | `0.004` | `0.005` | `src/logistics_mcp/version.ts` |
+| npm 包版本 | `0.0.4` | `0.0.5` | `package.json`、`deploy/cli/package.json` |
 
 官网、CLI `--version`、MCP `serverInfo.version` 和面向用户的文档使用对外产品版本。npm tarball 的包元数据使用合法 semver；发布下载文件可以使用对外版本命名。
 

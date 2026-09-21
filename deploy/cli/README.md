@@ -9,7 +9,7 @@
 需要 Node.js 22.13 或更新版本。[官网 CLI 页面](https://www.freightclaw.net/console/#cli) 提供安装包、校验文件和输入示例。当前通过官网托管的 npm 包交付，尚未发布到公共 npm registry。
 
 ```sh
-npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.003.tgz
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.004.tgz
 freightclaw --version
 freightclaw commands
 freightclaw status
