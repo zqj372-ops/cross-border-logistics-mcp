@@ -79,13 +79,16 @@ def build_backup_plan(root, state):
     container_root, state_root = mapped_state_root(root, state, environment)
     databases = [state_root / name for name in ('portal.sqlite', 'sessions.sqlite', 'business-access.sqlite')]
     databases.extend(state_root / name for name in ('calls.sqlite', 'public-quota.sqlite') if (state_root / name).exists())
-    if environment.get('PORTAL_CASES_ENABLED') == 'true':
+    if environment.get('PORTAL_CASES_ENABLED') == 'true' or environment.get('PORTAL_FCL_ENABLED') == 'true':
         databases.append(state_root / 'business-cases.sqlite')
     private_state = []
-    if environment.get('PORTAL_NATIVE_BUSINESS_ENABLED') == 'true':
+    if environment.get('PORTAL_NATIVE_BUSINESS_ENABLED') == 'true' or environment.get('PORTAL_FCL_ENABLED') == 'true':
         native_database = state_root / 'native-business.sqlite'
         databases.append(native_database)
-        private_state.append(Path(str(native_database) + '.encryption-key'))
+        native_key = Path(str(native_database) + '.encryption-key')
+        # Freightcom creates this key; personal FCL alone has no encrypted Freightcom store.
+        if environment.get('PORTAL_NATIVE_BUSINESS_ENABLED') == 'true' or native_key.exists() or native_key.is_symlink():
+            private_state.append(native_key)
     quote_path = environment.get('PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH', '')
     if quote_path:
         databases.append(mapped_database_path(quote_path, container_root, state_root))

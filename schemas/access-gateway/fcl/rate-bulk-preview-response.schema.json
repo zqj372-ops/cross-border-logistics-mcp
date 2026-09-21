@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "preview_hash": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "changes": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "rate_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "container_type": {
+                    "type": "string",
+                    "enum": [
+                      "20GP",
+                      "40GP",
+                      "40HQ",
+                      "45HQ"
+                    ]
+                  },
+                  "original_amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                  },
+                  "adjusted_amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "USD",
+                      "CAD",
+                      "CNY"
+                    ]
+                  }
+                },
+                "required": [
+                  "rate_id",
+                  "container_type",
+                  "original_amount",
+                  "adjusted_amount",
+                  "currency"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "new_estimates": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "affected_estimates": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "locked_estimates": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "preview_hash",
+            "expected_version",
+            "changes",
+            "new_estimates",
+            "affected_estimates",
+            "locked_estimates"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "needs_input",
+            "manual_review"
+          ]
+        },
+        "data": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "preview_hash": {
+                  "type": "string",
+                  "minLength": 64,
+                  "maxLength": 64
+                },
+                "expected_version": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "changes": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "rate_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "container_type": {
+                        "type": "string",
+                        "enum": [
+                          "20GP",
+                          "40GP",
+                          "40HQ",
+                          "45HQ"
+                        ]
+                      },
+                      "original_amount": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                      },
+                      "adjusted_amount": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD",
+                          "CAD",
+                          "CNY"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "rate_id",
+                      "container_type",
+                      "original_amount",
+                      "adjusted_amount",
+                      "currency"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "new_estimates": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "affected_estimates": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "locked_estimates": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "preview_hash",
+                "expected_version",
+                "changes",
+                "new_estimates",
+                "affected_estimates",
+                "locked_estimates"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

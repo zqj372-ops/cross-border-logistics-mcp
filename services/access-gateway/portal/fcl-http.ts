@@ -19,12 +19,15 @@ import type {CaseService} from './cases';
 import type {NativeAdminService} from './native-admin';
 import type {DocumentWorkflowService} from '../../quote-documents/workflow';
 import type {FclReceiverAuthority,FclReceiverProof} from './fcl-receiver-authority';
+import {fclEstimateRequestSchema,fclEstimateSelectSchema} from '../../quote-native/fcl-operations-contracts';
+import {estimateToQuoteDraft} from '../../quote-native/fcl-operations';
+import {FCL_DOCUMENT_WORKFLOW_VERSION} from '../../quote-native/fcl-contracts';
 
 const publicCookieName='fc_fcl_public';
 const publicCookiePath='/inquiry';
 const publicCookieTtlMs=30*24*60*60_000;
 type FclCasePort=Pick<CaseService,'listFclCases'|'getFclCase'|'updateFclCaseStatus'|'supplementFclCaseAsStaff'|'confirmFclCase'|'submitFclInquiry'|'getFclCustomerView'|'supplementFclCase'>;
-type FclRatePort=Pick<NativeAdminService,'get'|'save'|'preview'|'publish'|'disable'|'rollback'|'getFclNotification'|'saveFclNotification'>;
+type FclRatePort=Pick<NativeAdminService,'get'|'save'|'preview'|'publish'|'disable'|'rollback'|'getFclNotification'|'saveFclNotification'>&Partial<Pick<NativeAdminService,'fclOperations'>>;
 type FclDocumentPort=Pick<DocumentWorkflowService,
   'matchFclQuote'|'saveFclQuote'|'getFclQuote'|'listFclQuotes'|
   'fclConfig'|'saveFclConfig'|
@@ -197,6 +200,24 @@ export class FclHttpService{
     return this.authorized(ctx,async()=>{
     let data:unknown;
     switch(action){
+      case 'estimate-run':{
+        const value=fclEstimateRequestSchema.parse(request);
+        if(value.case_ref){const detail=this.dependencies.caseService.getFclCase(ctx,value.case_ref);if(detail.case_status==='closed'||detail.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');}
+        data=this.operations().run(ctx,value,key());break;
+      }
+      case 'estimate-list':data=this.operations().list(ctx,request);break;
+      case 'estimate-get':data=this.operations().get(ctx,request);break;
+      case 'estimate-adjust':data=this.operations().adjust(ctx,request,key());break;
+      case 'estimate-duplicate':data=this.operations().duplicate(ctx,request,key());break;
+      case 'rate-bulk-preview':this.checkEstimateCase(ctx,request);data=this.operations().bulkPreview(ctx,request);break;
+      case 'rate-bulk-publish':this.checkEstimateCase(ctx,request);data=this.operations().bulkPublish(ctx,request,key());break;
+      case 'estimate-select':{
+        const value=fclEstimateSelectSchema.parse(request),estimate=this.operations().get(ctx,{estimate_id:value.estimate_id,version:value.expected_version});
+        if(estimate.version!==value.expected_version)throw new PortalError('version_conflict');
+        const release=this.dependencies.nativeAdmin.get(ctx,'fcl').active_release;
+        if(!release)throw new PortalError('fcl_rate_source_unavailable');
+        data=this.dependencies.documentWorkflow.saveFclQuote(ctx,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'create',case_ref:value.case_ref,expected_case_version:value.expected_case_version,expected_customer_supplement_ref:value.expected_customer_supplement_ref,selected_rate_id:estimate.calculation.rate_id,expected_release_id:release.release_id,expected_release_version:release.version,expected_dataset_digest:release.digest,input:estimateToQuoteDraft(estimate)},key());break;
+      }
       case 'case-list':data=this.dependencies.caseService.listFclCases(ctx,request);break;
       case 'case-get':data=this.dependencies.caseService.getFclCase(ctx,(request as {case_id:string}).case_id);break;
       case 'case-status':{const value=request as {case_id:string}&Record<string,unknown>;const {case_id,...body}=value;data=this.dependencies.caseService.updateFclCaseStatus(ctx,case_id,body,key());break;}
@@ -229,6 +250,11 @@ export class FclHttpService{
     return this.output(action,data);
     });
   }
+  private checkEstimateCase(ctx:PortalContext,input:unknown){
+    const caseRef=(input as {estimate_request?:{case_ref:string|null}|null}).estimate_request?.case_ref;
+    if(caseRef){const detail=this.dependencies.caseService.getFclCase(ctx,caseRef);if(['closed','cancelled'].includes(detail.case_status))throw new PortalError('fcl_quote_case_closed');}
+  }
+  private operations(){const service=this.dependencies.nativeAdmin.fclOperations;if(!service)throw new PortalError('fcl_operations_not_configured');return service;}
   async executePublicAction(ctx:PortalContext,action:'submit'|'exchange'|'get'|'supplement'|'logout',input:unknown,key:()=>string,cookieHeader:string|undefined|null):Promise<{status:FclHttpResult['status'];data:unknown;reason_codes:readonly string[];setCookie?:string}>{
     const execute=async():Promise<{status:FclHttpResult['status'];data:unknown;reason_codes:readonly string[];setCookie?:string}>=>{
     const current=this.publicSessions.read(cookieHeader);

@@ -66,6 +66,23 @@ class BackupPortalStateTest(unittest.TestCase):
         self.assertEqual(key_copy.stat().st_mode & 0o777, 0o400)
         self.assertNotIn('k' * 32, json.dumps(manifest))
 
+    def test_personal_fcl_includes_case_and_native_stores_without_enterprise_flags(self):
+        self.enabled_files()
+        state = self.inspect_state()
+        state['Config']['Env'] = [value for value in state['Config']['Env'] if not value.startswith(('PORTAL_CASES_ENABLED=', 'PORTAL_NATIVE_BUSINESS_ENABLED='))] + ['PORTAL_FCL_ENABLED=true']
+        plan = BACKUP.build_backup_plan(self.root, state)
+        self.assertIn(self.root / 'state' / 'business-cases.sqlite', plan['databases'])
+        self.assertIn(self.root / 'state' / 'native-business.sqlite', plan['databases'])
+        self.assertIn(self.root / 'state' / 'native-business.sqlite.encryption-key', plan['private_state'])
+
+    def test_personal_fcl_without_freightcom_does_not_require_a_nonexistent_key(self):
+        self.enabled_files(include_key=False)
+        state = self.inspect_state()
+        state['Config']['Env'] = [value for value in state['Config']['Env'] if not value.startswith(('PORTAL_CASES_ENABLED=', 'PORTAL_NATIVE_BUSINESS_ENABLED='))] + ['PORTAL_FCL_ENABLED=true']
+        plan = BACKUP.build_backup_plan(self.root, state)
+        self.assertEqual(len(plan['databases']), 7)
+        self.assertEqual(plan['private_state'], [])
+
     def test_rejects_quote_database_outside_or_missing_from_the_state_mount(self):
         self.enabled_files(include_quote=False)
         with self.assertRaisesRegex(RuntimeError, 'outside PORTAL_STATE_ROOT'):

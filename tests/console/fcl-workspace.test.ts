@@ -2,7 +2,7 @@
 import {createHash} from 'node:crypto';
 import {describe,expect,it} from 'vitest';
 // @ts-expect-error Browser ESM module intentionally has no TypeScript declaration.
-import {nextDocumentOperation,nextQuoteOperation,quoteDraftFromView,verifyPdfOutput} from '../../apps/console/fcl.js';
+import {selectWorkspaceQuoteRef,nextDocumentOperation,nextQuoteOperation,quoteDraftFromView,verifyPdfOutput} from '../../apps/console/fcl.js';
 
 describe('FCL workspace state transitions and PDF verification',()=>{
   it('uses create only before a current quote or document exists',()=>{
@@ -12,6 +12,13 @@ describe('FCL workspace state transitions and PDF verification',()=>{
     expect(nextDocumentOperation({state:'draft'})).toBe('refresh');
     expect(nextDocumentOperation({state:'rejected'})).toBe('resubmit');
     expect(nextDocumentOperation({state:'approved'})).toBe('re_quote');
+  });
+
+  it('opens the explicitly selected quote even when same-time list order or pagination differs',()=>{
+    const earlier='00000000-0000-4000-8000-000000000099',selected='00000000-0000-4000-8000-000000000001';
+    expect(selectWorkspaceQuoteRef([{quote_ref:earlier}],selected)).toBe(selected);
+    expect(selectWorkspaceQuoteRef([{quote_ref:earlier}],null)).toBe(earlier);
+    expect(()=>{selectWorkspaceQuoteRef([], 'invalid-ref');}).toThrow();
   });
 
   it('reconstructs source sell prices, manual fees and only explicit service scopes',()=>{

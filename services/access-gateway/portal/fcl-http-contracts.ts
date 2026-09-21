@@ -1,3 +1,4 @@
+import {fclEstimateRequestSchema,fclEstimateListRequestSchema,fclEstimateGetSchema,fclEstimateAdjustSchema,fclEstimateActionSchema,fclEstimateSelectSchema,fclEstimateListSchema,fclEstimateViewSchema,fclBulkPreviewRequestSchema,fclBulkPublishRequestSchema,fclBulkPreviewSchema} from '../../quote-native/fcl-operations-contracts';
 import {z} from 'zod';
 import {
   fclCaseConfirmationSchema,
@@ -60,6 +61,15 @@ export const fclEmptyRequestSchema=z.object({}).strict();
 export const fclRatePreviewRequestSchema=z.object({release_id:z.string().uuid().optional()}).strict();
 
 export const fclHttpActions=[
+  'estimate-run',
+  'estimate-list',
+  'estimate-get',
+  'estimate-adjust',
+  'estimate-duplicate',
+  'estimate-select',
+  'rate-bulk-preview',
+  'rate-bulk-publish',
+
   'case-list',
   'case-get',
   'case-status',
@@ -92,6 +102,14 @@ export const fclHttpActions=[
 export type FclHttpAction=typeof fclHttpActions[number];
 
 export const FCL_STAFF_ACTION_METHODS:Readonly<Record<FclHttpAction,'GET'|'POST'>>=Object.freeze({
+  'estimate-run':'POST',
+  'estimate-list':'POST',
+  'estimate-get':'POST',
+  'estimate-adjust':'POST',
+  'estimate-duplicate':'POST',
+  'estimate-select':'POST',
+  'rate-bulk-preview':'POST',
+  'rate-bulk-publish':'POST',
   'case-list':'GET',
   'case-get':'POST',
   'case-status':'POST',
@@ -122,12 +140,27 @@ export const FCL_STAFF_ACTION_METHODS:Readonly<Record<FclHttpAction,'GET'|'POST'
   'notification-save':'POST',
 });
 export const FCL_STAFF_WRITE_ACTIONS=[
+  'estimate-run',
+  'estimate-adjust',
+  'estimate-duplicate',
+  'estimate-select',
+  'rate-bulk-publish',
+
   'case-status','case-staff-supplement','case-confirm','rate-save','rate-publish','rate-disable','rate-rollback',
   'quote-save','issuer-config-save','document-save','document-approve','document-reject','document-export',
   'handoff-save','notification-save',
 ] as const satisfies readonly FclHttpAction[];
 
 export const FCL_HTTP_BODY_LIMITS:Record<FclHttpAction,number>={
+  'estimate-run':1024*1024,
+  'estimate-list':1024*1024,
+  'estimate-get':1024*1024,
+  'estimate-adjust':1024*1024,
+  'estimate-duplicate':1024*1024,
+  'estimate-select':1024*1024,
+  'rate-bulk-preview':1024*1024,
+  'rate-bulk-publish':1024*1024,
+
   'case-list':16*1024,
   'case-get':16*1024,
   'case-status':1024*1024,
@@ -172,6 +205,15 @@ export const FCL_PUBLIC_BODY_LIMITS={
 } as const;
 
 export const fclHttpRequestSchemas:Record<FclHttpAction,z.ZodType>={
+  'estimate-run':fclEstimateRequestSchema,
+  'estimate-list':fclEstimateListRequestSchema,
+  'estimate-get':fclEstimateGetSchema,
+  'estimate-adjust':fclEstimateAdjustSchema,
+  'estimate-duplicate':fclEstimateActionSchema,
+  'estimate-select':fclEstimateSelectSchema,
+  'rate-bulk-preview':fclBulkPreviewRequestSchema,
+  'rate-bulk-publish':fclBulkPublishRequestSchema,
+
   'case-list':fclCaseListQuerySchema,
   'case-get':fclCaseIdRequestSchema,
   'case-status':fclCaseStatusRequestSchema,
@@ -203,6 +245,15 @@ export const fclHttpRequestSchemas:Record<FclHttpAction,z.ZodType>={
 };
 
 export const fclHttpOutputSchemas:Record<FclHttpAction,z.ZodType>={
+  'estimate-run':fclEstimateListSchema,
+  'estimate-list':fclEstimateListSchema,
+  'estimate-get':fclEstimateViewSchema,
+  'estimate-adjust':fclEstimateViewSchema,
+  'estimate-duplicate':fclEstimateViewSchema,
+  'estimate-select':fclQuoteViewSchema,
+  'rate-bulk-preview':fclBulkPreviewSchema,
+  'rate-bulk-publish':nativeDataSchema('fcl'),
+
   'case-list':fclCaseListSchema,
   'case-get':fclCaseInternalViewSchema,
   'case-status':fclCaseInternalViewSchema,

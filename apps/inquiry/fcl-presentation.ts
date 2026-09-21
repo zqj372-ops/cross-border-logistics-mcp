@@ -41,6 +41,20 @@ const systemMessages: Record<string, string> = {
 export const fclEventMessage = (value: string): string => systemMessages[value] ?? value;
 
 const issues: Record<string, string> = {
+  operations_date_order_invalid:'失效日期不能早于生效日期',operations_duplicate_version:'同一费用不能使用重复版本号',operations_validity_overlap:'同一项目的有效期重叠，请先缩短原版本的有效期',operations_capacity_invalid:'最低重量或体积不能大于上限',operations_tier_invalid:'重量区间上下限颠倒',operations_tier_overlap:'重量阶梯重叠，请使用互不重叠的区间',operations_charge_reference_invalid:'固定费用引用不存在或重复',operations_delivery_reference_invalid:'模板引用的内陆运价不存在',operations_schedule_duplicate:'同一海运来源只能维护一份班期',operations_rate_reference_invalid:'班期对应的海运来源不存在',operations_schedule_date_invalid:'预计到港不能早于开船日期',
+  fcl_estimate_too_many_customer_lines: '费用明细超过客户报价上限，请精简模板后重算',
+  fcl_operations_not_configured:'请先在报价工作台维护固定费用和模板，保存并发布',
+  fcl_operations_input_invalid:'输入格式不正确，请核对金额、日期、柜型和必填项目',
+  fcl_estimate_source_changed:'所用费用已变化，请重新计算',fcl_estimate_source_unavailable:'价格来源暂不可用，请核对已发布费用',
+  fcl_estimate_expired:'报价已过期 Expired',fcl_estimate_historical:'历史版本，仅供核对',fcl_estimate_incomplete:'方案仍有待补费用或条件',
+  fcl_estimate_case_mismatch:'方案与本票线路、柜数或重量不一致，请从本票重新计算',
+  fcl_estimate_shipping_date_invalid:'出运日期不能早于客户备货日期',fcl_estimate_binding_invalid:'所选方案已变化，请刷新并重新选择',
+  fcl_estimate_adjust_in_workbench:'请在报价工作台调整方案，再生成新客户报价',fcl_estimate_no_candidates:'没有匹配方案，请核对起运港与已发布模板',
+  fcl_estimate_locked:'请先解除锁定，再调整售价',fcl_estimate_limit:'方案数量已达到本阶段上限，请联系维护人员',
+  fcl_rate_unsaved_publication:'存在未发布的配置，请先发布或还原草稿',fcl_bulk_rate_window_conflict:'同一海运来源的柜型需使用一致的有效期和来源版本',
+  template_ambiguous:'模板有效期重叠，请修正配置',template_expired:'出运日期没有对应的有效模板',ocean_rate_expired:'海运费有效期不覆盖出运日期',route_mismatch:'起运港或目的港与模板不一致',
+  delivery_route_mismatch:'内陆运价的起终点或运输模式与模板不一致',delivery_container_mismatch:'内陆运价不支持所选柜型',delivery_postal_code_mismatch:'内陆运价不适用当前邮编',delivery_zone_mismatch:'内陆运价不适用当前区域',delivery_tier_unavailable:'重量未落在已维护的阶梯内',delivery_tier_ambiguous:'重量阶梯重叠，请修正内陆运价',
+
   fcl_state_conflict: '当前处理状态不允许此操作，请刷新后核对',
   fcl_quote_not_current_version: '这是历史报价，请查看最新版本',
   fcl_quote_case_version_changed: '客户需求已更新，这份报价基于较早资料',
@@ -88,6 +102,12 @@ const issues: Record<string, string> = {
 };
 export function fclIssue(code: string): string {
   if (issues[code]) return issues[code];
+  const [prefix,value]=code.split(':');
+  const scoped:Record<string,string>={fx_missing:'缺少对人民币汇率',charge_unavailable:'没有有效费用',charge_ambiguous:'费用有效期重叠',charge_duplicate:'费用被重复计入',charge_route_mismatch:'费用不适用当前路线',charge_container_mismatch:'费用不适用当前柜型',delivery_unavailable:'没有有效内陆运价',delivery_ambiguous:'内陆运价有效期重叠',container_unavailable:'柜型无可用价格',adjustment_source_changed:'人工调整对应费用已变化'};
+  if(prefix&&scoped[prefix])return `${scoped[prefix]}：${value||''}`;
+  const limits=/^(template|delivery)_(kg|cbm)_(required|out_of_range)$/u.exec(code);
+  if(limits)return `${limits[1]==='template'?'模板':'内陆运输'}：${limits[3]==='required'?'请填写':'超出适用范围，核对'}${limits[2]==='kg'?'重量':'体积'}`;
+
   const fee = /^\/cost_rows\/(\d+)\/(cost_price|sell_price|evidence_ref|evidence_version)$/u.exec(code);
   if (fee) return `第 ${Number(fee[1]) + 1} 项费用：请填写${({cost_price:'成本单价',sell_price:'客户单价',evidence_ref:'费用依据',evidence_version:'依据版本'} as Record<string,string>)[fee[2] ?? '']}`;
   const currency = /^\/exchange_rates\/(USD|CAD)$/u.exec(code);

@@ -78,6 +78,7 @@ import {
   type FclQuoteView,
 } from '../quote-native/fcl';
 import type {FclRateDataset} from '../quote-native/fcl-contracts';
+import {estimateToQuoteDraft} from '../quote-native/fcl-operations';
 
 const parse=<T>(schema:z.ZodType<T>,input:unknown,code='document_input_invalid'):T=>{
   const parsed=schema.safeParse(input);
@@ -178,7 +179,7 @@ export interface FclQuoteWorkflowDependencies{
   readonly caseReader:Pick<CaseService,'getFclCase'>;
   readonly caseLock:Pick<CaseService,'withFclReadLock'>;
   readonly rateLock:Pick<NativeAdminService,'withFclReadLock'>;
-  readonly rateReader:Pick<NativeAdminService,'get'>;
+  readonly rateReader:Pick<NativeAdminService,'get'>&Partial<Pick<NativeAdminService,'fclOperations'>>;
   readonly handoff?:Pick<CaseService,'withFclHandoffTransaction'|'recordFclHandoffInTransaction'|'listFclHandoffs'|'findFclHandoffByKey'>;
 }
 
@@ -920,6 +921,11 @@ export class DocumentWorkflowService{
     }catch{reasons.add('fcl_quote_source_unavailable');}
     const today=this.fclTimestamp(options).slice(0,10);
     if(today<snapshot.source_snapshot.valid_from||today>snapshot.source_snapshot.valid_until)reasons.add('fcl_quote_source_expired');
+    const estimateBinding=snapshot.extensions?.fcl_estimate_v1;
+    if(estimateBinding){
+      if(today<estimateBinding.valid_from||today>estimateBinding.valid_until)reasons.add('fcl_quote_source_expired');
+      try{const estimate=dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:estimateBinding.estimate_id,version:estimateBinding.version});if(!estimate||!estimate.currentness.valid_now||estimate.content_digest!==estimateBinding.content_digest)reasons.add('fcl_quote_source_rate_changed');}catch{reasons.add('fcl_quote_source_unavailable');}
+    }
     return {valid_now:reasons.size===0,reason_codes:[...reasons]};
   }
   private fclQuoteView(snapshot:ReturnType<typeof validateFclQuoteSnapshot>,currentVersion:number,replay:{replayed:boolean;submittedVersion:number|null},currentness:FclQuoteCurrentness):FclQuoteView{
@@ -963,7 +969,8 @@ export class DocumentWorkflowService{
     const action=`fcl-quote-${request.operation}`;
     const target=request.operation==='update'?request.quote_ref:'create';
     const partition=JSON.stringify(['v5-personal',options.receiverUserId,ctx.identity.userId,action,target]);
-    const requestDigest=canonicalHash(request),db=this.store.db;
+    const digestInput=request.operation==='create'&&request.input.extensions?.fcl_estimate_v1?{...request,expected_release_id:null,expected_release_version:null,expected_dataset_digest:null}:request;
+    const requestDigest=canonicalHash(digestInput),db=this.store.db;
     db.exec('BEGIN IMMEDIATE');
     let committed=false;
     try{
@@ -979,18 +986,22 @@ export class DocumentWorkflowService{
         dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
         return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:true,submittedVersion:submitted.version},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
       }
+      const binding=request.input.extensions?.fcl_estimate_v1;
+      const estimate=binding?dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:binding.estimate_id,version:binding.version}):undefined;
+      if(binding&&(!estimate||!estimate.currentness.valid_now||estimate.content_digest!==binding.content_digest||canonicalHash(estimateToQuoteDraft(estimate))!==canonicalHash(request.input)))throw new PortalError('fcl_estimate_binding_invalid');
       let quoteRef:string,version:number,selected;
       let caseBinding,caseProjection,caseView;
       if(request.operation==='create'){
         quoteRef=randomUUID();version=1;
         caseView=dependencies.caseReader.getFclCase(ctx,request.case_ref);
         if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');
-        const match=dependencies.quoteService.match(ctx,{contract_version:FCL_QUOTE_WORKFLOW_VERSION,case_ref:request.case_ref,expected_case_version:request.expected_case_version,expected_customer_supplement_ref:request.expected_customer_supplement_ref,selected_rate_id:request.selected_rate_id});
+        const match=dependencies.quoteService.match(ctx,{contract_version:FCL_QUOTE_WORKFLOW_VERSION,case_ref:request.case_ref,expected_case_version:request.expected_case_version,expected_customer_supplement_ref:request.expected_customer_supplement_ref,selected_rate_id:request.selected_rate_id},estimate?.request.shipping_date);
         this.assertFclQuoteMatch(match.status,match.data.selected,request);
         selected=match.data.selected!;
         caseBinding={case_ref:request.case_ref,case_version:request.expected_case_version,latest_customer_supplement_ref:request.expected_customer_supplement_ref};
       }else{
         const existing=this.readFclQuote(options.receiverUserId,request.quote_ref,null);
+        if(existing.snapshot.extensions?.fcl_estimate_v1)throw new PortalError('fcl_estimate_adjust_in_workbench');
         if(existing.snapshot.version!==request.expected_version)throw new PortalError('version_conflict');
         const caseRef=existing.snapshot.case_binding.case_ref;
         caseView=dependencies.caseReader.getFclCase(ctx,caseRef);
@@ -1008,6 +1019,12 @@ export class DocumentWorkflowService{
         }
       }
       const createdAt=this.fclTimestamp(options);
+      if(estimate){
+        const demand=caseView.current_input;
+        if(estimate.calculation.rate_id!==selected.rate_id||estimate.calculation.pol!==demand.pol||estimate.calculation.pod!==demand.pod||estimate.calculation.destination!==demand.final_destination||(estimate.request.case_ref!==null&&estimate.request.case_ref!==caseView.case_id)||canonicalHash(estimate.request.containers.map(({type,quantity})=>({type,quantity})).sort((a,b)=>a.type.localeCompare(b.type)))!==canonicalHash([...demand.containers].sort((a,b)=>a.type.localeCompare(b.type))))throw new PortalError('fcl_estimate_case_mismatch');
+        if(demand.cargo_ready_date!==null&&estimate.request.shipping_date<demand.cargo_ready_date)throw new PortalError('fcl_estimate_shipping_date_invalid');
+        if(estimate.request.weight_kg!==null&&(!demand.estimated_weight||!new Decimal(estimate.request.weight_kg).eq(demand.estimated_weight.value)))throw new PortalError('fcl_estimate_case_mismatch');
+      }
       const snapshot=buildFclCostSellSnapshot({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:quoteRef,version,actor:ctx.identity.userId,created_at:createdAt,caseView,selected,input:request.input,...(caseBinding===undefined?{}:{case_binding:caseBinding}),...(caseProjection===undefined?{}:{case_projection:caseProjection})});
       db.prepare('INSERT INTO fcl_quote_revisions(quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at) VALUES(?,?,?,?,?,?,?,?)').run(quoteRef,version,options.receiverUserId,snapshot.case_binding.case_ref,JSON.stringify(snapshot),snapshot.content_digest,ctx.identity.userId,createdAt);
       const auditId=randomUUID();
@@ -1312,6 +1329,8 @@ export class DocumentWorkflowService{
       if(config.version!==request.expected_config_version||!config.input)throw new PortalError('fcl_document_config_stale');
       const today=this.fclTimestamp(options).slice(0,10);
       if(request.quote_date>request.valid_until||request.quote_date>today||today>request.valid_until||request.quote_date<quote.snapshot.source_snapshot.valid_from||request.valid_until>quote.snapshot.source_snapshot.valid_until)throw new PortalError('fcl_document_date_invalid');
+      const estimateValidity=quote.snapshot.extensions?.fcl_estimate_v1;
+      if(estimateValidity&&(request.quote_date<estimateValidity.valid_from||request.valid_until>estimateValidity.valid_until))throw new PortalError('fcl_document_date_invalid');
       const createdAt=this.fclTimestamp(options),revisionId=randomUUID();
       const payload=this.buildFclDocumentPayload({documentId,revisionId,version,state:'draft',actor:ctx.identity.userId,createdAt,updatedAt:createdAt,quote:quote.snapshot,caseView,config,display:{quote_no:request.quote_no,quote_date:request.quote_date,valid_until:request.valid_until,remark:request.remark}});
       db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,documentId,null,options.receiverUserId,options.receiverUserId,version,'draft',5,JSON.stringify(payload),canonicalHash(payload.customer_input),canonicalHash(payload.template),sourceRevisionId,null,null,ctx.identity.userId,createdAt);

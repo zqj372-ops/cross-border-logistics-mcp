@@ -60,13 +60,16 @@ describe("standalone CLI installation", () => {
     expect(await readFile(join(packageRoot, "bin/freightclaw.mjs"), "utf8")).not.toContain("node:sqlite");
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
-    expect(JSON.parse((await installed(["workspace","commands","--json"])).stdout)).toHaveLength(112);
-    expect((await installed(["workspace","commands","--json"])).stdout).toContain("schedules live-search");
-    expect((await installed(["workspace","commands","--json"])).stdout).toContain("fcl document-export");
-    expect((await installed(["workspace","commands","--json"])).stdout).toContain("fcl inquiry submit");
+    const workspaceCommands=(await installed(["workspace","commands","--json"])).stdout;
+    expect(JSON.parse(workspaceCommands)).toHaveLength(120);
+    expect(workspaceCommands).toContain("schedules live-search");
+    expect(workspaceCommands).toContain("fcl document-export");
+    expect(workspaceCommands).toContain("fcl inquiry submit");
     expect((await installed(["workspace","schema","schedules","live-search"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","document-export"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","inquiry","submit"])).code).toBe(0);
+    expect((await installed(["workspace","schema","fcl","estimate-run"])).code).toBe(0);
+    expect((await installed(["workspace","schema","fcl","rate-bulk-publish"])).code).toBe(0);
     expect((await installed(["workspace","schema","cases","create"])).code).toBe(0);
     expect((await installed(["workspace","schema","channels","publish"])).code).toBe(0);
     expect(await readFile(join(packageRoot,"workspace.md"),"utf8")).toContain("workspace login start");
@@ -76,7 +79,7 @@ describe("standalone CLI installation", () => {
       expect(schema.stdout).toContain('"$schema":"https://json-schema.org/draft/2020-12/schema"');
       expect(schema.stdout).not.toContain("#/components/schemas/");
     }
-  }, 20_000);
+  }, 40_000); // Cold starts for all embedded schemas on shared CI runners; each command still has a 10s limit.
 
   it("invokes all nine fixed HTTP routes from installed example files and keeps business exit codes", async () => {
     const receipts: { path: string | undefined; method: string | undefined; authorization: string | undefined; body: unknown }[] = [];

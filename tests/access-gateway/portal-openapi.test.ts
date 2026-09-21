@@ -15,7 +15,7 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  const fclStaff=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/fcl/')),publicFcl=Object.keys(paths).filter(path=>path.startsWith('/inquiry/api/v1'));
  expect(Object.keys(paths).filter(path=>!personnel.includes(path)&&!fclStaff.includes(path)&&!publicFcl.includes(path))).toHaveLength(17);
  expect(personnel).toHaveLength(31);
- expect(fclStaff).toHaveLength(28);expect(publicFcl).toHaveLength(6);
+ expect(fclStaff).toHaveLength(36);expect(publicFcl).toHaveLength(6);
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
   for(const [method,operation] of Object.entries(methods)){

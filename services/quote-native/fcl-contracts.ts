@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {FCL_RATE_DATASET_V2,fclOperationsSchema,validateFclOperations} from './fcl-operations-contracts';
 import { FCL_CONTAINER_TYPES, FCL_SERVICE_IDS } from '../../apps/inquiry/fcl-model';
 import { FCL_DOCUMENT_WORKFLOW_VERSION,fclCurrentnessSchema,templateRefSchema } from '../quote-documents/workflow-contracts';
 export { FCL_DOCUMENT_WORKFLOW_VERSION } from '../quote-documents/workflow-contracts';
@@ -57,11 +58,14 @@ export const fclRateSchema = z.object({
   additional_fees: z.array(fclAdditionalFeeSchema).max(30),
 }).strict();
 
-export const fclRateDatasetSchema = z.object({
+const fclRateDatasetV1Schema = z.object({
   contract_version: z.literal(FCL_RATE_DATASET_VERSION),
   label: identifier(),
   rates: z.array(fclRateSchema).min(1).max(500),
-}).strict().superRefine((dataset, context) => {
+}).strict();
+export const fclRateDatasetV2Schema=fclRateDatasetV1Schema.extend({contract_version:z.literal(FCL_RATE_DATASET_V2),operations:fclOperationsSchema}).strict();
+export const fclRateDatasetSchema = z.union([fclRateDatasetV1Schema,fclRateDatasetV2Schema]).superRefine((dataset, context) => {
+  if(dataset.contract_version===FCL_RATE_DATASET_V2)for(const message of validateFclOperations(dataset.operations,dataset.rates.map(r=>r.rate_id)))context.addIssue({code:'custom',path:['operations'],message});
   const seenRateIds = new Set<string>();
   dataset.rates.forEach((rate, rateIndex) => {
     if (seenRateIds.has(rate.rate_id)) {
@@ -228,7 +232,10 @@ export const fclQuoteServiceScopeInputSchema = z.object({
   }
 });
 
+export const fclEstimateBindingSchema=z.object({estimate_id:z.string().uuid(),version:z.number().int().positive(),content_digest:z.string().length(64),valid_from:date(),valid_until:date()}).strict();
+export const fclQuoteExtensionsSchema=z.object({fcl_estimate_v1:fclEstimateBindingSchema}).strict();
 export const fclQuoteDraftInputSchema = z.object({
+  extensions:fclQuoteExtensionsSchema.optional(),
   source_sell_prices: z.array(fclQuoteSourceSellPriceSchema).max(120),
   manual_fees: z.array(fclQuoteManualFeeInputSchema).max(60),
   service_scopes: z.array(fclQuoteServiceScopeInputSchema).max(FCL_SERVICE_IDS.length),
@@ -402,6 +409,7 @@ export const fclQuoteCaseProjectionSchema = z.object({
 }).strict();
 
 export const fclQuoteSnapshotSchema = z.object({
+  extensions:fclQuoteExtensionsSchema.optional(),
   contract_version: z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
   schema_version: z.literal('fcl-cost-sell-snapshot@2026-09-20.v1'),
   quote_ref: z.string().uuid(),
