@@ -35,8 +35,13 @@ export function nextDocumentOperation(document) {
 }
 
 export function quoteDraftFromView(view) {
+  const extensions = {};
+  if (view.extensions?.fcl_estimate_v1) extensions.fcl_estimate_v1 = view.extensions.fcl_estimate_v1;
+  const presentRows = new Set(view.cost_rows.map(row => row.row_key));
+  const changes = view.extensions?.fcl_row_adjustments_v1?.changes?.filter(change => !change.row_key.startsWith('manual:') || presentRows.has(change.row_key)) || [];
+  if (changes.length) extensions.fcl_row_adjustments_v1 = { changes };
   return {
-    ...(view.extensions?{extensions:view.extensions}:{}),
+    ...(Object.keys(extensions).length?{extensions}:{}),
     source_sell_prices: view.cost_rows.filter(row => row.source_kind !== 'manual').map(row => ({
       row_key: row.row_key,
       sell_price: row.sell_price,
@@ -824,7 +829,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
         expected_config_version: configView?.version ?? 0,
         quote_no: display.quote_no || `FCL-${detail.inquiry_no}`,
         quote_date: display.quote_date || model().session?.fcl_capability?.business_date || new Date().toISOString().slice(0, 10),
-        valid_until: display.valid_until || quoteView.extensions?.fcl_estimate_v1.valid_until || quoteView.source_snapshot.valid_until,
+        valid_until: display.valid_until || quoteView.extensions?.fcl_estimate_v1?.valid_until || quoteView.source_snapshot.valid_until,
         remark: display.remark ?? null,
       };
       const response = await write('document-save', body);

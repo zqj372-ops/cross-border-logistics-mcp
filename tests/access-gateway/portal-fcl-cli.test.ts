@@ -8,6 +8,8 @@ import {afterEach,describe,expect,it} from 'vitest';
 import {runCli} from '../../deploy/cli/cli';
 import {FCL_HTTP_VERSION,fclHttpActions,FCL_STAFF_WRITE_ACTIONS} from '../../services/access-gateway/portal/fcl-http-contracts';
 import {createFclCliFixture,fclCliInquiry,fclCliRates} from './fcl-cli-fixture';
+import {createFclInquiryDraft} from '../../apps/inquiry/fcl-model';
+import {estimateToQuoteDraft} from '../../services/quote-native/fcl-operations';
 
 const directories:string[]=[];
 afterEach(async()=>{await Promise.all(directories.splice(0).map(path=>rm(path,{recursive:true,force:true})));});
@@ -49,6 +51,22 @@ describe('FCL CLI parity',()=>{
       const bulk=await run<{preview_hash:string}>('rate-bulk-preview',changes);await run('rate-bulk-publish',{...changes,preview_hash:bulk.preview_hash,confirmation:'reviewed_sources_and_conditions'});
       expect((await run<FclEstimateView>('estimate-get',{estimate_id:quote.estimate_id,version:null})).calculation.totals.cost_total).toBe('32900.00');
       expect((await run<FclEstimateView>('estimate-get',{estimate_id:quote.estimate_id,version:1})).calculation.totals.cost_total).toBe('30800.00');
+    }finally{directories.push(f.root);await f.close();}
+  });
+
+  it('updates an estimate-bound Quote through the same closed adjustment extension',async()=>{
+    const root=await mkdtemp(join(tmpdir(),'fcl-cli-bound-quote-')),f=await createFclCliFixture();directories.push(root);
+    try{
+      const staff=join(root,'staff.json');await f.staffSessionFile(staff);let index=0;
+      const run=async<T=unknown>(action:string,input?:unknown):Promise<T>=>{const args=['workspace','fcl',action,'--session-file',staff,'--endpoint',f.origin,'--json'];if(input!==undefined){const path=join(root,`input-${++index}.json`);await privateJson(path,input);args.push('--input',path);if(FCL_STAFF_WRITE_ACTIONS.includes(action as never))args.push('--idempotency-key',`fcl-cli-bound-key-${index}`);}const result=await invoke(args);expect(result.code,result.stderr||result.stdout).toBe(0);return (JSON.parse(result.stdout) as {data:T}).data;};
+      await run('rate-save',{expected_version:0,input:operationsFixture()});const preview=await run<{preview_hash:string}>('rate-preview');await run('rate-publish',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'});
+      const submitted=await f.caseService.submitFclInquiry('fcl-cli-bound-session','fcl-cli-bound-submit-01',{...createFclInquiryDraft(),origin_city:'Shanghai',pol:'Shanghai',pod:'Vancouver',final_destination:'Calgary',containers:[{type:'40HQ' as const,quantity:1}],cargo_name:'Synthetic cargo',cargo_type:'general' as const,estimated_weight:{value:'18000',unit:'kg' as const},cargo_ready_date:'2026-10-08',incoterm:'EXW' as const,selected_services:['ocean_freight','canada_customs','delivery'] as const,contact:{name:'Synthetic',company:null,email:'shipper@example.test',phone:null},notes:null,consent:true});
+      const confirmed=f.caseService.confirmFclCase(f.receiver,submitted.case_id,{expected_version:submitted.case_version,expected_customer_supplement_ref:null,confirmed_fields:{changes:[]},reason:'Confirmed CLI estimate'},'fcl-cli-bound-confirm-01');
+      const estimates=await run<{items:FclEstimateView[]}>('estimate-run',{...estimateRequest(),case_ref:submitted.case_id});const estimate=estimates.items.find(item=>item.calculation.rate_id===cosco)!;
+      const created=await run<{quote_ref:string;version:number;content_digest:string;extensions:{fcl_estimate_v1:{estimate_id:string}}}>('estimate-select',{estimate_id:estimate.estimate_id,expected_version:estimate.version,case_ref:submitted.case_id,expected_case_version:confirmed.case_version,expected_customer_supplement_ref:null});
+      const base=estimateToQuoteDraft(estimate),input={...base,extensions:{...base.extensions,fcl_row_adjustments_v1:{changes:[{row_key:'ocean_freight:40HQ',operation:'override' as const,cost_price:'3250',sell_price:'3600',reason:'CLI ticket-specific adjustment'}]}}};
+      const updated=await run<{quote_ref:string;version:number;extensions:{fcl_estimate_v1:{estimate_id:string};fcl_row_adjustments_v1:{changes:unknown[]}}}>('quote-save',{contract_version:'fcl-document-workflow@2026-09-20.v1',operation:'update',quote_ref:created.quote_ref,expected_version:created.version,source_binding:{mode:'retain'},input});
+      expect(updated).toMatchObject({quote_ref:created.quote_ref,version:2,extensions:{fcl_estimate_v1:{estimate_id:estimate.estimate_id},fcl_row_adjustments_v1:{changes:[expect.objectContaining({row_key:'ocean_freight:40HQ'})]}}});
     }finally{directories.push(f.root);await f.close();}
   });
 

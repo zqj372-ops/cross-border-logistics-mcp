@@ -56,3 +56,15 @@ Tests cover one/two-container and per-shipment quantities, override/remove, null
 ## Rollback
 
 Stop writing new snapshots with this extension and retain the reader. Existing snapshots remain immutable and readable; no historical amount is rewritten.
+
+## A2 Accepted Scope: Estimate-Bound Quote Updates
+
+Status addendum: **Accepted by root for A2 implementation, 2026-09-21**. This addendum connects the A1 row-adjustment contract to the existing personal FCL Quote and DocumentWorkflow path. It does not add an API, table, engine, UI layout or deployment approval.
+
+An existing Quote carrying `extensions.fcl_estimate_v1` may be updated through the existing `quote-save` action only with `source_binding.mode="retain"`. The request must carry the exact existing estimate binding in its input extensions and may additionally carry `fcl_row_adjustments_v1`, manual fee changes, service scopes, FX and remark changes. Missing or changed identity fields fail closed; `replace` is rejected for a bound Quote.
+
+The service rereads the exact estimate version, requires it to remain current, verifies its content digest and reconstructs the canonical estimate binding. It also rechecks the existing Case binding, source snapshot, route, container quantities and cargo-ready date before appending the next Quote version. The original estimate, selected rate/template, prior Quote revision and other Tickets remain unchanged.
+
+The server persists the original binding and the A1 server-owned audit extension. The console `quoteDraftFromView` helper returns only writable input extensions, never the read-only audit. Source removals survive round-trip; an already-applied manual-row removal is dropped from the input adjustments because the manual row is absent and must not be reconstructed as an unknown row. Historical audit remains in the prior immutable snapshot.
+
+An adjusted update invalidates old Document reviews through the existing Quote currentness checks. Formal Document review, approval and PDF continue to use the existing service and require a new current revision.

@@ -96,11 +96,96 @@
                     "valid_until"
                   ],
                   "additionalProperties": false
+                },
+                "fcl_row_adjustments_v1": {
+                  "type": "object",
+                  "properties": {
+                    "changes": {
+                      "maxItems": 60,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "row_key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160,
+                            "pattern": "^[a-z][A-Za-z0-9_:-]*$"
+                          },
+                          "operation": {
+                            "type": "string",
+                            "enum": [
+                              "override",
+                              "remove"
+                            ]
+                          },
+                          "cost_price": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "sell_price": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "type": "string",
+                            "enum": [
+                              "CNTR",
+                              "SHIPMENT"
+                            ]
+                          },
+                          "container_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "20GP",
+                                  "40GP",
+                                  "40HQ",
+                                  "45HQ"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+                          }
+                        },
+                        "required": [
+                          "row_key",
+                          "operation",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "changes"
+                  ],
+                  "additionalProperties": false
                 }
               },
-              "required": [
-                "fcl_estimate_v1"
-              ],
               "additionalProperties": false
             },
             "source_sell_prices": {
@@ -611,11 +696,96 @@
                     "valid_until"
                   ],
                   "additionalProperties": false
+                },
+                "fcl_row_adjustments_v1": {
+                  "type": "object",
+                  "properties": {
+                    "changes": {
+                      "maxItems": 60,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "row_key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160,
+                            "pattern": "^[a-z][A-Za-z0-9_:-]*$"
+                          },
+                          "operation": {
+                            "type": "string",
+                            "enum": [
+                              "override",
+                              "remove"
+                            ]
+                          },
+                          "cost_price": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "sell_price": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "type": "string",
+                            "enum": [
+                              "CNTR",
+                              "SHIPMENT"
+                            ]
+                          },
+                          "container_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "20GP",
+                                  "40GP",
+                                  "40HQ",
+                                  "45HQ"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001f\\u007f]+$"
+                          }
+                        },
+                        "required": [
+                          "row_key",
+                          "operation",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "changes"
+                  ],
+                  "additionalProperties": false
                 }
               },
-              "required": [
-                "fcl_estimate_v1"
-              ],
               "additionalProperties": false
             },
             "source_sell_prices": {
