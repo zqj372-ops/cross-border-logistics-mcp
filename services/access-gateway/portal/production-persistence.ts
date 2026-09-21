@@ -55,3 +55,22 @@ export function openPortalProductionDatabase(databasePath:string,applicationId:s
 export function securePortalDatabaseFiles(databasePath:string):void{
   for(const path of [databasePath,`${databasePath}-wal`,`${databasePath}-shm`]){try{const entry=lstatSync(path);if(entry.isSymbolicLink()||!entry.isFile())throw new Error("portal_database_path_invalid");chmodSync(path,0o600);}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}}
 }
+
+export function readPortalProductionDatabaseVersion(databasePath:string,applicationId:string):number|null{
+  if(!isAbsolute(databasePath)||resolve(databasePath)!==databasePath||databasePath.includes("\0"))throw new Error("portal_database_path_invalid");
+  const parent=dirname(databasePath),parentEntry=lstatSync(parent);
+  if(!parentEntry.isDirectory()||parentEntry.isSymbolicLink()||(parentEntry.mode&0o077)!==0)throw new Error("portal_database_parent_insecure");
+  for(const path of [databasePath,`${databasePath}-wal`,`${databasePath}-shm`]){
+    try{
+      const entry=lstatSync(path);
+      if(entry.isSymbolicLink()||!entry.isFile()||(entry.mode&0o077)!==0)throw new Error("portal_database_path_insecure");
+    }catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+  }
+  try{lstatSync(databasePath);}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return null;throw error;}
+  const database=new DatabaseSync(databasePath,{readOnly:true});
+  try{
+    const identity=database.prepare("SELECT application_id FROM portal_database_identity WHERE singleton=1").get() as {application_id:string}|undefined;
+    if(identity?.application_id!==applicationId)throw new Error("portal_database_identity_mismatch");
+    return Number((database.prepare("PRAGMA user_version").get() as {user_version:number}).user_version);
+  }finally{database.close();}
+}

@@ -1,6 +1,6 @@
-# 后台管理 CLI（本地开发版）
+# FreightClaw workspace CLI
 
-本页对应当前产品版本 `0.002`。官网 `v0.002` 下载包包含 `workspace` 命令；当前人员登录只在本地隔离验收环境启用。已有查询 Key 与权限继续保留。
+本页对应当前产品版本 `0.002`。public FCL inquiry 无需登录；staff 人员操作使用独立 device flow，API Key 不能替代本人身份。已有查询 Key 与权限继续保留。
 
 ## 构建与登录
 
@@ -66,7 +66,7 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 
 ## 交付范围
 
-当前候选包包含 112 项工作台命令，覆盖现有人员功能以及 28 项 FCL 人员 action、6 项 FCL 公开 inquiry action。OCR、邮件订舱、SO 识别仍未交付。正式来源就绪、承运商当前报价、目标环境部署需独立验收；命令存在不等于生产业务已可用。
+当前 `workspace commands` 包含现有人员功能以及 FCL 人员 action、公开 inquiry action。运行 `workspace commands` 查看实际支持范围。OCR、邮件订舱、SO 识别仍未交付；命令存在不等于生产业务已启用。
 
 ## FCL 人员与公开询价
 
@@ -119,7 +119,7 @@ freightclaw workspace fcl inquiry logout --inquiry-session-file inquiry.json --i
 - `workspace customs-packages list/import/browse/publish/disable`：完整 SQLite 法规快照接收、目录检索及发布控制。import/publish/disable 要求幂等键；browse 为只读。
 - `workspace residential-rates export --input selection.json --file calgary.csv`：selection 可为 `{"table":"rates","selection":"published","origin":"calgary"}`。import-preview 同样支持 origin，生成完整待保存配置，保留其他起运地。
 
-通过 `freightclaw workspace schema <两段命令>` 获取闭合输入 Schema。所有命令复用 `--session-file` 指定的人员会话；公开查询 Key 没有配置、保存或审核权限。官网已发布下载包仍需正式部署后才包含本候选功能。
+通过 `freightclaw workspace schema <命令>` 获取闭合输入 Schema。staff 命令复用 `--session-file` 指定的人员会话；FCL public inquiry 使用独立 `--inquiry-session-file`。公开查询 Key 没有人员配置、保存或审核权限。CLI 版本不会自动升级，官网下载包按发布流程单独更新。
 
 
 ## 船期与码头效率（本地候选功能）

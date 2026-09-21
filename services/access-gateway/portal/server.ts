@@ -30,7 +30,7 @@ export interface PortalMachineHandler { handle(request:IncomingMessage,response:
 export interface PortalRuntimeStatus {
   readonly releaseId: string;
   readonly buildId: string;
-  readiness(): Promise<Readonly<{ ready: boolean; checks: Readonly<Record<"portal_database"|"session_database"|"business_access_database"|"identity"|"business_configuration", boolean>> }>>;
+  readiness(): Promise<Readonly<{ ready: boolean; checks: Readonly<Record<string, boolean>> }>>;
 }
 export interface StartPortalServerOptions {
   readonly mode: "fixtures" | "production";

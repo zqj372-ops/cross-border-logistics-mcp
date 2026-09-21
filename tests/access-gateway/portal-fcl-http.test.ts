@@ -18,6 +18,7 @@ import {FCL_QUOTE_WORKFLOW_VERSION,FCL_RATE_DATASET_VERSION,type FclRateDataset}
 import {FCL_DOCUMENT_WORKFLOW_VERSION} from '../../services/quote-documents/fcl-contracts';
 import {createPortalFixtureRuntime} from '../../services/access-gateway/portal/fixture';
 import type {PortalContext} from '../../services/access-gateway/portal/contracts';
+import {runWithVerifiedFclReceiver,type FclReceiverAuthority} from '../../services/access-gateway/portal/fcl-receiver-authority';
 
 const receiverId='fixture-fcl-receiver';
 const receiver:PortalContext={organizationId:null,identity:{userId:receiverId,displayName:'FCL receiver',email:'fcl-receiver@example.test',emailVerified:true,platformRole:null}};
@@ -40,17 +41,18 @@ async function staffSession(f:Pick<Awaited<ReturnType<typeof fclHttpFixture>>,'o
   return {cookie:logged.headers.get('set-cookie')!.split(';')[0]!,csrf:body.csrf_token};
 }
 
-async function fclHttpFixture(){
+async function fclHttpFixture(authority?:FclReceiverAuthority,options:{portal?:typeof portal}={}){
   const root=mkdtempSync(join(tmpdir(),'fcl-http-red-')),caseStore=new CaseStore(join(root,'cases.sqlite'),fresh),rateStore=new NativeAdminStore(join(root,'rates.sqlite'),fresh),documentStore=new DocumentStore(join(root,'documents.sqlite'),fresh),workflowStore=new DocumentWorkflowStore(documentStore,fresh);
-  const caseService=new CaseService(caseStore,portal as never,{receiverUserId:receiverId,receiverIsActive:()=>true,credentialSecret:'synthetic-fcl-credential-secret-32-bytes',credentialTtlDays:30,now:()=> '2026-10-08T12:00:00.000Z',mail:{enabled:false}});
-  const rateService=new NativeAdminService(rateStore,portal as never,{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=> '2026-10-08T12:00:00.000Z'});
+  const portalService=options.portal??portal;
+  const caseService=new CaseService(caseStore,portalService as never,{receiverUserId:receiverId,receiverIsActive:()=>true,credentialSecret:'synthetic-fcl-credential-secret-32-bytes',credentialTtlDays:30,now:()=> '2026-10-08T12:00:00.000Z',mail:{enabled:false}});
+  const rateService=new NativeAdminService(rateStore,portalService as never,{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=> '2026-10-08T12:00:00.000Z'});
   const quoteService=new FclQuoteService({caseReader:caseService,rateReader:rateService,now:()=> '2026-10-08T12:00:00.000Z'});
-  const documentWorkflow=new DocumentWorkflowService(workflowStore,new DocumentService(documentStore,portal as never),portal as never,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))),{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=> '2026-10-08T12:00:00.000Z'},{quoteService,caseReader:caseService,caseLock:caseService,rateLock:rateService,rateReader:rateService,handoff:caseService});
+  const documentWorkflow=new DocumentWorkflowService(workflowStore,new DocumentService(documentStore,portalService as never),portalService as never,()=>Promise.resolve(Buffer.from('%PDF-1.7\n'+'.'.repeat(120))),{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=> '2026-10-08T12:00:00.000Z'},{quoteService,caseReader:caseService,caseLock:caseService,rateLock:rateService,rateReader:rateService,handoff:caseService});
   const server=createServer((request,response)=>{void handler.handle(request,response);});
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const sessions=new PortalSessionManager({store:new InMemoryPortalSessionStore(),secureCookie:false,canSelectPersonal:identity=>{try{caseService.listFclCases({identity,organizationId:null},{limit:1,status:null,cursor:null});return true;}catch{return false;}}});
-  const handler=createPortalHttpHandler({mode:'fixtures',service:portal as never,caseService,nativeAdmin:rateService,documentWorkflowService:documentWorkflow,identityProvider:new FixturePortalIdentityProvider({mode:'fixtures',loopback:true}),sessions,allowedHosts:[new URL(origin).host],allowedOrigins:[origin],allowLoopbackHttp:true,fcl:{caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08',secureCookie:false}});
+  const handler=createPortalHttpHandler({mode:'fixtures',service:portalService as never,caseService,nativeAdmin:rateService,documentWorkflowService:documentWorkflow,identityProvider:new FixturePortalIdentityProvider({mode:'fixtures',loopback:true}),sessions,allowedHosts:[new URL(origin).host],allowedOrigins:[origin],allowLoopbackHttp:true,fcl:{caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08',secureCookie:false,...(authority?{receiverAuthority:authority}:{})}});
   return {root,server,origin,caseService,rateService,workflowStore,close:async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));workflowStore.close();documentStore.close();rateStore.close();caseStore.close();rmSync(root,{recursive:true,force:true});}};
 }
 
@@ -104,6 +106,27 @@ it('reports personal FCL capability from the exact receiver even after an organi
     expect(loggedBody.fcl_capability).toEqual({fcl_personal:true,receiver_user_id:receiverId,business_date:'2026-10-08'});
     const personal=await fetch(f.origin+'/console/api/v1/session/organization',{method:'POST',headers:{cookie:logged.headers.get('set-cookie')!.split(';')[0]!,origin:f.origin,'x-csrf-token':loggedBody.csrf_token,'idempotency-key':'fcl-capability-personal-01','content-type':'application/json'},body:JSON.stringify({organization_id:null})});
     expect(personal.status).toBe(200);
+  }finally{await f.close();}
+});
+
+it('switches from an organization back to personal only with a fresh receiver proof',async()=>{
+  let calls=0;
+  const proof={sub:receiverId,active:true as const,emailVerified:true as const};
+  const authority:FclReceiverAuthority={runVerified:async operation=>{calls++;return runWithVerifiedFclReceiver(proof,()=>operation(proof));}};
+  const portalService={getState:()=>({data:{current_organization:{organization_id:'org_fixture',status:'active'},organizations:[],memberships:[{userId:receiverId,organizationId:'org_fixture',status:'active',role:'owner'}],invitations:[]}})};
+  const f=await fclHttpFixture(authority,{portal:portalService as never});
+  try{
+    const session=await staffSession(f);
+    const select=async(organizationId:string|null,key:string,csrf:string)=>fetch(`${f.origin}/console/api/v1/session/organization`,{method:'POST',headers:{cookie:session.cookie,origin:f.origin,'x-csrf-token':csrf,'idempotency-key':key,'content-type':'application/json'},body:JSON.stringify({organization_id:organizationId})});
+    const organization=await select('org_fixture','fcl-http-switch-org-0001',session.csrf);
+    expect(organization.status).toBe(200);
+    const organizationBody=await organization.json() as {csrf_token:string};
+    expect(organizationBody).toMatchObject({organization_id:'org_fixture',fcl_capability:{fcl_personal:true,receiver_user_id:receiverId}});
+    const personal=await select(null,'fcl-http-switch-personal-01',organizationBody.csrf_token);
+    const personalBody=await personal.json() as {organization_id:string|null;fcl_capability:{fcl_personal:boolean;receiver_user_id:string|null}};
+    expect(personal.status,JSON.stringify(personalBody)).toBe(200);
+    expect(personalBody).toMatchObject({organization_id:null,fcl_capability:{fcl_personal:true,receiver_user_id:receiverId}});
+    expect(calls).toBeGreaterThanOrEqual(4);
   }finally{await f.close();}
 });
 
@@ -304,4 +327,28 @@ it('validates the public key closure inside exchange and logout service paths',a
   const invalidKey=()=>{throw new Error('idempotency_key_invalid');};
   await expect(service.executePublic({} as never,'exchange',{},invalidKey,cookie)).rejects.toThrow('idempotency_key_invalid');
   await expect(service.executePublic({} as never,'logout',{},invalidKey,cookie)).rejects.toThrow('idempotency_key_invalid');
+});
+
+it('revalidates receiver authority for session capability and staff FCL requests, without blocking unrelated login',async()=>{
+  let calls=0;
+  const proof={sub:receiverId,active:true as const,emailVerified:true as const};
+  const authority:FclReceiverAuthority={runVerified:async operation=>{calls++;return runWithVerifiedFclReceiver(proof,()=>operation(proof));}};
+  const f=await fclHttpFixture(authority);
+  try{
+    const session=await staffSession(f),capability=await fetch(`${f.origin}/console/api/v1/session`,{headers:{cookie:session.cookie}});
+    const body=await capability.json() as {fcl_capability:{fcl_personal:boolean;receiver_user_id:string|null}};
+    expect(capability.status).toBe(200);expect(body.fcl_capability).toEqual({fcl_personal:true,receiver_user_id:receiverId,business_date:'2026-10-08'});
+    const list=await fetch(`${f.origin}/console/api/v1/fcl/case-list?limit=1`,{headers:{cookie:session.cookie}});
+    expect(list.status).toBe(200);expect(calls).toBeGreaterThanOrEqual(3);
+
+    const denied=await fclHttpFixture({runVerified:()=>Promise.reject(new Error('fcl_receiver_authority_unavailable'))});
+    try{
+      const deniedSession=await staffSession(denied);
+      const deniedCapability=await fetch(`${denied.origin}/console/api/v1/session`,{headers:{cookie:deniedSession.cookie}});
+      expect(await deniedCapability.json()).toMatchObject({authenticated:true,fcl_capability:{fcl_personal:false,receiver_user_id:null}});
+      const deniedList=await fetch(`${denied.origin}/console/api/v1/fcl/case-list?limit=1`,{headers:{cookie:deniedSession.cookie}});
+      expect(deniedList.status).toBe(503);
+      expect(await deniedList.json()).toMatchObject({schema_version:'fcl-http@2026-09-21.v1',status:'unavailable',reason_codes:['fcl_receiver_authority_unavailable']});
+    }finally{await denied.close();}
+  }finally{await f.close();}
 });

@@ -328,9 +328,9 @@ function stateMemberships(value: unknown): readonly Membership[] {
   const data = (value as { data?: unknown }).data; if (!data || typeof data !== "object" || !("memberships" in data)) return [];
   return Array.isArray((data as { memberships?: unknown }).memberships) ? (data as { memberships: Membership[] }).memberships : [];
 }
-function sessionBody(options: PortalHttpOptions, session: PortalSession, fclHttp?:FclHttpService|null): Record<string, unknown> {
+async function sessionBody(options: PortalHttpOptions, session: PortalSession, fclHttp?:FclHttpService|null): Promise<Record<string, unknown>> {
   const fixtures = options.mode === "fixtures" ? options.identityProvider.listFixtureIdentities?.() ?? [] : [];
-  const capability=session.identity&&fclHttp?fclHttp.capability(session.identity):null;
+  const capability=session.identity&&fclHttp?await fclHttp.capability(session.identity):null;
   return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures, ...(capability?{fcl_capability:capability}:{}) };
 }
 function mutation<T>(request: IncomingMessage, input: T, expectedVersion?: number): PortalMutation<T> { return expectedVersion === undefined ? { idempotencyKey: idempotency(request), input } : { idempotencyKey: idempotency(request), expectedVersion, input }; }
@@ -490,7 +490,7 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
         if(!fclHttp)throw new PortalError("fcl_unavailable");
         return await handlePublicFcl(request,response,url,fclHttp,options);
       }
-      if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, sessionBody(options, ensured.session,fclHttp), ensured.setCookie); return true; }
+      if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, await sessionBody(options, ensured.session,fclHttp), ensured.setCookie); return true; }
       if(path.startsWith(`${API_PREFIX}/cli-auth/`)){
         if(!cliAuth)throw new PortalError("cli_auth_unavailable");
         if(url.search)throw new PortalError("body_invalid");
@@ -514,16 +514,16 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
           const input=await body(request,4096);closed(input,["account","password","captcha_id","captcha"]);
           const identityId=formLogin.verify(current.sessionId,address,{account:text(input,"account"),password:text(input,"password"),captcha_id:text(input,"captcha_id"),captcha:text(input,"captcha")});
           const identity=await options.identityProvider.authenticateFixture(identityId),authenticated=options.sessions.authenticate(current.sessionId,identity);
-          json(response,200,sessionBody(options,authenticated.session,fclHttp),authenticated.setCookie);return true;
+          json(response,200,await sessionBody(options,authenticated.session,fclHttp),authenticated.setCookie);return true;
         }
         json(response,405,{status:"blocked",data:null,reason_codes:["method_not_allowed"]});return true;
       }
       if (path === `${API_PREFIX}/fixture-login` && request.method === "POST") {
         if (options.mode !== "fixtures" || options.identityProvider.kind !== "fixture" || !options.identityProvider.authenticateFixture) throw new PortalError("fixture_identity_forbidden");
         const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["identity_id"]);
-        const identity = await options.identityProvider.authenticateFixture(text(input, "identity_id")); const authenticated = options.sessions.authenticate(current.sessionId, identity); json(response, 200, sessionBody(options, authenticated.session,fclHttp), authenticated.setCookie); return true;
+        const identity = await options.identityProvider.authenticateFixture(text(input, "identity_id")); const authenticated = options.sessions.authenticate(current.sessionId, identity); json(response, 200, await sessionBody(options, authenticated.session,fclHttp), authenticated.setCookie); return true;
       }
-      if (path === `${API_PREFIX}/logout` && request.method === "POST") { const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, []); const loggedOut = options.sessions.logout(current.sessionId); json(response, 200, sessionBody(options, loggedOut.session,fclHttp), loggedOut.setCookie); return true; }
+      if (path === `${API_PREFIX}/logout` && request.method === "POST") { const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, []); const loggedOut = options.sessions.logout(current.sessionId); json(response, 200, await sessionBody(options, loggedOut.session,fclHttp), loggedOut.setCookie); return true; }
       if (path === "/console/auth/login" && request.method === "GET") {
         if (options.identityProvider.kind !== "oidc" || !options.identityProvider.begin) throw new PortalError("oidc_not_configured"); const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); const transaction = await options.identityProvider.begin(); const pending = options.sessions.beginOidc(ensured.session.sessionId, transaction); response.statusCode = 302; commonHeaders(response); response.setHeader("set-cookie", options.sessions.cookieFor(pending)); response.setHeader("location", transaction.authorizationUrl); response.end(); return true;
       }
@@ -704,7 +704,17 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
         if (!options.organizationBridge) throw new PortalError("organization_bridge_unavailable");
         json(response, 200, await options.organizationBridge.getOrganizationAdmission(ctx, decodeURIComponent(organizationMatch[1]!))); return true;
       }
-      if (path === `${API_PREFIX}/session/organization` && request.method === "POST") { idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["organization_id"]); const state = options.service.getState({ ...ctx, organizationId: null }); const selected = options.sessions.selectOrganization(current.sessionId, nullableText(input, "organization_id"), stateMemberships(state)); json(response, 200, sessionBody(options, selected,fclHttp), options.sessions.cookieFor(selected)); return true; }
+      if (path === `${API_PREFIX}/session/organization` && request.method === "POST") {
+        idempotency(request);
+        const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
+        closed(input, ["organization_id"]);
+        const organizationId=nullableText(input,"organization_id"),state=options.service.getState({...ctx,organizationId:null}),memberships=stateMemberships(state);
+        const selected=organizationId===null&&fclHttp&&ctx.identity.platformRole!=='operator'&&ctx.identity.platformRole!=='reviewer'
+          ?await fclHttp.runWithPersonalAuthority(ctx.identity,()=>options.sessions.selectOrganization(current.sessionId,null,memberships))
+          :options.sessions.selectOrganization(current.sessionId,organizationId,memberships);
+        json(response, 200, await sessionBody(options, selected,fclHttp), options.sessions.cookieFor(selected));
+        return true;
+      }
       const input = write ? await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES) : {};
       if (path.startsWith(`${API_PREFIX}/business-access/`)) {
         if (!options.businessAccessService) throw new PortalError("business_access_unavailable");
