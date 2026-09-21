@@ -470,7 +470,7 @@ Case BEGIN IMMEDIATE
 
 Document 写 guard 保持到 Case COMMIT 和提交后读回完成；它不是 FCL.11 的只读 snapshot。Native/Document 尚未提交或验证失败时仍按其正常 guard 回滚，不禁止其既有安全回滚。Case event 与 idempotency 仍是唯一 Handoff 写入；`recordFclHandoffInTransaction` 要求真实活动事务，不能独立自动提交半写。
 
-插入前后会核对完整的 `business_cases` row 与不可变 FCL Inquiry 原件；插入后在同一 Case 事务和 COMMIT 后分别核对 event metadata、payload、idempotency key/digest/case 绑定。若数据库已实际完成 `COMMIT` 后才发生 transport 异常，catch 先读取真实 `isTransaction` 状态；事务已结束时不发无效 `ROLLBACK`，保留原异常。相同 key 重试仍恢复原事件且不重复写入。
+插入前后会核对完整的 `business_cases` row 与不可变 FCL Inquiry 原件；插入后在同一 Case 事务和 COMMIT 后分别核对 event metadata、payload、idempotency key/digest/case 绑定。事务由连接级同步 guard 跟踪，不依赖 Node 22.13 缺失的 `DatabaseSync.isTransaction`。提交前失败会尽力 `ROLLBACK`；若 `COMMIT` 已实际完成后才发生 transport 异常，无事务可回滚的错误被吞掉并保留原异常。相同 key 重试仍恢复原事件且不重复写入。
 
 ### FCL.12.4 未交付入口
 

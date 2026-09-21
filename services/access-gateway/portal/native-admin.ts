@@ -14,6 +14,7 @@ import {
 } from '../../quote-native/fcl-contracts';
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from './production-persistence';
 import { PortalError, type PortalContext } from './contracts';
+import {SyncTransactionGuard} from './sync-transaction';
 import type { PortalService } from './service';
 import {
   nativePublishSchema,
@@ -136,6 +137,7 @@ export class NativeAdminStore {
 
 export class NativeAdminService {
   readonly #fcl: NormalizedFclOptions | null;
+  readonly #fclNotificationTransaction=new SyncTransactionGuard();
   constructor(
     private store: NativeAdminStore,
     private portal: Pick<PortalService, 'getState'>,
@@ -311,7 +313,7 @@ export class NativeAdminService {
     const change = fclNotificationSaveSchema.safeParse(input);
     if (!change.success) throw new PortalError('native_input_invalid');
     const db = this.store.db, partition = JSON.stringify([scope, 'fcl-notification', 'save']), actionDigest = digest(change.data);
-    db.exec('BEGIN IMMEDIATE');
+    this.#fclNotificationTransaction.begin(db,'native_readback_failed');
     let committed = false;
     try {
       const old = db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(partition, key) as { digest: string; result: string } | undefined;
@@ -319,7 +321,7 @@ export class NativeAdminService {
         if (old.digest !== actionDigest) throw new PortalError('idempotency_conflict');
         let submitted:ReturnType<NativeAdminService['fclNotificationView']>;
         try{submitted=fclNotificationViewSchema.parse(JSON.parse(old.result) as unknown);}catch{throw new PortalError('native_readback_failed');}
-        db.exec('COMMIT');committed=true;
+        this.#fclNotificationTransaction.commit(db);committed=true;
         const current=this.fclNotificationView(scope);
         return this.fclNotificationView(scope,{replayed:true,submitted_version:submitted.version,current:current.version===submitted.version&&JSON.stringify(current.input)===JSON.stringify(submitted.input)});
       }
@@ -332,13 +334,11 @@ export class NativeAdminService {
       db.prepare('INSERT INTO native_audit VALUES(?,?,?,?,?,?,?)').run(auditId, scope, 'fcl-notification', ctx.identity.userId, 'save', actionDigest, createdAt);
       db.prepare('INSERT INTO native_idempotency VALUES(?,?,?,?)').run(partition, key, actionDigest, JSON.stringify(next));
       this.assertFclNotificationCommitted(scope,next,auditId,createdAt,actionDigest,partition,key,ctx.identity.userId);
-      db.exec('COMMIT'); committed = true;
+      this.#fclNotificationTransaction.commit(db); committed = true;
       this.assertFclNotificationCommitted(scope,next,auditId,createdAt,actionDigest,partition,key,ctx.identity.userId);
       return this.fclNotificationView(scope);
     } catch (error) {
-      if (!committed && (this.store.db as typeof db & { isTransaction: boolean }).isTransaction) {
-        try { db.exec('ROLLBACK'); } catch { /* Preserve the notification failure. */ }
-      }
+      if (!committed) this.#fclNotificationTransaction.rollbackOnFailure(db);
       throw error;
     }
   }

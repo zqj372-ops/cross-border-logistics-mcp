@@ -13,6 +13,7 @@ import type { Draft } from '../../../apps/inquiry/model';
 import { PortalError, type PortalContext } from './contracts';
 import type { PortalService } from './service';
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from './production-persistence';
+import {SyncTransactionGuard} from './sync-transaction';
 import {
   caseInputSchema,
   caseUpdateSchema,
@@ -296,6 +297,7 @@ export class CaseStore {
 
 export class CaseService {
   readonly #fcl: NormalizedFclOptions | null;
+  readonly #fclHandoffTransaction=new SyncTransactionGuard();
   constructor(readonly store: CaseStore, readonly portal: Pick<PortalService, 'getState'>, fcl?: FclCaseServiceOptions) {
     this.#fcl = fcl ? this.normalizeFclOptions(fcl) : null;
     if (this.#fcl !== null) this.assertFclStartup(this.#fcl);
@@ -887,23 +889,19 @@ export class CaseService {
     this.requireFclReceiver(ctx);
     if (Object.prototype.toString.call(operation) === '[object AsyncFunction]') throw new PortalError('fcl_handoff_async_forbidden');
     const db = this.store.db;
-    db.exec('BEGIN IMMEDIATE');
+    this.#fclHandoffTransaction.begin(db,'fcl_handoff_transaction_required');
     let committed = false;
     try {
       const result = operation(() => {
         if (committed) throw new PortalError('fcl_handoff_commit_twice');
-        db.exec('COMMIT');
+        this.#fclHandoffTransaction.commit(db);
         committed = true;
       });
       if (!committed) throw new PortalError('fcl_handoff_commit_required');
       if (result !== null && typeof result === 'object' && 'then' in result) throw new PortalError('fcl_handoff_async_forbidden');
       return result;
     } catch (error) {
-      if (!committed) {
-        let transactionOpen = true;
-        try { transactionOpen = (this.store.db as DatabaseSync & { isTransaction: boolean }).isTransaction; } catch { /* Preserve the handoff failure. */ }
-        if (transactionOpen) { try { db.exec('ROLLBACK'); } catch { /* Preserve the handoff failure. */ } }
-      }
+      if (!committed) this.#fclHandoffTransaction.rollbackOnFailure(db);
       throw error;
     }
   }
@@ -984,7 +982,7 @@ export class CaseService {
   }
   recordFclHandoffInTransaction(ctx: PortalContext, input: unknown, key: string): FclHandoffPayload {
     this.requireFclReceiver(ctx);
-    if (!(this.store.db as DatabaseSync & { isTransaction: boolean }).isTransaction) throw new PortalError('fcl_handoff_transaction_required');
+    if (!this.#fclHandoffTransaction.isOpen) throw new PortalError('fcl_handoff_transaction_required');
     if (!/^[A-Za-z0-9._:-]{16,128}$/u.test(key)) throw new PortalError('idempotency_key_invalid');
     const payload = fclHandoffPayloadSchema.parse(input);
     if (payload.actor !== ctx.identity.userId) throw new PortalError('fcl_handoff_actor_mismatch');
