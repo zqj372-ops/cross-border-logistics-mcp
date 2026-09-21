@@ -1,6 +1,6 @@
 # FreightClaw CLI
 
-`freightclaw` 直接调用现有 FreightClaw REST API。沿用同一个账号及统一应用 Key；企业、服务范围、人员角色和来源数据的判断由服务器负责。CLI 不计算价格或税率；业务记录保存在服务端。开发分支新增独立人员会话与 `workspace` 命令，说明见下方。
+`freightclaw` 直接调用现有 FreightClaw REST API。机器业务继续使用统一应用 Key；人员操作使用独立 `workspace` device flow，API Key 不能替代本人身份。企业、服务范围、人员角色和来源数据的判断由服务器负责。CLI 不计算价格或税率；业务记录保存在服务端。
 
 首次使用可从 [图文使用指南（含四张实测截图）](https://github.com/zqj372-ops/cross-border-logistics-mcp/blob/main/docs/runbooks/freightclaw-cli-illustrated.md) 开始，按安装、命令选择、连接检查、输入校验和结果处理逐步操作。
 
@@ -85,10 +85,10 @@ npm pack ./dist/cli
 
 构建将运行代码、当前 OpenAPI Schema 和所需校验库打包到 `dist/cli`，不需要运行时下载合同或访问源码目录。安装包不包含服务器、凭证和业务数据库。第三方许可列于包内 `THIRD-PARTY-NOTICES.txt`。
 
-## 后台人员操作（本地开发版）
+## workspace 人员与 FCL 操作
 
-渠道与仓库、询价管理、原生报价及发布配置使用 `workspace` 命令，与网页调用同一 API。使用浏览器核对代码后签发的独立 CLI 会话，不复用浏览器 Cookie，不提升应用 Key 权限。当前 `0.002` 安装包包含该扩展。
+渠道与仓库、询价管理、原生报价、FCL 公开询价与个人报价工作流使用 `workspace` 命令，与网页调用同一 API。public inquiry 不需要登录；staff FCL 操作先完成浏览器核对代码的 person device flow，不复用浏览器 Cookie，也不提升应用 Key 权限。
 
-完整登录、输入、命令与范围说明：[管理 CLI 使用说明](../../apps/console/workspace-cli.md)。`workspace commands` 当前返回 74 个具名操作，另有登录、退出、帮助与 Schema 命令。命令目录是当前版本的支持范围，不代表所有网页操作都有 CLI 入口。
+完整登录、输入、命令与范围说明：[workspace CLI 使用说明](../../apps/console/workspace-cli.md)，FCL 部分见 [FCL 人员与公开询价](../../apps/console/workspace-cli.md#fcl-人员与公开询价)。运行 `workspace commands` 查看当前版本实际支持范围；不要根据网页功能推断 CLI 已覆盖。
 
 两种私人地址报价分别使用 `workspace quote self` 和 `workspace quote freightcom`，各自提供输入文件，不自动共享或覆盖另一份资料。新增 `workspace schedules`（船期）和 `workspace terminals`（码头效率），每组均支持 `query`、`get`、`save`、`preview`、`publish`、`disable`、`rollback`。查询与网页读取同一份企业发布快照；配置写入要求管理权限、版本校验及幂等键。数据初始为空，目前没有自动船司或港口数据同步，详见[模块图文说明](../../docs/product/2026-09-08-independent-quotes-maritime.md)。

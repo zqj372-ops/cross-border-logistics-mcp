@@ -176,10 +176,13 @@ await build({
   entryPoints: ["services/access-gateway/portal/start.ts"], outfile: "dist/services/access-gateway/portal/start.mjs", bundle: true,
   format: "esm", platform: "node", target: "node22", banner: nodeEsmBanner, sourcemap: false, legalComments: "none",
 });
+mkdirSync(resolve("dist/services/access-gateway/portal"),{recursive:true});
+cpSync("services/access-gateway/portal/fcl_smtp_send.py","dist/services/access-gateway/portal/fcl_smtp_send.py");
 
 await build({entryPoints:["services/access-gateway/portal/postgres-worker.ts"],outfile:"dist/services/access-gateway/portal/postgres-worker.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
 
 await build({entryPoints:["services/access-gateway/portal/postgres-migration.ts"],outfile:"dist/services/access-gateway/portal/postgres-migration.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
+await build({entryPoints:["deploy/scripts/migrate-fcl-sqlite-offline.ts"],outfile:"dist/deploy/scripts/migrate-fcl-sqlite-offline.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
 await build({entryPoints:["src/logistics_mcp/module-runtime/provider-release-cli.ts"],outfile:"dist/src/logistics_mcp/module-runtime/provider-release-cli.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});
 
 await buildInquiry();

@@ -27,6 +27,7 @@ COPY deploy/portal/inquiry-navigation.css ./deploy/portal/inquiry-navigation.css
 COPY deploy/scripts/verify-pdf-renderer.ts ./deploy/scripts/verify-pdf-renderer.ts
 COPY deploy/scripts/start-portal-fixture.ts ./deploy/scripts/start-portal-fixture.ts
 COPY deploy/scripts/generate-portal-openapi.ts ./deploy/scripts/generate-portal-openapi.ts
+COPY deploy/scripts/migrate-fcl-sqlite-offline.ts ./deploy/scripts/migrate-fcl-sqlite-offline.ts
 COPY deploy/scripts/init-access-gateway.mjs ./deploy/scripts/init-access-gateway.mjs
 COPY deploy/scripts/migrate-access-gateway-postgres.mjs ./deploy/scripts/migrate-access-gateway-postgres.mjs
 COPY tsconfig.json .
