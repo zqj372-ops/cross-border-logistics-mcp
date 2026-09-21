@@ -15,6 +15,8 @@ import {
   type FclQuoteCaseProjection,
   type FclQuoteCostRow,
   type FclQuoteDraftInput,
+  type FclRowAdjustmentAuditChange,
+  type FclRowAdjustmentValue,
   type FclQuoteSelectedSnapshot,
   type FclQuoteServiceCoverage,
   type FclQuoteSnapshot,
@@ -54,10 +56,35 @@ export function fclQuoteSnapshotDigest(snapshot:Omit<FclQuoteSnapshot,'content_d
   return stableDigest(snapshot);
 }
 
+const hasOwn=(value:object,key:string)=>Object.prototype.hasOwnProperty.call(value,key);
+
+function validateFclRowAdjustmentAudit(snapshot:FclQuoteSnapshot):void{
+  const input=snapshot.extensions?.fcl_row_adjustments_v1,audit=snapshot.extensions?.fcl_row_adjustment_audit_v1;
+  if(!input&&!audit)return;
+  if(!input||!audit||input.changes.length!==audit.changes.length)throw new PortalError('fcl_quote_readback_failed');
+  const rows=new Map(snapshot.cost_rows.map(row=>[row.row_key,row]));
+  for(let index=0;index<input.changes.length;index++){
+    const change=input.changes[index]!,recorded=audit.changes[index]!,row=rows.get(change.row_key);
+    if(recorded.row_key!==change.row_key||recorded.operation!==change.operation||recorded.reason!==change.reason||recorded.actor!==snapshot.actor||recorded.created_at!==snapshot.created_at)throw new PortalError('fcl_quote_readback_failed');
+    if(change.operation==='remove'){
+      if(row||recorded.effective!==null)throw new PortalError('fcl_quote_readback_failed');
+      continue;
+    }
+    const effective=recorded.effective;
+    if(!row||!effective||row.quantity!==effective.quantity||row.unit!==effective.unit||row.container_type!==effective.container_type)throw new PortalError('fcl_quote_readback_failed');
+    if(row.cost_price!==effective.cost_price||row.sell_price!==effective.sell_price)throw new PortalError('fcl_quote_readback_failed');
+    if(hasOwn(change,'cost_price')&&change.cost_price!==effective.cost_price)throw new PortalError('fcl_quote_readback_failed');
+    if(hasOwn(change,'sell_price')&&change.sell_price!==effective.sell_price)throw new PortalError('fcl_quote_readback_failed');
+    if(hasOwn(change,'unit')&&row.unit!==change.unit)throw new PortalError('fcl_quote_readback_failed');
+    if(hasOwn(change,'container_type')&&row.container_type!==change.container_type)throw new PortalError('fcl_quote_readback_failed');
+  }
+}
+
 export function validateFclQuoteSnapshot(value:unknown):FclQuoteSnapshot{
   const snapshot=fclQuoteSnapshotSchema.parse(value);
   const {content_digest,...payload}=snapshot;
   if(content_digest!==stableDigest(payload))throw new PortalError('fcl_quote_readback_failed');
+  validateFclRowAdjustmentAudit(snapshot);
   for(const row of snapshot.cost_rows){
     const costAmount=row.cost_price===null?null:roundMoney(new D(row.quantity).mul(row.cost_price));
     const sellAmount=row.sell_price===null?null:roundMoney(new D(row.quantity).mul(row.sell_price));
@@ -156,12 +183,21 @@ export function calculateFclMoney(rows: Pick<FclQuoteCostRow,'currency'|'fully_p
   return {currencies,byCurrency,unified,missingFx,mixedCurrencies,allRowsPriced};
 }
 
+type FclRawCostRow=Omit<FclQuoteCostRow,'cost_amount'|'sell_amount'|'fully_priced'>;
+const rowAdjustmentValue=(row:FclRawCostRow):FclRowAdjustmentValue=>({
+  quantity:row.quantity,
+  unit:row.unit,
+  container_type:row.container_type,
+  cost_price:row.cost_price,
+  sell_price:row.sell_price,
+});
+
 export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):FclQuoteSnapshot{
   const noInput=()=>{throw new PortalError('fcl_quote_input_invalid');};
   const sourceOverrides=new Map(input.input.source_sell_prices.map(row=>[row.row_key,row]));
   const caseProjection=input.case_projection??projectionFromCase(input.caseView);
-  const sourceRows:Array<Omit<FclQuoteCostRow,'cost_amount'|'sell_amount'|'fully_priced'>>=[];
-  const addSourceRow=(row:Omit<FclQuoteCostRow,'cost_amount'|'sell_amount'|'fully_priced'>,overrideSource=true)=>{
+  const sourceRows:FclRawCostRow[]=[];
+  const addSourceRow=(row:FclRawCostRow,overrideSource=true)=>{
     const override=sourceOverrides.get(row.row_key);
     if(overrideSource&&override)sourceOverrides.delete(row.row_key);
     sourceRows.push({...row,sell_price:override?.sell_price??null,customer_note:override?.customer_note??null});
@@ -225,11 +261,11 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
   });
   if(sourceOverrides.size>0)throw new PortalError('fcl_quote_source_row_unknown');
 
-  const manualRows=input.input.manual_fees.map(fee=>{
+  const manualRows:FclRawCostRow[]=input.input.manual_fees.map(fee=>{
     const container=fee.unit==='CNTR'&&fee.container_type!==null?caseProjection.containers.find(candidate=>candidate.type===fee.container_type):null;
     if(fee.unit==='SHIPMENT'&&!new D(fee.quantity).eq(1))throw new PortalError('fcl_quote_scope_invalid');
     if(fee.unit==='CNTR'&&(!container||!new D(container.quantity).eq(fee.quantity)))throw new PortalError('fcl_quote_scope_invalid');
-    return rowWithAmounts({
+    return {
       row_key:`manual:${fee.id}`,
       source_kind:'manual',
       template_ref:fee.template_ref,
@@ -249,9 +285,41 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
       evidence_ref:fee.evidence_ref,
       evidence_version:fee.evidence_version,
       quantity_conditions:fee.quantity_conditions,
-    });
+    };
   });
-  const rows=[...sourceRows.map(rowWithAmounts),...manualRows];
+  const baseRows=[...sourceRows,...manualRows];
+  const baseByKey=new Map(baseRows.map((row,index)=>[row.row_key,index]));
+  const adjustmentChanges=input.input.extensions?.fcl_row_adjustments_v1?.changes??[];
+  const adjustedRows=baseRows.map(row=>structuredClone(row));
+  const removedRows=new Set<string>();
+  const seenAdjustments=new Set<string>();
+  const adjustmentAudit:FclRowAdjustmentAuditChange[]=[];
+  for(const change of adjustmentChanges){
+    if(seenAdjustments.has(change.row_key))throw new PortalError('fcl_quote_input_invalid');
+    seenAdjustments.add(change.row_key);
+    const index=baseByKey.get(change.row_key);
+    if(index===undefined)throw new PortalError('fcl_quote_source_row_unknown');
+    const original=structuredClone(baseRows[index]!),row=adjustedRows[index]!;
+    if(change.operation==='remove'){
+      removedRows.add(change.row_key);
+      adjustmentAudit.push({row_key:change.row_key,operation:'remove',reason:change.reason,original:rowAdjustmentValue(original),effective:null,actor:input.actor,created_at:input.created_at});
+      continue;
+    }
+    if(hasOwn(change,'cost_price'))row.cost_price=change.cost_price??null;
+    if(hasOwn(change,'sell_price'))row.sell_price=change.sell_price??null;
+    const effectiveUnit=change.unit??row.unit;
+    if(effectiveUnit==='SHIPMENT'){
+      row.unit='SHIPMENT';row.container_type=null;row.quantity='1';
+    }else{
+      const effectiveContainer=change.container_type??row.container_type;
+      if(effectiveContainer===null)throw new PortalError('fcl_quote_scope_invalid');
+      const container=caseProjection.containers.find(candidate=>candidate.type===effectiveContainer);
+      if(!container)throw new PortalError('fcl_quote_scope_invalid');
+      row.unit='CNTR';row.container_type=effectiveContainer;row.quantity=container.quantity;
+    }
+    adjustmentAudit.push({row_key:change.row_key,operation:'override',reason:change.reason,original:rowAdjustmentValue(original),effective:rowAdjustmentValue(row),actor:input.actor,created_at:input.created_at});
+  }
+  const rows=adjustedRows.filter(row=>!removedRows.has(row.row_key)).map(rowWithAmounts);
   if(rows.length>60)throw new PortalError('fcl_quote_row_limit');
   if(rows.some(row=>!caseProjection.services.includes(row.service)))throw new PortalError('fcl_quote_scope_invalid');
   const rowByKey=new Map(rows.map(row=>[row.row_key,row]));
@@ -306,14 +374,19 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
     {kind:'rate' as const,ref:input.selected.rate_id,version:input.selected.source_version,digest:input.selected.dataset_digest},
     ...rows.filter(row=>row.source_kind==='manual'&&row.evidence_ref).map(row=>({kind:'manual' as const,ref:row.evidence_ref!,version:row.evidence_version,digest:null})),
   ];
+  const hasAdjustments=adjustmentChanges.length>0;
   const calculationTrace:FclQuoteSnapshot['calculation']['calculation_trace']=[
     ...rows.map(row=>({step:'row_amount',detail:`${row.row_key} cost ${row.quantity} × ${row.cost_price??'null'} ${row.currency} = ${row.cost_amount??'null'}; sell ${row.quantity} × ${row.sell_price??'null'} ${row.currency} = ${row.sell_amount??'null'}`})),
     ...currencies.filter(currencyCode=>rows.some(row=>row.currency===currencyCode)).map(currencyCode=>({step:'currency_subtotal',detail:`${currencyCode} cost=${byCurrency[currencyCode].cost_subtotal??'null'} revenue=${byCurrency[currencyCode].revenue_subtotal??'null'} GP=${byCurrency[currencyCode].gp_subtotal??'null'}`})),
     ...(['USD','CAD'] as const).filter(currencyCode=>input.input.exchange_rates[currencyCode]!==null&&rows.some(row=>row.currency===currencyCode)).map(currencyCode=>({step:'fx_conversion',detail:`1 ${currencyCode} = ${input.input.exchange_rates[currencyCode]} CNY`})),
     {step:'unified_profit',detail:`CNY cost=${unified.cost_subtotal??'null'} revenue=${unified.revenue_subtotal??'null'} GP=${unified.gp_subtotal??'null'} margin=${unified.margin??'null'}`},
   ];
+  const snapshotExtensions=input.input.extensions?{
+    ...input.input.extensions,
+    ...(input.input.extensions.fcl_row_adjustments_v1?{fcl_row_adjustment_audit_v1:{changes:adjustmentAudit}}:{}),
+  }:undefined;
   const payload={
-    ...(input.input.extensions?{extensions:input.input.extensions}:{}),
+    ...(snapshotExtensions?{extensions:snapshotExtensions}:{}),
     contract_version:input.contract_version,
     schema_version:'fcl-cost-sell-snapshot@2026-09-20.v1' as const,
     quote_ref:input.quote_ref,
@@ -335,11 +408,12 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
       by_currency:byCurrency,
       unified_profit:unified,
       source_refs:sourceRefs,
-      assumptions:['source_costs_server_derived','fx_is_explicit_snapshot','no_inferred_included_services'],
+      assumptions:hasAdjustments?['source_base_costs_from_selected_rate','per_quote_adjustments_audited','effective_costs_may_be_adjusted','fx_is_explicit_snapshot','no_inferred_included_services']:['source_costs_server_derived','fx_is_explicit_snapshot','no_inferred_included_services'],
       warnings,
       blockers:mixedCurrencies&&missingFx.length>0?missingFx.map(currencyCode=>`fx_missing:${currencyCode}`):[],
       calculation_trace:[
-        {step:'source_rows_derived',detail:`${sourceRows.length} immutable source row(s)`},
+        {step:'source_rows_derived',detail:hasAdjustments?`${sourceRows.length} source row(s); source snapshot retained unchanged`:`${sourceRows.length} immutable source row(s)`},
+        ...(hasAdjustments?adjustmentAudit.map(change=>({step:'per_quote_adjustment',detail:`${change.row_key}: ${change.operation}; reason=${change.reason}`})):[]),
         {step:'manual_rows_collected',detail:`${manualRows.length} manual row(s)`},
         {step:'service_coverage_checked',detail:`${coverage.filter(item=>item.disposition!=='pending').length} resolved service(s)`},
         ...calculationTrace,

@@ -218,6 +218,61 @@ export const fclQuoteSourceSellPriceSchema = z.object({
   customer_note: customerNote(),
 }).strict();
 
+const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+export const fclRowAdjustmentOperationSchema = z.enum(['override', 'remove']);
+export const fclRowAdjustmentSchema = z.object({
+  row_key: quoteRowKey(),
+  operation: fclRowAdjustmentOperationSchema,
+  cost_price: decimal().nullable().optional(),
+  sell_price: decimal().nullable().optional(),
+  unit: z.enum(['CNTR', 'SHIPMENT']).optional(),
+  container_type: containerType.nullable().optional(),
+  reason: identifier(500),
+}).strict().superRefine((value, context) => {
+  const overrideFields = ['cost_price', 'sell_price', 'unit', 'container_type'].filter((key) => hasOwn(value, key));
+  if (value.operation === 'remove') {
+    if (overrideFields.length > 0) context.addIssue({ code: 'custom', path: [overrideFields[0]!], message: 'remove_forbids_override_fields' });
+    return;
+  }
+  const actualOverride = hasOwn(value, 'cost_price') || hasOwn(value, 'sell_price') || hasOwn(value, 'unit') || (hasOwn(value, 'container_type') && value.container_type !== null);
+  if (!actualOverride) context.addIssue({ code: 'custom', path: [], message: 'override_requires_effective_field' });
+  if (value.unit === 'CNTR' && value.container_type == null) context.addIssue({ code: 'custom', path: ['container_type'], message: 'cntr_requires_container_type' });
+  if (value.unit === 'SHIPMENT' && value.container_type !== undefined && value.container_type !== null) context.addIssue({ code: 'custom', path: ['container_type'], message: 'shipment_forbids_container_type' });
+  if (value.unit === undefined && hasOwn(value, 'container_type')) context.addIssue({ code: 'custom', path: ['unit'], message: 'container_type_requires_explicit_unit' });
+});
+export const fclRowAdjustmentsSchema = z.object({
+  changes: z.array(fclRowAdjustmentSchema).max(60),
+}).strict().superRefine((value, context) => {
+  const rows = new Set<string>();
+  value.changes.forEach((change, index) => {
+    if (rows.has(change.row_key)) context.addIssue({ code: 'custom', path: ['changes', index, 'row_key'], message: 'duplicate_row_key' });
+    rows.add(change.row_key);
+  });
+});
+
+export const fclRowAdjustmentValueSchema = z.object({
+  quantity: decimal(),
+  unit: z.enum(['CNTR', 'SHIPMENT']),
+  container_type: containerType.nullable(),
+  cost_price: decimal().nullable(),
+  sell_price: decimal().nullable(),
+}).strict();
+export const fclRowAdjustmentAuditChangeSchema = z.object({
+  row_key: quoteRowKey(),
+  operation: fclRowAdjustmentOperationSchema,
+  reason: identifier(500),
+  original: fclRowAdjustmentValueSchema,
+  effective: fclRowAdjustmentValueSchema.nullable(),
+  actor: identifier(),
+  created_at: z.iso.datetime(),
+}).strict().superRefine((value, context) => {
+  if (value.operation === 'override' && value.effective === null) context.addIssue({ code: 'custom', path: ['effective'], message: 'override_requires_effective_values' });
+  if (value.operation === 'remove' && value.effective !== null) context.addIssue({ code: 'custom', path: ['effective'], message: 'remove_requires_null_effective_values' });
+});
+export const fclRowAdjustmentAuditSchema = z.object({
+  changes: z.array(fclRowAdjustmentAuditChangeSchema).max(60),
+}).strict();
+
 export const fclQuoteServiceScopeInputSchema = z.object({
   service,
   disposition: z.enum(['included', 'free', 'out_of_scope']),
@@ -233,9 +288,13 @@ export const fclQuoteServiceScopeInputSchema = z.object({
 });
 
 export const fclEstimateBindingSchema=z.object({estimate_id:z.string().uuid(),version:z.number().int().positive(),content_digest:z.string().length(64),valid_from:date(),valid_until:date()}).strict();
-export const fclQuoteExtensionsSchema=z.object({fcl_estimate_v1:fclEstimateBindingSchema}).strict();
+export const fclQuoteInputExtensionsSchema=z.object({fcl_estimate_v1:fclEstimateBindingSchema.optional(),fcl_row_adjustments_v1:fclRowAdjustmentsSchema.optional()}).strict();
+export const fclQuoteExtensionsSchema=fclQuoteInputExtensionsSchema;
+export const fclQuoteSnapshotExtensionsSchema=fclQuoteInputExtensionsSchema.extend({fcl_row_adjustment_audit_v1:fclRowAdjustmentAuditSchema.optional()}).strict().superRefine((value,context)=>{
+  if(Boolean(value.fcl_row_adjustments_v1)!==Boolean(value.fcl_row_adjustment_audit_v1))context.addIssue({code:'custom',path:[],message:'row_adjustment_audit_pair_required'});
+});
 export const fclQuoteDraftInputSchema = z.object({
-  extensions:fclQuoteExtensionsSchema.optional(),
+  extensions:fclQuoteInputExtensionsSchema.optional(),
   source_sell_prices: z.array(fclQuoteSourceSellPriceSchema).max(120),
   manual_fees: z.array(fclQuoteManualFeeInputSchema).max(60),
   service_scopes: z.array(fclQuoteServiceScopeInputSchema).max(FCL_SERVICE_IDS.length),
@@ -409,7 +468,7 @@ export const fclQuoteCaseProjectionSchema = z.object({
 }).strict();
 
 export const fclQuoteSnapshotSchema = z.object({
-  extensions:fclQuoteExtensionsSchema.optional(),
+  extensions:fclQuoteSnapshotExtensionsSchema.optional(),
   contract_version: z.literal(FCL_DOCUMENT_WORKFLOW_VERSION),
   schema_version: z.literal('fcl-cost-sell-snapshot@2026-09-20.v1'),
   quote_ref: z.string().uuid(),
@@ -470,6 +529,10 @@ export const fclQuoteCostSellSchemas = {
 } as const;
 
 export type FclQuoteDraftInput = z.infer<typeof fclQuoteDraftInputSchema>;
+export type FclRowAdjustmentInput = z.infer<typeof fclRowAdjustmentSchema>;
+export type FclRowAdjustmentsInput = z.infer<typeof fclRowAdjustmentsSchema>;
+export type FclRowAdjustmentValue = z.infer<typeof fclRowAdjustmentValueSchema>;
+export type FclRowAdjustmentAuditChange = z.infer<typeof fclRowAdjustmentAuditChangeSchema>;
 export type FclQuoteSaveRequest = z.infer<typeof fclQuoteSaveRequestSchema>;
 export type FclQuoteSnapshot = z.infer<typeof fclQuoteSnapshotSchema>;
 export type FclQuoteView = z.infer<typeof fclQuoteViewSchema>;
