@@ -119,7 +119,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const selectCase = (id) => {
     if (activeCaseId === id) return;
-    epoch += 1; activeCaseId = id; workspaceStep = 'requirements'; resetCaseWorkspace();
+    epoch += 1; activeCaseId = id; workspaceStep = route().quoteRef ? 'quote' : 'requirements'; resetCaseWorkspace();
   };
   const requestRelatedRefresh = () => { relatedCaseId = ''; loadingRelated = false; };
   const hasCapability = () => model().session?.fcl_capability?.fcl_personal === true;
@@ -133,6 +133,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const leftCase = activeRouteKey.startsWith('fcl/case/');
     if (activeRouteKey.startsWith('fcl/compare/') && key !== activeRouteKey) operations?.reset();
     activeRouteKey = key;
+    if (current.action === 'case' && current.quoteRef) workspaceStep = 'quote';
     message = '';
     if (leftCase || current.action !== 'case') {
       epoch += 1;
