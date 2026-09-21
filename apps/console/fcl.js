@@ -150,8 +150,8 @@ export function buildFclQuoteInputDraft({draft, rows, sourceBaselines = new Map(
     id: row.id || row.row_key.slice(7),
     template_ref: row.template_ref ?? null,
     name: row.name || '',
-    group: row.group || 'C',
-    service: row.service || 'delivery',
+    group: row.group || '',
+    service: row.service || '',
     quantity: row.unit === 'SHIPMENT' ? '1' : row.quantity || '1',
     unit: row.unit,
     container_type: row.unit === 'CNTR' ? row.container_type : null,
@@ -296,7 +296,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       remark: null,
     };
   };
-  const blankManualFee = () => ({ id: crypto.randomUUID(), template_ref: null, name: '', group: 'C', service: detail?.current_input?.selected_services?.[0] || 'delivery', quantity: '1', unit: 'SHIPMENT', container_type: null, cost_price: null, sell_price: null, currency: 'CAD', internal_note: null, customer_note: null, evidence_ref: null, evidence_version: null, quantity_conditions: null });
+  const blankManualFee = () => ({ id: crypto.randomUUID(), template_ref: null, name: '', group: '', service: '', quantity: '1', unit: 'SHIPMENT', container_type: null, cost_price: null, sell_price: null, currency: 'CAD', internal_note: null, customer_note: null, evidence_ref: null, evidence_version: null, quantity_conditions: null });
   const primeQuoteEdit = (view) => {
     editingQuoteRef = view.quote_ref;
     quoteDraft = quoteDraftFromView(view);
@@ -521,7 +521,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     return panel('成本与客户售价', '选择已核验的运价，再填写售价、其他费用与服务说明。', `<div class="panel-body">${body}</div>`);
   };
   const feeGroupName = group => ({ A: '起运段', B: '干线运输', C: '目的段' }[group] || group);
-  const feeRowSignature = row => JSON.stringify([row.name, row.cost_price, row.sell_price, row.currency, row.unit, row.container_type]);
+  const feeRowSignature = row => JSON.stringify([row.name, row.cost_price, row.sell_price, row.currency, row.unit, row.container_type, row.group, row.service, row.customer_note, row.internal_note, row.evidence_ref, row.evidence_version]);
   const feeQuantity = row => {
     if (row.unit === 'SHIPMENT') return '1';
     const container = detail?.current_input.containers.find(item => item.type === row.container_type);
@@ -561,9 +561,10 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const feeRow = (row) => {
     const quantity = feeQuantity(row), source = row.source_kind !== 'manual', changed = quoteTouchedRows.has(row.row_key);
     const rowId = row.row_key.replace(/[^A-Za-z0-9_-]/g, '-'), existingManual = !source && quoteManualBases.has(row.row_key);
-    const name = source ? `<strong>${esc(row.name)}</strong><small>来源费用</small>` : `<div class="ops-fee-name">${valueField('费用名称', `fcl-fee-name-${rowId}`, row.name || '', 'name="fee_name"')}${valueField('价格依据', `fcl-fee-evidence-${rowId}`, row.evidence_ref || '', 'name="evidence"')}</div>`;
+    const name = source ? `<strong>${esc(row.name)}</strong><small>来源费用</small>` : valueField('费用名称', `fcl-fee-name-${rowId}`, row.name || '', 'name="fee_name"');
     const currency = source || existingManual ? `<span class="ops-fee-currency">${esc(row.currency)}</span>` : field('币种', `fcl-fee-currency-${rowId}`, `<select id="fcl-fee-currency-${rowId}" name="currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${row.currency === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`);
-    return `<tr data-fcl-fee-row data-key="${esc(row.row_key)}" data-source-kind="${esc(row.source_kind)}"><td>${name}</td><td>${valueField('成本单价', `fcl-fee-cost-${rowId}`, row.cost_price || '', 'name="cost_price" inputmode="decimal"')}</td><td>${currency}</td><td>${field('计费方式', `fcl-fee-unit-${rowId}`, `<select id="fcl-fee-unit-${rowId}" name="unit"><option value="SHIPMENT"${row.unit === 'SHIPMENT' ? ' selected' : ''}>按票</option><option value="CNTR"${row.unit === 'CNTR' ? ' selected' : ''}>按柜</option></select>`)}</td><td>${field('柜型', `fcl-fee-container-${rowId}`, `<select id="fcl-fee-container-${rowId}" name="container_type"${row.unit === 'SHIPMENT' ? ' disabled' : ''}><option value="">—</option>${containerTypes.map(type => `<option value="${type}"${row.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}</td><td class="num" data-fcl-fee-quantity>${esc(quantity || '待补')}</td><td>${valueField('销售单价', `fcl-fee-sell-${rowId}`, row.sell_price || '', 'name="sell_price" inputmode="decimal"')}</td><td class="num" data-fcl-fee-subtotal>${changed ? '待重新计算' : esc(row.sell_amount ?? '待补')}</td><td><button type="button" class="text-button" data-action="fcl-fee-remove" data-key="${esc(row.row_key)}">移除</button></td></tr>`;
+    const details = source ? '' : `<tr class="ops-fee-more"><td colspan="9"><details${existingManual ? '' : ' open'}><summary>更多信息</summary><div class="field-grid">${field('费用段', `fcl-fee-group-${rowId}`, `<select id="fcl-fee-group-${rowId}" name="group"${existingManual ? ' disabled' : ''}><option value="">请选择费用段</option>${['A','B','C'].map(group => `<option value="${group}"${row.group === group ? ' selected' : ''}>${esc(feeGroupName(group))}</option>`).join('')}</select>`)}${field('对应服务', `fcl-fee-service-${rowId}`, `<select id="fcl-fee-service-${rowId}" name="service"${existingManual ? ' disabled' : ''}><option value="">请选择对应服务</option>${Object.entries(serviceLabels).map(([id, label]) => `<option value="${id}"${row.service === id ? ' selected' : ''}>${label}</option>`).join('')}</select>`)}${valueField('价格依据', `fcl-fee-evidence-${rowId}`, row.evidence_ref || '', 'name="evidence"')}${valueField('依据日期或编号', `fcl-fee-evidence-version-${rowId}`, row.evidence_version || '', 'name="evidence_version"')}${valueField('客户说明', `fcl-fee-customer-note-${rowId}`, row.customer_note || '', 'name="customer_note"')}${valueField('内部备注', `fcl-fee-internal-note-${rowId}`, row.internal_note || '', 'name="internal_note"')}</div></details></td></tr>`;
+    return `<tr data-fcl-fee-row data-key="${esc(row.row_key)}" data-source-kind="${esc(row.source_kind)}"><td>${name}</td><td>${valueField('成本单价', `fcl-fee-cost-${rowId}`, row.cost_price || '', 'name="cost_price" inputmode="decimal"')}</td><td>${currency}</td><td>${field('计费方式', `fcl-fee-unit-${rowId}`, `<select id="fcl-fee-unit-${rowId}" name="unit"><option value="SHIPMENT"${row.unit === 'SHIPMENT' ? ' selected' : ''}>按票</option><option value="CNTR"${row.unit === 'CNTR' ? ' selected' : ''}>按柜</option></select>`)}</td><td>${field('柜型', `fcl-fee-container-${rowId}`, `<select id="fcl-fee-container-${rowId}" name="container_type"${row.unit === 'SHIPMENT' ? ' disabled' : ''}><option value="">—</option>${containerTypes.map(type => `<option value="${type}"${row.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}</td><td class="num" data-fcl-fee-quantity>${esc(quantity || '待补')}</td><td>${valueField('销售单价', `fcl-fee-sell-${rowId}`, row.sell_price || '', 'name="sell_price" inputmode="decimal"')}</td><td class="num" data-fcl-fee-subtotal>${changed ? '待重新计算' : esc(row.sell_amount ?? '待补')}</td><td><button type="button" class="text-button" data-action="fcl-fee-remove" data-key="${esc(row.row_key)}">移除</button></td></tr>${details}`;
   };
   const quoteHistoryPanel = () => {
     if (!quoteList?.items?.length) return '';
@@ -603,7 +604,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const calculationPanel = (value) => {
     const calculation = value.calculation;
-    return `<div class="fcl-profit-total"><span>折合人民币毛利</span><strong>${esc(calculation.unified_profit.gp_subtotal ?? '待补汇率')} <small>CNY</small></strong>${calculation.unified_profit.missing_fx?.length ? `<p>还需填写 ${esc(calculation.unified_profit.missing_fx.join('、'))} 对人民币的汇率</p>` : ''}</div><div class="fcl-currency-list">${Object.entries(calculation.by_currency).map(([currency, row]) => `<section class="fcl-currency"><h3>${currency}</h3><dl><div><dt>${fclField("total_cost")}</dt><dd>${esc(row.cost_subtotal ?? '待补')}</dd></div><div><dt>${fclField("sell_total")}</dt><dd>${esc(row.revenue_subtotal ?? '待补')}</dd></div><div><dt>${fclField("gross_profit")}</dt><dd class="${row.gp_subtotal?.startsWith('-') ? 'error' : ''}">${esc(row.gp_subtotal ?? '待补')}</dd></div><div><dt>${fclField("gross_margin")}</dt><dd>${esc(displayMargin(row.margin))}</dd></div></dl></section>`).join('')}</div>${calculation.blockers?.length ? note(`待补项目：${calculation.blockers.join('、')}`, 'warning') : ''}`;
+    return `<div class="table-wrap ops-summary-table"><table><thead><tr><th>币种</th><th>${fclField("total_cost")}</th><th>${fclField("sell_total")}</th><th>${fclField("gross_profit")}</th><th>${fclField("gross_margin")}</th></tr></thead><tbody>${Object.entries(calculation.by_currency).map(([currency, row]) => `<tr><td>${currency}</td><td class="num">${esc(row.cost_subtotal ?? '待补')}</td><td class="num">${esc(row.revenue_subtotal ?? '待补')}</td><td class="num ${row.gp_subtotal?.startsWith('-') ? 'error' : ''}">${esc(row.gp_subtotal ?? '待补')}</td><td class="num">${esc(displayMargin(row.margin))}</td></tr>`).join('')}</tbody></table></div><div class="ops-summary-total"><span>折合人民币毛利</span><strong>${esc(calculation.unified_profit.gp_subtotal ?? '待补汇率')} <small>CNY</small></strong></div>${calculation.unified_profit.missing_fx?.length ? `<p class="muted">还需填写 ${esc(calculation.unified_profit.missing_fx.join('、'))} 对人民币的汇率</p>` : ''}${calculation.blockers?.length ? note(`待补项目：${calculation.blockers.join('、')}`, 'warning') : ''}`;
 
   };
   const documentDisplayForm = () => {
@@ -704,9 +705,12 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       if (element.dataset.sourceKind === 'manual') {
         row.name = element.querySelector('[name="fee_name"]')?.value.trim() || row.name;
         row.currency = element.querySelector('[name="currency"]')?.value || row.currency;
-        const evidence = element.querySelector('[name="evidence"]')?.value.trim() || null;
-        row.evidence_ref = evidence;
-        row.evidence_version = evidence ? row.evidence_version || evidence : null;
+        row.group = element.querySelector('[name="group"]')?.value || row.group;
+        row.service = element.querySelector('[name="service"]')?.value || row.service;
+        row.evidence_ref = element.querySelector('[name="evidence"]')?.value.trim() || null;
+        row.evidence_version = element.querySelector('[name="evidence_version"]')?.value.trim() || null;
+        row.customer_note = element.querySelector('[name="customer_note"]')?.value.trim() || null;
+        row.internal_note = element.querySelector('[name="internal_note"]')?.value.trim() || null;
       }
       if (feeRowSignature(row) !== before) {
         quoteTouchedRows.add(row.row_key);
@@ -727,6 +731,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const buildQuoteInputForSubmit = () => {
     syncQuoteDraftFromRows();
+    if (quoteRows.some(row => row.source_kind === 'manual' && !quoteManualBases.has(row.row_key) && (!row.group || !row.service))) throw Object.assign(new Error('新增人工费用请选择费用段和对应服务。'), { code: 'fcl_quote_manual_classification_required' });
     const existingExtensions = quoteView?.quote_ref === editingQuoteRef ? quoteView.extensions : quoteDraft.extensions;
     const existingChanges = existingExtensions?.fcl_row_adjustments_v1?.changes || [];
     const changes = assembleFclQuoteRowAdjustments({ existingChanges, rows: quoteRows, sourceBaselines: quoteSourceBaselines, manualBases: quoteManualBases, touchedKeys: quoteTouchedRows, sourceRemovals: quoteRemovalKeys, manualRemovals: quoteRemovedManualKeys, reason: quoteAdjustmentReason });
@@ -901,7 +906,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       captureQuoteForm(form);
       let input;
       try { input = buildQuoteInputForSubmit(); } catch (error) {
-        message = error?.code === 'fcl_quote_adjustment_reason_required' ? error.message : fclError(error);
+        message = ['fcl_quote_adjustment_reason_required', 'fcl_quote_manual_classification_required'].includes(error?.code) ? error.message : fclError(error);
         notify(message, true); rerender(); return true;
       }
       const selected = matchedSelected();

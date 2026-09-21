@@ -37,19 +37,6 @@
 .fcl-workbench [data-fcl-scope] { border: 1px solid #e1e7f0; border-radius: 8px; padding: 16px; margin-top: 12px; }
 .fcl-workbench [data-fcl-scope] > strong { grid-column: 1 / -1; padding-bottom: 10px; }
 .fcl-workbench [data-fcl-scope] > .field:last-child { grid-column: 1 / -1; }
-.fcl-workbench .fcl-profit-total { background: #f0f4ff; padding: 18px; border-radius: 8px; margin: 18px 0; }
-.fcl-workbench .fcl-profit-total > span { font-size: 12px; color: #54688c; }
-.fcl-workbench .fcl-profit-total strong { display: block; font-size: 26px; font-weight: 750; color: #294dbc; margin-top: 5px; font-variant-numeric: tabular-nums; }
-.fcl-workbench .fcl-profit-total small { font-size: 12px; font-weight: 500; color: #617087; }
-.fcl-workbench .fcl-profit-total p { font-size: 12px; color: #916715; margin-top: 8px; }
-.fcl-workbench .fcl-currency { padding: 16px 0; border-bottom: 1px solid #e6ebf3; }
-.fcl-workbench .fcl-currency:first-child { padding-top: 0; }
-.fcl-workbench .fcl-currency:last-child { border: 0; }
-.fcl-workbench .fcl-currency h3 { color: #64748b; font-size: 13px; margin-bottom: 10px; }
-.fcl-workbench .fcl-currency dl { display: grid; gap: 7px; margin: 0; }
-.fcl-workbench .fcl-currency dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.fcl-workbench .fcl-currency dt { font-size: 13px; color: #617087; }
-.fcl-workbench .fcl-currency dd { margin: 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .fcl-workbench .fcl-document-status { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-bottom: 20px; }
 .fcl-workbench .fcl-document-status strong { color: #3659db; }
 .fcl-workbench .fcl-document-status span { color: #617087; font-size: 13px; }
@@ -315,6 +302,14 @@
 #app #content .fcl-workbench .ops-ticket-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 16px; }
 #app #content .fcl-workbench .ops-ticket-actions .button { min-width: 128px; }
 #app #content .fcl-workbench .ops-ticket-actions .button:active:not(:disabled) { transform: scale(.98); }
+#app #content .fcl-workbench .ops-summary-table table { min-width: 0; font-size: 12px; }
+#app #content .fcl-workbench .ops-summary-table :is(th,td) { height: 34px; padding: 6px 8px; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-summary-table th:first-child,
+#app #content .fcl-workbench .ops-summary-table td:first-child { width: 58px; font-weight: 600; }
+#app #content .fcl-workbench .ops-summary-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-summary-total span { color: var(--fc-muted); font-size: 12px; }
+#app #content .fcl-workbench .ops-summary-total strong { color: var(--fc-blue); font-size: 18px; font-variant-numeric: tabular-nums; }
+#app #content .fcl-workbench .ops-summary-total small { font-size: 11px; }
 #app #content .fcl-workbench .ops-stale-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px; margin-top: 14px; border: 1px solid #edd7a6; border-radius: 6px; background: #fff9e8; color: #815f18; }
 #app #content .fcl-workbench .ops-stale-total strong { font-size: 18px; }
 #app #content .fcl-workbench .ops-stale-total span { font-size: 12px; }

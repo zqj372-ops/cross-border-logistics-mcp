@@ -90,11 +90,11 @@ describe('FCL workspace state transitions and PDF verification',()=>{
   it('audits existing template-fee overrides from the baseline and does not revive a saved manual removal',()=>{
     const rowKey='manual:00000000-0000-4000-8000-000000000010';
     const base={row_key:rowKey,source_kind:'manual',id:'00000000-0000-4000-8000-000000000010',template_ref:null,name:'目的港操作费',group:'C',service:'delivery',quantity:'2',unit:'CNTR',container_type:'40HQ',cost_price:'200',sell_price:'220',currency:'CAD',internal_note:null,customer_note:null,evidence_ref:'fcl-estimate:fixture',evidence_version:'1',quantity_conditions:null,cost_amount:'400.00',sell_amount:'440.00',fully_priced:true};
-    const effective={...base,cost_price:'260',sell_price:'300'};
+    const effective={...base,cost_price:'260',sell_price:'300',currency:'USD'};
     const changes=assembleFclQuoteRowAdjustments({rows:[effective],manualBases:new Map([[rowKey,base]]),touchedKeys:new Set([rowKey]),reason:'Supplier increased the ticket fee'});
     expect(changes).toEqual([{row_key:rowKey,operation:'override',reason:'Supplier increased the ticket fee',cost_price:'260',sell_price:'300'}]);
     const input=buildFclQuoteInputDraft({draft:{source_sell_prices:[],manual_fees:[],service_scopes:[],exchange_rates:{USD:null,CAD:null},remark:null},rows:[effective],manualBases:new Map([[rowKey,base]]),changes});
-    expect(input.manual_fees[0]).toMatchObject({cost_price:'200',sell_price:'220'});
+    expect(input.manual_fees[0]).toMatchObject({cost_price:'200',sell_price:'220',currency:'CAD'});
     const newFee={...effective,row_key:'manual:00000000-0000-4000-8000-000000000015',id:'00000000-0000-4000-8000-000000000015',name:'新增人工费',evidence_ref:null,evidence_version:null};
     const newInput=buildFclQuoteInputDraft({draft:{source_sell_prices:[],manual_fees:[],service_scopes:[],exchange_rates:{USD:null,CAD:null},remark:null},rows:[newFee],manualBases:new Map()});
     expect(newInput.manual_fees[0]).toMatchObject({evidence_ref:null,evidence_version:null});
