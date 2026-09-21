@@ -34,11 +34,15 @@ export function nextDocumentOperation(document) {
   return 're_quote';
 }
 
+export function canEditFclQuote(detail, quote) {
+  return Boolean(quote?.currentness?.valid_now && detail && !['closed', 'cancelled'].includes(detail.case_status) && !detail.review_context?.review_required);
+}
+
 export function quoteDraftFromView(view) {
   const extensions = {};
-  if (view.extensions?.fcl_estimate_v1) extensions.fcl_estimate_v1 = view.extensions.fcl_estimate_v1;
+  if (view.extensions?.fcl_estimate_v1) extensions.fcl_estimate_v1 = structuredClone(view.extensions.fcl_estimate_v1);
   const presentRows = new Set(view.cost_rows.map(row => row.row_key));
-  const changes = view.extensions?.fcl_row_adjustments_v1?.changes?.filter(change => !change.row_key.startsWith('manual:') || presentRows.has(change.row_key)) || [];
+  const changes = view.extensions?.fcl_row_adjustments_v1?.changes?.filter(change => !change.row_key.startsWith('manual:') || presentRows.has(change.row_key)).map(change => structuredClone(change)) || [];
   if (changes.length) extensions.fcl_row_adjustments_v1 = { changes };
   return {
     ...(Object.keys(extensions).length?{extensions}:{}),
@@ -73,6 +77,101 @@ export function quoteDraftFromView(view) {
   };
 }
 
+export function assembleFclQuoteRowAdjustments({existingChanges = [], rows, sourceBaselines = new Map(), manualBases = new Map(), touchedKeys = new Set(), sourceRemovals = new Set(), manualRemovals = new Set(), reason = ''}) {
+  const existingOverrides = new Map(existingChanges.filter(change => change.operation === 'override').map(change => [change.row_key, change]));
+  const existingRemovals = new Map(existingChanges.filter(change => change.operation === 'remove').map(change => [change.row_key, change]));
+  const changes = [];
+  const override = (row, baseline) => {
+    const change = { row_key: row.row_key, operation: 'override', reason }, fields = [];
+    if (row.cost_price !== baseline.cost_price) { change.cost_price = row.cost_price; fields.push('cost_price'); }
+    if (row.sell_price !== baseline.sell_price) { change.sell_price = row.sell_price; fields.push('sell_price'); }
+    if (row.unit !== baseline.unit || row.container_type !== baseline.container_type) { change.unit = row.unit; change.container_type = row.unit === 'CNTR' ? row.container_type : null; fields.push('unit'); }
+    return fields.length ? change : null;
+  };
+  const appendOverride = (row, baseline) => {
+    const change = override(row, baseline);
+    if (!change) return;
+    if (!reason.trim()) throw Object.assign(new Error('本票费用有修改，请填写本票修改说明。'), { code: 'fcl_quote_adjustment_reason_required' });
+    changes.push(change);
+  };
+  for (const row of rows.filter(candidate => candidate.source_kind !== 'manual')) {
+    if (!touchedKeys.has(row.row_key)) {
+      const existing = existingOverrides.get(row.row_key);
+      if (existing) changes.push(structuredClone(existing));
+      continue;
+    }
+    appendOverride(row, sourceBaselines.get(row.row_key) || row);
+  }
+  for (const row of rows.filter(candidate => candidate.source_kind === 'manual' && manualBases.has(candidate.row_key))) {
+    if (!touchedKeys.has(row.row_key)) {
+      const existing = existingOverrides.get(row.row_key);
+      if (existing) changes.push(structuredClone(existing));
+      continue;
+    }
+    const baseline = manualBases.get(row.row_key);
+    if (baseline) appendOverride(row, baseline);
+  }
+  for (const rowKey of sourceRemovals) {
+    const existing = existingRemovals.get(rowKey);
+    if (existing) changes.push(structuredClone(existing));
+    else {
+      if (!reason.trim()) throw Object.assign(new Error('移除费用时请填写本票修改说明。'), { code: 'fcl_quote_adjustment_reason_required' });
+      changes.push({ row_key: rowKey, operation: 'remove', reason: reason.trim() });
+    }
+  }
+  for (const rowKey of manualRemovals) {
+    if (!manualBases.has(rowKey)) throw Object.assign(new Error('无法重建已移除的手工费用，请刷新后重试。'), { code: 'fcl_quote_adjustment_invalid' });
+    const existing = existingRemovals.get(rowKey);
+    if (existing) changes.push(structuredClone(existing));
+    else {
+      if (!reason.trim()) throw Object.assign(new Error('移除费用时请填写本票修改说明。'), { code: 'fcl_quote_adjustment_reason_required' });
+      changes.push({ row_key: rowKey, operation: 'remove', reason: reason.trim() });
+    }
+  }
+  return changes;
+}
+
+export function buildFclQuoteInputDraft({draft, rows, sourceBaselines = new Map(), manualBases = new Map(), removedManualKeys = new Set(), changes = []}) {
+  const extensions = draft.extensions?.fcl_estimate_v1 ? { fcl_estimate_v1: structuredClone(draft.extensions.fcl_estimate_v1) } : {};
+  if (changes.length) extensions.fcl_row_adjustments_v1 = { changes };
+  const sourceSellPrices = rows.filter(row => row.source_kind !== 'manual').map(row => {
+    const base = sourceBaselines.get(row.row_key) || row;
+    return { row_key: row.row_key, sell_price: base.sell_price, customer_note: base.customer_note ?? null };
+  });
+  const manualRows = rows.filter(row => row.source_kind === 'manual').map(row => {
+    const base = manualBases.get(row.row_key) || row;
+    return { ...structuredClone(base), name: row.name, evidence_ref: row.evidence_ref, evidence_version: row.evidence_version };
+  });
+  for (const rowKey of removedManualKeys) {
+    const base = manualBases.get(rowKey);
+    if (base) manualRows.push(structuredClone(base));
+  }
+  const manualFees = manualRows.map(row => ({
+    id: row.id || row.row_key.slice(7),
+    template_ref: row.template_ref ?? null,
+    name: row.name || '',
+    group: row.group || 'C',
+    service: row.service || 'delivery',
+    quantity: row.unit === 'SHIPMENT' ? '1' : row.quantity || '1',
+    unit: row.unit,
+    container_type: row.unit === 'CNTR' ? row.container_type : null,
+    cost_price: row.cost_price,
+    sell_price: row.sell_price,
+    currency: row.currency,
+    internal_note: row.internal_note ?? null,
+    customer_note: row.customer_note ?? null,
+    evidence_ref: row.evidence_ref,
+    evidence_version: row.evidence_version,
+    quantity_conditions: row.quantity_conditions ?? null,
+  }));
+  return {
+    ...draft,
+    ...(Object.keys(extensions).length ? { extensions } : { extensions: undefined }),
+    source_sell_prices: sourceSellPrices,
+    manual_fees: manualFees,
+  };
+}
+
 export function decodePdfBytes(value) {
   const binary = globalThis.atob(value.content_base64);
   return Uint8Array.from(binary, character => character.charCodeAt(0));
@@ -92,7 +191,7 @@ export async function verifyPdfOutput(value, cryptoApi = globalThis.crypto) {
 }
 
 export function createFclWorkspace({api, mutate, model, esc, head, panel, empty, note, field:renderField, actions, formError, icon, rerender, notify}) {
-  let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
+  let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteRows = null, quoteSourceBaselines = new Map(), quoteManualBases = new Map(), quoteRemovedManualKeys = new Set(), quoteTouchedRows = new Set(), quoteRemovalKeys = new Set(), quoteAdjustmentReason = '', quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
   let workspaceStep = 'requirements';
   const field=(label,id,body)=>renderField(fclFieldLabel(label),id,body);
   let operations;
@@ -100,7 +199,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const discardDrafts = () => {
     operations?.reset();
     issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false;
-    matchResult = null; editingQuoteRef = null; quoteDraft = null; quoteDirty = false; reviewView = null; exportView = null;
+    matchResult = null; editingQuoteRef = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; reviewView = null; exportView = null;
     documentDisplayDraft = null; documentDisplayDirty = false;
     caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false;
     handoffDraft = ''; handoffDirty = false;
@@ -112,10 +211,10 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const reset = () => {
     operations?.reset();
     epoch += 1; activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = '';
-    configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
+    configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const clearCaseDependents = () => {
-    matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
+    matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const resetCaseWorkspace = () => {
     detail = null; detailError = ''; clearCaseDependents(); message = '';
@@ -198,6 +297,34 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     };
   };
   const blankManualFee = () => ({ id: crypto.randomUUID(), template_ref: null, name: '', group: 'C', service: detail?.current_input?.selected_services?.[0] || 'delivery', quantity: '1', unit: 'SHIPMENT', container_type: null, cost_price: null, sell_price: null, currency: 'CAD', internal_note: null, customer_note: null, evidence_ref: null, evidence_version: null, quantity_conditions: null });
+  const primeQuoteEdit = (view) => {
+    editingQuoteRef = view.quote_ref;
+    quoteDraft = quoteDraftFromView(view);
+    quoteRows = view.cost_rows.map(row => structuredClone(row));
+    const baseRow = (row, source = view) => {
+      const audit = source.extensions?.fcl_row_adjustment_audit_v1?.changes.find(change => change.row_key === row.row_key);
+      return audit ? { ...structuredClone(row), quantity: audit.original.quantity, unit: audit.original.unit, container_type: audit.original.container_type, cost_price: audit.original.cost_price, sell_price: audit.original.sell_price } : structuredClone(row);
+    };
+    quoteSourceBaselines = new Map();
+    quoteManualBases = new Map();
+    for (const row of quoteRows) (row.source_kind === 'manual' ? quoteManualBases : quoteSourceBaselines).set(row.row_key, baseRow(row));
+    const changes = view.extensions?.fcl_row_adjustments_v1?.changes || [];
+    quoteRemovalKeys = new Set(changes.filter(change => change.operation === 'remove' && !change.row_key.startsWith('manual:')).map(change => change.row_key));
+    quoteRemovedManualKeys = new Set();
+    quoteTouchedRows = new Set();
+    quoteAdjustmentReason = '';
+    quoteDirty = false;
+    matchResult = {
+      status: 'success',
+      data: {
+        candidates: [view.source_snapshot],
+        selected: view.source_snapshot,
+      },
+      reason_codes: [],
+    };
+  };
+  const canEditCurrentQuote = () => canEditFclQuote(detail, quoteView);
+  const tryPrimeQuoteEdit = () => { if (!quoteDraft && quoteView && canEditCurrentQuote()) primeQuoteEdit(quoteView); };
 
   const loadCases = async (cursor = null, append = false) => {
     if (!append && (cases || casesError)) return;
@@ -222,7 +349,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     try {
       const response = await call('case-get', { case_id: id });
       if (e !== epoch || activeCaseId !== id) return;
-      if (response.data) detail = response.data; else detailError = response.reason_codes?.[0] || 'fcl_not_found';
+      if (response.data) { detail = response.data; tryPrimeQuoteEdit(); } else detailError = response.reason_codes?.[0] || 'fcl_not_found';
     } catch (error) { if (e === epoch && activeCaseId === id) detailError = error.code || 'network'; }
     if (e === epoch && activeCaseId === id) rerender();
   };
@@ -244,7 +371,10 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
           const value = await call('quote-get', { contract_version: DOCUMENT_VERSION, quote_ref: requestedRef, version: null });
           if (e !== epoch || activeCaseId !== id) return;
           if (value.data && value.data.case_binding.case_ref !== id) throw Object.assign(new Error('fcl_quote_case_mismatch'), {code:'fcl_quote_case_mismatch'});
-          if (value.data && !quoteDraft) quoteView = value.data;
+          if (value.data && !quoteDraft) {
+            quoteView = value.data;
+            tryPrimeQuoteEdit();
+          }
         }
       }
       if (documents.data) {
@@ -348,14 +478,14 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const confirmForm = `<form class="panel" data-fcl-form="case-confirm" data-case="${esc(id)}" data-version="${detail.case_version}" data-ref="${esc(detail.review_context.latest_customer_supplement_ref || '')}"><div class="panel-body">${formError}<h2>核对确认</h2><p>请核对客户的线路、柜量、货物和服务。确认后即可开始报价。</p><div class="field"><label for="fcl-confirm-reason">核对说明</label><textarea id="fcl-confirm-reason" name="reason" rows="3" required maxlength="2000">${esc(confirmReasonDraft)}</textarea></div>${actions('确认当前需求')}</div></form>`;
     const showOperations = operationsOpen || Boolean(caseStatusDraft || staffSupplementDraft || caseStatusDirty || staffSupplementDirty || staffSupplementMessage);
     const steps = [
-      ['requirements', '确认需求', ended ? fclLabel(detail.case_status) : detail.review_context.review_required ? '待核对' : '已确认'],
-      ['quote', '填写报价', quoteDirty ? '有未保存修改' : quoteView ? (quoteView.completeness.complete ? '已保存' : '待补费用') : '待报价'],
-      ['documents', '审核与导出', quoteDirty || documentDisplayDirty ? '有未保存修改' : documentView ? (documentView.currentness.valid_now ? fclLabel(documentView.state) : '待重新核对') : '待生成'],
+      ['template', '套模板', quoteView ? '已套用' : detail.review_context.review_required ? '待核对需求' : '待选择模板'],
+      ['quote', '改本票', quoteDirty ? '有未保存修改' : quoteView ? (quoteView.completeness.complete ? '已保存' : '待补费用') : '待报价'],
+      ['documents', '出报价', quoteDirty || documentDisplayDirty ? '有未保存修改' : documentView ? (documentView.currentness.valid_now ? fclLabel(documentView.state) : '待重新核对') : '待生成'],
     ];
     const brief = `<section class="fcl-route-brief" aria-label="本票概况"><div><span class="fcl-eyebrow">中国 → 加拿大 · 整柜海运</span><h2>${esc(inputValue.pol || '起运港待确认')} <span aria-hidden="true">→</span> ${esc(inputValue.pod || '目的港待确认')}</h2></div><div><span>${fclField("containers")}</span><strong>${esc(inputValue.containers.map(row => `${row.type} × ${row.quantity ?? '待确认'}`).join('、') || '待确认')}</strong></div><div><span>${fclField("cargo_ready_date")}</span><strong>${esc(inputValue.cargo_ready_date || '待确认')}</strong></div><span class="badge ${detail.case_status === 'needs_input' ? 'warning' : ''}">${esc(fclLabel(detail.case_status))}</span></section>`;
-    const navigation = `<nav class="fcl-workflow" aria-label="报价处理步骤">${steps.map(([key, label, state], index) => `<button type="button" data-action="fcl-workspace-step" data-step="${key}" aria-controls="fcl-step-${key}"${workspaceStep === key ? ' aria-current="step"' : ''}><span class="fcl-step-index">${index + 1}</span><span><strong>${label}</strong><small>${state}</small></span></button>`).join('')}</nav>`;
-    const requirements = `<section id="fcl-step-requirements"${workspaceStep !== 'requirements' ? ' hidden' : ''}><div class="fcl-review-layout"><div>${panel('客户需求', '核对这份资料后，再选择运价并填写客户售价。', `<div class="panel-body">${inquiryReadonlySummary(inputValue)}</div>`)}${ended ? '' : `<details class="panel fcl-operations"${showOperations ? ' open' : ''}><summary>补充资料与处理状态</summary><div class="panel-body">${statusForm}${supplementForm}</div></details>`}</div><aside>${ended ? '<section class="panel"><div class="panel-body"><h2>本票已结束</h2><p>历史需求、报价与文件均已保留。本票不能继续修改，如有新的运输需求，请重新提交询价。</p></div></section>' : detail.review_context.review_required ? confirmForm : `<section class="panel fcl-next-action"><div class="panel-body"><span class="fcl-eyebrow">需求已确认</span><h2>可以开始报价了</h2><p>选择本票适用的运价，填写客户售价与其他费用。</p><button class="button primary" data-action="fcl-workspace-step" data-step="quote">前往填写报价 ${icon('arrow')}</button></div></section>`}<details class="panel"><summary>客户首次提交的资料</summary><div class="panel-body">${inquiryReadonlySummary(originalValue)}</div></details><details class="panel"><summary>处理记录 · ${events.length}</summary><ol class="case-timeline">${eventRows}</ol></details></aside></div></section>`;
-    const quote = `<section id="fcl-step-quote"${workspaceStep !== 'quote' ? ' hidden' : ''}><div class="fcl-quote-layout"><div>${quoteInputPanel(id)}</div><aside>${quoteResultPanel()}<section class="panel fcl-next-action"><div class="panel-body"><h3>${ended ? '历史报价单' : '下一步：生成报价单'}</h3><p>${ended ? '已出具的报价单与审核记录仍可查看。' : '保存报价后，核对客户金额并审核，再导出正式文件。'}</p><button class="button" data-action="fcl-workspace-step" data-step="documents">前往审核与导出 ${icon('arrow')}</button></div></section></aside></div>${quoteHistorySnapshot()}${quoteHistoryPanel()}</section>`;
+    const navigation = `<nav class="fcl-workflow" aria-label="报价处理步骤">${steps.map(([key, label, state], index) => { const disabled = (key === 'documents' && (quoteDirty || !quoteView || !quoteView.currentness.valid_now)) || (key === 'template' && ended); return `<button type="button" data-action="${key === 'template' ? 'fcl-template-step' : 'fcl-workspace-step'}" data-step="${key}" aria-controls="fcl-step-${key}"${(key === 'template' ? workspaceStep === 'requirements' : workspaceStep === key) ? ' aria-current="step"' : ''}${disabled ? ' disabled' : ''}><span class="fcl-step-index">${index + 1}</span><span><strong>${label}</strong><small>${state}</small></span></button>`; }).join('')}</nav>`;
+    const requirements = `<section id="fcl-step-requirements"${workspaceStep !== 'requirements' ? ' hidden' : ''}><div class="fcl-review-layout"><div>${panel('客户需求', '需求核对保留为报价依据；核对后从上方选择已发布模板。', `<div class="panel-body">${inquiryReadonlySummary(inputValue)}</div>`)}${ended ? '' : `<details class="panel fcl-operations"${showOperations ? ' open' : ''}><summary>补充资料与处理状态</summary><div class="panel-body">${statusForm}${supplementForm}</div></details>`}</div><aside>${ended ? '<section class="panel"><div class="panel-body"><h2>本票已结束</h2><p>历史需求、报价与文件均已保留。本票不能继续修改，如有新的运输需求，请重新提交询价。</p></div></section>' : detail.review_context.review_required ? confirmForm : `<section class="panel fcl-next-action"><div class="panel-body"><span class="fcl-eyebrow">需求已确认</span><h2>${quoteView ? '本票报价已建立' : '下一步：套模板'}</h2><p>${quoteView ? '继续修改本票费用并保存计算。' : '从已发布海运费和费用模板开始，费用会直接带入本票。'}</p><button class="button primary" data-action="${quoteView ? 'fcl-workspace-step' : 'fcl-template-step'}" data-step="${quoteView ? 'quote' : 'template'}">${quoteView ? '查看本票费用' : '去选择模板'} ${icon('arrow')}</button></div></section>`}<details class="panel"><summary>客户首次提交的资料</summary><div class="panel-body">${inquiryReadonlySummary(originalValue)}</div></details><details class="panel"><summary>处理记录 · ${events.length}</summary><ol class="case-timeline">${eventRows}</ol></details></aside></div></section>`;
+    const quote = `<section id="fcl-step-quote"${workspaceStep !== 'quote' ? ' hidden' : ''}><div class="fcl-quote-layout"><div>${quoteInputPanel(id)}</div><aside>${quoteResultPanel()}<section class="panel fcl-next-action"><div class="panel-body"><h3>${ended ? '历史报价单' : '下一步：预览报价单'}</h3><p>${ended ? '已出具的报价单与审核记录仍可查看。' : quoteDirty ? '请先保存并重新计算，旧金额不能作为当前报价继续处理。' : '以服务器计算结果生成报价单，人工核对后再确认和导出。'}</p><button class="button" data-action="fcl-workspace-step" data-step="documents"${quoteDirty || !quoteView?.currentness.valid_now ? ' disabled' : ''}>预览报价单 ${icon('arrow')}</button></div></section></aside></div>${quoteHistorySnapshot()}${quoteHistoryPanel()}</section>`;
     const documents = `<section id="fcl-step-documents"${workspaceStep !== 'documents' ? ' hidden' : ''}><div class="fcl-review-layout"><div>${panel('报价单与审核', '先核对客户看到的金额、条款与有效期，再确认审核。', `<div class="panel-body">${quoteView ? `<div class="fcl-document-status"><strong>${documentView ? (documentView.currentness.valid_now ? fclLabel(documentView.state) : '需要重新生成或核对') : '待生成报价单'}</strong><span>报价第 ${quoteView.version} 版${documentView ? ` · 报价单第 ${documentView.version} 版` : ''}</span></div>${ended ? '<p>本票已结束。可以在下方查看报价单快照，或从历史记录下载已经生成的文件。</p>' : `${documentDisplayForm()}${reviewPanel()}${documentActions()}`}` : '<div class="fcl-empty"><h3>请先保存一份报价</h3><p>填写成本与售价并保存后，就可以在这里生成和审核报价单。</p><button class="button primary" data-action="fcl-workspace-step" data-step="quote">前往填写报价</button></div>'}</div>`)}${documentSnapshotPanel()}${documentHistoryPanel()}</div><aside>${handoffPanel()}</aside></div></section>`;
     return heading + messageNote() + brief + navigation + requirements + quote + documents;
 
@@ -367,24 +497,16 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (matched) return matched;
     return editingQuoteRef && quoteView?.quote_ref === editingQuoteRef ? quoteView.source_snapshot : null;
   };
-  const beginQuoteEdit = () => {
-    if (!quoteView) return;
-    editingQuoteRef = quoteView.quote_ref;
-    quoteDraft = quoteDraftFromView(quoteView);
-    matchResult = {
-      status: 'success',
-      data: {
-        candidates: [quoteView.source_snapshot],
-        selected: quoteView.source_snapshot,
-      },
-      reason_codes: [],
-    };
+  const beginQuoteEdit = (view = quoteView) => {
+    if (!view) return;
+    primeQuoteEdit(view);
   };
   const quoteInputPanel = (id) => {
     if (!detail) return '';
+    if (quoteView && quoteDraft && editingQuoteRef === quoteView.quote_ref) return panel('本票费用', '只有服务器计算结果可以作为客户报价；修改后请保存并重新计算。', `<div class="panel-body">${quoteEditor(quoteView.source_snapshot)}</div>`);
     if (quoteView && !quoteDraft && !matchResult) {
       const source = quoteView.source_snapshot;
-      return panel('已保存的报价', '核对费用明细，或继续编辑售价与服务范围。', `<div class="panel-body"><div class="fcl-source-selected">运价来源：${esc(source.rate.supplier_label)} · ${esc(source.valid_from)} 至 ${esc(source.valid_until)}</div><div class="fcl-saved-fees">${quoteView.cost_rows.map(row => `<article><div><strong>${esc(row.source_kind === 'ocean_freight' ? `${row.container_type || ''} 海运费` : row.name)}</strong><small>${esc(row.quantity)} ${esc(fclLabel(row.unit))} · ${esc(row.currency)}</small></div><dl><div><dt>${fclField("cost_price")}</dt><dd>${esc(row.cost_price ?? '待补')}</dd></div><div><dt>${fclField("sell_price")}</dt><dd>${esc(row.sell_price ?? '待补')}</dd></div><div><dt>${fclField("sell_total")}</dt><dd>${esc(row.sell_amount ?? '待补')}</dd></div></dl>${row.customer_note ? `<p>${esc(row.customer_note)}</p>` : ''}</article>`).join('')}</div><div class="head-actions">${quoteView.currentness.valid_now && !quoteView.extensions?.fcl_estimate_v1 ? '<button class="button primary" data-action="fcl-edit-quote">继续编辑此报价</button>' : ''}<button class="button" data-action="fcl-match" data-id="${esc(id)}"${detail.review_context.review_required ? ' disabled' : ''}>重新选择运价</button><a class="button" href="#fcl/rates">海运费表</a></div></div>`);
+      return panel(canEditCurrentQuote() ? '已保存的报价' : '当前报价暂不可编辑', canEditCurrentQuote() ? '核对费用明细，或继续编辑本票。' : '请先重新核对需求或处理当前来源变化。', `<div class="panel-body"><div class="fcl-source-selected">运价来源：${esc(source.rate.supplier_label)} · ${esc(source.valid_from)} 至 ${esc(source.valid_until)}</div><div class="fcl-saved-fees">${quoteView.cost_rows.map(row => `<article><div><strong>${esc(row.source_kind === 'ocean_freight' ? `${row.container_type || ''} 海运费` : row.name)}</strong><small>${esc(row.quantity)} ${esc(fclLabel(row.unit))} · ${esc(row.currency)}</small></div><dl><div><dt>${fclField("cost_price")}</dt><dd>${esc(row.cost_price ?? '待补')}</dd></div><div><dt>${fclField("sell_price")}</dt><dd>${esc(row.sell_price ?? '待补')}</dd></div><div><dt>${fclField("sell_total")}</dt><dd>${esc(row.sell_amount ?? '待补')}</dd></div></dl>${row.customer_note ? `<p>${esc(row.customer_note)}</p>` : ''}</article>`).join('')}</div><div class="head-actions">${canEditCurrentQuote() ? '<button class="button primary" data-action="fcl-edit-quote">继续编辑此报价</button>' : `<button class="button primary" data-action="fcl-workspace-step" data-step="requirements">重新核对需求</button>`}</div></div>`);
     }
     const matchButton = `<button class="button primary" data-action="fcl-match" data-id="${esc(id)}" ${detail.review_context.review_required ? 'disabled' : ''}>查找适用运价</button>`;
     let body = `<p>按本票线路、柜型和备货日期查找可用运价。多个来源时，请选择实际采用的一项。</p><div class="head-actions">${matchButton}<a class="button" href="#fcl/rates">海运费表</a></div>`;
@@ -398,19 +520,50 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     else body += '<p class="muted">请先选择适用运价。保存报价后，可查看成本、销售额和毛利。</p>';
     return panel('成本与客户售价', '选择已核验的运价，再填写售价、其他费用与服务说明。', `<div class="panel-body">${body}</div>`);
   };
-  const manualTemplateRefs = () => {
-    const selection = configView?.input?.standard_fee_template_v1;
-    const configured = (selection?.items || []).map(item => ({ template_id: selection.template_id, template_version: selection.template_version, item_key: item.item_key, name: item.name }));
-    const catalog = configView?.catalog?.groups?.flatMap(group => group.items.map(item => ({ template_id: configView.catalog.template_id, template_version: configView.catalog.template_version, item_key: item.item_key, name: item.name }))) || [];
-    const values = configured.length ? configured : catalog;
-    return values.filter((item, index) => values.findIndex(candidate => candidate.item_key === item.item_key && candidate.template_id === item.template_id && candidate.template_version === item.template_version) === index);
+  const feeGroupName = group => ({ A: '起运段', B: '干线运输', C: '目的段' }[group] || group);
+  const feeRowSignature = row => JSON.stringify([row.name, row.cost_price, row.sell_price, row.currency, row.unit, row.container_type]);
+  const feeQuantity = row => {
+    if (row.unit === 'SHIPMENT') return '1';
+    const container = detail?.current_input.containers.find(item => item.type === row.container_type);
+    return container?.quantity == null ? '' : String(container.quantity);
   };
-  const manualTemplateSelect = (fee, index) => {
-    const refs = manualTemplateRefs();
-    const current = fee.template_ref ? JSON.stringify(fee.template_ref) : '';
-    const saved = fee.template_ref && !refs.some(ref => JSON.stringify({ template_id: ref.template_id, template_version: ref.template_version, item_key: ref.item_key }) === current)
-      ? `<option value="${esc(current)}" selected>${esc(fee.template_ref.item_key)}</option>` : '';
-    return field('标准费用项目', `fcl-manual-template-${index}`, `<select id="fcl-manual-template-${index}" name="template_ref"><option value="">不引用</option>${saved}${refs.map(ref => { const value = JSON.stringify({ template_id: ref.template_id, template_version: ref.template_version, item_key: ref.item_key }); return `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(ref.name || ref.item_key)}</option>`; }).join('')}</select>`);
+  const ensureQuoteRows = (selected) => {
+    if (quoteRows) return;
+    const sourceRows = quoteDraft.source_sell_prices.map(row => {
+      const rateRow = selected.rate.items.find(item => `ocean_freight:${item.container_type}` === row.row_key);
+      const fee = !rateRow && selected.rate.additional_fees?.[Number(row.row_key.split(':')[1])];
+      return {
+        row_key: row.row_key,
+        source_kind: rateRow ? 'ocean_freight' : 'rate_fee',
+        template_ref: null,
+        name: rateRow ? `${rateRow.container_type} 海运费` : fee?.name || row.row_key,
+        group: rateRow ? 'B' : fee?.group || 'C',
+        service: rateRow ? 'ocean_freight' : fee?.service || 'delivery',
+        cost_price: rateRow ? rateRow.ocean_freight : fee?.cost_price ?? null,
+        sell_price: row.sell_price,
+        currency: rateRow ? rateRow.currency : fee?.currency || 'CAD',
+        unit: rateRow ? 'CNTR' : fee?.unit || 'SHIPMENT',
+        container_type: rateRow ? rateRow.container_type : fee?.container_type ?? null,
+        internal_note: fee?.note ?? null,
+        customer_note: row.customer_note,
+        evidence_ref: null,
+        evidence_version: null,
+        quantity_conditions: null,
+        cost_amount: null,
+        sell_amount: null,
+        fully_priced: false,
+      };
+    });
+    const manualRows = quoteDraft.manual_fees.map(fee => ({ ...structuredClone(fee), row_key: `manual:${fee.id}`, source_kind: 'manual' }));
+    quoteRows = [...sourceRows, ...manualRows];
+    quoteSourceBaselines = new Map(quoteRows.map(row => [row.row_key, structuredClone(row)]));
+  };
+  const feeRow = (row) => {
+    const quantity = feeQuantity(row), source = row.source_kind !== 'manual', changed = quoteTouchedRows.has(row.row_key);
+    const rowId = row.row_key.replace(/[^A-Za-z0-9_-]/g, '-'), existingManual = !source && quoteManualBases.has(row.row_key);
+    const name = source ? `<strong>${esc(row.name)}</strong><small>来源费用</small>` : `<div class="ops-fee-name">${valueField('费用名称', `fcl-fee-name-${rowId}`, row.name || '', 'name="fee_name"')}${valueField('价格依据', `fcl-fee-evidence-${rowId}`, row.evidence_ref || '', 'name="evidence"')}</div>`;
+    const currency = source || existingManual ? `<span class="ops-fee-currency">${esc(row.currency)}</span>` : field('币种', `fcl-fee-currency-${rowId}`, `<select id="fcl-fee-currency-${rowId}" name="currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${row.currency === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`);
+    return `<tr data-fcl-fee-row data-key="${esc(row.row_key)}" data-source-kind="${esc(row.source_kind)}"><td>${name}</td><td>${valueField('成本单价', `fcl-fee-cost-${rowId}`, row.cost_price || '', 'name="cost_price" inputmode="decimal"')}</td><td>${currency}</td><td>${field('计费方式', `fcl-fee-unit-${rowId}`, `<select id="fcl-fee-unit-${rowId}" name="unit"><option value="SHIPMENT"${row.unit === 'SHIPMENT' ? ' selected' : ''}>按票</option><option value="CNTR"${row.unit === 'CNTR' ? ' selected' : ''}>按柜</option></select>`)}</td><td>${field('柜型', `fcl-fee-container-${rowId}`, `<select id="fcl-fee-container-${rowId}" name="container_type"${row.unit === 'SHIPMENT' ? ' disabled' : ''}><option value="">—</option>${containerTypes.map(type => `<option value="${type}"${row.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}</td><td class="num" data-fcl-fee-quantity>${esc(quantity || '待补')}</td><td>${valueField('销售单价', `fcl-fee-sell-${rowId}`, row.sell_price || '', 'name="sell_price" inputmode="decimal"')}</td><td class="num" data-fcl-fee-subtotal>${changed ? '待重新计算' : esc(row.sell_amount ?? '待补')}</td><td><button type="button" class="text-button" data-action="fcl-fee-remove" data-key="${esc(row.row_key)}">移除</button></td></tr>`;
   };
   const quoteHistoryPanel = () => {
     if (!quoteList?.items?.length) return '';
@@ -424,32 +577,29 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const quoteResultPanel = () => {
     let body = '';
     if (quoteView) {
-      body += `<div data-fcl-quote-dirty class="inline-note warning"${quoteDirty ? '' : ' hidden'}>售价或费用已修改。下方仍是上次保存的金额，请重新保存。</div><div class="inline-note">已保存 · 第 ${quoteView.version} 版 · ${quoteView.currentness.valid_now ? '当前有效' : `需重新处理：${esc(quoteView.currentness.reason_codes.map(fclIssue).join('、'))}`} · ${quoteView.completeness.complete ? '费用完整' : `待补：${esc(quoteView.completeness.missing_fields.map(fclIssue).join('、'))}`}</div>${calculationPanel(quoteView)}`;
+      body += `<div data-fcl-quote-dirty class="inline-note warning"${quoteDirty ? '' : ' hidden'}>费用已修改，旧金额、毛利和下一步已失效。请保存并重新计算。</div><div class="inline-note">已保存 · 第 ${quoteView.version} 版 · ${quoteView.currentness.valid_now ? '当前有效' : `需重新处理：${esc(quoteView.currentness.reason_codes.map(fclIssue).join('、'))}`} · ${quoteView.completeness.complete ? '费用完整' : `待补：${esc(quoteView.completeness.missing_fields.map(fclIssue).join('、'))}`}</div><div data-fcl-current-calculation>${quoteDirty ? '<div class="ops-stale-total"><strong>待重新计算</strong><span>以服务器返回结果为准</span></div>' : calculationPanel(quoteView)}</div>`;
     } else body += '<p class="muted">尚无已保存报价。</p>';
     return panel('报价汇总', '金额来自最近一次保存的报价。', `<div class="panel-body">${body}</div>`);
   };
 
   const quoteEditor = (selected) => {
     if (!quoteDraft) quoteDraft = blankQuoteDraft(selected);
-    const sourcePriceRows = quoteDraft.source_sell_prices.map((row, index) => {
-      const rateRow = selected.rate.items.find(item => `ocean_freight:${item.container_type}` === row.row_key);
-      const fee = !rateRow && selected.rate.additional_fees?.[Number(row.row_key.split(':')[1])];
-      const label = rateRow ? `${rateRow.container_type} 海运费` : fee ? `${fee.name} · ${fee.unit === 'CNTR' ? fee.container_type : 'SHIPMENT'}` : row.row_key;
-      const cost = rateRow ? rateRow.ocean_freight : fee?.cost_price;
-      const currency = rateRow ? rateRow.currency : fee?.currency;
-      return `<div class="field-grid" data-fcl-source-price data-key="${esc(row.row_key)}"><div><strong>${esc(label)}</strong><small>成本 ${esc(cost ?? '缺价')} ${esc(currency ?? '')} / ${rateRow || fee?.unit === 'CNTR' ? '柜' : '票'}</small><input type="hidden" name="source_key" value="${esc(row.row_key)}"></div>${valueField('客户售价', `fcl-source-sell-${index}`, row.sell_price || '', `name="fcl-source-sell-${index}" inputmode="decimal"`)}${valueField('客户备注', `fcl-source-note-${index}`, row.customer_note || '', `name="fcl-source-note-${index}"`)}</div>`;
+    ensureQuoteRows(selected);
+    const body = ['A', 'B', 'C'].map(group => {
+      const rows = quoteRows.filter(row => row.group === group);
+      return rows.length ? `<tr class="ops-fee-group"><th colspan="9">${esc(feeGroupName(group))}</th></tr>${rows.map(feeRow).join('')}` : '';
     }).join('');
-    const manualRows = quoteDraft.manual_fees.map((fee, index) => `<div class="panel" data-fcl-manual-row data-id="${esc(fee.id)}" data-template-ref="${esc(JSON.stringify(fee.template_ref))}" data-quantity-conditions="${esc(JSON.stringify(fee.quantity_conditions))}"><div class="panel-body"><div class="field-grid">${valueField('人工费用名称', `fcl-manual-name-${index}`, fee.name || '', 'name="name"')}${field('服务', `fcl-manual-service-${index}`, `<select id="fcl-manual-service-${index}" name="service">${Object.entries(serviceLabels).map(([id, label]) => `<option value="${id}"${fee.service === id ? ' selected' : ''}>${label}</option>`).join('')}</select>`)}${field('分组', `fcl-manual-group-${index}`, `<select id="fcl-manual-group-${index}" name="group">${['A','B','C'].map(group => `<option value="${group}"${fee.group === group ? ' selected' : ''}>${esc(configView?.catalog?.groups.find(item => item.group === group)?.label || {A:'起运段',B:'干线运输',C:'目的段'}[group])}</option>`).join('')}</select>`)}${field('单位', `fcl-manual-unit-${index}`, `<select id="fcl-manual-unit-${index}" name="unit"><option value="SHIPMENT"${fee.unit === 'SHIPMENT' ? ' selected' : ''}>按票计费</option><option value="CNTR"${fee.unit === 'CNTR' ? ' selected' : ''}>按柜计费</option></select>`)}${field('柜型', `fcl-manual-container-${index}`, `<select id="fcl-manual-container-${index}" name="container_type">${containerTypes.map(type => `<option value="${type}"${fee.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}${manualTemplateSelect(fee, index)}${valueField('数量', `fcl-manual-quantity-${index}`, fee.quantity || '', 'name="quantity" inputmode="decimal"')}${valueField('成本价', `fcl-manual-cost-${index}`, fee.cost_price || '', 'name="cost_price" inputmode="decimal"')}${valueField('售价', `fcl-manual-sell-${index}`, fee.sell_price || '', 'name="sell_price" inputmode="decimal"')}${field('币种', `fcl-manual-currency-${index}`, `<select id="fcl-manual-currency-${index}" name="currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${fee.currency === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`)}${valueField('费用依据', `fcl-manual-evidence-${index}`, fee.evidence_ref || '', 'name="evidence_ref"')}${valueField('依据版本', `fcl-manual-evidence-version-${index}`, fee.evidence_version || '', 'name="evidence_version"')}</div><div class="field"><label for="fcl-manual-conditions-${index}">数量条件</label><textarea id="fcl-manual-conditions-${index}" name="quantity_conditions" rows="2" maxlength="2000">${esc(fee.quantity_conditions || '')}</textarea></div><div class="field"><label for="fcl-manual-internal-${index}">内部备注</label><input id="fcl-manual-internal-${index}" name="internal_note" value="${esc(fee.internal_note || '')}"></div><div class="field"><label for="fcl-manual-customer-${index}">客户备注</label><input id="fcl-manual-customer-${index}" name="customer_note" value="${esc(fee.customer_note || '')}"></div><button type="button" class="text-button" data-action="fcl-manual-remove" data-index="${index}">删除人工费用</button></div></div>`).join('');
-    const manualRefs = quoteDraft.manual_fees.map(fee => `manual:${fee.id}`);
-    const availableRefs = [...quoteDraft.source_sell_prices.map(row => row.row_key), ...manualRefs];
-    const feeName = (ref) => ref.startsWith('manual:') ? quoteDraft.manual_fees.find(fee => `manual:${fee.id}` === ref)?.name || '未命名人工费用' : ref.startsWith('ocean_freight:') ? `${ref.split(':')[1]} 海运费` : selected.rate.additional_fees?.[Number(ref.split(':')[1])]?.name || '来源附费';
+    const availableRefs = quoteRows.map(row => row.row_key);
+    const feeName = (ref) => quoteRows.find(row => row.row_key === ref)?.name || ref;
     const scopes = Object.entries(serviceLabels).filter(([id]) => detail.current_input.selected_services.includes(id) || quoteDraft.service_scopes.some(scope => scope.service === id)).map(([id, label]) => {
       const existing = quoteDraft.service_scopes.find(scope => scope.service === id);
       const options = availableRefs.map(ref => `<option value="${esc(ref)}"${existing?.included_row_refs?.includes(ref) ? ' selected' : ''}>${esc(feeName(ref))}</option>`).join('');
       return `<div class="field-grid" data-fcl-scope="${id}"><strong>${label}</strong>${field('费用安排', `fcl-scope-${id}`, `<select id="fcl-scope-${id}" name="disposition"><option value=""${!existing ? ' selected' : ''}>使用费用行 / 待确认</option><option value="included"${existing?.disposition === 'included' ? ' selected' : ''}>已包含</option><option value="free"${existing?.disposition === 'free' ? ' selected' : ''}>明确免费</option><option value="out_of_scope"${existing?.disposition === 'out_of_scope' ? ' selected' : ''}>不在范围</option></select>`)}${valueField('说明', `fcl-scope-note-${id}`, existing?.note || '', 'name="scope_note"')}<div class="field fcl-inclusion-refs"><label for="fcl-scope-refs-${id}">包含费用行</label><select id="fcl-scope-refs-${id}" name="scope_refs" multiple size="3">${options}</select><small>选择承担本项服务费用的项目，可按住 Ctrl / ⌘ 多选。</small></div></div>`;
     }).join('');
     const operation = nextQuoteOperation(editingQuoteRef && quoteView?.quote_ref === editingQuoteRef ? quoteView : null);
-    return `<form data-fcl-form="quote-save" data-case="${esc(detail.case_id)}" data-version="${detail.case_version}" data-ref="${esc(detail.review_context.latest_customer_supplement_ref || '')}" data-selected="${esc(selected.rate_id)}" data-release="${esc(selected.release_id)}" data-release-version="${selected.release_version}" data-digest="${esc(selected.dataset_digest)}">${formError}<h3 class="fcl-section-heading">客户售价</h3><p class="muted">成本来自所选运价；请按相同单位填写客户售价。</p>${sourcePriceRows}${manualRows}<button type="button" class="button" data-action="fcl-manual-add">添加人工费用</button><h3 class="fcl-section-heading">服务范围</h3><p class="muted">已有费用的服务会自动关联；其余服务请选择已包含、免费或不在本次范围，并填写说明。</p>${scopes}<h3>汇率（1 USD/CAD = 多少 CNY）</h3><div class="field-grid">${valueField('USD → CNY', 'fcl-fx-usd', quoteDraft.exchange_rates.USD || '', 'name="USD" inputmode="decimal"')}${valueField('CAD → CNY', 'fcl-fx-cad', quoteDraft.exchange_rates.CAD || '', 'name="CAD" inputmode="decimal"')}</div><div class="field"><label for="fcl-quote-remark">报价备注</label><textarea id="fcl-quote-remark" name="remark" rows="2" maxlength="500">${esc(quoteDraft.remark || '')}</textarea></div><button class="button primary" type="submit">${operation === 'create' ? '保存报价并计算' : '保存修改并重新计算'}</button></form>`;
+    const sourceCandidates = matchResult?.data?.candidates?.length > 1 ? `<div class="table-wrap"><table><thead><tr><th>选择</th><th>来源</th><th>线路</th><th>柜型价</th></tr></thead><tbody>${matchResult.data.candidates.map(candidate => `<tr><td><input type="radio" name="fcl-rate-candidate" value="${esc(candidate.rate_id)}"${selectedRateId === candidate.rate_id ? ' checked' : ''}></td><td>${esc(candidate.rate.supplier_label)}</td><td>${esc(candidate.rate.pol)} → ${esc(candidate.rate.pod)}</td><td>${esc(candidate.rate.items.map(item => `${item.container_type} ${item.ocean_freight} ${item.currency}`).join(' / '))}</td></tr>`).join('')}</tbody></table></div><button type="button" class="button" data-action="fcl-select-candidate">使用所选来源</button>` : '';
+    const sourceAction = quoteView?.extensions?.fcl_estimate_v1 ? '<button type="button" class="button" data-action="fcl-template-step">重新套用模板</button>' : '<button type="button" class="button" data-action="fcl-match">查找其他运价</button>';
+    return `<form data-fcl-form="quote-save" data-case="${esc(detail.case_id)}" data-version="${detail.case_version}" data-ref="${esc(detail.review_context.latest_customer_supplement_ref || '')}" data-selected="${esc(selected.rate_id)}" data-release="${esc(selected.release_id)}" data-release-version="${selected.release_version}" data-digest="${esc(selected.dataset_digest)}">${formError}<div class="ops-ticket-head"><div><span class="fcl-eyebrow">2 改本票</span><h3>本票费用</h3><p>来源币种固定；数量按本票柜量自动计算。金额由服务器重新计算。</p></div><button type="button" class="button" data-action="fcl-manual-add">添加人工费用</button></div><div class="table-wrap ops-ticket-table-wrap"><table class="ops-ticket-table"><thead><tr><th>费用名称</th><th>成本单价</th><th>币种</th><th>按柜 / 按票</th><th>柜型</th><th class="num">数量</th><th>销售单价</th><th class="num">小计</th><th>操作</th></tr></thead><tbody>${body || '<tr><td colspan="9">本票暂无费用行。</td></tr>'}</tbody></table></div><label class="ops-adjustment-reason"><span>本票修改说明</span><input name="adjustment_reason" value="${esc(quoteAdjustmentReason)}" maxlength="500" placeholder="修改成本、售价、计费方式或移除费用时填写"></label><details class="ops-ticket-details"><summary>服务范围与客户说明</summary>${scopes}</details><details class="ops-ticket-details"${!quoteDraft.exchange_rates.USD || !quoteDraft.exchange_rates.CAD || quoteDraft.remark ? ' open' : ''}><summary>汇率与报价备注</summary><div class="field-grid">${valueField('USD → CNY', 'fcl-fx-usd', quoteDraft.exchange_rates.USD || '', 'name="USD" inputmode="decimal"')}${valueField('CAD → CNY', 'fcl-fx-cad', quoteDraft.exchange_rates.CAD || '', 'name="CAD" inputmode="decimal"')}</div><div class="field"><label for="fcl-quote-remark">报价备注</label><textarea id="fcl-quote-remark" name="remark" rows="2" maxlength="500">${esc(quoteDraft.remark || '')}</textarea></div></details><details class="ops-ticket-details"><summary>更换运价来源与需求核对</summary><div class="head-actions">${sourceAction}<button type="button" class="button" data-action="fcl-workspace-step" data-step="requirements">核对客户需求</button></div>${sourceCandidates}</details><div class="ops-ticket-actions"><span class="muted">${operation === 'create' ? '首次保存会生成报价第 1 版。' : `保存后生成报价第 ${quoteView.version + 1} 版，历史版本保留。`}</span><button class="button primary" type="submit">保存并计算</button></div></form>`;
   };
   const calculationPanel = (value) => {
     const calculation = value.calculation;
@@ -533,31 +683,36 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     return heading + messageNote() + `<div class="form-layout"><form class="panel" data-fcl-form="issuer-config-save" data-version="${configView.version}">${formError}<div class="panel-body"><h2>报价出具人</h2><div class="field-grid">${valueField('出具人名称', 'fcl-issuer-name', config.issuer_name || '', 'name="fcl-issuer-name"')}${valueField('邮箱', 'fcl-issuer-email', config.issuer_email || '', 'name="fcl-issuer-email" type="email"')}${valueField('电话', 'fcl-issuer-phone', config.issuer_phone || '', 'name="fcl-issuer-phone"')}${valueField('地址', 'fcl-issuer-address', config.issuer_address || '', 'name="fcl-issuer-address"')}</div><div class="field"><label for="fcl-issuer-terms">报价条款</label><textarea id="fcl-issuer-terms" name="fcl-issuer-terms" rows="3" maxlength="4000">${esc(config.terms || '')}</textarea></div>${templatePicker}<button class="button primary" type="submit">保存出具人资料</button></div></form><form class="panel" data-fcl-form="notification-save" data-version="${notificationView.version}">${formError}<div class="panel-body"><h2>内部通知</h2><label class="check-row"><input type="checkbox" name="enabled"${notification.enabled ? ' checked' : ''}>启用内部通知</label>${valueField('收件人', 'fcl-notification-recipient', notification.recipient || '', 'name="fcl-notification-recipient" type="email"')}${valueField('抄送（逗号分隔）', 'fcl-notification-cc', (notification.cc || []).join(','), 'name="fcl-notification-cc"')}<button class="button primary" type="submit">保存通知配置</button><p class="muted">这里设置新询价的内部通知收件人。邮件发送成功后，仍需以收件箱实际收到为准。</p></div></form></div>`;
   };
 
+  const quoteMoneyValue = value => String(value ?? '').trim() || null;
+  const syncQuoteDraftFromRows = () => {
+    quoteDraft = buildFclQuoteInputDraft({ draft: quoteDraft, rows: quoteRows, sourceBaselines: quoteSourceBaselines, manualBases: quoteManualBases, removedManualKeys: quoteRemovedManualKeys });
+  };
   const captureQuoteForm = (form) => {
-    if (!quoteDraft) return;
-    quoteDraft.source_sell_prices = [...form.querySelectorAll('[data-fcl-source-price]')].map(row => {
-      const key = row.dataset.key;
-      const index = [...form.querySelectorAll('[data-fcl-source-price]')].indexOf(row);
-      return { row_key: key, sell_price: row.querySelector(`[name="fcl-source-sell-${index}"]`)?.value.trim() || null, customer_note: row.querySelector(`[name="fcl-source-note-${index}"]`)?.value.trim() || null };
-    });
-    quoteDraft.manual_fees = [...form.querySelectorAll('[data-fcl-manual-row]')].map(row => ({
-      id: row.dataset.id || crypto.randomUUID(),
-      template_ref: (() => { try { const raw = row.querySelector('[name="template_ref"]')?.value; return raw ? JSON.parse(raw) : null; } catch { return null; } })(),
-      name: row.querySelector('[name="name"]')?.value.trim() || '',
-      group: row.querySelector('[name="group"]')?.value || 'C',
-      service: row.querySelector('[name="service"]')?.value || 'delivery',
-      unit: row.querySelector('[name="unit"]')?.value || 'SHIPMENT',
-      quantity: row.querySelector('[name="unit"]')?.value === 'SHIPMENT' ? '1' : row.querySelector('[name="quantity"]')?.value.trim() || '1',
-      container_type: row.querySelector('[name="unit"]')?.value === 'CNTR' ? row.querySelector('[name="container_type"]')?.value || '40HQ' : null,
-      cost_price: row.querySelector('[name="cost_price"]')?.value.trim() || null,
-      sell_price: row.querySelector('[name="sell_price"]')?.value.trim() || null,
-      currency: row.querySelector('[name="currency"]')?.value || 'CAD',
-      internal_note: row.querySelector('[name="internal_note"]')?.value.trim() || null,
-      customer_note: row.querySelector('[name="customer_note"]')?.value.trim() || null,
-      evidence_ref: row.querySelector('[name="evidence_ref"]')?.value.trim() || null,
-      evidence_version: row.querySelector('[name="evidence_version"]')?.value.trim() || null,
-      quantity_conditions: row.querySelector('[name="quantity_conditions"]')?.value.trim() || null,
-    }));
+    if (!quoteDraft || !quoteRows) return;
+    quoteAdjustmentReason = form.querySelector('[name="adjustment_reason"]')?.value.trim() || '';
+    for (const element of form.querySelectorAll('[data-fcl-fee-row]')) {
+      const row = quoteRows.find(candidate => candidate.row_key === element.dataset.key);
+      if (!row) continue;
+      const before = feeRowSignature(row);
+      const unit = element.querySelector('[name="unit"]')?.value || row.unit;
+      const containerType = unit === 'CNTR' ? element.querySelector('[name="container_type"]')?.value || null : null;
+      row.cost_price = quoteMoneyValue(element.querySelector('[name="cost_price"]')?.value);
+      row.sell_price = quoteMoneyValue(element.querySelector('[name="sell_price"]')?.value);
+      row.unit = unit;
+      row.container_type = containerType;
+      row.quantity = feeQuantity(row);
+      if (element.dataset.sourceKind === 'manual') {
+        row.name = element.querySelector('[name="fee_name"]')?.value.trim() || row.name;
+        row.currency = element.querySelector('[name="currency"]')?.value || row.currency;
+        const evidence = element.querySelector('[name="evidence"]')?.value.trim() || null;
+        row.evidence_ref = evidence;
+        row.evidence_version = evidence ? row.evidence_version || evidence : null;
+      }
+      if (feeRowSignature(row) !== before) {
+        quoteTouchedRows.add(row.row_key);
+        const subtotal = element.querySelector('[data-fcl-fee-subtotal]'); if (subtotal) subtotal.textContent = '待重新计算';
+      }
+    }
     quoteDraft.service_scopes = [...form.querySelectorAll('[data-fcl-scope]')].flatMap(row => {
       const disposition = row.querySelector('[name="disposition"]')?.value;
       if (!disposition) return [];
@@ -568,6 +723,15 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     });
     quoteDraft.exchange_rates = { USD: form.querySelector('[name="USD"]')?.value.trim() || null, CAD: form.querySelector('[name="CAD"]')?.value.trim() || null };
     quoteDraft.remark = form.querySelector('[name="remark"]')?.value.trim() || null;
+    syncQuoteDraftFromRows();
+  };
+  const buildQuoteInputForSubmit = () => {
+    syncQuoteDraftFromRows();
+    const existingExtensions = quoteView?.quote_ref === editingQuoteRef ? quoteView.extensions : quoteDraft.extensions;
+    const existingChanges = existingExtensions?.fcl_row_adjustments_v1?.changes || [];
+    const changes = assembleFclQuoteRowAdjustments({ existingChanges, rows: quoteRows, sourceBaselines: quoteSourceBaselines, manualBases: quoteManualBases, touchedKeys: quoteTouchedRows, sourceRemovals: quoteRemovalKeys, manualRemovals: quoteRemovedManualKeys, reason: quoteAdjustmentReason });
+    quoteDraft = buildFclQuoteInputDraft({ draft: quoteDraft, rows: quoteRows, sourceBaselines: quoteSourceBaselines, manualBases: quoteManualBases, removedManualKeys: quoteRemovedManualKeys, changes });
+    return quoteDraft;
   };
 
   const page = () => {
@@ -607,10 +771,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       captureQuoteForm(form);
       quoteDirty = true;
       const draftNotice = document.querySelector('[data-fcl-quote-dirty]'); if (draftNotice) draftNotice.hidden = false;
+      const calculation = document.querySelector('[data-fcl-current-calculation]'); if (calculation) calculation.innerHTML = '<div class="ops-stale-total"><strong>待重新计算</strong><span>以服务器返回结果为准</span></div>';
       const stepLabel = document.querySelector('[data-step="quote"] small'); if (stepLabel) stepLabel.textContent = '有未保存修改';
       reviewView = null;
       exportView = null;
-      document.querySelectorAll('[data-action="fcl-doc-approve"],[data-action="fcl-handoff"]').forEach(button => { button.disabled = true; });
+      document.querySelectorAll('[data-action="fcl-doc-approve"],[data-action="fcl-handoff"],[data-action="fcl-workspace-step"][data-step="documents"]').forEach(button => { button.disabled = true; });
       return;
     }
     const data = new FormData(form);
@@ -734,6 +899,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     }
     if (type === 'quote-save') {
       captureQuoteForm(form);
+      let input;
+      try { input = buildQuoteInputForSubmit(); } catch (error) {
+        message = error?.code === 'fcl_quote_adjustment_reason_required' ? error.message : fclError(error);
+        notify(message, true); rerender(); return true;
+      }
       const selected = matchedSelected();
       const source = selected?.rate;
       if (!source) throw Object.assign(new Error('请先查找适用运价'), { code: 'fcl_quote_source_unavailable' });
@@ -748,7 +918,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
         source_binding: !caseChanged && existing.source_snapshot.rate_id === form.dataset.selected && existing.source_snapshot.release_id === form.dataset.release && existing.source_snapshot.dataset_digest === form.dataset.digest
           ? { mode: 'retain' }
           : { mode: 'replace', expected_case_version: Number(form.dataset.version), expected_customer_supplement_ref: form.dataset.ref || null, ...selectedBinding },
-        input: quoteDraft,
+        input,
       } : {
         contract_version: DOCUMENT_VERSION,
         operation: 'create',
@@ -756,22 +926,16 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
         expected_case_version: Number(form.dataset.version),
         expected_customer_supplement_ref: form.dataset.ref || null,
         ...selectedBinding,
-        input: quoteDraft,
+        input,
       };
       const response = await write('quote-save', body);
       if (e !== epoch) return true;
       if (response.data) {
         quoteView = response.data;
-        if (response.status === 'success') {
-          quoteDraft = null;
-          matchResult = null;
-          editingQuoteRef = null;
-          documentDisplayDraft = null;
-          documentDisplayDirty = false;
-          requestRelatedRefresh();
-        } else {
-          editingQuoteRef = quoteView.quote_ref;
-        }
+        primeQuoteEdit(response.data);
+        documentDisplayDraft = null;
+        documentDisplayDirty = false;
+        requestRelatedRefresh();
         quoteDirty = false;
         reviewView = null;
         exportView = null;
@@ -788,15 +952,38 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const name = button.dataset.action;
     if (!name?.startsWith('fcl-')) return false;
     const e = epoch;
-    if (name === 'fcl-workspace-step' && ['requirements', 'quote', 'documents'].includes(button.dataset.step)) { workspaceStep = button.dataset.step; rerender(); const heading = document.querySelector(`#fcl-step-${workspaceStep} h2`); heading?.setAttribute('tabindex', '-1'); heading?.focus({ preventScroll: true }); return true; }
-    if (name === 'fcl-manual-add') { const form = document.querySelector('[data-fcl-form="quote-save"]'); if (form) captureQuoteForm(form); quoteDraft.manual_fees.push(blankManualFee()); quoteDirty = true; rerender(); return true; }
-    if (name === 'fcl-manual-remove') { const form = document.querySelector('[data-fcl-form="quote-save"]'); if (form) captureQuoteForm(form); quoteDraft.manual_fees.splice(Number(button.dataset.index), 1); quoteDirty = true; rerender(); return true; }
+    if (name === 'fcl-template-step') {
+      if (quoteDirty || documentDisplayDirty) { message = '请先保存本票费用或报价单信息，再重新套用模板。'; rerender(); return true; }
+      if (detail.review_context.review_required) { workspaceStep = 'requirements'; message = '请先核对客户需求，再选择模板。'; rerender(); return true; }
+      location.hash = `fcl/compare/${detail.case_id}`;
+      return true;
+    }
+    if (name === 'fcl-workspace-step' && ['requirements', 'quote', 'documents'].includes(button.dataset.step)) {
+      if (button.dataset.step === 'documents' && (quoteDirty || !quoteView || !quoteView.currentness.valid_now)) { message = !quoteView ? '请先保存并计算本票报价。' : quoteDirty ? '请先保存并重新计算本票费用。' : '当前报价需要重新核对后才能生成报价单。'; rerender(); return true; }
+      workspaceStep = button.dataset.step; rerender(); const heading = document.querySelector(`#fcl-step-${workspaceStep} h2`); heading?.setAttribute('tabindex', '-1'); heading?.focus({ preventScroll: true }); return true;
+    }
+    if (name === 'fcl-manual-add') {
+      const form = document.querySelector('[data-fcl-form="quote-save"]');
+      if (form) captureQuoteForm(form);
+      const fee = blankManualFee();
+      quoteRows.push({ ...fee, row_key: `manual:${fee.id}`, source_kind: 'manual' });
+      quoteDirty = true; rerender(); return true;
+    }
+    if (name === 'fcl-manual-remove' || name === 'fcl-fee-remove') {
+      const form = document.querySelector('[data-fcl-form="quote-save"]');
+      if (form) captureQuoteForm(form);
+      const key = button.dataset.key || (button.dataset.index !== undefined ? `manual:${quoteRows.filter(row => row.source_kind === 'manual')[Number(button.dataset.index)]?.id}` : null);
+      const row = quoteRows.find(candidate => candidate.row_key === key);
+      if (row?.source_kind !== 'manual') quoteRemovalKeys.add(key);
+      quoteRows = quoteRows.filter(candidate => candidate.row_key !== key);
+      quoteDirty = true; rerender(); return true;
+    }
     if (name === 'fcl-cases-more') { if (casesNextCursor) await loadCases(casesNextCursor, true); return true; }
     if (['fcl-match','fcl-select-candidate'].includes(name) && quoteDirty && !window.confirm('重新选择运价会清空尚未保存的费用和售价。是否继续？')) return true;
     if (name === 'fcl-match') {
       const response = await call('quote-match', { contract_version: QUOTE_VERSION, case_ref: detail.case_id, expected_case_version: detail.case_version, expected_customer_supplement_ref: detail.review_context.latest_customer_supplement_ref, selected_rate_id: selectedRateId });
       if (e !== epoch) return true;
-      matchResult = response; quoteDraft = response.status === 'success' && response.data.selected ? blankQuoteDraft(response.data.selected) : null; editingQuoteRef = quoteView?.case_binding.case_ref === detail.case_id && response.status === 'success' ? quoteView.quote_ref : null; message = response.status === 'success' ? '匹配成功，请核对客户售价。' : `匹配未完成：${response.reason_codes.map(fclIssue).join('、') || '请按状态处理'}`; if (!response.data) notify(message, true); rerender(); return true;
+      matchResult = response; quoteRows = null; quoteSourceBaselines = new Map(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDraft = response.status === 'success' && response.data.selected ? blankQuoteDraft(response.data.selected) : null; editingQuoteRef = quoteView?.case_binding.case_ref === detail.case_id && response.status === 'success' ? quoteView.quote_ref : null; message = response.status === 'success' ? '匹配成功，请核对客户售价。' : `匹配未完成：${response.reason_codes.map(fclIssue).join('、') || '请按状态处理'}`; if (!response.data) notify(message, true); rerender(); return true;
     }
     if (name === 'fcl-select-candidate') {
       const selected = document.querySelector('input[name="fcl-rate-candidate"]:checked');
@@ -804,9 +991,9 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       selectedRateId = selected.value;
       const response = await call('quote-match', { contract_version: QUOTE_VERSION, case_ref: detail.case_id, expected_case_version: detail.case_version, expected_customer_supplement_ref: detail.review_context.latest_customer_supplement_ref, selected_rate_id: selectedRateId });
       if (e !== epoch) return true;
-      matchResult = response; quoteDraft = null; editingQuoteRef = quoteView?.case_binding.case_ref === detail.case_id && response.status === 'success' ? quoteView.quote_ref : null; message = response.status === 'success' ? '已按所选来源匹配，请核对客户售价。' : `所选来源仍无法完成匹配：${response.reason_codes.map(fclIssue).join('、') || '请人工复核'}`; rerender(); return true;
+      matchResult = response; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; editingQuoteRef = quoteView?.case_binding.case_ref === detail.case_id && response.status === 'success' ? quoteView.quote_ref : null; message = response.status === 'success' ? '已按所选来源匹配，请核对客户售价。' : `所选来源仍无法完成匹配：${response.reason_codes.map(fclIssue).join('、') || '请人工复核'}`; rerender(); return true;
     }
-    if (name === 'fcl-edit-quote') { beginQuoteEdit(); quoteDirty = false; message = '正在编辑当前报价。保存后会保留新的版本，历史报价仍可查看。'; rerender(); return true; }
+    if (name === 'fcl-edit-quote') { if (!canEditCurrentQuote()) { message = '当前报价需要重新核对或本票已结束，不能继续编辑。'; rerender(); return true; } beginQuoteEdit(); quoteDirty = false; message = '正在编辑当前报价。保存后会保留新的版本，历史报价仍可查看。'; rerender(); return true; }
     if (name === 'fcl-quote-open-history') { const target = Number(document.querySelector(`[data-fcl-quote-version="${button.dataset.quote}"]`)?.value || button.dataset.version); const response = await call('quote-get', { contract_version: DOCUMENT_VERSION, quote_ref: button.dataset.quote, version: target }); if (e !== epoch) return true; if (response.data) { quoteHistoryView = response.data; message = `正在只读查看报价 v${quoteHistoryView.version}。`; rerender(); } else { message = responseMessage(response, '', ''); rerender(); } return true; }
     if (['fcl-doc-save','fcl-doc-review','fcl-doc-approve','fcl-doc-reject','fcl-doc-export','fcl-handoff'].includes(name) && blockUnsavedQuote()) return true;
     if (blockUnsavedDocumentDisplay(name)) return true;
@@ -894,6 +1081,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       const form = event.target.closest('[data-fcl-form]');
       if (!form) return false;
       captureFormDraft(form);
+      if (form.dataset.fclForm === 'quote-save' && ['unit', 'container_type'].includes(event.target.name)) { rerender(); return true; }
       return false;
     },
     toggle: (event) => {

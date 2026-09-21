@@ -55,10 +55,51 @@ describe('FCL simplified workbench',()=>{
   const draft=operationsFixture();const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{authenticated:true,identity:{user_id:'personal'},fcl_capability:{business_date:'2026-10-15'}},state:{}})});
   ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
-  const html=ops.render();expect(html).toContain('选择线路、船期和海运费，快速生成整柜报价。');expect(html).toContain('线路及货物');expect(html).toContain('查询 COSCO 船期');expect(html).toContain('高级设置');
-  const header=html.match(/<header class="ops-heading">[\s\S]*?<\/header>/)?.[0]??'';expect(header.match(/data-action=/g)).toHaveLength(2);expect(header).not.toContain('发布');
+  const html=ops.render();expect(html).toContain('从已发布海运费与费用模板开始');expect(html).toContain('线路及货物');expect(html).toContain('查询 COSCO 船期');expect(html).toContain('模板维护');
+  const header=html.match(/<header class="ops-heading">[\s\S]*?<\/header>/)?.[0]??'';expect(header.match(/data-action=/g)).toHaveLength(2);expect(header).not.toContain('保存与发布');
   const tabs=html.match(/<nav class="ops-tabs"[\s\S]*?<\/nav>/)?.[0]??'';expect(tabs.match(/data-tab=/g)).toHaveLength(4);expect(tabs).not.toContain('目的地模板');
   const table=ops.render('', 'rates');expect(table).toContain('ops-ocean-table');expect(table).toContain('20GP');expect(table).toContain('查询 COSCO 船期');expect(table).not.toContain('Save Draft Item');
+ });
+ it('uses only published data for daily quoting even when an unrelated public draft exists',async()=>{
+  const published=operationsFixture(),draft=structuredClone(published);draft.rates[0]!.items[0]!.ocean_freight='9999';draft.operations.templates[0]!.label='Draft template only';
+  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft,active_release:{input:published},history:[]}:{items:[]}}));
+  const write=vi.fn((action:string,body?:unknown)=>{void action;void body;return Promise.resolve({status:'success',data:{items:[]}});});
+  const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  const html=ops.render();
+  expect(html).toContain('Calgary');expect(html).not.toContain('Draft template only');expect(html).not.toContain('保存与发布');
+  vi.stubGlobal('FormData',class {get(key:string){return ({pol:'Shanghai',pod:'Vancouver',destination:'Calgary',shipping_date:'2026-10-15','box-40HQ':'1',selected_rate:published.rates[0]!.rate_id,template:published.operations.templates[0]!.id} as Record<string,string>)[key]??null;}});
+  await ops.submit({dataset:{fclForm:'ops-run'}});
+  expect(write.mock.calls[0]?.[0]).toBe('estimate-run');
+  expect(write.mock.calls[0]?.[1]).toMatchObject({rate_ids:[published.rates[0]!.rate_id],template_ids:[published.operations.templates[0]!.id]});
+ });
+ it('auto-selects one explicit case candidate and leaves multiple candidates for human choice',async()=>{
+  const published=operationsFixture(),caseView={case_id:'00000000-0000-4000-8000-000000000901',case_status:'in_review',case_version:2,current_input:{pol:'Shanghai',pod:'Vancouver',final_destination:'Calgary',containers:[{type:'40HQ',quantity:1}],cargo_ready_date:'2026-10-15',estimated_weight:null,selected_services:['ocean_freight','canada_customs','delivery']},review_context:{latest_customer_supplement_ref:null,review_required:false}};
+  const estimate={estimate_id:'00000000-0000-4000-8000-000000000902',version:1,calculation:{rate_id:published.rates[0]!.rate_id},request:{case_ref:caseView.case_id}};
+  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft:published,active_release:{input:published},history:[]}:action==='case-get'?caseView:{items:[]}}));
+  const writes:string[]=[];const write=vi.fn((action:string)=>{writes.push(action);return Promise.resolve({status:'success',data:action==='estimate-run'?{items:[estimate]}:{quote_ref:'00000000-0000-4000-8000-000000000903',version:1}});});
+  const location={hash:''};vi.stubGlobal('location',location);
+  const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
+  ops.render(caseView.case_id);await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(4));await new Promise(r=>setTimeout(r,0));
+  vi.stubGlobal('FormData',class {get(key:string){return ({pol:'Shanghai',pod:'Vancouver',destination:'Calgary',shipping_date:'2026-10-15','box-40HQ':'1',selected_rate:published.rates[0]!.rate_id,template:published.operations.templates[0]!.id} as Record<string,string>)[key]??null;}});
+  await ops.submit({dataset:{fclForm:'ops-run'}});
+  expect(writes).toEqual(['estimate-run','estimate-select']);expect(location.hash).toContain(`fcl/case/${caseView.case_id}/`);
+  const multiple=createFclOperations({call,write:vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='estimate-run'?{items:[estimate,{...estimate,estimate_id:'00000000-0000-4000-8000-000000000904'}]}:{items:[]}})),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
+  multiple.render(caseView.case_id);await vi.waitFor(()=>expect(call.mock.calls.length).toBeGreaterThanOrEqual(8));await new Promise(r=>setTimeout(r,0));
+  await multiple.submit({dataset:{fclForm:'ops-run'}});
+  expect(multiple.render(caseView.case_id)).toContain('已生成 2 个候选');
+ });
+ it('previews only the unique charge version effective on the selected shipping date',async()=>{
+  const published=operationsFixture(),current=published.operations.charges.find(charge=>charge.id==='thc')!;
+  current.valid_until='2026-10-20';published.operations.charges=[{...current,version:2,valid_from:'2026-10-21',valid_until:'2026-12-31',amount:'150'},current,...published.operations.charges.filter(charge=>charge.id!=='thc')];
+  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:3,draft:published,active_release:{input:published},history:[]}:{items:[]}}));
+  const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  const form={dataset:{fclForm:'ops-run'}};let formDate='2026-10-15';
+  const target=(date:string)=>{formDate=date;return {closest:(selector:string)=>selector==='.ops-workspace'||selector==='[data-fcl-form="ops-run"]'?form:null,form,dataset:{},name:'shipping_date',value:date};};
+  vi.stubGlobal('FormData',class {readonly values:Record<string,string>;constructor(){this.values={pol:'Shanghai',pod:'Vancouver',destination:'Calgary','box-40HQ':'1',selected_rate:published.rates[0]!.rate_id,template:published.operations.templates[0]!.id};}get(key:string){return (key==='shipping_date'?formDate:this.values[key])??null;}});
+  ops.input({target:target('2026-10-15')});expect(ops.render()).toContain('码头操作费 100 CAD');expect(ops.render()).not.toContain('码头操作费 150 CAD');
+  ops.input({target:target('2026-10-25')});expect(ops.render()).toContain('码头操作费 150 CAD');expect(ops.render()).not.toContain('码头操作费 100 CAD');
  });
  it('keeps prices and sources when cancelling advanced edits, and clears only stale sailing associations',async()=>{
   vi.stubGlobal('document',{querySelector:()=>null});
