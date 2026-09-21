@@ -144,7 +144,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(name==='ops-select'){
       const caseId=contextId||query.case_ref;if(!caseId){message='请先选择要关联的客户询价。';rerender();return true;}
       const c=requireData(await call('case-get',{case_id:caseId}));const quote=requireData(await write('estimate-select',{estimate_id:id,expected_version:estimate.version,case_ref:caseId,expected_case_version:c.case_version,expected_customer_supplement_ref:c.review_context.latest_customer_supplement_ref}));
-      notify(`客户报价第 ${quote.version} 版已保存，请继续核对与审核。`);location.hash=`fcl/case/${caseId}`;return true;
+      notify(`客户报价第 ${quote.version} 版已保存，请继续核对与审核。`);location.hash=`fcl/case/${caseId}/${quote.quote_ref}`;return true;
     }return true;
   };
   const change=event=>{

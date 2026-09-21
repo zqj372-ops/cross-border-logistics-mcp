@@ -19,6 +19,11 @@ const serviceLabels = {
 
 const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 
+export function selectWorkspaceQuoteRef(items, requestedRef) {
+  if (requestedRef && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(requestedRef)) throw Object.assign(new Error('fcl_quote_not_found'), {code:'fcl_quote_not_found'});
+  return requestedRef || items?.[0]?.quote_ref || null;
+}
+
 export function nextQuoteOperation(quote) {
   return quote ? 'update' : 'create';
 }
@@ -120,10 +125,10 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const hasCapability = () => model().session?.fcl_capability?.fcl_personal === true;
   const route = () => {
     const parts = location.hash.slice(1).split('/');
-    return { page: parts[0] || 'fcl', action: parts[1] || '', id: parts[2] || '' };
+    return { page: parts[0] || 'fcl', action: parts[1] || '', id: parts[2] || '', quoteRef: parts[3] || '' };
   };
   const syncRoute = () => {
-    const current = route(), key = `${current.page}/${current.action}/${current.id}`;
+    const current = route(), key = `${current.page}/${current.action}/${current.id}/${current.quoteRef}`;
     if (key === activeRouteKey) return current;
     const leftCase = activeRouteKey.startsWith('fcl/case/');
     if (activeRouteKey.startsWith('fcl/compare/') && key !== activeRouteKey) operations?.reset();
@@ -230,10 +235,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       if (e !== epoch || activeCaseId !== id) return;
       if (quotes.data) {
         quoteList = quotes.data;
-        const latest = quotes.data.items?.[0];
-        if (latest) {
-          const value = await call('quote-get', { contract_version: DOCUMENT_VERSION, quote_ref: latest.quote_ref, version: null });
+        const requestedRef = selectWorkspaceQuoteRef(quotes.data.items, route().quoteRef);
+        if (requestedRef) {
+          const value = await call('quote-get', { contract_version: DOCUMENT_VERSION, quote_ref: requestedRef, version: null });
           if (e !== epoch || activeCaseId !== id) return;
+          if (value.data && value.data.case_binding.case_ref !== id) throw Object.assign(new Error('fcl_quote_case_mismatch'), {code:'fcl_quote_case_mismatch'});
           if (value.data && !quoteDraft) quoteView = value.data;
         }
       }
