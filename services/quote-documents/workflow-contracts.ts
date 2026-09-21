@@ -6,6 +6,11 @@ export const WORKFLOW_REQUEST_VERSION='quote-documents-workflow@2026-09-15.v1' a
 export const WORKFLOW_RESPONSE_VERSION='quote-documents@2026-09-15.v3' as const;
 export const DRAFT_VERSION='quote-document-draft@2026-09-15.v1' as const;
 export const FEE_TEMPLATE_VERSION='quote-fee-template@2026-09-15.v1' as const;
+export const FCL_DOCUMENT_WORKFLOW_VERSION='fcl-document-workflow@2026-09-20.v1' as const;
+export const fclCurrentnessSchema=z.object({
+  valid_now:z.boolean(),
+  reason_codes:z.array(z.string().min(1).max(120)).max(64),
+}).strict();
 
 const text=(max=200)=>z.string().trim().max(max);
 const nullableText=(max=200)=>text(max).nullable();

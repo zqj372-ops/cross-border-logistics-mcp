@@ -17,10 +17,12 @@ import { FixtureFormLogin } from "./form-login";
 import { CASE_LINK_VERSION, CASE_V2_VERSION, CASE_VERSION, caseResponseV2Schema, caseResponseSchema, type CaseService } from "./cases";
 import type { PortalPublicCustomsService } from "./public-customs";
 import type { PortalCallLogService } from "./call-log";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import { PORTAL_CAPABILITIES, PortalError, PORTAL_SCHEMA_VERSION, type Membership, type PortalCapabilityId, type PortalContext, type PortalMutation } from "./contracts";
+import {FclHttpService,fclHttpFailure,type FclHttpDependencies} from "./fcl-http";
+import {FCL_HTTP_BODY_LIMITS,FCL_HTTP_RESPONSE_LIMITS,FCL_HTTP_VERSION,FCL_PUBLIC_BODY_LIMITS,FCL_STAFF_ACTION_METHODS,fclHttpActions,fclHttpResponseSchemas,fclPublicOutputSchemas,type FclHttpAction} from "./fcl-http-contracts";
 import type { PortalIdentityProvider } from "./identity";
 import type { PortalSession, PortalSessionManager } from "./session";
 import { parsePortalSessionCookie } from "./session";
@@ -75,6 +77,7 @@ export interface PortalHttpOptions {
   readonly allowLoopbackHttp?: boolean;
   readonly trustedProxyAddresses?: readonly string[];
   readonly maxBodyBytes?: number;
+  readonly fcl?: FclHttpDependencies;
 }
 export interface PortalHttpHandler { handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> }
 
@@ -325,9 +328,10 @@ function stateMemberships(value: unknown): readonly Membership[] {
   const data = (value as { data?: unknown }).data; if (!data || typeof data !== "object" || !("memberships" in data)) return [];
   return Array.isArray((data as { memberships?: unknown }).memberships) ? (data as { memberships: Membership[] }).memberships : [];
 }
-function sessionBody(options: PortalHttpOptions, session: PortalSession): Record<string, unknown> {
+function sessionBody(options: PortalHttpOptions, session: PortalSession, fclHttp?:FclHttpService|null): Record<string, unknown> {
   const fixtures = options.mode === "fixtures" ? options.identityProvider.listFixtureIdentities?.() ?? [] : [];
-  return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures };
+  const capability=session.identity&&fclHttp?fclHttp.capability(session.identity):null;
+  return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures, ...(capability?{fcl_capability:capability}:{}) };
 }
 function mutation<T>(request: IncomingMessage, input: T, expectedVersion?: number): PortalMutation<T> { return expectedVersion === undefined ? { idempotencyKey: idempotency(request), input } : { idempotencyKey: idempotency(request), expectedVersion, input }; }
 function stableResourceId(prefix: string, context: PortalContext, key: string): string {
@@ -335,6 +339,7 @@ function stableResourceId(prefix: string, context: PortalContext, key: string): 
   return `${prefix}_${createHash("sha256").update(`${context.organizationId}\0${context.identity.userId}\0${key}`).digest("hex").slice(0,24)}`;
 }
 function authenticatedResourcePath(path: string): boolean {
+  if (/^\/console\/api\/v1\/fcl(?:\/|$)/u.test(path)) return true;
   if (/^\/console\/api\/v1\/maritime\/(sailing-schedules|terminal-efficiency)\/query$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/maritime\/schedule-collector\/(carriers|locations|search)$/u.test(path)) return true;
   if (/^\/console\/api\/v1\/quote-documents\/(config|config-save|preview|native-prepare|save|list|get|review|approve|reject|export)$/u.test(path)) return true;
@@ -355,18 +360,137 @@ function authenticatedResourcePath(path: string): boolean {
     || /^\/console\/api\/v1\/(?:invitations\/[^/]+\/(?:accept|revoke)|memberships\/[^/]+\/status|applications\/[^/]+(?:\/credentials(?:\/status|\/[^/]+\/(?:acknowledge|rotate|revoke))?)?|requests\/[^/]+(?:\/(?:submit|withdraw|review|decision))?|grants\/[^/]+\/(?:status|scope|provision))$/u.test(path);
 }
 
+function publicFclCsrf(request:IncomingMessage,fclHttp:FclHttpService):void{
+  const session=fclHttp.publicSessions.read(request.headers.cookie);
+  if(!session)throw new PortalError("fcl_public_session_required");
+  const supplied=request.headers["x-csrf-token"];
+  if(rawHeaderCount(request,"x-csrf-token")!==1||typeof supplied!=="string")throw new PortalError("csrf_invalid");
+  const expected=Buffer.from(session.csrfToken),actual=Buffer.from(supplied);
+  if(expected.length!==actual.length||!timingSafeEqual(expected,actual))throw new PortalError("csrf_invalid");
+}
+
+function publicFclQuery(url:URL,allowed:readonly string[]=[]):Record<string,unknown>{
+  if(!url.search)return {};
+  const entries=[...url.searchParams.entries()];
+  if(new Set(entries.map(([key])=>key)).size!==entries.length)throw new PortalError("fcl_input_invalid");
+  if(entries.some(([key])=>!allowed.includes(key)))throw new PortalError("fcl_input_invalid");
+  return Object.fromEntries(entries);
+}
+
+async function handlePublicFcl(request:IncomingMessage,response:ServerResponse,url:URL,fclHttp:FclHttpService,options:PortalHttpOptions):Promise<boolean>{
+  const path=url.pathname,method=request.method??"GET",write=method!=="GET"&&method!=="HEAD";
+  try{
+    fclHttp.consumePublicAttempt(request.socket.remoteAddress??"unknown");
+    if(path==="/inquiry/api/v1/session"&&method==="GET"){
+      if(url.search)throw new PortalError("fcl_input_invalid");
+      const ensured=fclHttp.publicSessions.ensure(request.headers.cookie);
+      const responseBody=fclPublicOutputSchemas.session.parse({schema_version:FCL_HTTP_VERSION,status:"success",data:{session:{session_id:ensured.session.sessionId,csrf_token:ensured.session.csrfToken},inquiry_id:ensured.session.inquiryId,capability:{fcl_personal:false,receiver_user_id:null,business_date:fclHttp.publicBusinessDate()}},reason_codes:[]});
+      json(response,200,responseBody,ensured.setCookie,true);
+      return true;
+    }
+    if(path==="/inquiry/api/v1/fcl/submit"&&method==="POST"){
+      if(url.search)throw new PortalError("fcl_input_invalid");
+      publicFclCsrf(request,fclHttp);
+      const result=await fclHttp.executePublic({} as PortalContext,"submit",await body(request,Math.min(options.maxBodyBytes??FCL_PUBLIC_BODY_LIMITS.submit,FCL_PUBLIC_BODY_LIMITS.submit)),()=>idempotency(request),request.headers.cookie);
+      const responseBody=fclPublicOutputSchemas.submit.parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:result.reason_codes});
+      json(response,200,responseBody,result.setCookie,true);
+      return true;
+    }
+    if(path==="/inquiry/api/v1/fcl/credential/exchange"&&method==="POST"){
+      if(url.search)throw new PortalError("fcl_input_invalid");
+      publicFclCsrf(request,fclHttp);
+      idempotency(request);
+      const result=await fclHttp.executePublic({} as PortalContext,"exchange",await body(request,Math.min(options.maxBodyBytes??FCL_PUBLIC_BODY_LIMITS.exchange,FCL_PUBLIC_BODY_LIMITS.exchange)),()=>idempotency(request),request.headers.cookie);
+      const responseBody=fclPublicOutputSchemas.exchange.parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:result.reason_codes});
+      json(response,200,responseBody,result.setCookie,true);
+      return true;
+    }
+    if(path==="/inquiry/api/v1/fcl/supplement"&&method==="POST"){
+      if(url.search)throw new PortalError("fcl_input_invalid");
+      publicFclCsrf(request,fclHttp);
+      const result=await fclHttp.executePublic({} as PortalContext,"supplement",await body(request,Math.min(options.maxBodyBytes??FCL_PUBLIC_BODY_LIMITS.supplement,FCL_PUBLIC_BODY_LIMITS.supplement)),()=>idempotency(request),request.headers.cookie);
+      const responseBody=fclPublicOutputSchemas.supplement.parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:result.reason_codes});
+      json(response,200,responseBody,result.setCookie,true);
+      return true;
+    }
+    if(path==="/inquiry/api/v1/fcl"&&method==="GET"){
+      const result=await fclHttp.executePublic({} as PortalContext,"get",publicFclQuery(url,["inquiry_id"]),()=>idempotency(request),request.headers.cookie);
+      const responseBody=fclPublicOutputSchemas.get.parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:result.reason_codes});
+      json(response,200,responseBody,result.setCookie,true);
+      return true;
+    }
+    if(path==="/inquiry/api/v1/logout"&&method==="POST"){
+      if(url.search)throw new PortalError("fcl_input_invalid");
+      publicFclCsrf(request,fclHttp);
+      const input=await body(request,1024);closed(input,[]);
+      const result=await fclHttp.executePublic({} as PortalContext,"logout",{},()=>idempotency(request),request.headers.cookie);
+      const responseBody=fclPublicOutputSchemas.logout.parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:result.reason_codes});
+      json(response,200,responseBody,result.setCookie,true);
+      return true;
+    }
+    if(write)throw new PortalError("method_not_allowed");
+    json(response,404,{schema_version:FCL_HTTP_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"]},undefined,true);
+    return true;
+  }catch(error){
+    const failure=fclHttpFailure(error);
+    json(response,failure.http,failure.body,undefined,true);
+    return true;
+  }
+}
+
+function fclStaffRoute(path:string):{action:FclHttpAction;method:"GET"|"POST"}|null{
+  const direct=/^\/console\/api\/v1\/fcl\/([a-z-]+)$/u.exec(path);
+  if(!direct||!fclHttpActions.includes(direct[1] as FclHttpAction))return null;
+  const action=direct[1] as FclHttpAction;
+  return {action,method:FCL_STAFF_ACTION_METHODS[action]};
+}
+
+async function handleStaffFcl(request:IncomingMessage,response:ServerResponse,url:URL,fclHttp:FclHttpService,options:PortalHttpOptions,ctx:PortalContext,route:{action:FclHttpAction;method:"GET"|"POST"}):Promise<boolean>{
+  try{
+    if((request.method??"GET")!==route.method){json(response,405,{schema_version:FCL_HTTP_VERSION,status:"blocked",data:null,reason_codes:["method_not_allowed"]},undefined,true);return true;}
+    if(url.search&&!["case-list","rate-preview"].includes(route.action))throw new PortalError("fcl_input_invalid");
+    let input:Record<string,unknown>;
+      if(request.method==="GET"){
+      if(route.action==="case-list"){
+        const query=publicFclQuery(url,["limit","status","cursor"]);
+        input={limit:query.limit===undefined?25:Number(query.limit),status:query.status===undefined?null:query.status,cursor:query.cursor===undefined?null:query.cursor};
+      }else if(route.action==="rate-preview"){
+        const release=url.searchParams.get("release_id");
+        if(url.search&&(!release||!/^[0-9a-f-]{36}$/u.test(release)||[...url.searchParams.keys()].length!==1))throw new PortalError("fcl_input_invalid");
+        input=release?{release_id:release}:{};
+      }else input={};
+    }else{
+      input=await body(request,Math.min(options.maxBodyBytes??FCL_HTTP_BODY_LIMITS[route.action],FCL_HTTP_BODY_LIMITS[route.action]));
+    }
+    const result=await fclHttp.executeStaff(ctx,route.action,input,()=>idempotency(request));
+    const responseBody=fclHttpResponseSchemas[route.action].parse({schema_version:FCL_HTTP_VERSION,status:result.status,data:result.data,reason_codes:[...result.reason_codes]});
+    if(Buffer.byteLength(JSON.stringify(responseBody))>FCL_HTTP_RESPONSE_LIMITS[route.action]){json(response,503,{schema_version:FCL_HTTP_VERSION,status:'unavailable',data:null,reason_codes:['fcl_response_too_large']},undefined,true);return true;}
+    json(response,200,responseBody,undefined,true);
+    return true;
+  }catch(error){
+    const failure=fclHttpFailure(error);
+    json(response,failure.http,failure.body,undefined,true);
+    return true;
+  }
+}
+
 export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpHandler {
   const cliAuth=new CliAuthorization(options.sessions);
   const formLogin=options.mode==="fixtures"&&options.identityProvider.kind==="fixture"?new FixtureFormLogin():null;
+  const fclHttp=options.fcl?new FclHttpService(options.fcl):null;
   return { async handle(request, response): Promise<boolean> {
     const url = new URL(request.url ?? "/", "http://portal.invalid"); const path = url.pathname; const id = requestId(request);
-    if (!path.startsWith(API_PREFIX) && path !== "/console/auth/login" && path !== "/console/auth/callback") return false;
+    if(!path.startsWith(API_PREFIX)&&path!=="/console/auth/login"&&path!=="/console/auth/callback"&&!path.startsWith("/inquiry/api/v1"))return false;
     let boundaryPassed = false;
     try {
       const write = request.method !== "GET" && request.method !== "HEAD";
       boundary(request, options, write);
       boundaryPassed = true;
-      if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, sessionBody(options, ensured.session), ensured.setCookie); return true; }
+      if(path.startsWith("/inquiry/api/v1")){
+        if(!fclHttp)throw new PortalError("fcl_unavailable");
+        return await handlePublicFcl(request,response,url,fclHttp,options);
+      }
+      if (path === `${API_PREFIX}/session` && request.method === "GET") { const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); json(response, 200, sessionBody(options, ensured.session,fclHttp), ensured.setCookie); return true; }
       if(path.startsWith(`${API_PREFIX}/cli-auth/`)){
         if(!cliAuth)throw new PortalError("cli_auth_unavailable");
         if(url.search)throw new PortalError("body_invalid");
@@ -390,16 +514,16 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
           const input=await body(request,4096);closed(input,["account","password","captcha_id","captcha"]);
           const identityId=formLogin.verify(current.sessionId,address,{account:text(input,"account"),password:text(input,"password"),captcha_id:text(input,"captcha_id"),captcha:text(input,"captcha")});
           const identity=await options.identityProvider.authenticateFixture(identityId),authenticated=options.sessions.authenticate(current.sessionId,identity);
-          json(response,200,sessionBody(options,authenticated.session),authenticated.setCookie);return true;
+          json(response,200,sessionBody(options,authenticated.session,fclHttp),authenticated.setCookie);return true;
         }
         json(response,405,{status:"blocked",data:null,reason_codes:["method_not_allowed"]});return true;
       }
       if (path === `${API_PREFIX}/fixture-login` && request.method === "POST") {
         if (options.mode !== "fixtures" || options.identityProvider.kind !== "fixture" || !options.identityProvider.authenticateFixture) throw new PortalError("fixture_identity_forbidden");
         const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["identity_id"]);
-        const identity = await options.identityProvider.authenticateFixture(text(input, "identity_id")); const authenticated = options.sessions.authenticate(current.sessionId, identity); json(response, 200, sessionBody(options, authenticated.session), authenticated.setCookie); return true;
+        const identity = await options.identityProvider.authenticateFixture(text(input, "identity_id")); const authenticated = options.sessions.authenticate(current.sessionId, identity); json(response, 200, sessionBody(options, authenticated.session,fclHttp), authenticated.setCookie); return true;
       }
-      if (path === `${API_PREFIX}/logout` && request.method === "POST") { const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, []); const loggedOut = options.sessions.logout(current.sessionId); json(response, 200, sessionBody(options, loggedOut.session), loggedOut.setCookie); return true; }
+      if (path === `${API_PREFIX}/logout` && request.method === "POST") { const current = sessionFor(request, options, false); csrf(request, options, current); idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, []); const loggedOut = options.sessions.logout(current.sessionId); json(response, 200, sessionBody(options, loggedOut.session,fclHttp), loggedOut.setCookie); return true; }
       if (path === "/console/auth/login" && request.method === "GET") {
         if (options.identityProvider.kind !== "oidc" || !options.identityProvider.begin) throw new PortalError("oidc_not_configured"); const ensured = options.sessions.ensure(parsePortalSessionCookie(request.headers.cookie)); const transaction = await options.identityProvider.begin(); const pending = options.sessions.beginOidc(ensured.session.sessionId, transaction); response.statusCode = 302; commonHeaders(response); response.setHeader("set-cookie", options.sessions.cookieFor(pending)); response.setHeader("location", transaction.authorizationUrl); response.end(); return true;
       }
@@ -437,6 +561,11 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if (!authenticatedResourcePath(path)) { json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true; }
       const current = sessionFor(request, options); const ctx = context(current);
       if (write) csrf(request, options, current);
+      const fclRoute=fclStaffRoute(path);
+      if(fclRoute){
+        if(!fclHttp){const failure=fclHttpFailure(new PortalError("fcl_unavailable"));json(response,failure.http,failure.body,undefined,true);return true;}
+        return await handleStaffFcl(request,response,url,fclHttp,options,ctx,fclRoute);
+      }
       const maritimeMatch=/^\/console\/api\/v1\/maritime\/(sailing-schedules|terminal-efficiency)\/query$/u.exec(path);
       if(maritimeMatch){
         if(request.method!=='POST')throw new PortalError('method_not_allowed');
@@ -575,7 +704,7 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
         if (!options.organizationBridge) throw new PortalError("organization_bridge_unavailable");
         json(response, 200, await options.organizationBridge.getOrganizationAdmission(ctx, decodeURIComponent(organizationMatch[1]!))); return true;
       }
-      if (path === `${API_PREFIX}/session/organization` && request.method === "POST") { idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["organization_id"]); const state = options.service.getState({ ...ctx, organizationId: null }); const selected = options.sessions.selectOrganization(current.sessionId, nullableText(input, "organization_id"), stateMemberships(state)); json(response, 200, sessionBody(options, selected), options.sessions.cookieFor(selected)); return true; }
+      if (path === `${API_PREFIX}/session/organization` && request.method === "POST") { idempotency(request); const input = await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES); closed(input, ["organization_id"]); const state = options.service.getState({ ...ctx, organizationId: null }); const selected = options.sessions.selectOrganization(current.sessionId, nullableText(input, "organization_id"), stateMemberships(state)); json(response, 200, sessionBody(options, selected,fclHttp), options.sessions.cookieFor(selected)); return true; }
       const input = write ? await body(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES) : {};
       if (path.startsWith(`${API_PREFIX}/business-access/`)) {
         if (!options.businessAccessService) throw new PortalError("business_access_unavailable");
@@ -659,7 +788,11 @@ export function createPortalHttpHandler(options: PortalHttpOptions): PortalHttpH
       if ((match=/^\/console\/api\/v1\/applications\/([^/]+)\/credentials\/status$/u.exec(path)) && request.method === "GET") { if(!options.bridge?.getCredentialState)throw new PortalError("credential_bridge_unavailable"); json(response,200,await options.bridge.getCredentialState(ctx,decodeURIComponent(match[1]!))); return true; }
       if ((match=/^\/console\/api\/v1\/applications\/([^/]+)\/credentials$/u.exec(path)) && request.method === "POST") { if(!options.bridge?.issueCredential)throw new PortalError("credential_bridge_unavailable"); closed(input,["label","tool_names","expires_in_seconds"]); json(response,200,await options.bridge.issueCredential(ctx,decodeURIComponent(match[1]!),mutation(request,input))); return true; }
       if ((match=/^\/console\/api\/v1\/applications\/([^/]+)\/credentials\/([^/]+)\/(acknowledge|rotate|revoke)$/u.exec(path)) && request.method === "POST") { if(!options.bridge)throw new PortalError("credential_bridge_unavailable"); const app=decodeURIComponent(match[1]!); const credential=decodeURIComponent(match[2]!); const action=match[3]!; if(action==="acknowledge"||action==="revoke")closed(input,[]); const m=mutation(request,input); const result=action==="acknowledge"?options.bridge.acknowledgeCredentialDelivery?.(ctx,app,credential,m as PortalMutation<Record<string,never>>):action==="rotate"?options.bridge.rotateCredential?.(ctx,app,credential,m):options.bridge.revokeCredential?.(ctx,app,credential,m as PortalMutation<Record<string,never>>); if(!result)throw new PortalError("credential_bridge_unavailable"); json(response,200,result); return true; }
+      if(path.startsWith(`${API_PREFIX}/fcl`)){json(response,404,{schema_version:FCL_HTTP_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"]},undefined,true);return true;}
       json(response,404,{schema_version:PORTAL_SCHEMA_VERSION,status:"blocked",data:null,reason_codes:["route_not_found"],request_id:id}); return true;
-    } catch (error) { const category = boundaryPassed ? browserAuthRecovery(request,path,error) : null; if(category)redirectAuthRecovery(response,category);else sendError(response,id,error); return true; }
+    } catch (error) {
+      if(path.startsWith("/inquiry/api/v1")||path.startsWith(`${API_PREFIX}/fcl`)){const failure=fclHttpFailure(error);json(response,failure.http,failure.body,undefined,true);return true;}
+      const category = boundaryPassed ? browserAuthRecovery(request,path,error) : null; if(category)redirectAuthRecovery(response,category);else sendError(response,id,error); return true;
+    }
   }};
 }

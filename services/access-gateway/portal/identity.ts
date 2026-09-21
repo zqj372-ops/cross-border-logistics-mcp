@@ -19,6 +19,7 @@ export const FIXTURE_PORTAL_IDENTITIES: readonly PortalIdentity[] = Object.freez
   Object.freeze({ userId: "fixture-developer", displayName: "企业开发者", email: "developer@example.test", emailVerified: true, platformRole: null }),
   Object.freeze({ userId: "fixture-owner", displayName: "企业所有者", email: "owner@example.test", emailVerified: true, platformRole: null }),
   Object.freeze({ userId: "fixture-sales", displayName: "业务员", email: "sales@example.test", emailVerified: true, platformRole: null }),
+  Object.freeze({ userId: "fixture-fcl-receiver", displayName: "个人报价受理人", email: "fcl-receiver@example.test", emailVerified: true, platformRole: null }),
   Object.freeze({ userId: "fixture-reviewer", displayName: "平台审核员", email: "reviewer@example.test", emailVerified: true, platformRole: "reviewer" }),
   Object.freeze({ userId: "fixture-operator", displayName: "平台运维管理员", email: "operator@example.test", emailVerified: true, platformRole: "operator" }),
 ]);

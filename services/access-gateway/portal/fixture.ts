@@ -29,7 +29,7 @@ const TENANT_ID="tenant_fixture";
 const ISSUER="https://fixture-access.example.invalid/";
 const AUDIENCE="logistics-mcp";
 
-export interface CreatePortalFixtureRuntimeOptions { readonly databaseDirectory:string; readonly nowSeconds?:number }
+export interface CreatePortalFixtureRuntimeOptions { readonly databaseDirectory:string; readonly nowSeconds?:number; readonly mode?:"legacy"|"fcl-personal" }
 export interface PortalFixtureRuntime {
   readonly service:PortalService;
   readonly bridge:PortalAccessBridge;
@@ -79,6 +79,7 @@ export async function createPortalFixtureRuntime(options:CreatePortalFixtureRunt
   const frozen=options.nowSeconds!==undefined;
   const clock=()=>options.nowSeconds??Math.floor(Date.now()/1_000);
   const nowSeconds=clock();
+  const personal=options.mode==="fcl-personal";
   const databaseDirectory=resolve(options.databaseDirectory);
   mkdirSync(databaseDirectory,{recursive:true,mode:0o700});
   const accessPaths=tenantAccessPaths(databaseDirectory);
@@ -98,8 +99,10 @@ export async function createPortalFixtureRuntime(options:CreatePortalFixtureRunt
     const jwks=createLocalJWKSet({keys:signingJwks.keys.map(key=>({...key}))});
     const createBridge=(applicationCredentialAuthority?:Pick<BusinessAccessService,"authorizeT0ApiKey"|"authorizeT0Credential"|"exchangeApplicationToken">)=>createPortalAccessBridge({dataMode:"fixtures",portalService:service,tenantAccessService:tenantService,accessGateway:gateway,...(applicationCredentialAuthority===undefined?{}:{applicationCredentialAuthority,applicationTokenVerifier:{verify:async(token:string)=>(await jwtVerify(token,jwks,{algorithms:["RS256"],...(frozen?{currentDate:new Date(nowSeconds*1_000)}:{})})).payload},applicationTokenPolicy:{issuer:ISSUER,audience:AUDIENCE,...(frozen?{nowSeconds}:{}),maxLifetimeSeconds:900}}),internalAdminContext:internalAdmin(nowSeconds),tokenVerifier:{verify:async(token:string)=>(await jwtVerify(token,jwks,{algorithms:["RS256"],...(frozen?{currentDate:new Date(nowSeconds*1_000)}:{})})).payload},restTokenPolicy:{issuer:ISSUER,audience:AUDIENCE,...(frozen?{nowSeconds}:{}),maxLifetimeSeconds:900},exchangeAudience:AUDIENCE,t0Definitions:t0Definitions()});
     const bridge=createBridge();
-    await tenantService.createTenant(internalAdmin(nowSeconds),{schema_version:TENANT_ACCESS_SCHEMA_VERSION,tenant_id:TENANT_ID,display_name:"示例物流企业"},"fixture-seed-tenant-0001");
-    seedPortal(service);
+    if(!personal){
+      await tenantService.createTenant(internalAdmin(nowSeconds),{schema_version:TENANT_ACCESS_SCHEMA_VERSION,tenant_id:TENANT_ID,display_name:"示例物流企业"},"fixture-seed-tenant-0001");
+      seedPortal(service);
+    }
     let closed=false;
     const requireActiveTenantClient=async(tenantId:string,clientId:string)=>{
       const state=await tenantService.getState(internalAdmin(clock()));

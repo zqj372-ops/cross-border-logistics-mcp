@@ -66,7 +66,31 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 
 ## 交付范围
 
-当前候选包包含 60 项人员工作台命令，覆盖运价、邮编表格、原生关务与完整数据包、报价单、询价处理及人员历史等功能。OCR、邮件订舱、SO 识别仍未交付。正式来源就绪、承运商当前报价、目标环境部署需独立验收；命令存在不等于生产业务已可用。
+当前候选包包含 112 项工作台命令，覆盖现有人员功能以及 28 项 FCL 人员 action、6 项 FCL 公开 inquiry action。OCR、邮件订舱、SO 识别仍未交付。正式来源就绪、承运商当前报价、目标环境部署需独立验收；命令存在不等于生产业务已可用。
+
+## FCL 人员与公开询价
+
+人员 FCL 命令复用同一 person session，路径固定为 `/console/api/v1/fcl/<action>`：
+
+```sh
+freightclaw workspace fcl case-list --session-file session.json
+freightclaw workspace fcl rate-save --session-file session.json --input rates.json --idempotency-key rate-save-0000001
+freightclaw workspace fcl document-export --session-file session.json --input export.json --file ./quote.pdf --idempotency-key document-export-01
+freightclaw workspace schema fcl quote-match
+```
+
+公开 inquiry 命令使用独立 `--inquiry-session-file`，不复用人员 session：
+
+```sh
+freightclaw workspace fcl inquiry session --inquiry-session-file inquiry.json
+freightclaw workspace fcl inquiry submit --inquiry-session-file inquiry.json --input request.json --idempotency-key inquiry-submit-0001
+freightclaw workspace fcl inquiry exchange --inquiry-session-file inquiry.json --idempotency-key inquiry-exchange-01
+freightclaw workspace fcl inquiry get --inquiry-session-file inquiry.json
+freightclaw workspace fcl inquiry supplement --inquiry-session-file inquiry.json --input supplement.json --idempotency-key inquiry-supplement-01
+freightclaw workspace fcl inquiry logout --inquiry-session-file inquiry.json --idempotency-key inquiry-logout-0001
+```
+
+公开文件只允许当前用户读取，绑定单一 origin 和本票，拒绝 symlink；提交前保存 pending key/body，未知结果不换身份、不自动重试。exchange 可从 Web 的受限恢复文件读取 `{inquiry_id,credential}`，credential 不进入命令参数、URL、环境变量或输出。FCL PDF 不覆盖已有文件，stdout 不输出 `content_base64`。生产启用、真实接收人 authority 与业务验收仍独立判断。
 
 关务、私人地址运价、Freightcom 配置与人员身份查询：参见 [业务操作说明](native-business.md)。新增操作与网站共用当前企业配置和权限。
 

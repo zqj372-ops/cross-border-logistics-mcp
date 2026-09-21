@@ -1,10 +1,12 @@
 import Decimal from 'decimal.js';
 import {readdirSync,statSync} from 'node:fs';
-import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {createHash,createHmac,randomBytes,randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from '../access-gateway/portal/contracts';
 import type {PortalService} from '../access-gateway/portal/service';
-import type {DocumentService,DocumentStore} from './service';
-import {calculate,renderHtml} from './engine';
+import type {CaseService} from '../access-gateway/portal/cases';
+import type {NativeAdminService} from '../access-gateway/portal/native-admin';
+import type {DocumentFclStoreOptions,DocumentService,DocumentStore} from './service';
+import {calculate,renderHtml,type FclRenderMetadata} from './engine';
 import {renderPdf} from './renderer';
 import {
   DRAFT_VERSION,
@@ -25,8 +27,57 @@ import {
   type NativeBindingV3,
   type WorkflowDocumentView,
 } from './workflow-contracts';
-import type {z} from 'zod';
-import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema} from './contracts';
+import {z} from 'zod';
+import {INQUIRY_QUOTE_LINK_VERSION,type nativeQuoteBindingSchema,type QuoteDocument,type QuoteTemplate} from './contracts';
+import {
+  FCL_DOCUMENT_WORKFLOW_VERSION,
+  FCL_HANDOFF_VERSION,
+  fclConfigSaveSchema,
+  fclConfigViewSchema,
+  fclDocumentGetRequestSchema,
+  fclHandoffGetRequestSchema,
+  fclHandoffPayloadSchema,
+  fclHandoffRequestSchema,
+  fclHandoffViewSchema,
+  fclDocumentApproveRequestSchema,
+  fclDocumentRejectRequestSchema,
+  fclDocumentReviewRequestSchema,
+  fclDocumentReviewViewSchema,
+  fclDocumentExportRequestSchema,
+  fclDocumentExportOutputSchema,
+  fclDocumentPdfReferenceSchema,
+  fclDocumentPdfBindingSchema,
+  fclDocumentListRequestSchema,
+  fclDocumentListSchema,
+  fclDocumentPayloadSchema,
+  fclDocumentReferenceSchema,
+  fclDocumentSaveRequestSchema,
+  fclDocumentViewSchema,
+  type FclConfigView,
+  type FclDocumentPayload,
+  type FclDocumentReviewView,
+  type FclDocumentExportOutput,
+  type FclDocumentPdfBinding,
+  type FclDocumentView,
+  type FclHandoffPayload,
+  type FclHandoffView,
+} from './fcl-contracts';
+import {
+  buildFclCostSellSnapshot,
+  FCL_QUOTE_WORKFLOW_VERSION,
+  fclQuoteGetRequestSchema,
+  fclQuoteListSchema,
+  fclQuoteListRequestSchema,
+  fclQuoteMatchRequestSchema,
+  fclQuoteReferenceSchema,
+  fclQuoteSaveRequestSchema,
+  fclQuoteViewSchema,
+  validateFclQuoteSnapshot,
+  type FclQuoteCurrentness,
+  type FclQuoteService,
+  type FclQuoteView,
+} from '../quote-native/fcl';
+import type {FclRateDataset} from '../quote-native/fcl-contracts';
 
 const parse=<T>(schema:z.ZodType<T>,input:unknown,code='document_input_invalid'):T=>{
   const parsed=schema.safeParse(input);
@@ -40,6 +91,12 @@ const sortValue=(value:unknown):unknown=>{
   return value;
 };
 const canonicalHash=(value:unknown)=>hash(sortValue(value));
+const canonicalJson=(value:unknown)=>JSON.stringify(sortValue(value));
+const stableUuid=(value:string)=>{
+  const hex=createHash('sha256').update(value).digest('hex').slice(0,32).split('');
+  hex[12]='5';hex[16]='8';
+  return `${hex.slice(0,8).join('')}-${hex.slice(8,12).join('')}-${hex.slice(12,16).join('')}-${hex.slice(16,20).join('')}-${hex.slice(20,32).join('')}`;
+};
 const safeText=(value:unknown)=>typeof value==='string'?value:'';
 const today=()=>new Date().toISOString().slice(0,10);
 // Compare inode identities and fail closed when an existing process cannot be inspected.
@@ -109,6 +166,27 @@ export const standardFeeTemplate={
     ]},
   ],
 } as const;
+
+export interface FclDocumentWorkflowOptions{
+  readonly receiverUserId:string;
+  readonly receiverIsActive:(userId:string)=>boolean;
+  readonly now?:()=>string;
+}
+
+export interface FclQuoteWorkflowDependencies{
+  readonly quoteService:Pick<FclQuoteService,'match'>;
+  readonly caseReader:Pick<CaseService,'getFclCase'>;
+  readonly caseLock:Pick<CaseService,'withFclReadLock'>;
+  readonly rateLock:Pick<NativeAdminService,'withFclReadLock'>;
+  readonly rateReader:Pick<NativeAdminService,'get'>;
+  readonly handoff?:Pick<CaseService,'withFclHandoffTransaction'|'recordFclHandoffInTransaction'|'listFclHandoffs'|'findFclHandoffByKey'>;
+}
+
+type NormalizedFclDocumentWorkflowOptions={
+  receiverUserId:string;
+  receiverIsActive:(userId:string)=>boolean;
+  now:()=>string;
+};
 
 export function nativeFeeDigest(fees:DraftFee[]):string{
   const rows=fees.map(fee=>({
@@ -300,30 +378,147 @@ function renderDocument(input:DraftDocument){
 }
 
 /** oldWritersStopped is an explicit deployment attestation, not a probing inference. */
-export interface DocumentWorkflowStoreOptions{readonly oldWritersStopped?:boolean;readonly readOnly?:boolean;readonly ownershipMode?:'existing-database'|'fresh-fixture';readonly externalHandleProbe?:(path:string)=>void}
+type ExpectedColumn={name:string;type:string;notnull:number;pk:boolean};
+type ExpectedIndex={name:string;columns:Array<{name:string;desc:boolean}>;unique:boolean};
+const v3TableLayouts:Record<string,ExpectedColumn[]>={
+  document_configs:[
+    {name:'org',type:'TEXT',notnull:0,pk:true},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'input',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_revisions:[
+    {name:'revision_id',type:'TEXT',notnull:0,pk:true},
+    {name:'document_id',type:'TEXT',notnull:1,pk:false},
+    {name:'org',type:'TEXT',notnull:1,pk:false},
+    {name:'owner',type:'TEXT',notnull:1,pk:false},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'state',type:'TEXT',notnull:1,pk:false},
+    {name:'schema_version',type:'INTEGER',notnull:1,pk:false},
+    {name:'payload',type:'TEXT',notnull:1,pk:false},
+    {name:'input_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'template_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'source_revision_id',type:'TEXT',notnull:0,pk:false},
+    {name:'review_hash',type:'TEXT',notnull:0,pk:false},
+    {name:'rejection_reason',type:'TEXT',notnull:0,pk:false},
+    {name:'created_by',type:'TEXT',notnull:1,pk:false},
+    {name:'created_at',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_current_revisions:[
+    {name:'document_id',type:'TEXT',notnull:0,pk:true},
+    {name:'org',type:'TEXT',notnull:1,pk:false},
+    {name:'owner',type:'TEXT',notnull:1,pk:false},
+    {name:'revision_id',type:'TEXT',notnull:1,pk:false},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'schema_version',type:'INTEGER',notnull:1,pk:false},
+    {name:'projection_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'updated_at',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_audit:[
+    {name:'id',type:'TEXT',notnull:0,pk:true},
+    {name:'org',type:'TEXT',notnull:1,pk:false},
+    {name:'actor',type:'TEXT',notnull:1,pk:false},
+    {name:'action',type:'TEXT',notnull:1,pk:false},
+    {name:'digest',type:'TEXT',notnull:1,pk:false},
+    {name:'created',type:'TEXT',notnull:1,pk:false},
+  ],
+};
+const v4TableLayouts:Record<string,ExpectedColumn[]>={
+  document_configs:[
+    {name:'org',type:'TEXT',notnull:0,pk:false},
+    {name:'personal_owner_id',type:'TEXT',notnull:0,pk:false},
+    {name:'version',type:'INTEGER',notnull:1,pk:false},
+    {name:'input',type:'TEXT',notnull:1,pk:false},
+  ],
+  document_revisions:v3TableLayouts.document_revisions!.flatMap(column=>column.name==='org'?[{...column,notnull:0},{name:'personal_owner_id',type:'TEXT',notnull:0,pk:false}]:[{...column,notnull:column.name==='revision_id'?0:column.notnull}]),
+  document_current_revisions:v3TableLayouts.document_current_revisions!.flatMap(column=>column.name==='org'?[{...column,notnull:0}, {name:'personal_owner_id',type:'TEXT',notnull:0,pk:false}]:[{...column,notnull:column.name==='document_id'?0:column.notnull}]),
+  document_audit:v3TableLayouts.document_audit!.flatMap(column=>column.name==='org'?[{...column,notnull:0}, {name:'personal_owner_id',type:'TEXT',notnull:0,pk:false}]:[{...column,notnull:column.name==='id'?0:column.notnull}]),
+};
+const v3Indexes:Record<string,ExpectedIndex[]> = {
+  document_revisions:[{name:'document_revisions_document',columns:[{name:'document_id',desc:false},{name:'version',desc:true}],unique:false}],
+  document_current_revisions:[{name:'document_current_org',columns:[{name:'org',desc:false},{name:'updated_at',desc:true}],unique:false}],
+};
+const v4Indexes:Record<string,ExpectedIndex[]> = {
+  document_revisions:[...v3Indexes.document_revisions!,{name:'document_revisions_personal',columns:[{name:'personal_owner_id',desc:false},{name:'document_id',desc:false},{name:'version',desc:true}],unique:false}],
+  document_current_revisions:[...v3Indexes.document_current_revisions!,{name:'document_current_personal',columns:[{name:'personal_owner_id',desc:false},{name:'updated_at',desc:true}],unique:false}],
+  document_audit:[{name:'document_audit_personal',columns:[{name:'personal_owner_id',desc:false},{name:'created',desc:true}],unique:false}],
+};
+const v5TableLayouts:Record<string,ExpectedColumn[]>={
+  ...v4TableLayouts,
+  fcl_quote_revisions:[
+    {name:'quote_id',type:'TEXT',notnull:1,pk:true},
+    {name:'version',type:'INTEGER',notnull:1,pk:true},
+    {name:'personal_owner_id',type:'TEXT',notnull:1,pk:false},
+    {name:'case_ref',type:'TEXT',notnull:1,pk:false},
+    {name:'payload',type:'TEXT',notnull:1,pk:false},
+    {name:'content_digest',type:'TEXT',notnull:1,pk:false},
+    {name:'actor',type:'TEXT',notnull:1,pk:false},
+    {name:'created_at',type:'TEXT',notnull:1,pk:false},
+  ],
+};
+const v5Indexes:Record<string,ExpectedIndex[]>={
+  ...v4Indexes,
+  fcl_quote_revisions:[
+    {name:'fcl_quote_revisions_owner',columns:[{name:'personal_owner_id',desc:false},{name:'created_at',desc:true},{name:'quote_id',desc:true}],unique:false},
+    {name:'fcl_quote_revisions_case',columns:[{name:'personal_owner_id',desc:false},{name:'case_ref',desc:false},{name:'quote_id',desc:false},{name:'version',desc:true}],unique:false},
+  ],
+};
+export interface DocumentWorkflowStoreOptions{
+  readonly oldWritersStopped?:boolean;
+  readonly readOnly?:boolean;
+  readonly ownershipMode?:'existing-database'|'fresh-fixture';
+  readonly externalHandleProbe?:(path:string)=>void;
+  readonly fcl?:DocumentFclStoreOptions;
+}
 export class DocumentWorkflowStore{
   readonly db;
   readonly signingSecret:string;
   private schemaReady=false;
+  private fclReady=false;
+  private quoteReady=false;
   private readonly oldWritersStopped:boolean;
   private readonly ownershipMode:'existing-database'|'fresh-fixture';
   private readonly externalHandleProbe:(path:string)=>void;
+  private readonly fclStoreOptions:DocumentFclStoreOptions|undefined;
   readonly readOnly:boolean;
   constructor(readonly store:DocumentStore,options:DocumentWorkflowStoreOptions={}){
     this.db=store.db;
     this.oldWritersStopped=options.oldWritersStopped===true;
     this.ownershipMode=options.ownershipMode??'existing-database';
     this.externalHandleProbe=options.externalHandleProbe??assertNoExternalSqliteHandles;
+    this.fclStoreOptions=options.fcl;
     this.readOnly=options.readOnly===true;
     const db=this.db;
     const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
+    const fclRequested=this.fclStoreOptions!==undefined||store.fclEnabled;
+    if(fclRequested){
+      if(!store.fclEnabled)throw new Error('document_fcl_open_required');
+      if(version>5)throw new Error('workflow_schema_incompatible');
+      if(version===5){
+        this.signingSecret=this.readSigningSecret();
+        this.assertV5Schema();
+        this.schemaReady=true;
+        this.fclReady=true;
+        this.quoteReady=true;
+        if(this.readOnly)db.exec('PRAGMA query_only=ON;');
+        return;
+      }
+      if(version===4&&(this.readOnly||this.fclStoreOptions?.mode==='reopen')){
+        this.signingSecret=this.readSigningSecret();
+        this.assertV4Schema();
+        this.schemaReady=true;
+        this.fclReady=true;
+        if(this.readOnly)db.exec('PRAGMA query_only=ON;');
+        return;
+      }
+      if(this.readOnly)throw new Error('workflow_read_only_requires_v4');
+      this.signingSecret=version>=3?this.readSigningSecret():randomBytes(32).toString('hex');
+      this.migrateToV5(version);
+      return;
+    }
     if(version>3)throw new Error('workflow_schema_incompatible');
     if(this.readOnly&&version!==3)throw new Error('workflow_read_only_requires_v3');
     if(version===3){
-      const row=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
-      const revisionTable=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_revisions'").get();
-      if(!row?.value||!revisionTable)throw new Error('workflow_metadata_invalid');
-      this.signingSecret=row.value;
+      this.signingSecret=this.readSigningSecret();
       this.schemaReady=true;
       if(this.readOnly)db.exec('PRAGMA query_only=ON;');
     }else{
@@ -331,6 +526,188 @@ export class DocumentWorkflowStore{
     }
   }
   static openReadOnly(store:DocumentStore):DocumentWorkflowStore{return new DocumentWorkflowStore(store,{readOnly:true});}
+  private readSigningSecret():string{
+    const row=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
+    const revisionTable=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_revisions'").get();
+    if(!row?.value||!revisionTable)throw new Error('workflow_metadata_invalid');
+    return row.value;
+  }
+  private indexColumns(indexName:string):Array<{name:string;desc:boolean}>{
+    return (this.db.prepare('SELECT name,"desc" AS is_desc FROM pragma_index_xinfo(?) WHERE key=1 ORDER BY seqno').all(indexName) as Array<{name:string;is_desc:number}>).map(column=>({name:column.name,desc:column.is_desc===1}));
+  }
+  private assertTableLayout(table:string,expected:ExpectedColumn[]):void{
+    const columns=this.db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{name:string;type:string;notnull:number;pk:number}>;
+    if(columns.length!==expected.length)throw new Error('workflow_schema_unsupported');
+    for(const [index,column] of columns.entries()){
+      const wanted=expected[index];
+      if(!wanted||column.name!==wanted.name||column.type.toUpperCase()!==wanted.type||column.notnull!==wanted.notnull||(column.pk>0)!==wanted.pk)throw new Error('workflow_schema_unsupported');
+    }
+  }
+  private assertIndexDefinition(table:string,expected:ExpectedIndex):void{
+    const row=this.db.prepare(`PRAGMA index_list('${table}')`).all().find(index=>(index as {name:string}).name===expected.name) as {name:string;unique:number}|undefined;
+    if(!row||(row.unique===1)!==expected.unique)throw new Error('workflow_schema_unsupported');
+    const columns=this.indexColumns(expected.name);
+    if(columns.length!==expected.columns.length||columns.some((column,index)=>column.name!==expected.columns[index]?.name||column.desc!==expected.columns[index]?.desc))throw new Error('workflow_schema_unsupported');
+  }
+  private assertUniqueColumns(table:string,columns:string[]):void{
+    const indexes=this.db.prepare(`PRAGMA index_list('${table}')`).all() as Array<{name:string;unique:number}>;
+    if(!indexes.some(index=>index.unique===1&&this.indexColumns(index.name).every((column,position)=>column.name===columns[position])&&this.indexColumns(index.name).length===columns.length))throw new Error('workflow_schema_unsupported');
+  }
+  private assertPrimaryColumns(table:string,columns:string[]):void{
+    const rows=(this.db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{name:string;pk:number}>).filter(row=>row.pk>0).sort((left,right)=>left.pk-right.pk);
+    if(rows.length!==columns.length||rows.some((row,index)=>row.name!==columns[index]))throw new Error('workflow_schema_unsupported');
+  }
+  private assertKnownSchema(layouts:Record<string,ExpectedColumn[]>,indexes:Record<string,ExpectedIndex[]>):void{
+    for(const [table,expected] of Object.entries(layouts)){
+      this.assertTableLayout(table,expected);
+      const allowed=new Set(indexes[table]?.map(index=>index.name)??[]);
+      const existing=this.db.prepare(`PRAGMA index_list('${table}')`).all() as Array<{name:string}>;
+      if(existing.some(index=>!index.name.startsWith('sqlite_autoindex_')&&!allowed.has(index.name)))throw new Error('workflow_schema_unsupported');
+      const trigger=this.db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=? LIMIT 1").get(table);
+      if(trigger)throw new Error('workflow_schema_unsupported');
+    }
+    for(const [table,expected] of Object.entries(indexes))for(const index of expected)this.assertIndexDefinition(table,index);
+  }
+  private assertV4OwnerConstraints():void{
+    const tables=['document_configs','document_revisions','document_current_revisions','document_audit'];
+    for(const table of tables){
+      const row=this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {sql:string}|undefined;
+      const sql=row?.sql.replace(/\s+/gu,'').toLowerCase()??'';
+      if(!sql.includes('check((orgisnull)!=(personal_owner_idisnull))'))throw new Error('workflow_schema_unsupported');
+    }
+    this.assertUniqueColumns('document_configs',['org']);
+    this.assertUniqueColumns('document_configs',['personal_owner_id']);
+    this.assertUniqueColumns('document_revisions',['document_id','version']);
+    this.assertUniqueColumns('document_current_revisions',['revision_id']);
+  }
+  private assertKnownV3Schema():void{
+    this.assertKnownSchema(v3TableLayouts,v3Indexes);
+    this.assertUniqueColumns('document_configs',['org']);
+    this.assertUniqueColumns('document_revisions',['document_id','version']);
+    this.assertUniqueColumns('document_current_revisions',['revision_id']);
+  }
+  private assertKnownV4Schema():void{
+    this.assertKnownSchema(v4TableLayouts,v4Indexes);
+    this.assertV4OwnerConstraints();
+  }
+  private assertV5Schema():void{
+    const metadata=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('schema_version') as {value:string}|undefined;
+    if(metadata?.value!=='5')throw new Error('workflow_metadata_invalid');
+    this.assertKnownSchema(v5TableLayouts,v5Indexes);
+    this.assertV4OwnerConstraints();
+    this.assertPrimaryColumns('fcl_quote_revisions',['quote_id','version']);
+  }
+  private assertV4Schema():void{
+    const metadata=this.db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('schema_version') as {value:string}|undefined;
+    if(metadata?.value!=='4')throw new Error('workflow_metadata_invalid');
+    this.assertKnownV4Schema();
+  }
+  private assertFreshFixtureEmpty():void{
+    const tables=['document_configs','quote_documents','document_idempotency','document_audit','document_pdfs','document_revisions','document_current_revisions','document_revision_events','document_native_prepare_credentials','fcl_quote_revisions'];
+    for(const table of tables){
+      const exists=this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if(exists&&this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())throw new PortalError('fcl_upgrade_fresh_fixture_not_empty');
+    }
+  }
+  private assertV4UpgradeOwnership():void{
+    try{this.store.assertExclusiveOwnership();}catch{throw new PortalError('fcl_upgrade_old_writer_open');}
+    const fclOptions=this.fclStoreOptions;
+    const mode=fclOptions?.mode??(this.ownershipMode==='fresh-fixture'?'fresh_fixture':'exclusive_verified');
+    if(mode==='reopen')throw new PortalError('fcl_schema_not_upgraded');
+    if(mode==='fresh_fixture'){
+      if(fclOptions&&fclOptions.mode==='fresh_fixture'&&(!fclOptions.authorized||!fclOptions.oldWritersStopped))throw new PortalError('fcl_upgrade_not_authorized');
+      if(!fclOptions&&(!this.oldWritersStopped||this.ownershipMode!=='fresh-fixture'))throw new PortalError('fcl_upgrade_not_authorized');
+      this.assertFreshFixtureEmpty();
+      return;
+    }
+    if(fclOptions&&fclOptions.mode==='exclusive_verified'&&(!fclOptions.authorized||!fclOptions.oldWritersStopped))throw new PortalError('fcl_upgrade_not_authorized');
+    if(!fclOptions&&!this.oldWritersStopped)throw new PortalError('fcl_upgrade_not_authorized');
+    if(fclOptions?.mode==='exclusive_verified'&&fclOptions.assertExclusive){
+      try{fclOptions.assertExclusive();}catch{throw new PortalError('fcl_upgrade_ownership_unverified');}
+    }
+    try{this.externalHandleProbe(this.store.path);}catch(error){
+      if(error instanceof PortalError&&error.code==='document_v3_upgrade_old_writer_open')throw new PortalError('fcl_upgrade_old_writer_open');
+      throw new PortalError('fcl_upgrade_ownership_unverified');
+    }
+  }
+  private createV3Tables():void{
+    this.db.exec(`CREATE TABLE IF NOT EXISTS document_store_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_revisions(revision_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,org TEXT NOT NULL,owner TEXT NOT NULL,version INTEGER NOT NULL,state TEXT NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL,input_digest TEXT NOT NULL,template_digest TEXT NOT NULL,source_revision_id TEXT,review_hash TEXT,rejection_reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(document_id,version));
+CREATE TABLE IF NOT EXISTS document_current_revisions(document_id TEXT PRIMARY KEY,org TEXT NOT NULL,owner TEXT NOT NULL,revision_id TEXT NOT NULL UNIQUE,version INTEGER NOT NULL,schema_version INTEGER NOT NULL,projection_digest TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_revision_events(audit_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,revision_id TEXT NOT NULL,version INTEGER NOT NULL,action TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS document_native_prepare_credentials(binding_hash TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,document_kind TEXT NOT NULL,case_ref TEXT,binding_digest TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS document_revisions_document ON document_revisions(document_id,version DESC);
+CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(org,updated_at DESC);`);
+  }
+  private migrateV4Tables():void{
+    this.db.exec(`CREATE TABLE document_configs_v4(org TEXT UNIQUE,personal_owner_id TEXT UNIQUE,version INTEGER NOT NULL,input TEXT NOT NULL,CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_configs_v4(org,personal_owner_id,version,input) SELECT org,NULL,version,input FROM document_configs;
+CREATE TABLE document_revisions_v4(revision_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,org TEXT,personal_owner_id TEXT,owner TEXT NOT NULL,version INTEGER NOT NULL,state TEXT NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL,input_digest TEXT NOT NULL,template_digest TEXT NOT NULL,source_revision_id TEXT,review_hash TEXT,rejection_reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(document_id,version),CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_revisions_v4(revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) SELECT revision_id,document_id,org,NULL,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at FROM document_revisions;
+CREATE TABLE document_current_revisions_v4(document_id TEXT PRIMARY KEY,org TEXT,personal_owner_id TEXT,owner TEXT NOT NULL,revision_id TEXT NOT NULL UNIQUE,version INTEGER NOT NULL,schema_version INTEGER NOT NULL,projection_digest TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_current_revisions_v4(document_id,org,personal_owner_id,owner,revision_id,version,schema_version,projection_digest,updated_at) SELECT document_id,org,NULL,owner,revision_id,version,schema_version,projection_digest,updated_at FROM document_current_revisions;
+CREATE TABLE document_audit_v4(id TEXT PRIMARY KEY,org TEXT,personal_owner_id TEXT,actor TEXT NOT NULL,action TEXT NOT NULL,digest TEXT NOT NULL,created TEXT NOT NULL,CHECK((org IS NULL)!=(personal_owner_id IS NULL)));
+INSERT INTO document_audit_v4(id,org,personal_owner_id,actor,action,digest,created) SELECT id,org,NULL,actor,action,digest,created FROM document_audit;
+DROP TABLE document_configs;
+DROP TABLE document_revisions;
+DROP TABLE document_current_revisions;
+DROP TABLE document_audit;
+ALTER TABLE document_configs_v4 RENAME TO document_configs;
+ALTER TABLE document_revisions_v4 RENAME TO document_revisions;
+ALTER TABLE document_current_revisions_v4 RENAME TO document_current_revisions;
+ALTER TABLE document_audit_v4 RENAME TO document_audit;
+CREATE INDEX document_revisions_document ON document_revisions(document_id,version DESC);
+CREATE INDEX document_revisions_personal ON document_revisions(personal_owner_id,document_id,version DESC);
+CREATE INDEX document_current_org ON document_current_revisions(org,updated_at DESC);
+CREATE INDEX document_current_personal ON document_current_revisions(personal_owner_id,updated_at DESC);
+CREATE INDEX document_audit_personal ON document_audit(personal_owner_id,created DESC);`);
+  }
+  private createV5Tables():void{
+    this.db.exec(`CREATE TABLE fcl_quote_revisions(quote_id TEXT NOT NULL,version INTEGER NOT NULL,personal_owner_id TEXT NOT NULL,case_ref TEXT NOT NULL,payload TEXT NOT NULL,content_digest TEXT NOT NULL,actor TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(quote_id,version));
+CREATE INDEX fcl_quote_revisions_owner ON fcl_quote_revisions(personal_owner_id,created_at DESC,quote_id DESC);
+CREATE INDEX fcl_quote_revisions_case ON fcl_quote_revisions(personal_owner_id,case_ref,quote_id,version DESC);`);
+  }
+  private migrateToV5(initialVersion:number):void{
+    this.assertV4UpgradeOwnership();
+    const db=this.db;
+    db.exec('BEGIN EXCLUSIVE');
+    try{
+      const version=Number((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
+      if(version!==initialVersion)throw new Error('workflow_upgrade_ownership_conflict');
+      if(version>5)throw new Error('workflow_schema_incompatible');
+      if(version===5)throw new Error('workflow_upgrade_ownership_conflict');
+      if(version<3){
+        this.createV3Tables();
+        db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','3');
+        db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('workflow_signing_secret',this.signingSecret);
+        db.exec('PRAGMA user_version=3;');
+      }else{
+        const existing=db.prepare('SELECT value FROM document_store_metadata WHERE key=?').get('workflow_signing_secret') as {value:string}|undefined;
+        if(!existing||existing.value!==this.signingSecret)throw new Error('workflow_upgrade_ownership_conflict');
+      }
+      if(version<4){
+        this.assertKnownV3Schema();
+        this.migrateV4Tables();
+        db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','4');
+        db.exec('PRAGMA user_version=4;');
+        this.assertV4Schema();
+      }else{
+        this.assertV4Schema();
+      }
+      this.createV5Tables();
+      db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema_version','5');
+      db.prepare('INSERT INTO document_store_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('workflow_signing_secret',this.signingSecret);
+      db.exec('PRAGMA user_version=5;');
+      this.assertV5Schema();
+      db.exec('COMMIT');
+      this.schemaReady=true;
+      this.fclReady=true;
+      this.quoteReady=true;
+    }catch(error){
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   private ensureCredentialTable(){this.db.exec('CREATE TABLE IF NOT EXISTS document_native_prepare_credentials(binding_hash TEXT PRIMARY KEY,org TEXT NOT NULL,actor TEXT NOT NULL,document_kind TEXT NOT NULL,case_ref TEXT,binding_digest TEXT NOT NULL,created_at TEXT NOT NULL);');}
   rememberPrepareCredential(input:{bindingHash:string;org:string;actor:string;documentKind:StoredPayload['document_kind'];caseRef:string|null;bindingDigest:string}){
     this.ensureWritable();
@@ -338,7 +715,7 @@ export class DocumentWorkflowStore{
   }
   nativePrepareCredential(bindingHash:string){if(!this.schemaReady||!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_native_prepare_credentials'").get())return null;return this.db.prepare('SELECT org,actor,document_kind,case_ref,binding_digest FROM document_native_prepare_credentials WHERE binding_hash=?').get(bindingHash) as {org:string;actor:string;document_kind:StoredPayload['document_kind'];case_ref:string|null;binding_digest:string}|undefined??null;}
   private upgrade():void{
-    if(this.schemaReady){this.ensureCredentialTable();return;}
+    if(this.schemaReady){if(!this.fclReady)this.ensureCredentialTable();return;}
     if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');
     if(!this.oldWritersStopped)throw new PortalError('document_v3_upgrade_ownership_required');
     try{this.store.assertExclusiveOwnership();}catch{throw new PortalError('document_v3_upgrade_old_writer_open');}
@@ -375,15 +752,1121 @@ CREATE INDEX IF NOT EXISTS document_current_org ON document_current_revisions(or
   }
   close(){void this.store;}
   isV3(){return this.schemaReady;}
+  isV4(){return this.fclReady;}
+  isV5(){return this.quoteReady;}
   ensureWritable(){if(this.readOnly)throw new PortalError('document_v3_rollback_read_only');this.upgrade();}
   health(){try{const version=Number((this.store.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);if(version<=2)return true;this.store.db.prepare('SELECT revision_id FROM document_revisions LIMIT 1').get();return true;}catch{return false;}}
 }
 
 export class DocumentWorkflowService{
   private readonly secret;
-  private readonly reviews=new Map<string,{id:string;version:number;revision_id:string|null;content_digest:string;expires:number;actor:string}>();
-  constructor(readonly store:DocumentWorkflowStore,private readonly legacy:DocumentService,private readonly portal:Pick<PortalService,'getState'>,private readonly renderer:(html:string)=>Promise<Buffer>=renderPdf){this.secret=store.signingSecret;}
+  private readonly reviews=new Map<string,{kind:'enterprise';id:string;version:number;revision_id:string|null;content_digest:string;expires:number;actor:string}|{kind:'fcl';id:string;version:number;revision_id:string;content_digest:string;expires:number;reviewed_at:string;review_expires_at:string;actor:string}>();
+  private readonly fcl:NormalizedFclDocumentWorkflowOptions|null;
+  private readonly fclQuote:FclQuoteWorkflowDependencies|null;
+  constructor(
+    readonly store:DocumentWorkflowStore,
+    private readonly legacy:DocumentService,
+    private readonly portal:Pick<PortalService,'getState'>,
+    private readonly renderer:(html:string)=>Promise<Buffer>=renderPdf,
+    fclOptions?:FclDocumentWorkflowOptions,
+    fclQuote?:FclQuoteWorkflowDependencies,
+  ){
+    this.secret=store.signingSecret;
+    this.fcl=fclOptions?this.normalizeFclOptions(fclOptions):null;
+    if(this.fcl)this.assertFclStartup(this.fcl);
+    this.fclQuote=fclQuote??null;
+    if(this.fclQuote&&!this.store.isV5())throw new Error('fcl_quote_upgrade_not_authorized');
+  }
 
+  private normalizeFclOptions(options:FclDocumentWorkflowOptions):NormalizedFclDocumentWorkflowOptions{
+    if(!this.store.isV4())throw new Error('fcl_upgrade_not_authorized');
+    if(!options.receiverUserId.trim())throw new Error('fcl_receiver_configuration_invalid');
+    const now=options.now??(()=>new Date().toISOString());
+    let initialNow:string;
+    try{initialNow=now();}catch{throw new Error('fcl_clock_invalid');}
+    if(!z.iso.datetime().safeParse(initialNow).success)throw new Error('fcl_clock_invalid');
+    return {receiverUserId:options.receiverUserId,receiverIsActive:options.receiverIsActive,now};
+  }
+  private fclTimestamp(options:NormalizedFclDocumentWorkflowOptions):string{
+    let value:string;
+    try{value=options.now();}catch{throw new PortalError('fcl_clock_invalid');}
+    if(!z.iso.datetime().safeParse(value).success)throw new PortalError('fcl_clock_invalid');
+    return value;
+  }
+  private assertFclStartup(options:NormalizedFclDocumentWorkflowOptions):void{
+    let active:boolean;
+    try{active=options.receiverIsActive(options.receiverUserId);}catch{active=false;}
+    if(!active)throw new Error('fcl_receiver_unavailable');
+    const owners=this.store.db.prepare(`SELECT personal_owner_id AS owner_id FROM document_configs WHERE personal_owner_id IS NOT NULL
+      UNION SELECT personal_owner_id FROM document_revisions WHERE personal_owner_id IS NOT NULL
+      UNION SELECT personal_owner_id FROM document_current_revisions WHERE personal_owner_id IS NOT NULL
+      UNION SELECT personal_owner_id FROM document_audit WHERE personal_owner_id IS NOT NULL${this.store.isV5()?' UNION SELECT personal_owner_id FROM fcl_quote_revisions WHERE personal_owner_id IS NOT NULL':''}`).all() as Array<{owner_id:string}>;
+    if(owners.some(row=>row.owner_id!==options.receiverUserId))throw new Error('fcl_receiver_configuration_mismatch');
+  }
+  private fclOptions():NormalizedFclDocumentWorkflowOptions{
+    if(!this.fcl)throw new PortalError('fcl_unavailable');
+    return this.fcl;
+  }
+  private requireFclReceiver(ctx:PortalContext):NormalizedFclDocumentWorkflowOptions{
+    const options=this.fclOptions();
+    if(!ctx.identity.emailVerified||ctx.organizationId!==null||ctx.identity.userId!==options.receiverUserId)throw new PortalError('fcl_not_found');
+    let active:boolean;
+    try{active=options.receiverIsActive(options.receiverUserId);}catch{active=false;}
+    if(!active)throw new PortalError('fcl_unavailable');
+    return options;
+  }
+  private fclConfigRaw(personalOwnerId:string):FclConfigView{
+    const row=this.store.db.prepare('SELECT version,input FROM document_configs WHERE org IS NULL AND personal_owner_id=?').get(personalOwnerId) as {version:number;input:string}|undefined;
+    let input:unknown=null;
+    if(row){
+      try{input=JSON.parse(row.input);}catch{throw new PortalError('document_readback_failed');}
+    }
+    const parsed=fclConfigViewSchema.safeParse({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,version:row?.version??0,input,catalog:standardFeeTemplate});
+    if(!parsed.success)throw new PortalError('document_readback_failed');
+    return parsed.data;
+  }
+  fclConfig(ctx:PortalContext):FclConfigView{
+    const options=this.requireFclReceiver(ctx);
+    return this.fclConfigRaw(options.receiverUserId);
+  }
+  private assertFclCommitted(input:{personalOwnerId:string;version:number;input:unknown;auditId:string;partition:string;key:string;digest:string;created:string}):void{
+    const readback=this.fclConfigRaw(input.personalOwnerId);
+    if(readback.version!==input.version||canonicalHash(readback.input)!==canonicalHash(input.input))throw new PortalError('document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.personalOwnerId||audit.action!=='fcl-config-save'||audit.digest!==input.digest||audit.created!==input.created)throw new PortalError('document_readback_failed');
+    const idempotency=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!idempotency||idempotency.digest!==input.digest)throw new PortalError('document_readback_failed');
+    let persisted:FclConfigView;
+    try{persisted=fclConfigViewSchema.parse(JSON.parse(idempotency.result));}catch{throw new PortalError('document_readback_failed');}
+    if(canonicalHash(persisted)!==canonicalHash(readback))throw new PortalError('document_readback_failed');
+  }
+  saveFclConfig(ctx:PortalContext,input:unknown,key:string):FclConfigView{
+    const options=this.requireFclReceiver(ctx);
+    const data=parse(fclConfigSaveSchema,input);
+    const createdAt=this.fclTimestamp(options);
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
+    const partition=JSON.stringify(['v4-personal',options.receiverUserId,ctx.identity.userId,'fcl-config-save']),digest=canonicalHash(data),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==digest)throw new PortalError('idempotency_conflict');
+        this.requireFclReceiver(ctx);
+        db.exec('COMMIT');
+        committed=true;
+        return this.fclConfigRaw(options.receiverUserId);
+      }
+      const current=this.fclConfigRaw(options.receiverUserId);
+      if(current.version!==data.expected_version)throw new PortalError('version_conflict');
+      const nextVersion=data.expected_version+1;
+      const committedView:FclConfigView=fclConfigViewSchema.parse({
+        contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+        version:nextVersion,
+        input:data.input,
+        catalog:standardFeeTemplate,
+      });
+      db.prepare('INSERT INTO document_configs(org,personal_owner_id,version,input) VALUES(?,?,?,?) ON CONFLICT(personal_owner_id) DO UPDATE SET version=excluded.version,input=excluded.input').run(null,options.receiverUserId,nextVersion,JSON.stringify(data.input));
+      const auditId=randomUUID();
+      db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,'fcl-config-save',digest,createdAt);
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,digest,JSON.stringify(committedView));
+      this.assertFclCommitted({personalOwnerId:options.receiverUserId,version:nextVersion,input:data.input,auditId,partition,key,digest,created:createdAt});
+      this.requireFclReceiver(ctx);
+      db.exec('COMMIT');
+      committed=true;
+      this.assertFclCommitted({personalOwnerId:options.receiverUserId,version:nextVersion,input:data.input,auditId,partition,key,digest,created:createdAt});
+      return this.fclConfigRaw(options.receiverUserId);
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');
+      throw error;
+    }
+  }
+  private fclQuoteDependencies():FclQuoteWorkflowDependencies{
+    if(!this.fclQuote||!this.store.isV5())throw new PortalError('fcl_quote_unavailable');
+    return this.fclQuote;
+  }
+  private readFclQuote(personalOwnerId:string,quoteRef:string,requestedVersion:number|null):{snapshot:ReturnType<typeof validateFclQuoteSnapshot>;currentVersion:number}{
+    const current=this.store.db.prepare('SELECT MAX(version) AS version FROM fcl_quote_revisions WHERE personal_owner_id=? AND quote_id=?').get(personalOwnerId,quoteRef) as {version:number|null}|undefined;
+    if(!current?.version)throw new PortalError('fcl_quote_not_found');
+    const version=requestedVersion??current.version;
+    const row=this.store.db.prepare('SELECT quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at FROM fcl_quote_revisions WHERE personal_owner_id=? AND quote_id=? AND version=?').get(personalOwnerId,quoteRef,version) as {quote_id:string;version:number;personal_owner_id:string;case_ref:string;payload:string;content_digest:string;actor:string;created_at:string}|undefined;
+    if(!row)throw new PortalError('fcl_quote_not_found');
+    let snapshot:ReturnType<typeof validateFclQuoteSnapshot>;
+    try{snapshot=validateFclQuoteSnapshot(JSON.parse(row.payload));}catch{throw new PortalError('fcl_quote_readback_failed');}
+    if(snapshot.quote_ref!==row.quote_id||snapshot.version!==row.version||row.quote_id!==quoteRef||row.version!==version||row.personal_owner_id!==personalOwnerId||row.case_ref!==snapshot.case_binding.case_ref||row.content_digest!==snapshot.content_digest||row.actor!==snapshot.actor||row.created_at!==snapshot.created_at)throw new PortalError('fcl_quote_readback_failed');
+    return {snapshot,currentVersion:current.version};
+  }
+  private fclQuoteCurrentness(ctx:PortalContext,snapshot:ReturnType<typeof validateFclQuoteSnapshot>,currentVersion:number,options:NormalizedFclDocumentWorkflowOptions):FclQuoteCurrentness{
+    const reasons=new Set<string>();
+    const dependencies=this.fclQuoteDependencies();
+    if(snapshot.version<currentVersion)reasons.add('fcl_quote_not_current_version');
+    try{
+      const caseView=dependencies.caseReader.getFclCase(ctx,snapshot.case_binding.case_ref);
+      if(caseView.case_version!==snapshot.case_binding.case_version)reasons.add('fcl_quote_case_version_changed');
+      if(caseView.review_context.latest_customer_supplement_ref!==snapshot.case_binding.latest_customer_supplement_ref)reasons.add('fcl_quote_case_supplement_changed');
+      if(caseView.case_status==='closed'||caseView.case_status==='cancelled')reasons.add('fcl_quote_case_closed');
+      if(caseView.case_status==='submitted'||caseView.case_status==='needs_input'||caseView.review_context.review_required)reasons.add('fcl_quote_case_review_required');
+    }catch{reasons.add('fcl_quote_case_unavailable');}
+    try{
+      const release=dependencies.rateReader.get(ctx,'fcl').active_release;
+      if(!release)reasons.add('fcl_quote_source_unavailable');
+      else if(release.release_id!==snapshot.source_snapshot.release_id||release.version!==snapshot.source_snapshot.release_version||release.digest!==snapshot.source_snapshot.dataset_digest)reasons.add('fcl_quote_source_release_changed');
+      else{
+        const rate=(release.input as FclRateDataset).rates.find(candidate=>candidate.rate_id===snapshot.source_snapshot.rate_id);
+        if(!rate||canonicalHash(rate)!==canonicalHash(snapshot.source_snapshot.rate))reasons.add('fcl_quote_source_rate_changed');
+      }
+    }catch{reasons.add('fcl_quote_source_unavailable');}
+    const today=this.fclTimestamp(options).slice(0,10);
+    if(today<snapshot.source_snapshot.valid_from||today>snapshot.source_snapshot.valid_until)reasons.add('fcl_quote_source_expired');
+    return {valid_now:reasons.size===0,reason_codes:[...reasons]};
+  }
+  private fclQuoteView(snapshot:ReturnType<typeof validateFclQuoteSnapshot>,currentVersion:number,replay:{replayed:boolean;submittedVersion:number|null},currentness:FclQuoteCurrentness):FclQuoteView{
+    return fclQuoteViewSchema.parse({
+      ...snapshot,
+      current_version:currentVersion,
+      historical:snapshot.version<currentVersion,
+      currentness,
+      replay:{replayed:replay.replayed,submitted_version:replay.submittedVersion,current:snapshot.version===currentVersion},
+    });
+  }
+  private assertFclQuoteMatch(
+    status:'success'|'needs_input'|'manual_review'|'blocked'|'unavailable',
+    selected:{rate_id:string;release_id:string;release_version:number;dataset_digest:string}|null,
+    expected:{selected_rate_id:string;expected_release_id:string;expected_release_version:number;expected_dataset_digest:string},
+  ):void{
+    if(status!=='success'||!selected){
+      if(status==='blocked')throw new PortalError('fcl_quote_binding_conflict');
+      if(status==='needs_input')throw new PortalError('fcl_quote_case_incomplete');
+      throw new PortalError('fcl_quote_source_unavailable');
+    }
+    if(selected.rate_id!==expected.selected_rate_id||selected.release_id!==expected.expected_release_id||selected.release_version!==expected.expected_release_version||selected.dataset_digest!==expected.expected_dataset_digest)throw new PortalError('fcl_quote_source_changed');
+  }
+  private assertFclQuoteCommitted(input:{personalOwnerId:string;quoteRef:string;version:number;contentDigest:string;actor:string;createdAt:string;auditId:string;partition:string;key:string;requestDigest:string}):void{
+    const read=this.readFclQuote(input.personalOwnerId,input.quoteRef,input.version);
+    const snapshot=read.snapshot;
+    if(snapshot.content_digest!==input.contentDigest||snapshot.actor!==input.actor||snapshot.created_at!==input.createdAt)throw new PortalError('fcl_quote_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.actor||audit.action!==`fcl-quote-${snapshot.version===1?'create':'update'}`||audit.digest!==input.requestDigest||audit.created!==input.createdAt)throw new PortalError('fcl_quote_readback_failed');
+    const idempotency=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!idempotency||idempotency.digest!==input.requestDigest)throw new PortalError('fcl_quote_readback_failed');
+    try{
+      const result=fclQuoteReferenceSchema.parse(JSON.parse(idempotency.result));
+      if(result.quote_ref!==input.quoteRef||result.version!==input.version)throw new Error('mismatch');
+    }catch{throw new PortalError('fcl_quote_readback_failed');}
+  }
+  private saveFclQuoteLocked(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,input:unknown,key:string):FclQuoteView{
+    const request=parse(fclQuoteSaveRequestSchema,input,'fcl_quote_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    const dependencies=this.fclQuoteDependencies();
+    const action=`fcl-quote-${request.operation}`;
+    const target=request.operation==='update'?request.quote_ref:'create';
+    const partition=JSON.stringify(['v5-personal',options.receiverUserId,ctx.identity.userId,action,target]);
+    const requestDigest=canonicalHash(request),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==requestDigest)throw new PortalError('idempotency_conflict');
+        let submitted:{quote_ref:string;version:number};
+        try{submitted=fclQuoteReferenceSchema.parse(JSON.parse(old.result));}catch{throw new PortalError('fcl_quote_readback_failed');}
+        this.requireFclReceiver(ctx);
+        db.exec('COMMIT');
+        committed=true;
+        const read=this.readFclQuote(options.receiverUserId,submitted.quote_ref,submitted.version);
+        dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
+        return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:true,submittedVersion:submitted.version},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
+      }
+      let quoteRef:string,version:number,selected;
+      let caseBinding,caseProjection,caseView;
+      if(request.operation==='create'){
+        quoteRef=randomUUID();version=1;
+        caseView=dependencies.caseReader.getFclCase(ctx,request.case_ref);
+        if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');
+        const match=dependencies.quoteService.match(ctx,{contract_version:FCL_QUOTE_WORKFLOW_VERSION,case_ref:request.case_ref,expected_case_version:request.expected_case_version,expected_customer_supplement_ref:request.expected_customer_supplement_ref,selected_rate_id:request.selected_rate_id});
+        this.assertFclQuoteMatch(match.status,match.data.selected,request);
+        selected=match.data.selected!;
+        caseBinding={case_ref:request.case_ref,case_version:request.expected_case_version,latest_customer_supplement_ref:request.expected_customer_supplement_ref};
+      }else{
+        const existing=this.readFclQuote(options.receiverUserId,request.quote_ref,null);
+        if(existing.snapshot.version!==request.expected_version)throw new PortalError('version_conflict');
+        const caseRef=existing.snapshot.case_binding.case_ref;
+        caseView=dependencies.caseReader.getFclCase(ctx,caseRef);
+        if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');
+        quoteRef=request.quote_ref;version=request.expected_version+1;
+        if(request.source_binding.mode==='retain'){
+          selected=existing.snapshot.source_snapshot;
+          caseBinding=existing.snapshot.case_binding;
+          caseProjection=existing.snapshot.case_projection;
+        }else{
+          const match=dependencies.quoteService.match(ctx,{contract_version:FCL_QUOTE_WORKFLOW_VERSION,case_ref:caseRef,expected_case_version:request.source_binding.expected_case_version,expected_customer_supplement_ref:request.source_binding.expected_customer_supplement_ref,selected_rate_id:request.source_binding.selected_rate_id});
+          this.assertFclQuoteMatch(match.status,match.data.selected,request.source_binding);
+          selected=match.data.selected!;
+          caseBinding={case_ref:caseRef,case_version:request.source_binding.expected_case_version,latest_customer_supplement_ref:request.source_binding.expected_customer_supplement_ref};
+        }
+      }
+      const createdAt=this.fclTimestamp(options);
+      const snapshot=buildFclCostSellSnapshot({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:quoteRef,version,actor:ctx.identity.userId,created_at:createdAt,caseView,selected,input:request.input,...(caseBinding===undefined?{}:{case_binding:caseBinding}),...(caseProjection===undefined?{}:{case_projection:caseProjection})});
+      db.prepare('INSERT INTO fcl_quote_revisions(quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at) VALUES(?,?,?,?,?,?,?,?)').run(quoteRef,version,options.receiverUserId,snapshot.case_binding.case_ref,JSON.stringify(snapshot),snapshot.content_digest,ctx.identity.userId,createdAt);
+      const auditId=randomUUID();
+      db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,`fcl-quote-${request.operation}`,requestDigest,createdAt);
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,requestDigest,JSON.stringify({quote_ref:quoteRef,version}));
+      this.assertFclQuoteCommitted({personalOwnerId:options.receiverUserId,quoteRef,version,contentDigest:snapshot.content_digest,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest});
+      this.requireFclReceiver(ctx);
+      db.exec('COMMIT');
+      committed=true;
+      this.assertFclQuoteCommitted({personalOwnerId:options.receiverUserId,quoteRef,version,contentDigest:snapshot.content_digest,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest});
+      const read=this.readFclQuote(options.receiverUserId,quoteRef,version);
+      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('fcl_quote_readback_failed');
+      throw error;
+    }
+  }
+  saveFclQuote(ctx:PortalContext,input:unknown,key:string):FclQuoteView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();
+    this.store.ensureWritable();
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.saveFclQuoteLocked(ctx,options,input,key)));
+  }
+  matchFclQuote(ctx:PortalContext,input:unknown){
+    this.requireFclReceiver(ctx);const dependencies=this.fclQuoteDependencies();
+    const request=parse(fclQuoteMatchRequestSchema,input,'fcl_quote_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>dependencies.quoteService.match(ctx,request)));
+  }
+  getFclQuote(ctx:PortalContext,input:unknown):FclQuoteView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclQuoteGetRequestSchema,input,'fcl_quote_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>{
+      const read=this.readFclQuote(options.receiverUserId,request.quote_ref,request.version);
+      dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
+      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
+    });
+  }
+  listFclQuotes(ctx:PortalContext,input:unknown){
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclQuoteListRequestSchema,input,'fcl_quote_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>{
+      dependencies.caseReader.getFclCase(ctx,request.case_ref);
+      let cursor:{case_ref:string;at:string;quote_ref:string}|null=null;
+      if(request.cursor){
+        try{
+          cursor=z.object({case_ref:z.string().uuid(),at:z.iso.datetime(),quote_ref:z.string().uuid()}).strict().parse(JSON.parse(Buffer.from(request.cursor,'base64url').toString('utf8')));
+        }catch{throw new PortalError('fcl_quote_input_invalid');}
+        if(cursor.case_ref!==request.case_ref)throw new PortalError('fcl_quote_input_invalid');
+      }
+      const rows=this.store.db.prepare(`SELECT q.quote_id,q.version,q.created_at FROM fcl_quote_revisions q WHERE q.personal_owner_id=? AND q.case_ref=? AND q.version=(SELECT MAX(m.version) FROM fcl_quote_revisions m WHERE m.quote_id=q.quote_id AND m.personal_owner_id=q.personal_owner_id) AND (? IS NULL OR q.created_at<? OR (q.created_at=? AND q.quote_id<?)) ORDER BY q.created_at DESC,q.quote_id DESC LIMIT ?`).all(options.receiverUserId,request.case_ref,cursor?.at??null,cursor?.at??'',cursor?.at??'',cursor?.quote_ref??'',request.limit+1) as Array<{quote_id:string;version:number;created_at:string}>;
+      const page=rows.slice(0,request.limit);
+      return fclQuoteListSchema.parse({
+        items:page.map(row=>{
+          const read=this.readFclQuote(options.receiverUserId,row.quote_id,row.version);
+          return {
+            quote_ref:row.quote_id,
+            version:row.version,
+            current_version:read.currentVersion,
+            case_ref:request.case_ref,
+            case_version:read.snapshot.case_binding.case_version,
+            rate_id:read.snapshot.source_snapshot.rate_id,
+            release_id:read.snapshot.source_snapshot.release_id,
+            complete:read.snapshot.completeness.complete,
+            by_currency:read.snapshot.calculation.by_currency,
+            currentness:this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options),
+            created_at:row.created_at,
+          };
+        }),
+        next_cursor:rows.length>request.limit&&page.at(-1)?Buffer.from(JSON.stringify({case_ref:request.case_ref,at:page.at(-1)!.created_at,quote_ref:page.at(-1)!.quote_id})).toString('base64url'):null,
+      });
+    });
+  }
+  private fclDocumentSignature(payload:Omit<FclDocumentPayload,'content_digest'|'signature'>):{content_digest:string;signature:string}{
+    const content_digest=canonicalHash(payload);
+    return {content_digest,signature:createHmac('sha256',this.secret).update(canonicalJson({domain:'fcl-linked-document',payload:{...payload,content_digest}})).digest('hex')};
+  }
+  private readFclDocument(personalOwnerId:string,documentId:string,requestedVersion:number|null):{payload:FclDocumentPayload;currentVersion:number}{
+    const latest=this.store.db.prepare('SELECT MAX(version) AS version FROM document_revisions WHERE personal_owner_id=? AND document_id=?').get(personalOwnerId,documentId) as {version:number|null}|undefined;
+    if(!latest?.version)throw new PortalError('fcl_document_not_found');
+    const version=requestedVersion??latest.version;
+    const row=this.store.db.prepare('SELECT revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at FROM document_revisions WHERE personal_owner_id=? AND document_id=? AND version=?').get(personalOwnerId,documentId,version) as {revision_id:string;document_id:string;org:string|null;personal_owner_id:string|null;owner:string;version:number;state:string;schema_version:number;payload:string;input_digest:string;template_digest:string;source_revision_id:string|null;review_hash:string|null;rejection_reason:string|null;created_by:string;created_at:string}|undefined;
+    if(!row)throw new PortalError('fcl_document_not_found');
+    let payload:FclDocumentPayload;
+    try{payload=fclDocumentPayloadSchema.parse(JSON.parse(row.payload));}catch{throw new PortalError('fcl_document_readback_failed');}
+    const expected=this.fclDocumentSignature(Object.fromEntries(Object.entries(payload).filter(([key])=>key!=='content_digest'&&key!=='signature')) as unknown as Omit<FclDocumentPayload,'content_digest'|'signature'>);
+    const prior=version>1?this.store.db.prepare('SELECT revision_id,payload FROM document_revisions WHERE personal_owner_id=? AND document_id=? AND version=?').get(personalOwnerId,documentId,version-1) as {revision_id:string;payload:string}|undefined:undefined;
+    let priorPayload:FclDocumentPayload|undefined;
+    try{priorPayload=prior?fclDocumentPayloadSchema.parse(JSON.parse(prior.payload)):undefined;}catch{throw new PortalError('fcl_document_readback_failed');}
+    const priorExpected=priorPayload?this.fclDocumentSignature(Object.fromEntries(Object.entries(priorPayload).filter(([key])=>key!=='content_digest'&&key!=='signature')) as unknown as Omit<FclDocumentPayload,'content_digest'|'signature'>):null;
+    const priorIntegrityValid=priorPayload!==undefined&&priorExpected!==null&&priorPayload.document_id===documentId&&priorPayload.personal_owner_id===personalOwnerId&&priorPayload.revision_id===prior?.revision_id&&priorPayload.version===version-1&&priorPayload.content_digest===priorExpected.content_digest&&priorPayload.signature===priorExpected.signature;
+    const latestRow=this.store.db.prepare('SELECT revision_id,payload FROM document_revisions WHERE personal_owner_id=? AND document_id=? AND version=?').get(personalOwnerId,documentId,latest.version) as {revision_id:string;payload:string}|undefined;
+    let latestPayload:FclDocumentPayload;
+    try{latestPayload=fclDocumentPayloadSchema.parse(JSON.parse(latestRow?.payload??''));}catch{throw new PortalError('fcl_document_readback_failed');}
+    const latestExpected=this.fclDocumentSignature(Object.fromEntries(Object.entries(latestPayload).filter(([key])=>key!=='content_digest'&&key!=='signature')) as unknown as Omit<FclDocumentPayload,'content_digest'|'signature'>);
+    const event=this.store.db.prepare('SELECT audit_id,action FROM document_revision_events WHERE document_id=? AND revision_id=? AND version=?').get(documentId,row.revision_id,version) as {audit_id:string;action:string}|undefined;
+    const audit=event?this.store.db.prepare('SELECT org,personal_owner_id,actor,action,created FROM document_audit WHERE id=?').get(event.audit_id) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;created:string}|undefined:undefined;
+    const currentRow=this.store.db.prepare('SELECT revision_id,org,personal_owner_id,owner,version,schema_version,projection_digest,updated_at FROM document_current_revisions WHERE document_id=?').get(documentId) as {revision_id:string;org:string|null;personal_owner_id:string|null;owner:string;version:number;schema_version:number;projection_digest:string;updated_at:string}|undefined;
+    const decision=payload.decision??null;
+    const expectedAction=payload.state==='draft'
+      ?version===1?'fcl-document-create':priorPayload?.state==='rejected'?'fcl-document-resubmit':priorPayload?.state==='approved'?'fcl-document-re-quote':'fcl-document-refresh'
+      :payload.state==='approved'?'fcl-document-approve':'fcl-document-reject';
+    const reviewHash=payload.state==='approved'?decision?.review_hash??null:null;
+    const rejectionReason=payload.state==='rejected'?decision?.reason??null:null;
+    const decisionTimesValid=decision!==null&&decision.actor===payload.actor&&decision.at===payload.created_at&&(decision.kind!=='approved'||(decision.reviewed_at!==null&&decision.review_expires_at!==null&&Date.parse(decision.reviewed_at)<=Date.parse(decision.at)&&Date.parse(decision.at)<Date.parse(decision.review_expires_at)&&Date.parse(decision.review_expires_at)-Date.parse(decision.reviewed_at)<=600000));
+    const decisionValid=payload.state==='draft'
+      ?decision===null
+      :decision!==null&&priorIntegrityValid&&priorPayload?.state==='draft'&&decisionTimesValid&&decision.kind===payload.state&&decision.source_revision_id===prior?.revision_id&&decision.source_version===version-1&&decision.source_content_digest===priorPayload?.content_digest&&(payload.state==='approved'?decision.approved_revision_id===row.revision_id&&decision.approved_version===version:true);
+    if(!decisionValid||(version>1&&!priorIntegrityValid)||payload.content_digest!==expected.content_digest||payload.signature!==expected.signature||payload.document_kind!=='fcl_linked'||payload.personal_owner_id!==personalOwnerId||payload.document_id!==row.document_id||payload.revision_id!==row.revision_id||payload.version!==row.version||payload.version!==version||row.org!==null||row.personal_owner_id!==personalOwnerId||row.owner!==personalOwnerId||row.schema_version!==5||row.created_by!==payload.actor||row.created_at!==payload.created_at||row.input_digest!==canonicalHash(payload.customer_input)||row.template_digest!==canonicalHash(payload.template)||row.source_revision_id!==(decision?.source_revision_id??prior?.revision_id??null)||row.review_hash!==reviewHash||row.rejection_reason!==rejectionReason||row.state!==payload.state)throw new PortalError('fcl_document_readback_failed');
+    if(version>1&&!prior)throw new PortalError('fcl_document_readback_failed');
+    if(latestPayload.content_digest!==latestExpected.content_digest||latestPayload.signature!==latestExpected.signature||!currentRow||currentRow.version!==latest.version||currentRow.revision_id!==latestRow?.revision_id||currentRow.org!==null||currentRow.personal_owner_id!==personalOwnerId||currentRow.owner!==personalOwnerId||currentRow.schema_version!==5||currentRow.projection_digest!==latestPayload.content_digest||currentRow.updated_at!==latestPayload.updated_at)throw new PortalError('fcl_document_readback_failed');
+    if(!event||event.action!==expectedAction||!audit||audit.org!==null||audit.personal_owner_id!==personalOwnerId||audit.actor!==payload.actor||audit.action!==expectedAction||audit.created!==payload.created_at)throw new PortalError('fcl_document_readback_failed');
+    try{
+      const quoted=this.readFclQuote(personalOwnerId,payload.quote_binding.quote_ref,payload.quote_binding.quote_version);
+      if(quoted.snapshot.content_digest!==payload.quote_binding.quote_digest||canonicalHash(quoted.snapshot.case_binding)!==canonicalHash(payload.case_binding)||quoted.snapshot.source_snapshot.rate_id!==payload.source_binding.rate_id||quoted.snapshot.source_snapshot.release_id!==payload.source_binding.release_id||quoted.snapshot.source_snapshot.dataset_digest!==payload.source_binding.dataset_digest||canonicalHash(quoted.snapshot.source_snapshot.rate)!==payload.source_binding.rate_digest)throw new PortalError('fcl_document_readback_failed');
+    }catch{throw new PortalError('fcl_document_readback_failed');}
+    return {payload,currentVersion:latest.version};
+  }
+  private fclDocumentCurrentness(ctx:PortalContext,payload:FclDocumentPayload,currentVersion:number,options:NormalizedFclDocumentWorkflowOptions):FclQuoteCurrentness{
+    const reasons=new Set<string>();
+    if(payload.version<currentVersion)reasons.add('fcl_document_not_current_version');
+    try{
+      const quote=this.readFclQuote(options.receiverUserId,payload.quote_binding.quote_ref,payload.quote_binding.quote_version);
+      const quoteCurrentness=this.fclQuoteCurrentness(ctx,quote.snapshot,quote.currentVersion,options);
+      quoteCurrentness.reason_codes.forEach(reason=>reasons.add(reason));
+      if(quote.currentVersion!==payload.quote_binding.quote_version)reasons.add('fcl_document_quote_changed');
+    }catch{reasons.add('fcl_document_quote_unavailable');}
+    try{
+      const config=this.fclConfigRaw(options.receiverUserId);
+      if(!config.input)reasons.add('fcl_document_template_unavailable');
+      else if(config.version!==payload.template_version)reasons.add('fcl_document_template_changed');
+    }catch{reasons.add('fcl_document_template_unavailable');}
+    const today=this.fclTimestamp(options).slice(0,10);
+    const quoteDate=payload.customer_input.quote_date,validUntil=payload.customer_input.valid_until;
+    if(quoteDate===null||validUntil===null||quoteDate>today||today>validUntil)reasons.add('fcl_document_expired');
+    return {valid_now:reasons.size===0,reason_codes:[...reasons]};
+  }
+  private fclDocumentView(payload:FclDocumentPayload,currentVersion:number,currentness:FclQuoteCurrentness,replay:{replayed:boolean;submitted_version:number|null;current:boolean}={replayed:false,submitted_version:null,current:payload.version===currentVersion}):FclDocumentView{
+    return fclDocumentViewSchema.parse({...payload,current_version:currentVersion,historical:payload.version<currentVersion,currentness,replay});
+  }
+  private buildFclDocumentPayload(input:{
+    documentId:string;revisionId:string;version:number;state:FclDocumentPayload['state'];actor:string;createdAt:string;updatedAt:string;
+    quote:ReturnType<typeof validateFclQuoteSnapshot>;caseView:ReturnType<CaseService['getFclCase']>;config:FclConfigView;
+    display:{quote_no:string;quote_date:string;valid_until:string;remark:string|null};
+  }):FclDocumentPayload{
+    if(!input.config.input)throw new PortalError('fcl_document_config_required');
+    const quote=input.quote;
+    const fees=input.quote.cost_rows.flatMap(row=>{
+      if(row.sell_price===null)throw new PortalError('fcl_document_quote_incomplete');
+      return [{
+        id:stableUuid(`${input.documentId}:${row.row_key}`),
+        source_kind:'manual' as const,
+        template_ref:null,
+        name:row.name,
+        description:null,
+        group:row.group,
+        quantity:row.quantity,
+        unit:row.unit,
+        unit_price:row.sell_price,
+        currency:row.currency,
+        display:'detail' as const,
+        merge_name:null,
+        note:row.customer_note,
+      }];
+    });
+    if(fees.length===0)throw new PortalError('fcl_document_no_quoted_service');
+    const contact=input.caseView.current_input.contact;
+    const customer_name=contact.company?.trim()?contact.company:contact.name;
+    if(!customer_name)throw new PortalError('fcl_document_customer_missing');
+    const caseProjection={
+      origin_city:input.caseView.current_input.origin_city,
+      pol:input.caseView.current_input.pol,
+      pod:input.caseView.current_input.pod,
+      final_destination:input.caseView.current_input.final_destination,
+      containers:input.caseView.current_input.containers.flatMap(container=>container.quantity===null?[]:[{type:container.type,quantity:String(container.quantity)}]),
+      services:[...input.caseView.current_input.selected_services],
+      incoterm:input.caseView.current_input.incoterm,
+      incoterm_other:input.caseView.current_input.incoterm_other,
+      customer_name,
+    };
+    const customerInput=draftDocumentSchema.parse({
+      schema_version:DRAFT_VERSION,
+      quote_no:input.display.quote_no,
+      customer_name,
+      quote_date:input.display.quote_date,
+      valid_until:input.display.valid_until,
+      origin:input.caseView.current_input.origin_city??input.caseView.current_input.pol??'',
+      destination:input.caseView.current_input.final_destination??input.caseView.current_input.pod??'',
+      route_name:`${input.caseView.current_input.pol??''} → ${input.caseView.current_input.pod??''}`,
+      job_no:null,
+      so_no:null,
+      container_no:null,
+      remark:input.display.remark,
+      exchange_rates:quote.exchange_rates,
+      fee_items:fees,
+    });
+    const customerTotals=Object.fromEntries((['USD','CAD','CNY'] as const).map(currency=>{
+      const revenue=input.quote.calculation.by_currency[currency].revenue_subtotal;
+      if(revenue===null)throw new PortalError('fcl_document_quote_incomplete');
+      return [currency,revenue];
+    })) as {USD:string;CAD:string;CNY:string};
+    const unsigned={
+      contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+      schema_version:'fcl-linked-document@2026-09-20.v1' as const,
+      document_id:input.documentId,
+      revision_id:input.revisionId,
+      document_kind:'fcl_linked' as const,
+      personal_owner_id:input.actor,
+      version:input.version,
+      state:input.state,
+      case_binding:quote.case_binding,
+      quote_binding:{quote_ref:quote.quote_ref,quote_version:quote.version,quote_digest:quote.content_digest},
+      source_binding:{
+        rate_id:quote.source_snapshot.rate_id,
+        release_id:quote.source_snapshot.release_id,
+        release_version:quote.source_snapshot.release_version,
+        dataset_digest:quote.source_snapshot.dataset_digest,
+        source_ref:quote.source_snapshot.source_ref,
+        source_version:quote.source_snapshot.source_version,
+        valid_from:quote.source_snapshot.valid_from,
+        valid_until:quote.source_snapshot.valid_until,
+        rate_digest:canonicalHash(quote.source_snapshot.rate),
+      },
+      case_projection:caseProjection,
+      customer_input:customerInput,
+      customer_scope:quote.service_coverage.map(item=>({service:item.service,disposition:item.disposition,note:item.note,included_row_refs:item.included_row_refs})),
+      customer_totals:{by_currency:customerTotals},
+      template:{company_name:input.config.input.issuer_name,company_address:input.config.input.issuer_address,company_phone:input.config.input.issuer_phone,company_email:input.config.input.issuer_email,terms:input.config.input.terms},
+      template_version:input.config.version,
+      actor:input.actor,
+      created_at:input.createdAt,
+      updated_at:input.updatedAt,
+    };
+    return fclDocumentPayloadSchema.parse({...unsigned,...this.fclDocumentSignature(unsigned)});
+  }
+  private assertFclDocumentCommitted(input:{personalOwnerId:string;documentId:string;revisionId:string;version:number;contentDigest:string;signature:string;actor:string;createdAt:string;auditId:string;partition:string;key:string;requestDigest:string;action:string}):void{
+    const read=this.readFclDocument(input.personalOwnerId,input.documentId,input.version);
+    if(read.payload.revision_id!==input.revisionId||read.payload.content_digest!==input.contentDigest||read.payload.signature!==input.signature||read.payload.actor!==input.actor||read.payload.created_at!==input.createdAt)throw new PortalError('fcl_document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.actor||audit.digest!==input.requestDigest||audit.created!==input.createdAt||audit.action!==input.action)throw new PortalError('fcl_document_readback_failed');
+    const current=this.store.db.prepare('SELECT revision_id,version,org,personal_owner_id,owner FROM document_current_revisions WHERE document_id=?').get(input.documentId) as {revision_id:string;version:number;org:string|null;personal_owner_id:string|null;owner:string}|undefined;
+    if(!current||current.revision_id!==input.revisionId||current.version!==input.version||current.org!==null||current.personal_owner_id!==input.personalOwnerId||current.owner!==input.personalOwnerId)throw new PortalError('fcl_document_readback_failed');
+    const event=this.store.db.prepare('SELECT action FROM document_revision_events WHERE audit_id=? AND document_id=? AND revision_id=? AND version=?').get(input.auditId,input.documentId,input.revisionId,input.version) as {action:string}|undefined;
+    if(!event||event.action!==input.action)throw new PortalError('fcl_document_readback_failed');
+    const idem=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!idem||idem.digest!==input.requestDigest)throw new PortalError('fcl_document_readback_failed');
+    try{const result=fclDocumentReferenceSchema.parse(JSON.parse(idem.result));if(result.document_id!==input.documentId||result.version!==input.version||result.audit_id!==input.auditId)throw new Error('mismatch');}catch{throw new PortalError('fcl_document_readback_failed');}
+  }
+  private persistFclDocumentRevision(input:{personalOwnerId:string;payload:FclDocumentPayload;sourceRevisionId:string|null;action:string;auditId:string;partition:string;key:string;requestDigest:string}):void{
+    const db=this.store.db,payload=input.payload;
+    db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(payload.revision_id,payload.document_id,null,input.personalOwnerId,input.personalOwnerId,payload.version,payload.state,5,JSON.stringify(payload),canonicalHash(payload.customer_input),canonicalHash(payload.template),input.sourceRevisionId,payload.state==='approved'?payload.decision?.review_hash??null:null,payload.state==='rejected'?payload.decision?.reason??null:null,payload.actor,payload.created_at);
+    db.prepare('INSERT INTO document_current_revisions(document_id,org,personal_owner_id,owner,revision_id,version,schema_version,projection_digest,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET org=excluded.org,personal_owner_id=excluded.personal_owner_id,owner=excluded.owner,revision_id=excluded.revision_id,version=excluded.version,schema_version=excluded.schema_version,projection_digest=excluded.projection_digest,updated_at=excluded.updated_at').run(payload.document_id,null,input.personalOwnerId,input.personalOwnerId,payload.revision_id,payload.version,5,payload.content_digest,payload.updated_at);
+    db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(input.auditId,null,input.personalOwnerId,payload.actor,input.action,input.requestDigest,payload.created_at);
+    db.prepare('INSERT INTO document_revision_events(audit_id,document_id,revision_id,version,action) VALUES(?,?,?,?,?)').run(input.auditId,payload.document_id,payload.revision_id,payload.version,input.action);
+    db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(input.partition,input.key,input.requestDigest,JSON.stringify({document_id:payload.document_id,version:payload.version,audit_id:input.auditId}));
+    this.assertFclDocumentCommitted({personalOwnerId:input.personalOwnerId,documentId:payload.document_id,revisionId:payload.revision_id,version:payload.version,contentDigest:payload.content_digest,signature:payload.signature,actor:payload.actor,createdAt:payload.created_at,auditId:input.auditId,partition:input.partition,key:input.key,requestDigest:input.requestDigest,action:input.action});
+  }
+  private saveFclDocumentLocked(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,input:unknown,key:string):FclDocumentView{
+    const request=parse(fclDocumentSaveRequestSchema,input,'fcl_document_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    const dependencies=this.fclQuoteDependencies(),action=request.operation==='re_quote'?'fcl-document-re-quote':`fcl-document-${request.operation}`,target=request.operation==='create'?'create':request.document_id;
+    const partition=JSON.stringify(['v5-doc-personal',options.receiverUserId,ctx.identity.userId,action,target]),requestDigest=canonicalHash(request),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==requestDigest)throw new PortalError('idempotency_conflict');
+        let submitted:{document_id:string;version:number;audit_id:string};
+        try{submitted=fclDocumentReferenceSchema.parse(JSON.parse(old.result));}catch{throw new PortalError('fcl_document_readback_failed');}
+        const event=db.prepare('SELECT revision_id,action FROM document_revision_events WHERE audit_id=? AND document_id=? AND version=?').get(submitted.audit_id,submitted.document_id,submitted.version) as {revision_id:string;action:string}|undefined;
+        const audit=db.prepare('SELECT personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(submitted.audit_id) as {personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+        if(!event||event.action!==action||!audit||audit.personal_owner_id!==options.receiverUserId||audit.actor!==ctx.identity.userId||audit.action!==action||audit.digest!==requestDigest)throw new PortalError('fcl_document_readback_failed');
+        db.exec('COMMIT');committed=true;
+        const read=this.readFclDocument(options.receiverUserId,submitted.document_id,submitted.version);
+        if(read.payload.revision_id!==event.revision_id)throw new PortalError('fcl_document_readback_failed');
+        dependencies.caseReader.getFclCase(ctx,read.payload.case_binding.case_ref);
+        return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options),{replayed:true,submitted_version:submitted.version,current:read.payload.version===read.currentVersion});
+      }
+      const documentId=request.operation==='create'?randomUUID():request.document_id;
+      let version=1,sourceRevisionId:string|null=null;
+      let existingPayload:FclDocumentPayload|null=null;
+      if(request.operation!=='create'){
+        const current=this.readFclDocument(options.receiverUserId,documentId,null);
+        if(current.payload.version!==request.expected_document_version)throw new PortalError('version_conflict');
+        const expectedState=request.operation==='refresh'?'draft':request.operation==='resubmit'?'rejected':'approved';
+        if(current.payload.state!==expectedState)throw new PortalError('fcl_document_state_not_editable');
+        version=current.payload.version+1;sourceRevisionId=current.payload.revision_id;existingPayload=current.payload;
+      }
+      const quote=this.readFclQuote(options.receiverUserId,request.quote_ref,request.expected_quote_version);
+      if(existingPayload&&existingPayload.case_binding.case_ref!==quote.snapshot.case_binding.case_ref)throw new PortalError('fcl_document_case_mismatch');
+      if(quote.snapshot.version!==request.expected_quote_version||quote.snapshot.content_digest!==request.expected_quote_digest||quote.currentVersion!==request.expected_quote_version)throw new PortalError('fcl_document_quote_stale');
+      if(request.operation==='re_quote'&&existingPayload){
+        const quoteChanged=existingPayload.quote_binding.quote_ref!==quote.snapshot.quote_ref||existingPayload.quote_binding.quote_version!==quote.snapshot.version;
+        if(!quoteChanged&&this.fclConfigRaw(options.receiverUserId).version===existingPayload.template_version)throw new PortalError('fcl_document_re_quote_required');
+      }
+      const quoteCurrentness=this.fclQuoteCurrentness(ctx,quote.snapshot,quote.currentVersion,options);
+      if(!quoteCurrentness.valid_now)throw new PortalError('fcl_document_quote_not_current');
+      if(!quote.snapshot.completeness.complete||!quote.snapshot.calculation.complete)throw new PortalError('fcl_document_quote_incomplete');
+      const caseRef=quote.snapshot.case_binding.case_ref;
+      const caseView=dependencies.caseReader.getFclCase(ctx,caseRef);
+      if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_document_case_closed');
+      if(caseView.case_version!==request.expected_case_version||caseView.review_context.latest_customer_supplement_ref!==request.expected_customer_supplement_ref)throw new PortalError('fcl_document_case_stale');
+      const config=this.fclConfigRaw(options.receiverUserId);
+      if(config.version!==request.expected_config_version||!config.input)throw new PortalError('fcl_document_config_stale');
+      const today=this.fclTimestamp(options).slice(0,10);
+      if(request.quote_date>request.valid_until||request.quote_date>today||today>request.valid_until||request.quote_date<quote.snapshot.source_snapshot.valid_from||request.valid_until>quote.snapshot.source_snapshot.valid_until)throw new PortalError('fcl_document_date_invalid');
+      const createdAt=this.fclTimestamp(options),revisionId=randomUUID();
+      const payload=this.buildFclDocumentPayload({documentId,revisionId,version,state:'draft',actor:ctx.identity.userId,createdAt,updatedAt:createdAt,quote:quote.snapshot,caseView,config,display:{quote_no:request.quote_no,quote_date:request.quote_date,valid_until:request.valid_until,remark:request.remark}});
+      db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,documentId,null,options.receiverUserId,options.receiverUserId,version,'draft',5,JSON.stringify(payload),canonicalHash(payload.customer_input),canonicalHash(payload.template),sourceRevisionId,null,null,ctx.identity.userId,createdAt);
+      db.prepare('INSERT INTO document_current_revisions(document_id,org,personal_owner_id,owner,revision_id,version,schema_version,projection_digest,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET org=excluded.org,personal_owner_id=excluded.personal_owner_id,owner=excluded.owner,revision_id=excluded.revision_id,version=excluded.version,schema_version=excluded.schema_version,projection_digest=excluded.projection_digest,updated_at=excluded.updated_at').run(documentId,null,options.receiverUserId,options.receiverUserId,revisionId,version,5,payload.content_digest,createdAt);
+      const auditId=randomUUID();
+      db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,action,requestDigest,createdAt);
+      db.prepare('INSERT INTO document_revision_events(audit_id,document_id,revision_id,version,action) VALUES(?,?,?,?,?)').run(auditId,documentId,revisionId,version,action);
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,requestDigest,JSON.stringify({document_id:documentId,version,audit_id:auditId}));
+      this.assertFclDocumentCommitted({personalOwnerId:options.receiverUserId,documentId,revisionId,version,contentDigest:payload.content_digest,signature:payload.signature,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest,action});
+      this.requireFclReceiver(ctx);
+      db.exec('COMMIT');committed=true;
+      this.assertFclDocumentCommitted({personalOwnerId:options.receiverUserId,documentId,revisionId,version,contentDigest:payload.content_digest,signature:payload.signature,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest,action});
+      const read=this.readFclDocument(options.receiverUserId,documentId,version);
+      return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options));
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('fcl_document_readback_failed');
+      throw error;
+    }
+  }
+  saveFclDocument(ctx:PortalContext,input:unknown,key:string):FclDocumentView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();this.store.ensureWritable();
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.saveFclDocumentLocked(ctx,options,input,key)));
+  }
+  getFclDocument(ctx:PortalContext,input:unknown):FclDocumentView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentGetRequestSchema,input,'fcl_document_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>{
+      const read=this.readFclDocument(options.receiverUserId,request.document_id,request.version);
+      dependencies.caseReader.getFclCase(ctx,read.payload.case_binding.case_ref);
+      return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options));
+    });
+  }
+  listFclDocuments(ctx:PortalContext,input:unknown){
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentListRequestSchema,input,'fcl_document_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>{
+      dependencies.caseReader.getFclCase(ctx,request.case_ref);
+      let cursor:{case_ref:string;updated_at:string;document_id:string}|null=null;
+      if(request.cursor){
+        try{cursor=z.object({case_ref:z.string().uuid(),updated_at:z.iso.datetime(),document_id:z.string().uuid()}).strict().parse(JSON.parse(Buffer.from(request.cursor,'base64url').toString('utf8')));}catch{throw new PortalError('fcl_document_input_invalid');}
+        if(cursor.case_ref!==request.case_ref)throw new PortalError('fcl_document_input_invalid');
+      }
+      const rows=this.store.db.prepare(`SELECT c.document_id,c.version,c.updated_at FROM document_current_revisions c JOIN document_revisions r ON r.revision_id=c.revision_id WHERE c.org IS NULL AND c.personal_owner_id=? AND json_extract(r.payload,'$.case_binding.case_ref')=? AND (? IS NULL OR c.updated_at<? OR (c.updated_at=? AND c.document_id<?)) ORDER BY c.updated_at DESC,c.document_id DESC LIMIT ?`).all(options.receiverUserId,request.case_ref,cursor?.updated_at??null,cursor?.updated_at??'',cursor?.updated_at??'',cursor?.document_id??'',request.limit+1) as Array<{document_id:string;version:number;updated_at:string}>;
+      const page=rows.slice(0,request.limit);
+      return fclDocumentListSchema.parse({items:page.map(row=>{const read=this.readFclDocument(options.receiverUserId,row.document_id,row.version);return {document_id:row.document_id,version:row.version,current_version:read.currentVersion,state:read.payload.state,case_ref:read.payload.case_binding.case_ref,quote_ref:read.payload.quote_binding.quote_ref,quote_version:read.payload.quote_binding.quote_version,source_release_id:read.payload.source_binding.release_id,customer_name:read.payload.case_projection.customer_name,quote_no:read.payload.customer_input.quote_no!,quote_date:read.payload.customer_input.quote_date!,valid_until:read.payload.customer_input.valid_until!,currentness:this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options),created_at:row.updated_at};}),next_cursor:rows.length>request.limit&&page.at(-1)?Buffer.from(JSON.stringify({case_ref:request.case_ref,updated_at:page.at(-1)!.updated_at,document_id:page.at(-1)!.document_id})).toString('base64url'):null});
+    });
+  }
+  private fclHandoffDependency():NonNullable<FclQuoteWorkflowDependencies['handoff']>{
+    const handoff=this.fclQuoteDependencies().handoff;
+    if(!handoff)throw new PortalError('fcl_handoff_unavailable');
+    return handoff;
+  }
+  private fclHandoffPayloadEqual(left:FclHandoffPayload,right:FclHandoffPayload):boolean{
+    return JSON.stringify(left)===JSON.stringify(right);
+  }
+  private fclHandoffCaseSnapshot(value:ReturnType<CaseService['getFclCase']>):string{
+    return canonicalHash({
+      ...value,
+      events:value.events.filter(event=>event.kind!=='fcl_handoff_recorded'),
+    });
+  }
+  private buildFclHandoffPayload(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:z.infer<typeof fclHandoffRequestSchema>):FclHandoffPayload{
+    const prepared=this.prepareFormalFclPdf(ctx,options,{document_id:request.document_id,expected_version:request.expected_document_version});
+    const document=prepared.payload,decision=document.decision;
+    if(!prepared.bytes)throw new PortalError('fcl_handoff_pdf_unavailable');
+    if(document.case_binding.case_ref!==request.case_ref||document.case_binding.case_version!==request.expected_case_version||document.case_binding.latest_customer_supplement_ref!==request.expected_customer_supplement_ref)throw new PortalError('fcl_handoff_case_changed');
+    if(document.quote_binding.quote_ref!==request.quote_ref||document.quote_binding.quote_version!==request.expected_quote_version||document.quote_binding.quote_digest!==request.expected_quote_digest)throw new PortalError('fcl_handoff_quote_changed');
+    if(document.version!==request.expected_document_version)throw new PortalError('fcl_handoff_document_changed');
+    if(document.state!=='approved'||!decision||decision.kind!=='approved'||decision.approved_revision_id===null||decision.approved_version===null||decision.approved_revision_id!==document.revision_id||decision.approved_version!==document.version)throw new PortalError('fcl_handoff_approved_proof_missing');
+    const pdfSha256=createHash('sha256').update(prepared.bytes).digest('hex');
+    if(pdfSha256!==request.expected_pdf_sha256)throw new PortalError('fcl_handoff_pdf_changed');
+    return fclHandoffPayloadSchema.parse({
+      contract_version:FCL_HANDOFF_VERSION,
+      inquiry_no:prepared.metadata.inquiry_no,
+      case_id:document.case_binding.case_ref,
+      case_version:document.case_binding.case_version,
+      latest_customer_supplement_ref:document.case_binding.latest_customer_supplement_ref,
+      quote_ref:document.quote_binding.quote_ref,
+      quote_version:document.quote_binding.quote_version,
+      quote_digest:document.quote_binding.quote_digest,
+      document_id:document.document_id,
+      document_revision_id:document.revision_id,
+      document_version:document.version,
+      approved_revision_id:decision.approved_revision_id,
+      approved_version:decision.approved_version,
+      pdf_sha256:pdfSha256,
+      pdf_byte_length:prepared.bytes.length,
+      customer_name:document.case_projection.customer_name,
+      pol:document.case_projection.pol,
+      pod:document.case_projection.pod,
+      containers:document.case_projection.containers.map(container=>({type:container.type,quantity:container.quantity})),
+      approved_at:decision.at,
+      handoff_status:'handed_off',
+      handoff_note:request.note,
+      actor:ctx.identity.userId,
+      recorded_at:this.fclTimestamp(options),
+      request_digest:canonicalHash(request),
+    });
+  }
+  private fclHandoffReasonCode(reason:string):string{
+    if(reason.startsWith('fcl_quote_case_'))return 'fcl_handoff_case_changed';
+    if(reason==='fcl_quote_not_current_version'||reason==='fcl_document_quote_changed'||reason==='fcl_document_quote_unavailable')return 'fcl_handoff_quote_changed';
+    if(reason==='fcl_document_not_current_version')return 'fcl_handoff_document_changed';
+    return 'fcl_handoff_source_changed';
+  }
+  private fclHandoffReasonCodes(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,payload:FclHandoffPayload):string[]{
+    const reasons=new Set<string>(),dependencies=this.fclQuoteDependencies();
+    let caseView:ReturnType<CaseService['getFclCase']>;
+    try{caseView=dependencies.caseReader.getFclCase(ctx,payload.case_id);}catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_readback_failed')throw error;
+      return ['fcl_handoff_case_changed'];
+    }
+    if(caseView.case_version!==payload.case_version||caseView.review_context.latest_customer_supplement_ref!==payload.latest_customer_supplement_ref||caseView.case_status==='closed'||caseView.case_status==='cancelled'||caseView.review_context.review_required)reasons.add('fcl_handoff_case_changed');
+    let quote:{snapshot:ReturnType<typeof validateFclQuoteSnapshot>;currentVersion:number};
+    try{quote=this.readFclQuote(options.receiverUserId,payload.quote_ref,payload.quote_version);}catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_quote_readback_failed')throw error;
+      reasons.add('fcl_handoff_quote_changed');
+      return [...reasons].slice(0,32);
+    }
+    if(quote.currentVersion!==payload.quote_version||quote.snapshot.content_digest!==payload.quote_digest||quote.snapshot.case_binding.case_ref!==payload.case_id||quote.snapshot.case_binding.case_version!==payload.case_version||quote.snapshot.case_binding.latest_customer_supplement_ref!==payload.latest_customer_supplement_ref)reasons.add('fcl_handoff_quote_changed');
+    let document:{payload:FclDocumentPayload;currentVersion:number};
+    try{document=this.readFclDocument(options.receiverUserId,payload.document_id,payload.document_version);}catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_document_readback_failed')throw error;
+      reasons.add('fcl_handoff_document_changed');
+      return [...reasons].slice(0,32);
+    }
+    const documentPayload=document.payload,decision=documentPayload.decision;
+    if(document.currentVersion!==payload.document_version||documentPayload.revision_id!==payload.document_revision_id||documentPayload.version!==payload.document_version||documentPayload.state!=='approved'||!decision||decision.kind!=='approved'||decision.approved_revision_id!==payload.approved_revision_id||decision.approved_version!==payload.approved_version||decision.at!==payload.approved_at||canonicalHash(documentPayload.case_binding)!==canonicalHash({case_ref:payload.case_id,case_version:payload.case_version,latest_customer_supplement_ref:payload.latest_customer_supplement_ref})||documentPayload.quote_binding.quote_ref!==payload.quote_ref||documentPayload.quote_binding.quote_version!==payload.quote_version||documentPayload.quote_binding.quote_digest!==payload.quote_digest||documentPayload.case_projection.customer_name!==payload.customer_name||documentPayload.case_projection.pol!==payload.pol||documentPayload.case_projection.pod!==payload.pod||canonicalHash(documentPayload.case_projection.containers)!==canonicalHash(payload.containers))reasons.add('fcl_handoff_document_changed');
+    if(reasons.size===0)try{
+      const currentness=this.fclDocumentCurrentness(ctx,documentPayload,document.currentVersion,options);
+      currentness.reason_codes.forEach(reason=>reasons.add(this.fclHandoffReasonCode(reason)));
+    }catch(error){
+      if(error instanceof PortalError&&error.code==='fcl_document_readback_failed')throw error;
+      reasons.add('fcl_handoff_source_changed');
+    }
+    if(reasons.size===0)try{
+      const prepared=this.prepareFormalFclPdf(ctx,options,{document_id:payload.document_id,expected_version:payload.document_version});
+      if(!prepared.bytes)throw new PortalError('fcl_handoff_pdf_unavailable');
+      const sha256=createHash('sha256').update(prepared.bytes).digest('hex');
+      if(sha256!==payload.pdf_sha256||prepared.bytes.length!==payload.pdf_byte_length)throw new PortalError('fcl_handoff_pdf_unavailable');
+    }catch(error){
+      if(error instanceof PortalError&&['fcl_document_pdf_binding_missing','fcl_document_history_bytes_missing','document_pdf_invalid','document_readback_failed','fcl_handoff_pdf_unavailable'].includes(error.code))reasons.add('fcl_handoff_pdf_unavailable');
+      else if(error instanceof PortalError&&['fcl_document_not_approved','fcl_document_not_current'].includes(error.code))reasons.add('fcl_handoff_source_changed');
+      else throw error;
+    }
+    return [...reasons].slice(0,32);
+  }
+  private fclHandoffViewFromState(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,caseRef:string):FclHandoffView{
+    const dependencies=this.fclQuoteDependencies(),handoff=this.fclHandoffDependency();
+    dependencies.caseReader.getFclCase(ctx,caseRef);
+    const events=handoff.listFclHandoffs(ctx,caseRef);
+    const replay={replayed:false,submitted_request_digest:null,submitted_current:false} as const;
+    if(events.length===0)return fclHandoffViewSchema.parse({contract_version:FCL_HANDOFF_VERSION,case_ref:caseRef,status:'pending',reason_codes:['fcl_handoff_not_recorded'],current:null,history:[],replay});
+    let currentIndex=-1;
+    for(let index=events.length-1;index>=0;index--){
+      const candidate=events[index]!;
+      if(this.fclHandoffReasonCodes(ctx,options,candidate).length===0){currentIndex=index;break;}
+    }
+    if(currentIndex>=0)return fclHandoffViewSchema.parse({
+      contract_version:FCL_HANDOFF_VERSION,
+      case_ref:caseRef,
+      status:'handed_off',
+      reason_codes:[],
+      current:events[currentIndex]!,
+      history:events.filter((_,index)=>index!==currentIndex),
+      replay,
+    });
+    const newest=events.at(-1)!;
+    return fclHandoffViewSchema.parse({
+      contract_version:FCL_HANDOFF_VERSION,
+      case_ref:caseRef,
+      status:'pending',
+      reason_codes:this.fclHandoffReasonCodes(ctx,options,newest),
+      current:null,
+      history:events,
+      replay,
+    });
+  }
+  private fclHandoffReplayView(current:FclHandoffView,replayed:FclHandoffPayload):FclHandoffView{
+    const inHistory=current.history.some(event=>this.fclHandoffPayloadEqual(event,replayed));
+    const isCurrent=current.current!==null&&this.fclHandoffPayloadEqual(current.current,replayed);
+    if(!inHistory&&!isCurrent)throw new PortalError('fcl_handoff_readback_failed');
+    return fclHandoffViewSchema.parse({
+      ...current,
+      replay:{
+        replayed:true,
+        submitted_request_digest:replayed.request_digest,
+        submitted_current:current.current!==null&&this.fclHandoffPayloadEqual(current.current,replayed),
+      },
+    });
+  }
+  saveFclHandoff(ctx:PortalContext,input:unknown,key:string):FclHandoffView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),handoff=this.fclHandoffDependency();
+    const request=parse(fclHandoffRequestSchema,input,'fcl_handoff_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    return handoff.withFclHandoffTransaction(ctx,commitCase=>{
+      return dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentWriteGuard(()=>{
+        const replayed=handoff.findFclHandoffByKey(ctx,key,{caseId:request.case_ref,requestDigest:canonicalHash(request)});
+        if(replayed){
+          const view=this.fclHandoffReplayView(this.fclHandoffViewFromState(ctx,options,request.case_ref),replayed);
+          commitCase();
+          return view;
+        }
+        const before=dependencies.caseReader.getFclCase(ctx,request.case_ref);
+        const payload=this.buildFclHandoffPayload(ctx,options,request);
+        const recorded=handoff.recordFclHandoffInTransaction(ctx,payload,key);
+        commitCase();
+        const committed=handoff.findFclHandoffByKey(ctx,key,{caseId:request.case_ref,requestDigest:canonicalHash(request)});
+        if(!committed||!this.fclHandoffPayloadEqual(committed,recorded))throw new PortalError('fcl_handoff_readback_failed');
+        const after=dependencies.caseReader.getFclCase(ctx,request.case_ref);
+        if(this.fclHandoffCaseSnapshot(before)!==this.fclHandoffCaseSnapshot(after))throw new PortalError('fcl_handoff_case_changed');
+        const view=this.fclHandoffViewFromState(ctx,options,request.case_ref);
+        if(view.status!=='handed_off'||!view.current||!this.fclHandoffPayloadEqual(view.current,recorded))throw new PortalError('fcl_handoff_readback_failed');
+        return view;
+      }));
+    });
+  }
+  getFclHandoff(ctx:PortalContext,input:unknown):FclHandoffView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();
+    const request=parse(fclHandoffGetRequestSchema,input,'fcl_handoff_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentReadWindow(()=>{
+      const view=this.fclHandoffViewFromState(ctx,options,request.case_ref);
+      if(view.current!==null&&view.current.case_id!==request.case_ref)throw new PortalError('fcl_handoff_readback_failed');
+      return view;
+    })));
+  }
+  private fclDocumentReviewHash(input:{personalOwnerId:string;actor:string;documentId:string;revisionId:string;version:number;contentDigest:string;payload:FclDocumentPayload;expiresAt:string}):string{
+    return createHmac('sha256',this.secret).update(canonicalJson({
+      domain:'fcl-document-review',
+      personal_owner_id:input.personalOwnerId,
+      actor:input.actor,
+      document_id:input.documentId,
+      revision_id:input.revisionId,
+      version:input.version,
+      content_digest:input.contentDigest,
+      case_binding:input.payload.case_binding,
+      quote_binding:input.payload.quote_binding,
+      source_binding:input.payload.source_binding,
+      template_version:input.payload.template_version,
+      quote_date:input.payload.customer_input.quote_date,
+      valid_until:input.payload.customer_input.valid_until,
+      review_expires_at:input.expiresAt,
+    })).digest('hex');
+  }
+  reviewFclDocument(ctx:PortalContext,input:unknown):FclDocumentReviewView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentReviewRequestSchema,input,'fcl_document_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>{
+      const read=this.readFclDocument(options.receiverUserId,request.document_id,null);
+      if(read.payload.version!==request.expected_version||read.payload.state!=='draft')throw new PortalError('version_conflict');
+      dependencies.caseReader.getFclCase(ctx,read.payload.case_binding.case_ref);
+      const quote=this.readFclQuote(options.receiverUserId,read.payload.quote_binding.quote_ref,read.payload.quote_binding.quote_version);
+      if(!quote.snapshot.completeness.complete||!quote.snapshot.calculation.complete)throw new PortalError('fcl_document_quote_incomplete');
+      const currentness=this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options);
+      if(!currentness.valid_now)throw new PortalError('fcl_document_quote_not_current');
+      const reviewedAt=this.fclTimestamp(options),expiresAt=new Date(Date.parse(reviewedAt)+600000).toISOString();
+      const reviewHash=this.fclDocumentReviewHash({personalOwnerId:options.receiverUserId,actor:ctx.identity.userId,documentId:read.payload.document_id,revisionId:read.payload.revision_id,version:read.payload.version,contentDigest:read.payload.content_digest,payload:read.payload,expiresAt});
+      this.reviews.set(reviewHash,{kind:'fcl',id:read.payload.document_id,version:read.payload.version,revision_id:read.payload.revision_id,content_digest:read.payload.content_digest,expires:Date.parse(expiresAt),reviewed_at:reviewedAt,review_expires_at:expiresAt,actor:ctx.identity.userId});
+      return fclDocumentReviewViewSchema.parse({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:read.payload.document_id,revision_id:read.payload.revision_id,version:read.payload.version,review_hash:reviewHash,review_expires_at:expiresAt,quote:quote.snapshot,document:this.fclDocumentView(read.payload,read.currentVersion,currentness)});
+    }));
+  }
+  private fclDocumentDecisionPayload(current:FclDocumentPayload,input:{state:'approved'|'rejected';actor:string;at:string;reviewHash:string|null;reviewedAt:string|null;reviewExpiresAt:string|null;reason:string|null;newRevisionId:string}):FclDocumentPayload{
+    const {content_digest:_content,signature:_signature,decision:_decision,...base}=current;
+    void _content;void _signature;void _decision;
+    const unsigned={
+      ...base,
+      revision_id:input.newRevisionId,
+      version:current.version+1,
+      state:input.state,
+      actor:input.actor,
+      created_at:input.at,
+      updated_at:input.at,
+      decision:{
+        kind:input.state,
+        source_revision_id:current.revision_id,
+        source_version:current.version,
+        source_content_digest:current.content_digest,
+        review_hash:input.reviewHash,
+        approved_revision_id:input.state==='approved'?input.newRevisionId:null,
+        approved_version:input.state==='approved'?current.version+1:null,
+        reviewed_at:input.reviewedAt,
+        review_expires_at:input.reviewExpiresAt,
+        reason:input.reason,
+        actor:input.actor,
+        at:input.at,
+      },
+    };
+    return fclDocumentPayloadSchema.parse({...unsigned,...this.fclDocumentSignature(unsigned)});
+  }
+  private idempotentFclDocumentDecision(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:{document_id:string},key:string,action:string,write:()=>FclDocumentPayload):FclDocumentView{
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
+    const partition=JSON.stringify(['v5-doc-personal',options.receiverUserId,ctx.identity.userId,action,request.document_id]),requestDigest=canonicalHash(request),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==requestDigest)throw new PortalError('idempotency_conflict');
+        let submitted:{document_id:string;version:number;audit_id:string};
+        try{submitted=fclDocumentReferenceSchema.parse(JSON.parse(old.result));}catch{throw new PortalError('fcl_document_readback_failed');}
+        const event=db.prepare('SELECT revision_id,action FROM document_revision_events WHERE audit_id=? AND document_id=? AND version=?').get(submitted.audit_id,submitted.document_id,submitted.version) as {revision_id:string;action:string}|undefined;
+        const audit=db.prepare('SELECT personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(submitted.audit_id) as {personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+        if(!event||!audit||event.action!==action||audit.personal_owner_id!==options.receiverUserId||audit.actor!==ctx.identity.userId||audit.action!==action||audit.digest!==requestDigest)throw new PortalError('fcl_document_readback_failed');
+        db.exec('COMMIT');committed=true;
+        const read=this.readFclDocument(options.receiverUserId,submitted.document_id,submitted.version);
+        if(read.payload.revision_id!==event.revision_id)throw new PortalError('fcl_document_readback_failed');
+        return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options),{replayed:true,submitted_version:submitted.version,current:read.payload.version===read.currentVersion});
+      }
+      const payload=write(),auditId=randomUUID();
+      this.persistFclDocumentRevision({personalOwnerId:options.receiverUserId,payload,sourceRevisionId:payload.decision?.source_revision_id??null,action,auditId,partition,key,requestDigest});
+      this.requireFclReceiver(ctx);
+      db.exec('COMMIT');committed=true;
+      this.assertFclDocumentCommitted({personalOwnerId:options.receiverUserId,documentId:payload.document_id,revisionId:payload.revision_id,version:payload.version,contentDigest:payload.content_digest,signature:payload.signature,actor:payload.actor,createdAt:payload.created_at,auditId,partition,key,requestDigest,action});
+      const read=this.readFclDocument(options.receiverUserId,payload.document_id,payload.version);
+      return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options));
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('fcl_document_readback_failed');
+      throw error;
+    }
+  }
+  approveFclDocument(ctx:PortalContext,input:unknown,key:string):FclDocumentView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentApproveRequestSchema,input,'fcl_document_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.idempotentFclDocumentDecision(ctx,options,request,key,'fcl-document-approve',()=>{
+      const current=this.readFclDocument(options.receiverUserId,request.document_id,null);
+      if(current.payload.version!==request.expected_version||current.payload.state!=='draft')throw new PortalError('version_conflict');
+      const review=this.reviews.get(request.review_hash);
+      if(!review||review.kind!=='fcl'||review.id!==current.payload.document_id||review.version!==current.payload.version||review.revision_id!==current.payload.revision_id||review.content_digest!==current.payload.content_digest||review.actor!==ctx.identity.userId||review.expires<=Date.parse(this.fclTimestamp(options)))throw new PortalError('fcl_document_review_stale');
+      dependencies.caseReader.getFclCase(ctx,current.payload.case_binding.case_ref);
+      const quote=this.readFclQuote(options.receiverUserId,current.payload.quote_binding.quote_ref,current.payload.quote_binding.quote_version);
+      if(!quote.snapshot.completeness.complete||!quote.snapshot.calculation.complete)throw new PortalError('fcl_document_quote_incomplete');
+      const currentness=this.fclDocumentCurrentness(ctx,current.payload,current.currentVersion,options);
+      if(!currentness.valid_now)throw new PortalError('fcl_document_quote_not_current');
+      const at=this.fclTimestamp(options);
+      return this.fclDocumentDecisionPayload(current.payload,{state:'approved',actor:ctx.identity.userId,at,reviewHash:request.review_hash,reviewedAt:review.reviewed_at,reviewExpiresAt:review.review_expires_at,reason:null,newRevisionId:randomUUID()});
+    })));
+  }
+  rejectFclDocument(ctx:PortalContext,input:unknown,key:string):FclDocumentView{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentRejectRequestSchema,input,'fcl_document_input_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>this.idempotentFclDocumentDecision(ctx,options,request,key,'fcl-document-reject',()=>{
+      const current=this.readFclDocument(options.receiverUserId,request.document_id,null);
+      if(current.payload.version!==request.expected_version||current.payload.state!=='draft')throw new PortalError('version_conflict');
+      dependencies.caseReader.getFclCase(ctx,current.payload.case_binding.case_ref);
+      const at=this.fclTimestamp(options);
+      return this.fclDocumentDecisionPayload(current.payload,{state:'rejected',actor:ctx.identity.userId,at,reviewHash:null,reviewedAt:null,reviewExpiresAt:null,reason:request.reason,newRevisionId:randomUUID()});
+    }));
+  }
+  private fclPdfCache(documentId:string,version:number):{sha256:string;bytes:Uint8Array}|null{
+    const row=this.store.db.prepare('SELECT sha256,bytes FROM document_pdfs WHERE id=? AND version=?').get(documentId,version) as {sha256:string;bytes:Uint8Array}|undefined;
+    return row??null;
+  }
+  private fclPdfBindingPartition(personalOwnerId:string):string{return JSON.stringify(['v5-doc-personal',personalOwnerId,'fcl-document-pdf-binding']);}
+  private fclPdfBindingKey(documentId:string,version:number):string{return `pdf:${documentId}:${version}`;}
+  private fclPdfBindingSignature(binding:Omit<FclDocumentPdfBinding,'signature'>):string{
+    return createHmac('sha256',this.secret).update(canonicalJson({domain:'fcl-document-pdf-binding',binding})).digest('hex');
+  }
+  private withFclDocumentWriteGuard<T>(operation:()=>T):T{
+    this.store.ensureWritable();
+    const db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');
+    let committed=false;
+    try{
+      const result=operation();
+      if(result!==null&&typeof result==='object'&&'then' in result)throw new PortalError('fcl_handoff_async_forbidden');
+      db.exec('COMMIT');
+      committed=true;
+      return result;
+    }catch(error){
+      if(!committed){try{db.exec('ROLLBACK');}catch{/* Preserve the operation or commit failure. */}}
+      throw error;
+    }
+  }
+  private withFclDocumentReadWindow<T>(operation:()=>T):T{
+    const db=this.store.db;
+    db.exec('BEGIN');
+    let committed=false;
+    try{const result=operation();db.exec('COMMIT');committed=true;return result;}catch(error){if(!committed){try{db.exec('ROLLBACK');}catch{/* Preserve the original failure. */}}throw error;}
+  }
+  private readFclPdfArtifact(personalOwnerId:string,documentId:string,version:number):{binding:FclDocumentPdfBinding;bytes:Buffer}{
+    const partition=this.fclPdfBindingPartition(personalOwnerId),key=this.fclPdfBindingKey(documentId,version);
+    const row=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+    if(!row)throw new PortalError('fcl_document_pdf_binding_missing');
+    let binding:FclDocumentPdfBinding;
+    try{binding=fclDocumentPdfBindingSchema.parse(JSON.parse(row.result));}catch{throw new PortalError('document_readback_failed');}
+    const unsigned=Object.fromEntries(Object.entries(binding).filter(([key])=>key!=='signature')) as Omit<FclDocumentPdfBinding,'signature'>,expected=this.fclPdfBindingSignature(unsigned);
+    if(row.digest!==binding.signature||binding.signature!==expected||binding.personal_owner_id!==personalOwnerId||binding.document_id!==documentId||binding.version!==version)throw new PortalError('document_readback_failed');
+    const cached=this.fclPdfCache(documentId,version),bytes=this.validateFclPdf(cached);
+    if(binding.sha256!==cached?.sha256||binding.byte_length!==bytes.length||createHash('sha256').update(bytes).digest('hex')!==binding.sha256)throw new PortalError('document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(binding.audit_id) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==personalOwnerId||audit.actor!==binding.actor||audit.action!=='fcl-document-export'||audit.digest!==binding.request_digest||audit.created!==binding.created_at)throw new PortalError('document_readback_failed');
+    return {binding,bytes};
+  }
+  private validateFclPdf(cached:{sha256:string;bytes:Uint8Array}|null):Buffer{
+    if(!cached)throw new PortalError('fcl_document_history_bytes_missing');
+    const bytes=Buffer.from(cached.bytes);
+    if(bytes.length<100||bytes.length>8388608||bytes.subarray(0,5).toString()!=='%PDF-'||createHash('sha256').update(bytes).digest('hex')!==cached.sha256)throw new PortalError('document_pdf_invalid');
+    return bytes;
+  }
+  private fclDocumentRenderData(payload:FclDocumentPayload,quote:ReturnType<typeof validateFclQuoteSnapshot>,caseView:ReturnType<CaseService['getFclCase']>){
+    const document=renderDocument(payload.customer_input),totals=calculate(document);
+    if((['USD','CAD','CNY'] as const).some(currency=>totals.by_currency[currency]!==payload.customer_totals.by_currency[currency]))throw new PortalError('fcl_pdf_amount_mismatch');
+    const rowNames=new Map(quote.cost_rows.map(row=>[row.row_key,row.name]));
+    const metadata:FclRenderMetadata={
+      inquiry_no:caseView.inquiry_no,
+      case_ref:payload.case_binding.case_ref,
+      quote_ref:payload.quote_binding.quote_ref,
+      rate_id:payload.source_binding.rate_id,
+      release_id:payload.source_binding.release_id,
+      case_version:payload.case_binding.case_version,
+      quote_version:payload.quote_binding.quote_version,
+      document_version:payload.version,
+      pol:payload.case_projection.pol,
+      pod:payload.case_projection.pod,
+      final_destination:payload.case_projection.final_destination,
+      containers:payload.case_projection.containers,
+      incoterm:payload.case_projection.incoterm,
+      incoterm_other:payload.case_projection.incoterm_other,
+      scope:payload.customer_scope.map(item=>({service:item.service,disposition:item.disposition,note:item.note,included_names:item.included_row_refs.flatMap(ref=>rowNames.has(ref)?[rowNames.get(ref)!]:[])})),
+    };
+    return {document,metadata};
+  }
+  private fclPdfOutput(payload:FclDocumentPayload,bytes:Buffer,currentVersion:number,mode:'formal'|'history',replay:{replayed:boolean;submitted_version:number|null;current:boolean}={replayed:false,submitted_version:null,current:payload.version===currentVersion}):FclDocumentExportOutput{
+    return fclDocumentExportOutputSchema.parse({
+      contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+      document_id:payload.document_id,
+      version:payload.version,
+      revision_id:payload.revision_id,
+      current_version:currentVersion,
+      mode,
+      historical:mode==='history',
+      valid_now:mode==='formal',
+      filename:`fcl-${payload.document_id}-v${payload.version}.pdf`,
+      sha256:createHash('sha256').update(bytes).digest('hex'),
+      byte_length:bytes.length,
+      content_base64:bytes.toString('base64'),
+      customer_totals:payload.customer_totals,
+      trace_refs:[payload.case_binding.case_ref,payload.quote_binding.quote_ref,payload.source_binding.release_id,payload.source_binding.rate_id],
+      replay,
+    });
+  }
+  private prepareFormalFclPdf(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:{document_id:string;expected_version:number}):{payload:FclDocumentPayload;document:QuoteDocument;template:QuoteTemplate;metadata:FclRenderMetadata;bytes:Buffer|null}{
+    const dependencies=this.fclQuoteDependencies(),read=this.readFclDocument(options.receiverUserId,request.document_id,null);
+    if(read.payload.state!=='approved'||read.payload.version!==request.expected_version)throw new PortalError('fcl_document_not_approved');
+    const currentness=this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options);
+    if(!currentness.valid_now)throw new PortalError('fcl_document_not_current');
+    const quote=this.readFclQuote(options.receiverUserId,read.payload.quote_binding.quote_ref,read.payload.quote_binding.quote_version);
+    if(quote.currentVersion!==read.payload.quote_binding.quote_version||quote.snapshot.content_digest!==read.payload.quote_binding.quote_digest||!quote.snapshot.completeness.complete||!quote.snapshot.calculation.complete)throw new PortalError('fcl_document_not_current');
+    const caseView=dependencies.caseReader.getFclCase(ctx,read.payload.case_binding.case_ref);
+    const rendered=this.fclDocumentRenderData(read.payload,quote.snapshot,caseView);
+    let bytes:Buffer|null=null;
+    try{bytes=this.readFclPdfArtifact(options.receiverUserId,read.payload.document_id,read.payload.version).bytes;}catch(error){
+      if(!(error instanceof PortalError&&error.code==='fcl_document_pdf_binding_missing'))throw error;
+      if(this.fclPdfCache(read.payload.document_id,read.payload.version))throw new PortalError('document_readback_failed');
+    }
+    return {...rendered,template:{...read.payload.template,fee_items:[]},payload:read.payload,bytes};
+  }
+  private assertFclPdfCommitted(input:{personalOwnerId:string;documentId:string;revisionId:string;version:number;contentDigest:string;sha256:string;bytes:Buffer;auditId:string;partition:string;key:string;requestDigest:string}):void{
+    const artifact=this.readFclPdfArtifact(input.personalOwnerId,input.documentId,input.version);
+    if(artifact.binding.revision_id!==input.revisionId||artifact.binding.content_digest!==input.contentDigest||artifact.binding.sha256!==input.sha256||artifact.binding.byte_length!==input.bytes.length||artifact.bytes.length!==input.bytes.length||!artifact.bytes.equals(input.bytes))throw new PortalError('document_readback_failed');
+    const audit=this.store.db.prepare('SELECT org,personal_owner_id,actor,action,digest,created FROM document_audit WHERE id=?').get(input.auditId) as {org:string|null;personal_owner_id:string|null;actor:string;action:string;digest:string;created:string}|undefined;
+    const idem=this.store.db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(input.partition,input.key) as {digest:string;result:string}|undefined;
+    if(!audit||audit.org!==null||audit.personal_owner_id!==input.personalOwnerId||audit.actor!==input.personalOwnerId||audit.action!=='fcl-document-export'||audit.digest!==artifact.binding.request_digest||audit.created!==artifact.binding.created_at||!idem||idem.digest!==input.requestDigest)throw new PortalError('document_readback_failed');
+    let ref:{document_id:string;version:number;sha256:string;audit_id:string};
+    try{ref=fclDocumentPdfReferenceSchema.parse(JSON.parse(idem.result));}catch{throw new PortalError('document_readback_failed');}
+    if(ref.document_id!==input.documentId||ref.version!==input.version||ref.sha256!==input.sha256||ref.audit_id!==input.auditId)throw new PortalError('document_readback_failed');
+  }
+  private writeFclPdf(ctx:PortalContext,options:NormalizedFclDocumentWorkflowOptions,request:{document_id:string;expected_version:number},key:string,bytes:Buffer,payload:FclDocumentPayload):FclDocumentExportOutput{
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.store.ensureWritable();
+    const partition=JSON.stringify(['v5-doc-personal',options.receiverUserId,ctx.identity.userId,'fcl-document-export',request.document_id]),requestDigest=canonicalHash(request),db=this.store.db;
+    db.exec('BEGIN IMMEDIATE');let committed=false;
+    try{
+      this.requireFclReceiver(ctx);
+      const prepared=this.prepareFormalFclPdf(ctx,options,request);
+      if(prepared.payload.revision_id!==payload.revision_id||prepared.payload.content_digest!==payload.content_digest)throw new PortalError('version_conflict');
+      const old=db.prepare('SELECT digest,result FROM document_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){
+        if(old.digest!==requestDigest)throw new PortalError('idempotency_conflict');
+        let ref:{document_id:string;version:number;sha256:string;audit_id:string};
+        try{ref=fclDocumentPdfReferenceSchema.parse(JSON.parse(old.result));}catch{throw new PortalError('document_readback_failed');}
+        if(ref.document_id!==prepared.payload.document_id||ref.version!==prepared.payload.version)throw new PortalError('document_readback_failed');
+        const artifact=this.readFclPdfArtifact(options.receiverUserId,prepared.payload.document_id,prepared.payload.version);
+        if(ref.sha256!==artifact.binding.sha256||ref.audit_id!==artifact.binding.audit_id)throw new PortalError('document_readback_failed');
+        this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId:artifact.binding.audit_id,partition,key,requestDigest});
+        db.exec('COMMIT');committed=true;
+        this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId:artifact.binding.audit_id,partition,key,requestDigest});
+        return this.fclPdfOutput(prepared.payload,artifact.bytes,prepared.payload.version,'formal',{replayed:true,submitted_version:ref.version,current:ref.version===prepared.payload.version});
+      }
+      let artifact:{binding:FclDocumentPdfBinding;bytes:Buffer};
+      const existing=this.fclPdfCache(prepared.payload.document_id,prepared.payload.version);
+      let auditId:string,created:string;
+      if(existing){
+        artifact=this.readFclPdfArtifact(options.receiverUserId,prepared.payload.document_id,prepared.payload.version);
+        auditId=artifact.binding.audit_id;created=artifact.binding.created_at;
+      }else{
+        auditId=randomUUID();created=this.fclTimestamp(options);
+        db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,'fcl-document-export',requestDigest,created);
+        const expectedSha=createHash('sha256').update(bytes).digest('hex');
+        db.prepare('INSERT INTO document_pdfs VALUES(?,?,?,?)').run(prepared.payload.document_id,prepared.payload.version,expectedSha,bytes);
+        const unsignedBinding={
+          contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,
+          personal_owner_id:options.receiverUserId,
+          document_id:prepared.payload.document_id,
+          revision_id:prepared.payload.revision_id,
+          version:prepared.payload.version,
+          content_digest:prepared.payload.content_digest,
+          sha256:expectedSha,
+          byte_length:bytes.length,
+          audit_id:auditId,
+          request_digest:requestDigest,
+          actor:ctx.identity.userId,
+          created_at:created,
+        };
+        const binding=fclDocumentPdfBindingSchema.parse({...unsignedBinding,signature:this.fclPdfBindingSignature(unsignedBinding)});
+        db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(this.fclPdfBindingPartition(options.receiverUserId),this.fclPdfBindingKey(prepared.payload.document_id,prepared.payload.version),binding.signature,JSON.stringify(binding));
+        artifact=this.readFclPdfArtifact(options.receiverUserId,prepared.payload.document_id,prepared.payload.version);
+        if(artifact.binding.sha256!==expectedSha||artifact.bytes.length!==bytes.length||!artifact.bytes.equals(bytes))throw new PortalError('document_readback_failed');
+      }
+      db.prepare('INSERT INTO document_idempotency(scope,key,digest,result) VALUES(?,?,?,?)').run(partition,key,requestDigest,JSON.stringify({document_id:prepared.payload.document_id,version:prepared.payload.version,sha256:artifact.binding.sha256,audit_id:auditId}));
+      this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId,partition,key,requestDigest});
+      db.exec('COMMIT');committed=true;
+      this.assertFclPdfCommitted({personalOwnerId:options.receiverUserId,documentId:prepared.payload.document_id,revisionId:prepared.payload.revision_id,version:prepared.payload.version,contentDigest:prepared.payload.content_digest,sha256:artifact.binding.sha256,bytes:artifact.bytes,auditId,partition,key,requestDigest});
+      return this.fclPdfOutput(prepared.payload,artifact.bytes,prepared.payload.version,'formal',{replayed:false,submitted_version:null,current:true});
+    }catch(error){
+      if(!committed)db.exec('ROLLBACK');
+      if(committed&&!(error instanceof PortalError))throw new PortalError('document_readback_failed');
+      throw error;
+    }
+  }
+  async exportFclDocument(ctx:PortalContext,input:unknown,key:string):Promise<FclDocumentExportOutput>{
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),request=parse(fclDocumentExportRequestSchema,input,'fcl_document_input_invalid');
+    if(request.mode==='history'){
+      return dependencies.caseLock.withFclReadLock(ctx,()=>{
+        return this.withFclDocumentReadWindow(()=>{
+          const target=this.readFclDocument(options.receiverUserId,request.document_id,request.target_version),current=this.readFclDocument(options.receiverUserId,request.document_id,null);
+          if(target.payload.state!=='approved')throw new PortalError('fcl_document_not_approved');
+          if(current.currentVersion!==request.expected_current_version)throw new PortalError('version_conflict');
+          dependencies.caseReader.getFclCase(ctx,target.payload.case_binding.case_ref);
+          let artifact:{binding:FclDocumentPdfBinding;bytes:Buffer};
+          try{artifact=this.readFclPdfArtifact(options.receiverUserId,request.document_id,request.target_version);}catch(error){
+            if(error instanceof PortalError&&error.code==='fcl_document_pdf_binding_missing')throw new PortalError(this.fclPdfCache(request.document_id,request.target_version)?'document_readback_failed':'fcl_document_history_bytes_missing');
+            throw error;
+          }
+          if(artifact.binding.revision_id!==target.payload.revision_id||artifact.binding.content_digest!==target.payload.content_digest)throw new PortalError('document_readback_failed');
+          return this.fclPdfOutput(target.payload,artifact.bytes,current.currentVersion,'history',{replayed:false,submitted_version:null,current:false});
+        });
+      });
+    }
+    this.store.ensureWritable();
+    const first=dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentReadWindow(()=>this.prepareFormalFclPdf(ctx,options,request))));
+    if(first.bytes)return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.writeFclPdf(ctx,options,request,key,first.bytes!,first.payload)));
+    let bytes:Buffer;
+    try{bytes=await this.renderer(renderHtml(first.document,first.template,true,first.metadata));}catch{throw new PortalError('document_renderer_unavailable');}
+    if(bytes.length<100||bytes.length>8388608||bytes.subarray(0,5).toString()!=='%PDF-')throw new PortalError('document_pdf_invalid');
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.writeFclPdf(ctx,options,request,key,bytes,first.payload)));
+  }
   private scope(ctx:PortalContext,manage=false):Scope{
     if(!ctx.identity.emailVerified||!ctx.organizationId)throw new PortalError('document_organization_required');
     const state=this.portal.getState(ctx).data;
@@ -473,7 +1956,7 @@ export class DocumentWorkflowService{
       const current=this.configRaw(scope);
       if(current.version!==data.expected_version)throw new PortalError('version_conflict');
       const merged={...current.input,...data.input};
-      this.store.store.db.prepare('INSERT INTO document_configs VALUES(?,?,?) ON CONFLICT(org) DO UPDATE SET version=excluded.version,input=excluded.input').run(scope.org,current.version+1,JSON.stringify(merged));
+      this.store.store.db.prepare('INSERT INTO document_configs(org,version,input) VALUES(?,?,?) ON CONFLICT(org) DO UPDATE SET version=excluded.version,input=excluded.input').run(scope.org,current.version+1,JSON.stringify(merged));
       return this.config(ctx);
     });
   }
@@ -591,9 +2074,9 @@ export class DocumentWorkflowService{
     const revisionId=payload.revision_id??randomUUID();
     const stored={...payload,revision_id:revisionId,version,state,updated_at:new Date().toISOString()};
     const inputDigest=canonicalHash(stored.input),templateDigest=canonicalHash(stored.template),created=new Date().toISOString();
-    this.store.store.db.prepare('INSERT INTO document_revisions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,stored.id,scope.org,stored.owner_id,version,state,3,JSON.stringify(stored),inputDigest,templateDigest,sourceRevision,reviewHash,rejectionReason,scope.user,created);
-    this.store.store.db.prepare('INSERT INTO document_current_revisions VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET org=excluded.org,owner=excluded.owner,revision_id=excluded.revision_id,version=excluded.version,schema_version=excluded.schema_version,projection_digest=excluded.projection_digest,updated_at=excluded.updated_at').run(stored.id,scope.org,stored.owner_id,revisionId,version,3,inputDigest,created);
-    const auditId=randomUUID();this.store.store.db.prepare('INSERT INTO document_audit VALUES(?,?,?,?,?,?)').run(auditId,scope.org,scope.user,action,inputDigest,created);
+    this.store.store.db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,stored.id,scope.org,stored.owner_id,version,state,3,JSON.stringify(stored),inputDigest,templateDigest,sourceRevision,reviewHash,rejectionReason,scope.user,created);
+    this.store.store.db.prepare('INSERT INTO document_current_revisions(document_id,org,owner,revision_id,version,schema_version,projection_digest,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET org=excluded.org,owner=excluded.owner,revision_id=excluded.revision_id,version=excluded.version,schema_version=excluded.schema_version,projection_digest=excluded.projection_digest,updated_at=excluded.updated_at').run(stored.id,scope.org,stored.owner_id,revisionId,version,3,inputDigest,created);
+    const auditId=randomUUID();this.store.store.db.prepare('INSERT INTO document_audit(id,org,actor,action,digest,created) VALUES(?,?,?,?,?,?)').run(auditId,scope.org,scope.user,action,inputDigest,created);
     this.store.store.db.prepare('INSERT INTO document_revision_events VALUES(?,?,?,?,?)').run(auditId,stored.id,revisionId,version,action);
     return stored;
   }
@@ -798,11 +2281,11 @@ export class DocumentWorkflowService{
     if(!completeness.complete)return {kind:'needs_input' as const,document_id:payload.id,version:payload.version,completeness,totals};
     const expires=Date.now()+600000,digest=this.contentDigest(payload);
     const reviewHash=hash([this.secret,scope.org,scope.user,payload.id,payload.version,payload.revision_id,digest,expires]);
-    this.reviews.set(reviewHash,{id:payload.id,version:payload.version,revision_id:payload.revision_id??null,content_digest:digest,expires,actor:scope.user});
+    this.reviews.set(reviewHash,{kind:'enterprise',id:payload.id,version:payload.version,revision_id:payload.revision_id??null,content_digest:digest,expires,actor:scope.user});
     return {kind:'success' as const,data:{document_id:payload.id,revision_id:payload.revision_id??null,reviewed_version:payload.version,state:payload.state,input:payload.input,completeness,totals,warnings:totals.warnings,blockers:[],requirements:{complete:true,case_current:true,native_source_current:true,validity_ok:true},can_approve:true,available_export_modes:payload.document_kind==='linked'?[]:['draft'],review_hash:reviewHash,review_expires_at:expires}};
   }
   review(ctx:PortalContext,input:unknown){const scope=this.scope(ctx),data=parse(reviewWorkflowSchema,input),payload=this.read(scope,data.id);if(payload.version!==data.expected_version)throw new PortalError('version_conflict');if(payload.state!=='draft')throw new PortalError('document_state_not_editable');const result=this.reviewPayload(scope,payload);if(result.kind==='needs_input')return {status:'needs_input' as const,...result};this.assertPayloadGates(ctx,payload,true,true);return {status:'success' as const,...result.data};}
-  approve(ctx:PortalContext,input:unknown,key:string){const scope=this.scope(ctx,true),data=parse(approveWorkflowSchema,input);return this.idempotent(ctx,scope,'approve',data.id,key,data,()=>{const current=this.read(scope,data.id);if(current.version!==data.expected_version)throw new PortalError('version_conflict');if(current.state!=='draft')throw new PortalError('version_conflict');this.assertPayloadGates(ctx,current,true,true);const review=this.reviews.get(data.review_hash);if(!review||review.actor!==scope.user||review.id!==current.id||review.version!==current.version||review.expires<Date.now()||review.content_digest!==this.contentDigest(current))throw new PortalError('document_review_stale');const claimed=current.revision_id?current:this.claimIfNeeded(scope,current).payload;if(review.revision_id!==null&&review.revision_id!==claimed.revision_id)throw new PortalError('document_review_stale');const sourceDigest=this.contentDigest(claimed),stored=this.append(scope,claimed,{state:'approved',approval:{...data,source_revision_id:claimed.revision_id,source_version:claimed.version,source_content_digest:sourceDigest,approved_revision_id:'',approved_version:claimed.version+1,review_expires_at:review.expires,actor:scope.user,at:new Date().toISOString()},approval_provenance:null},'approve',claimed.revision_id,data.review_hash);return this.view(stored);});}
+  approve(ctx:PortalContext,input:unknown,key:string){const scope=this.scope(ctx,true),data=parse(approveWorkflowSchema,input);return this.idempotent(ctx,scope,'approve',data.id,key,data,()=>{const current=this.read(scope,data.id);if(current.version!==data.expected_version)throw new PortalError('version_conflict');if(current.state!=='draft')throw new PortalError('version_conflict');this.assertPayloadGates(ctx,current,true,true);const review=this.reviews.get(data.review_hash);if(!review||review.kind!=='enterprise'||review.actor!==scope.user||review.id!==current.id||review.version!==current.version||review.expires<Date.now()||review.content_digest!==this.contentDigest(current))throw new PortalError('document_review_stale');const claimed=current.revision_id?current:this.claimIfNeeded(scope,current).payload;if(review.revision_id!==null&&review.revision_id!==claimed.revision_id)throw new PortalError('document_review_stale');const sourceDigest=this.contentDigest(claimed),stored=this.append(scope,claimed,{state:'approved',approval:{...data,source_revision_id:claimed.revision_id,source_version:claimed.version,source_content_digest:sourceDigest,approved_revision_id:'',approved_version:claimed.version+1,review_expires_at:review.expires,actor:scope.user,at:new Date().toISOString()},approval_provenance:null},'approve',claimed.revision_id,data.review_hash);return this.view(stored);});}
   reject(ctx:PortalContext,input:unknown,key:string){const scope=this.scope(ctx,true),data=parse(rejectWorkflowSchema,input);return this.idempotent(ctx,scope,'reject',data.id,key,data,()=>{const current=this.read(scope,data.id);if(current.version!==data.expected_version||current.state!=='draft')throw new PortalError('version_conflict');this.assertPayloadGates(ctx,current,true);const claimed=current.revision_id?current:this.claimIfNeeded(scope,current).payload,stored=this.append(scope,claimed,{state:'rejected',rejection:{reason:data.reason,actor:scope.user,at:new Date().toISOString()}},'reject',claimed.revision_id);return this.view(stored);});}
   private validatePdf(cached:{sha256:string;bytes:Uint8Array}|undefined):Buffer{
     if(!cached)throw new PortalError('inquiry_quote_history_bytes_missing');

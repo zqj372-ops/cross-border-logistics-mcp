@@ -55,8 +55,10 @@ export class PortalSessionManager {
   readonly #now: () => number;
   readonly #ttlMs: number;
   readonly #secureCookie: boolean;
-  constructor(options: { readonly store: PortalSessionStore; readonly now?: () => number; readonly ttlMs?: number; readonly secureCookie?: boolean }) {
+  readonly #canSelectPersonal: ((identity: PortalIdentity) => boolean) | undefined;
+  constructor(options: { readonly store: PortalSessionStore; readonly now?: () => number; readonly ttlMs?: number; readonly secureCookie?: boolean; readonly canSelectPersonal?: (identity: PortalIdentity) => boolean }) {
     this.store = options.store; this.#now = options.now ?? Date.now; this.#ttlMs = options.ttlMs ?? 30 * 60_000; this.#secureCookie = options.secureCookie ?? true;
+    this.#canSelectPersonal = options.canSelectPersonal;
     if (!Number.isSafeInteger(this.#ttlMs) || this.#ttlMs < 60_000 || this.#ttlMs > 24 * 60 * 60_000) throw new Error("session_ttl_invalid");
   }
   #cookie(sessionId: string): string { return `${PORTAL_SESSION_COOKIE}=${sessionId}; Path=/console; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(this.#ttlMs / 1000)}${this.#secureCookie ? "; Secure" : ""}`; }
@@ -78,7 +80,7 @@ export class PortalSessionManager {
   selectOrganization(sessionId: string, organizationId: string | null, memberships: readonly Membership[]): PortalSession {
     const current = this.get(sessionId); if (!current?.identity) throw new Error("authentication_required");
     if (organizationId === null) {
-      if (current.identity.platformRole !== "reviewer" && current.identity.platformRole !== "operator") throw new Error("platform_identity_required");
+      if (current.identity.platformRole !== "reviewer" && current.identity.platformRole !== "operator" && this.#canSelectPersonal?.(current.identity) !== true) throw new Error("platform_identity_required");
     } else {
       const allowed = memberships.some((membership) => membership.userId === current.identity!.userId && membership.organizationId === organizationId && membership.status === "active");
       if (!allowed) throw new Error("organization_membership_required");
