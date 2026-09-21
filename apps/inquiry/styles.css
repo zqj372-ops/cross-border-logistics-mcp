@@ -1,3 +1,4 @@
+@import "./fcl-design.css";
 @import "../console/fonts/fonts.css";
 :root {
   font-family:
@@ -1163,3 +1164,76 @@ select[aria-invalid=true] {
     grid-template-columns: 1fr;
   }
 }
+
+/* FCL intake uses the same visual language as the operations workbench. */
+body:has(.fcl-public-page) { background: #f4f6fa; font-family: "Manrope","Noto Sans SC",sans-serif; }
+body:has(.fcl-public-page) .site-header { height: 72px; padding-inline: max(24px,calc((100% - 1240px)/2)); }
+body:has(.fcl-public-page) .brand { font-size: 22px; }
+body:has(.fcl-public-page) .page { max-width: 1160px; width: calc(100% - 48px); padding: 36px 0 64px; }
+#inquiry .fcl-public-page .page-heading { margin: 0 0 30px; display: flex; gap: 20px; justify-content: space-between; align-items: center; }
+#inquiry .fcl-public-page .page-heading p { margin-top: 10px; max-width: 650px; }
+#inquiry .fcl-public-page .route-label { display: inline-flex; gap: 12px; align-items: center; padding: 8px 14px; border: 1px solid #dce3ee; border-radius: 7px; background: #fff; font-size: 13px; white-space: nowrap; }
+#inquiry .fcl-public-page .route-label span { color: #3659db; font-size: 11px; font-weight: 700; padding-left: 12px; border-left: 1px solid #dce3ee; }
+#inquiry .fcl-public-page .steps { width: 100%; max-width: 790px; margin: 0 0 24px; }
+#inquiry .fcl-public-page .steps ol { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+#inquiry .fcl-public-page .steps li:after { display: none; }
+#inquiry .fcl-public-page .steps button { gap: 10px; font-size: 14px; padding: 10px 0; font-weight: 600; }
+#inquiry .fcl-public-page .step-number { width: 32px; height: 32px; font-size: 13px; }
+#inquiry .fcl-public-page .inquiry-layout { grid-template-columns: minmax(0,1fr) 300px; gap: 24px; align-items: start; }
+#inquiry .fcl-public-page .form-content { padding: 30px; }
+#inquiry .fcl-public-page .section-intro { margin: 8px 0 26px; }
+#inquiry .fcl-public-page .summary-panel { position: sticky; top: 24px; padding: 24px; width: auto; margin: 0; }
+#inquiry .fcl-public-page .summary-panel summary { font-size: 16px; font-weight: 700; list-style: none; }
+#inquiry .fcl-public-page .summary-panel summary:after { display: none; }
+#inquiry .fcl-public-page .fcl-summary-route { margin: 22px 0; padding: 18px; border-radius: 8px; background: #f4f7fc; display: flex; flex-direction: column; align-items: flex-start; }
+#inquiry .fcl-public-page .fcl-summary-route > span { font-size: 11px; color: #617087; }
+#inquiry .fcl-public-page .fcl-summary-route strong { margin-top: 3px; font-size: 16px; overflow-wrap: anywhere; }
+#inquiry .fcl-public-page .fcl-summary-route .fcl-route-line { color: #7890bd; margin: 8px 0; font-size: 22px; }
+#inquiry .fcl-public-page .fcl-summary-route small { font-size: 12px; color: #617087; margin-top: 10px; }
+#inquiry .fcl-public-page .fcl-summary-list { margin: 0; }
+#inquiry .fcl-public-page .fcl-summary-list div { padding: 12px 0; border-bottom: 1px solid #edf0f5; }
+#inquiry .fcl-public-page .fcl-summary-list dt { color: #617087; font-size: 12px; }
+#inquiry .fcl-public-page .fcl-summary-list dd { margin: 4px 0 0; font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+#inquiry .fcl-public-page .fcl-summary-help { margin: 18px 0 0; font-size: 12px; color: #617087; line-height: 1.75; }
+#inquiry .fcl-public-page .fcl-container-row > label:first-child small { display: block; font-size: 11px; color: #617087; font-weight: 400; margin-top: 2px; }
+#inquiry .fcl-public-page .actions { grid-column: 1; background: #fff; border: 1px solid #dce3ee; border-radius: 10px; padding: 16px 24px; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#inquiry .fcl-public-page .action-note { font-size: 12px; color: #617087; }
+#inquiry .fcl-public-page .fcl-summary { padding: 18px; background: #f8faff; border: 1px solid #dce3ee; border-radius: 8px; margin-bottom: 24px; }
+#inquiry .fcl-public-page .fcl-summary dl { display: grid; grid-template-columns: 96px minmax(0,1fr); gap: 8px; margin: 0; font-size: 13px; }
+#inquiry .fcl-public-page .fcl-summary dt { color: #617087; }
+#inquiry .fcl-public-page .fcl-summary dd { margin: 0; }
+#inquiry .fcl-public-page .consent { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+#inquiry .fcl-public-page .consent input { margin-top: 3px; }
+#inquiry .fcl-public-page .case-status-line { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; font-size: 13px; color: #617087; }
+#inquiry .fcl-public-page .fcl-ticket-card { padding: 26px; margin-bottom: 24px; }
+#inquiry .fcl-public-page .case-timeline { padding: 18px 0 0 20px; }
+#inquiry .fcl-public-page .case-timeline li { padding: 0 0 22px 10px; }
+#inquiry .fcl-public-page .case-event-head { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+#inquiry .fcl-public-page .case-event-head time { color: #617087; font-size: 12px; }
+#inquiry .fcl-public-page .case-timeline small { color: #617087; }
+#inquiry .fcl-public-page [data-fcl-supplement] { margin-top: 24px; }
+#inquiry .fcl-public-page .table-wrap { overflow-x: auto; }
+#inquiry .fcl-public-page th, #inquiry .fcl-public-page td { padding: 12px; font-size: 13px; text-align: left; overflow-wrap: anywhere; }
+@media(max-width:800px) {
+  #inquiry .fcl-public-page .inquiry-layout { grid-template-columns: minmax(0,1fr); }
+  #inquiry .fcl-public-page .summary-panel { position: static; grid-row: auto; }
+  #inquiry .fcl-public-page .summary-panel details { display: block; }
+  #inquiry .fcl-public-page .actions { grid-row: 2; }
+  #inquiry .fcl-public-page .route-label { display: none; }
+}
+@media(max-width:520px) {
+  body:has(.fcl-public-page) .page { width: calc(100% - 32px); padding-top: 26px; }
+  body:has(.fcl-public-page) .site-header { padding-inline: 16px; }
+  body:has(.fcl-public-page) .site-header nav { gap: 14px; }
+  body:has(.fcl-public-page) .site-header nav a { font-size: 12px; }
+  body:has(.fcl-public-page) .site-header nav a[href="/console/#customs"] { display: none; }
+  #inquiry .fcl-public-page .form-content { padding: 22px 18px; }
+  #inquiry .fcl-public-page .steps button { font-size: 12px; gap: 6px; }
+  #inquiry .fcl-public-page .steps ol { gap: 8px; }
+  #inquiry .fcl-public-page .step-number { width: 27px; height: 27px; }
+  #inquiry .fcl-public-page .actions { padding: 14px; flex-wrap: wrap; }
+  #inquiry .fcl-public-page .actions .button.primary { margin-left: auto; }
+  #inquiry .fcl-public-page .action-note { width: 100%; }
+  #inquiry .fcl-public-page .fcl-service-grid { grid-template-columns: minmax(0,1fr); }
+}
+body:has(.fcl-public-page) .brand img { flex-shrink: 0; }
