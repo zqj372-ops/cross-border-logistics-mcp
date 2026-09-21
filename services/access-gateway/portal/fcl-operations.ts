@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {PortalError,type PortalContext} from './contracts';
 import type {NativeAdminStore,FclRateAdminView} from './native-admin';
+import {nativeDataSchema} from './native-admin-contracts';
 import {fclRateDatasetSchema,type FclRatePublication} from '../../quote-native/fcl-contracts';
 import {calculateFclEstimate,refreshFclEstimateTotals} from '../../quote-native/fcl-operations';
 import {
@@ -13,6 +14,7 @@ import {
 
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const parse=<T>(schema:z.ZodType<T>,input:unknown):T=>{const r=schema.safeParse(input);if(!r.success)throw new PortalError('fcl_operations_input_invalid');return r.data;};
+const revisionsSchema=z.array(z.object({estimate_id:z.string().uuid(),version:z.number().int().positive()}).strict());
 type Dependencies={store:NativeAdminStore;authorize:(ctx:PortalContext)=>{scope:string;now:()=>string};getRates:(ctx:PortalContext)=>FclRateAdminView};
 
 /** Typed FCL operations over the existing native business store. No public generic store access. */
@@ -59,18 +61,17 @@ export class FclOperationsService {
     const history=db.prepare('SELECT payload FROM native_releases WHERE id=? AND scope=? AND kind=?').get(snapshot.revision_id,owner.scope,'fcl-estimate') as {payload:string}|undefined;
     if(JSON.stringify(readback)!==serialized||history?.payload!==serialized)throw new PortalError('fcl_estimate_readback_failed');return readback;
   }
-  private write(ctx:PortalContext,action:string,input:unknown,key:string,operation:()=>string[]):string[]{
+  private write<T>(ctx:PortalContext,action:string,input:unknown,key:string,schema:z.ZodType<T>,operation:()=>T):T{
     const owner=this.deps.authorize(ctx);if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
     const db=this.deps.store.db,partition=JSON.stringify([owner.scope,ctx.identity.userId,'fcl-operations',action]),digest=hash(input);
     db.exec('BEGIN IMMEDIATE');let committed=false;
     try{
       const existing=db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
-      if(existing){if(existing.digest!==digest)throw new PortalError('idempotency_conflict');const ids=z.array(z.string().uuid()).parse(JSON.parse(existing.result));db.exec('COMMIT');committed=true;return ids;}
-      const ids=operation();
+      if(existing){if(existing.digest!==digest)throw new PortalError('idempotency_conflict');const result=schema.parse(JSON.parse(existing.result));db.exec('COMMIT');committed=true;return result;}
+      const result=schema.parse(operation());
       db.prepare('INSERT INTO native_audit VALUES(?,?,?,?,?,?,?)').run(randomUUID(),owner.scope,'fcl-operations',ctx.identity.userId,action,digest,owner.now());
-      db.prepare('INSERT INTO native_idempotency VALUES(?,?,?,?)').run(partition,key,digest,JSON.stringify(ids));
-      for(const id of ids)this.current(owner.scope,id);
-      db.exec('COMMIT');committed=true;return ids;
+      db.prepare('INSERT INTO native_idempotency VALUES(?,?,?,?)').run(partition,key,digest,JSON.stringify(result));
+      db.exec('COMMIT');committed=true;return result;
     }finally{if(!committed)db.exec('ROLLBACK');}
   }
   private calculate(ctx:PortalContext,release:FclRatePublication,request:FclEstimateRequest,rateId:string,templateId:string,previous?:FclEstimateSnapshot){
@@ -98,26 +99,27 @@ export class FclOperationsService {
   }
   run(ctx:PortalContext,input:unknown,key:string){
     const request=parse(fclEstimateRequestSchema,input);
-    const ids=this.write(ctx,'estimate-run',request,key,()=>this.generate(ctx,request,this.release(ctx)));
-    return {items:ids.map(estimate_id=>this.get(ctx,{estimate_id,version:null}))};
+    const owner=this.deps.authorize(ctx);
+    const revisions=this.write(ctx,'estimate-run',request,key,revisionsSchema,()=>this.generate(ctx,request,this.release(ctx)).map(estimate_id=>({estimate_id,version:this.current(owner.scope,estimate_id).version})));
+    return {items:revisions.map(ref=>this.get(ctx,ref))};
   }
   duplicate(ctx:PortalContext,input:unknown,key:string){
     const request=parse(fclEstimateActionSchema,input),owner=this.deps.authorize(ctx);
-    const ids=this.write(ctx,'estimate-duplicate',request,key,()=>{
+    const revisions=this.write(ctx,'estimate-duplicate',request,key,revisionsSchema,()=>{
       const old=this.current(owner.scope,request.estimate_id);if(old.version!==request.expected_version)throw new PortalError('version_conflict');
       if(this.records(owner.scope).length>=500)throw new PortalError('fcl_estimate_limit');
-      const copy=this.append(ctx,{...old,estimate_id:randomUUID(),version:1,locked:false,recommended:false,copied_from:{estimate_id:old.estimate_id,version:old.version}});return [copy.estimate_id];
-    });return this.get(ctx,{estimate_id:ids[0],version:null});
+      const copy=this.append(ctx,{...old,estimate_id:randomUUID(),version:1,locked:false,recommended:false,copied_from:{estimate_id:old.estimate_id,version:old.version}});return [{estimate_id:copy.estimate_id,version:copy.version}];
+    });return this.get(ctx,revisions[0]);
   }
   adjust(ctx:PortalContext,input:unknown,key:string){
     const request=parse(fclEstimateAdjustSchema,input),owner=this.deps.authorize(ctx);
-    const ids=this.write(ctx,'estimate-adjust',request,key,()=>{
+    const revisions=this.write(ctx,'estimate-adjust',request,key,revisionsSchema,()=>{
       const old=this.current(owner.scope,request.estimate_id);if(old.version!==request.expected_version)throw new PortalError('version_conflict');
       if(old.locked&&request.changes.length)throw new PortalError('fcl_estimate_locked');
       const calculation=structuredClone(old.calculation),adjustments=[...old.adjustments];const seen=new Set<string>();
       for(const change of request.changes){const line=calculation.lines.find(l=>l.id===change.line_id);if(!line?.editable||seen.has(change.line_id))throw new PortalError('fcl_estimate_adjustment_invalid');seen.add(change.line_id);adjustments.push({line_id:line.id,original_amount:line.sell_price,adjusted_amount:change.sell_price,reason:request.reason,actor:ctx.identity.userId,modified_at:owner.now()});line.sell_price=change.sell_price;}
-      return [this.append(ctx,{...old,version:old.version+1,locked:request.locked,recommended:request.recommended,calculation:refreshFclEstimateTotals(calculation),adjustments}).estimate_id];
-    });return this.get(ctx,{estimate_id:ids[0],version:null});
+      const updated=this.append(ctx,{...old,version:old.version+1,locked:request.locked,recommended:request.recommended,calculation:refreshFclEstimateTotals(calculation),adjustments});return [{estimate_id:updated.estimate_id,version:updated.version}];
+    });return this.get(ctx,revisions[0]);
   }
   /** Called inside the existing source-publication transaction; all versions commit together. */
   reprice(ctx:PortalContext,release:FclRatePublication):void {
@@ -157,7 +159,7 @@ export class FclOperationsService {
   bulkPreview(ctx:PortalContext,input:unknown){this.deps.authorize(ctx);return this.batch(ctx,input).preview;}
   bulkPublish(ctx:PortalContext,input:unknown,key:string){
     const request=parse(fclBulkPublishRequestSchema,input),owner=this.deps.authorize(ctx);
-    this.write(ctx,'rate-bulk-publish',request,key,()=>{
+    return this.write(ctx,'rate-bulk-publish',request,key,nativeDataSchema('fcl') as z.ZodType<FclRateAdminView>,()=>{
       const {preview_hash,confirmation,...proposal}=request;void preview_hash;void confirmation;const batch=this.batch(ctx,proposal);
       if(batch.preview.preview_hash!==request.preview_hash)throw new PortalError('native_preview_mismatch');
       const release:FclRatePublication={release_id:randomUUID(),version:request.expected_version+1,input:batch.candidate,published_at:owner.now(),digest:hash(batch.candidate)};
@@ -165,7 +167,7 @@ export class FclOperationsService {
       db.prepare("UPDATE native_configs SET version=?,draft=?,active=? WHERE scope=? AND kind='fcl'").run(release.version,JSON.stringify(release.input),release.release_id,owner.scope);
       this.reprice(ctx,release);
       if(request.estimate_request)this.generate(ctx,request.estimate_request,release);
-      const readback=this.deps.getRates(ctx);if(readback.active_release?.digest!==release.digest||readback.version!==release.version||readback.active_release?.release_id!==release.release_id)throw new PortalError('native_readback_failed');return [];
-    });return this.deps.getRates(ctx);
+      const readback=this.deps.getRates(ctx);if(readback.active_release?.digest!==release.digest||readback.version!==release.version||readback.active_release?.release_id!==release.release_id)throw new PortalError('native_readback_failed');return readback;
+    });
   }
 }

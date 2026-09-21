@@ -51,11 +51,16 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1000
+          },
+          "unit": {
+            "type": "string",
+            "const": "CNTR"
           }
         },
         "required": [
           "type",
-          "quantity"
+          "quantity",
+          "unit"
         ],
         "additionalProperties": false
       }

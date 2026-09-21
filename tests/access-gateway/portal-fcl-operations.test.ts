@@ -27,11 +27,16 @@ it('publishes one ocean change, appends affected estimate versions, preserves lo
     service.fclOperations.bulkPublish(receiver,commit,'ops-bulk-publish-key');
     const current=service.fclOperations.get(receiver,{estimate_id:quote.estimate_id,version:null});
     expect(current.version).toBe(2);expect(current.calculation.totals.cost_total).toBe('32900.00');
+    const replay=service.fclOperations.run(receiver,estimateRequest(),'ops-estimate-initial-key').items.find(e=>e.estimate_id===quote.estimate_id)!;expect(replay.version).toBe(1);expect(replay.calculation.totals.cost_total).toBe('30800.00');
+    expect(service.fclOperations.duplicate(receiver,{estimate_id:quote.estimate_id,expected_version:1},'ops-estimate-copy-key').version).toBe(1);
     expect(service.fclOperations.get(receiver,{estimate_id:quote.estimate_id,version:1}).calculation.totals.cost_total).toBe('30800.00');
     expect(service.fclOperations.get(receiver,{estimate_id:copy.estimate_id,version:null}).currentness.valid_now).toBe(false);
     expect(()=>service.fclOperations.list({...receiver,identity:{...receiver.identity,userId:'other'}},{case_ref:null,destination:null,shipping_date:null})).toThrow('fcl_not_found');
     store.close();store=new NativeAdminStore(path,{fcl:{mode:'reopen'}});service=new NativeAdminService(store,{} as never,options);
     expect(service.fclOperations.get(receiver,{estimate_id:quote.estimate_id,version:null}).version).toBe(2);
+    const latest=service.get(receiver,'fcl');service.save(receiver,'fcl',{expected_version:latest.version,input:latest.draft},'ops-later-save-config');
+    expect(service.fclOperations.bulkPublish(receiver,commit,'ops-bulk-publish-key').version).toBe(3);
+    expect(service.fclOperations.run(receiver,estimateRequest(),'ops-estimate-initial-key').items.find(e=>e.estimate_id===quote.estimate_id)?.version).toBe(1);
   }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
 
@@ -58,6 +63,7 @@ it('reprices multiple destinations atomically, rejects stale previews, and retai
     store.db.exec('DROP TRIGGER synthetic_fail_audit');
     service.fclOperations.bulkPublish(receiver,commit,'ops-atomic-bulk-publish');
     const updated=service.fclOperations.get(receiver,{estimate_id:quote.estimate_id,version:null});
+    expect(service.fclOperations.adjust(receiver,adjust,'ops-atomic-adjust-manual').version).toBe(2);
     expect(updated.version).toBe(3);expect(updated.calculation.lines[0]?.sell_price).toBe('3900');
     expect(updated.adjustments[0]).toMatchObject({original_amount:'3520.000000',adjusted_amount:'3900',actor:receiver.identity.userId,reason:'Agreed sale override'});
     expect(service.fclOperations.list(receiver,{case_ref:null,destination:'Edmonton',shipping_date:null}).items.find(e=>e.calculation.rate_id===cosco)?.version).toBe(2);
@@ -74,4 +80,20 @@ it('can generate first destination estimates as part of an ocean update with exp
     service.fclOperations.bulkPublish(receiver,{...input,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'},'ops-generate-bulk-publish');
     const estimates=service.fclOperations.list(receiver,{case_ref:null,destination:null,shipping_date:null});expect(estimates.items).toHaveLength(3);expect(estimates.items.find(e=>e.calculation.rate_id===cosco)?.calculation.totals.cost_total).toBe('32900.00');
   }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
+
+it('never reapplies an adjusted legacy fee to a different fee after reordering',()=>{
+ const root=mkdtempSync(join(tmpdir(),'fcl-fee-identity-')),store=new NativeAdminStore(join(root,'native.sqlite'),{fcl:{mode:'fresh_fixture',authorized:true,oldWritersStopped:true}});
+ try{
+  const service=new NativeAdminService(store,{} as never,options),data=operationsFixture();
+  const fee={name:'Fee A',group:'C' as const,service:'delivery' as const,unit:'SHIPMENT' as const,container_type:null,cost_price:'100',currency:'CAD' as const,note:null};
+  data.rates[0]!.additional_fees=[fee,{...fee,name:'Fee B',cost_price:'200'}];
+  service.save(receiver,'fcl',{expected_version:0,input:data},'fee-identity-save-initial');let p=service.preview(receiver,'fcl');service.publish(receiver,'fcl',{expected_version:1,preview_hash:p.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fee-identity-publish-initial');
+  const estimate=service.fclOperations.run(receiver,estimateRequest(),'fee-identity-estimate-run').items.find(e=>e.calculation.rate_id===cosco)!;
+  const line=estimate.calculation.lines.find(l=>l.name_zh==='Fee A')!;
+  service.fclOperations.adjust(receiver,{estimate_id:estimate.estimate_id,expected_version:1,locked:false,recommended:false,reason:'Fee A agreed sale',changes:[{line_id:line.id,sell_price:'150'}]},'fee-identity-adjust-key');
+  data.rates[0]!.additional_fees.shift();service.save(receiver,'fcl',{expected_version:2,input:data},'fee-identity-save-changed');p=service.preview(receiver,'fcl');service.publish(receiver,'fcl',{expected_version:3,preview_hash:p.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fee-identity-publish-changed');
+  const result=service.fclOperations.get(receiver,{estimate_id:estimate.estimate_id,version:null});
+  expect(result.currentness.valid_now).toBe(false);expect(result.calculation.lines.find(l=>l.name_zh==='Fee B')?.sell_price).toBe('220.000000');
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });

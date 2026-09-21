@@ -15,4 +15,4 @@ export function operationsFixture(){return fclRateDatasetV2Schema.parse({
     templates:[{id:'calgary',version:1,label:'Calgary',country:'CA',pod:'Vancouver',destination:'Calgary',routing:'Shanghai → Vancouver → Calgary',service_mode:'rail_truck',customs_mode:'broker',container_types:['40HQ'],...capacity,charge_ids:['thc','customs','reserve'],delivery_rate_id:'van-calgary',margin_rule:{mode:'cost_markup',value:'0.1'},exchange_rates:{USD:'7',CAD:'5.25'},fx_source:'synthetic:fx',...validity,enabled:true}],
   },
 });}
-export function estimateRequest(){return fclEstimateRequestSchema.parse({shipping_date:'2026-10-15',pol:'Shanghai',rate_ids:[],template_ids:[],containers:[{type:'40HQ',quantity:1}],weight_kg:null,volume_cbm:null,postal_code:null,zone:null,case_ref:null});}
+export function estimateRequest(){return fclEstimateRequestSchema.parse({shipping_date:'2026-10-15',pol:'Shanghai',rate_ids:[],template_ids:[],containers:[{type:'40HQ',quantity:1,unit:'CNTR'}],weight_kg:null,volume_cbm:null,postal_code:null,zone:null,case_ref:null});}

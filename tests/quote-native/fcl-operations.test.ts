@@ -46,11 +46,40 @@ it('rejects overlapping validity, duplicate references and invalid capacity befo
 it('bills per container separately from per shipment and chooses dated cost versions',()=>{
   const data=operationsFixture();const old=data.operations.charges[0]!;old.valid_until='2026-10-20';
   data.operations.charges.push({...old,version:2,valid_from:'2026-10-21',valid_until:'2026-12-31',amount:'150'});
-  const request={...estimateRequest(),containers:[{type:'40HQ' as const,quantity:2}]};
+  const request={...estimateRequest(),containers:[{type:'40HQ' as const,quantity:2,unit:'CNTR' as const}]};
   const first=calculateFclEstimate(data,request,cosco,'calgary');const later=calculateFclEstimate(data,{...request,shipping_date:'2026-10-25'},cosco,'calgary');
   expect(first.lines.find(l=>l.code==='ocean_freight')?.cost_amount).toBe('6400.00');
   expect(first.lines.find(l=>l.code==='thc')?.cost_amount).toBe('100.00');
   expect(later.lines.find(l=>l.code==='thc')?.cost_amount).toBe('150.00');
   expect(first.source_refs).toContainEqual({ref:'charge:thc',version:'1'});
   expect(later.source_refs).toContainEqual({ref:'charge:thc',version:'2'});
+});
+
+it('returns an explicitly blocked bounded calculation for oversized valid charge configurations',()=>{
+ const data=operationsFixture(),types=['20GP','40GP','40HQ','45HQ'] as const;
+ data.rates[0]!.items=types.map(container_type=>({...data.rates[0]!.items[0]!,container_type}));
+ data.operations.charges=Array.from({length:30},(_,i)=>({...data.operations.charges[0]!,id:`fee-${i}`,unit:'CNTR' as const,container_types:[...types]}));
+ Object.assign(data.operations.templates[0]!,{charge_ids:data.operations.charges.map(c=>c.id),container_types:[...types],delivery_rate_id:null});
+ const result=calculateFclEstimate(data,{...estimateRequest(),containers:types.map(type=>({type,quantity:1,unit:'CNTR' as const}))},cosco,'calgary');
+ expect(result.lines.length).toBeLessThanOrEqual(120);expect(result.blockers).toContain('fcl_estimate_line_limit');expect(result.totals.sell_total).toBeNull();
+});
+
+it('requires an explicit container count unit at the operations boundary',async()=>{
+ const {fclEstimateRequestSchema}=await import('../../services/quote-native/fcl-operations-contracts');
+ const request=estimateRequest();expect(fclEstimateRequestSchema.safeParse(request).success).toBe(true);
+ expect(fclEstimateRequestSchema.safeParse({...request,containers:[{type:'40HQ',quantity:1}]}).success).toBe(false);
+ expect(fclEstimateRequestSchema.safeParse({...request,containers:[{type:'40HQ',quantity:1,unit:'kg'}]}).success).toBe(false);
+});
+
+it('keeps a legacy fee identity through reorder and maps it back to the current customer quote row',async()=>{
+ const {estimateToQuoteDraft}=await import('../../services/quote-native/fcl-operations');
+ const data=operationsFixture(),fee={name:'Fee A',group:'C' as const,service:'delivery' as const,unit:'SHIPMENT' as const,container_type:null,cost_price:'100',currency:'CAD' as const,note:null};
+ data.rates[0]!.additional_fees=[fee,{...fee,name:'Fee B',cost_price:'200'}];
+ const first=calculateFclEstimate(data,estimateRequest(),cosco,'calgary');data.rates[0]!.additional_fees.reverse();
+ const next=calculateFclEstimate(data,estimateRequest(),cosco,'calgary'),a=next.lines.find(l=>l.name_zh==='Fee A')!;
+ expect(a.id).toBe(first.lines.find(l=>l.name_zh==='Fee A')!.id);
+ const draft=estimateToQuoteDraft({calculation:next,estimate_id:'00000000-0000-4000-8000-000000000001',version:1,content_digest:'0'.repeat(64)} as Parameters<typeof estimateToQuoteDraft>[0]);
+ expect(draft.source_sell_prices.find(l=>l.row_key==='rate_fee:1:delivery:SHIPMENT:shipment')?.sell_price).toBe('110.000000');
+ data.rates[0]!.additional_fees.push({...fee,cost_price:'300'});
+ expect(calculateFclEstimate(data,estimateRequest(),cosco,'calgary').blockers).toContain('legacy_fee_identity_ambiguous');
 });

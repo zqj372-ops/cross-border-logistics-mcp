@@ -81,7 +81,7 @@ export type FclOperations=z.infer<typeof fclOperationsSchema>;
 export type FclCharge=z.infer<typeof fclChargeSchema>;
 export const fclEstimateRequestSchema=z.object({
   shipping_date:date,pol:text,rate_ids:z.array(z.string().uuid()).max(30),template_ids:z.array(id).max(30),
-  containers:z.array(z.object({type:container,quantity:z.number().int().min(1).max(1000)}).strict()).min(1).max(4),
+  containers:z.array(z.object({type:container,quantity:z.number().int().min(1).max(1000),unit:z.literal('CNTR')}).strict()).min(1).max(4),
   weight_kg:positive.nullable(),volume_cbm:positive.nullable(),postal_code:text.nullable(),zone:text.nullable(),
   case_ref:z.string().uuid().nullable(),
 }).strict().refine(v=>new Set(v.containers.map(c=>c.type)).size===v.containers.length,'duplicate_container_type');

@@ -48,7 +48,7 @@ export function calculateFclEstimate(dataset:FclRateDataset,request:FclEstimateR
     }
   };
   capacity(template,'template');
-  const add=(line:Omit<Line,'cost_amount'|'sell_amount'>)=>lines.push({...line,cost_amount:'0.00',sell_amount:'0.00'});
+  const add=(line:Omit<Line,'cost_amount'|'sell_amount'>)=>{if(lines.length>=120){blockers.push('fcl_estimate_line_limit');return;}lines.push({...line,cost_amount:'0.00',sell_amount:'0.00'});};
   for(const box of request.containers){
     const item=rate.items.find(v=>v.container_type===box.type);
     if(!item||!template.container_types.includes(box.type)){blockers.push(`container_unavailable:${box.type}`);continue;}
@@ -67,10 +67,13 @@ export function calculateFclEstimate(dataset:FclRateDataset,request:FclEstimateR
     for(const box of boxes)add({id:`charge:${c.id}:${box.type??'shipment'}`,code:c.code,name_zh:c.name_zh,name_en:c.name_en,category:c.category,...pickSource(c),unit:c.unit,container_type:box.type,quantity:String(box.quantity),cost_price:c.amount,sell_price:c.sell_amount??selling(c.amount,template.margin_rule),currency:c.currency,editable:c.editable});
   };
   for(const chargeId of template.charge_ids)addCharge(chargeId);
+  const legacyFeeIds=new Set<string>();
   rate.additional_fees.forEach((fee,index)=>{
+    const identity=createHash('sha256').update(JSON.stringify([fee.name,fee.group,fee.service,fee.unit,fee.container_type,fee.currency])).digest('hex').slice(0,32);
+    if(legacyFeeIds.has(identity)){blockers.push('legacy_fee_identity_ambiguous');return;}legacyFeeIds.add(identity);
     const box=fee.unit==='CNTR'?request.containers.find(c=>c.type===fee.container_type):{quantity:1};
     if(!box)return;
-    add({id:`rate_fee:${index}:${fee.service}:${fee.unit}:${fee.container_type??'shipment'}`,code:`rate_fee_${index}`,name_zh:fee.name,name_en:fee.name,category:fee.group==='A'?'origin':fee.group==='B'?'ocean':'destination',source_ref:rate.source_ref,source_version:rate.source_version,valid_from:rate.valid_from,valid_until:rate.valid_until,unit:fee.unit,container_type:fee.container_type,quantity:String(box.quantity),cost_price:fee.cost_price,sell_price:selling(fee.cost_price,template.margin_rule),currency:fee.currency,editable:true});
+    add({id:`rate_fee:${identity}:${fee.service}:${fee.unit}:${fee.container_type??'shipment'}`,code:`rate_fee_${index}`,name_zh:fee.name,name_en:fee.name,category:fee.group==='A'?'origin':fee.group==='B'?'ocean':'destination',source_ref:rate.source_ref,source_version:rate.source_version,valid_from:rate.valid_from,valid_until:rate.valid_until,unit:fee.unit,container_type:fee.container_type,quantity:String(box.quantity),cost_price:fee.cost_price,sell_price:selling(fee.cost_price,template.margin_rule),currency:fee.currency,editable:true});
   });
   if(template.delivery_rate_id!==null){
     const candidates=ops.delivery_rates.filter(d=>d.id===template.delivery_rate_id&&inWindow(d,request.shipping_date));
@@ -106,7 +109,7 @@ export function estimateToQuoteDraft(estimate:FclEstimateSnapshot):FclQuoteDraft
   const manual=calculation.lines.filter(l=>!source.includes(l));
   return {
     extensions:{fcl_estimate_v1:{estimate_id:estimate.estimate_id,version:estimate.version,content_digest:estimate.content_digest,valid_from:calculation.valid_from,valid_until:calculation.valid_until}},
-    source_sell_prices:source.map(l=>({row_key:l.id,sell_price:l.sell_price,customer_note:null})),
+    source_sell_prices:source.map(l=>({row_key:l.id.startsWith('rate_fee:')?l.id.replace(/^rate_fee:[^:]+:/u,`rate_fee:${l.code.slice('rate_fee_'.length)}:`):l.id,sell_price:l.sell_price,customer_note:null})),
     manual_fees:manual.map(l=>{
       const h=createHash('sha256').update(`${estimate.estimate_id}:${l.id}`).digest('hex');
       const service=({origin:'pickup',destination:'delivery',customs:'canada_customs',inland:'delivery',ocean:'ocean_freight',other:'ocean_freight',risk:'ocean_freight'} as const)[l.category];

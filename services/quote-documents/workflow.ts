@@ -1021,7 +1021,7 @@ export class DocumentWorkflowService{
       const createdAt=this.fclTimestamp(options);
       if(estimate){
         const demand=caseView.current_input;
-        if(estimate.calculation.rate_id!==selected.rate_id||estimate.calculation.pol!==demand.pol||estimate.calculation.pod!==demand.pod||estimate.calculation.destination!==demand.final_destination||(estimate.request.case_ref!==null&&estimate.request.case_ref!==caseView.case_id)||canonicalHash([...estimate.request.containers].sort((a,b)=>a.type.localeCompare(b.type)))!==canonicalHash([...demand.containers].sort((a,b)=>a.type.localeCompare(b.type))))throw new PortalError('fcl_estimate_case_mismatch');
+        if(estimate.calculation.rate_id!==selected.rate_id||estimate.calculation.pol!==demand.pol||estimate.calculation.pod!==demand.pod||estimate.calculation.destination!==demand.final_destination||(estimate.request.case_ref!==null&&estimate.request.case_ref!==caseView.case_id)||canonicalHash(estimate.request.containers.map(({type,quantity})=>({type,quantity})).sort((a,b)=>a.type.localeCompare(b.type)))!==canonicalHash([...demand.containers].sort((a,b)=>a.type.localeCompare(b.type))))throw new PortalError('fcl_estimate_case_mismatch');
         if(demand.cargo_ready_date!==null&&estimate.request.shipping_date<demand.cargo_ready_date)throw new PortalError('fcl_estimate_shipping_date_invalid');
         if(estimate.request.weight_kg!==null&&(!demand.estimated_weight||!new Decimal(estimate.request.weight_kg).eq(demand.estimated_weight.value)))throw new PortalError('fcl_estimate_case_mismatch');
       }
