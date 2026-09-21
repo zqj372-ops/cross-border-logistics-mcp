@@ -143,3 +143,126 @@
 @media(max-width:760px){.ops-comparison{grid-template-columns:1fr}.ops-query-grid,.ops-editor .field-grid,.ops-check-list{grid-template-columns:repeat(2,minmax(0,1fr))}.ops-heading h1{font-size:24px}.ops-quantities{flex-wrap:wrap}.ops-toolbar .field{flex:1;min-width:120px}.ops-workspace .panel{padding:14px}.ops-heading .head-actions{width:100%}.ops-query-bottom>button{width:100%}}
 
 .fcl-workbench .ops-tabs{gap:6px}.fcl-workbench .ops-tabs .console-tab{padding:10px 16px}.fcl-workbench .ops-heading .head-actions{margin:0}.fcl-workbench .ops-workspace .fcl-field-en{font-size:10px;font-weight:400;line-height:1.3}.fcl-workbench .ops-workspace .field{font-size:13px}.fcl-workbench .ops-history .ops-trend td{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* Console refinement: the shared public form also uses an ID in :is().
+   Keep these rules scoped to the workbench so the cascade has one clear owner. */
+#app #content .fcl-workbench {
+  --fc-line: #e1e6ee;
+  --fc-muted: #637087;
+  color: var(--fc-ink);
+  font-family: "Noto Sans SC", "Manrope", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+#app #content .fcl-workbench :is(h1,h2,h3) { letter-spacing: 0; }
+#app #content .fcl-workbench h1 { font-size: 26px; line-height: 1.45; font-weight: 650; }
+#app #content .fcl-workbench h2 { font-size: 17px; line-height: 1.5; font-weight: 600; }
+#app #content .fcl-workbench h3 { font-size: 14px; line-height: 1.6; font-weight: 600; }
+#app #content .fcl-workbench :is(label,.fcl-field-zh) { font-size: 13px; font-weight: 500; }
+#app #content .fcl-workbench .fcl-field-en { display: block; font-size: 11px; font-weight: 400; color: var(--fc-muted); line-height: 1.4; margin-top: 2px; letter-spacing: 0; }
+#app #content .fcl-workbench :is(.muted,.page-head p,.panel-head p,.ops-heading p) { font-size: 13px; line-height: 1.7; color: var(--fc-muted); font-weight: 400; }
+#app #content .fcl-workbench :is(.panel,.fcl-route-brief,.case-card,.ops-quote-card) { border: 1px solid var(--fc-line); border-radius: 8px; box-shadow: none; }
+#app #content .fcl-workbench .ops-quote-card.is-recommended { border-color: var(--fc-blue); }
+#app #content .fcl-workbench .panel-head { border-bottom-color: var(--fc-line); }
+#app #content .fcl-workbench :is(.button,input,select,.console-tab) { min-height: 42px; font-size: 13px; line-height: 1.4; }
+#app #content .fcl-workbench :is(input,select,textarea) { padding: 8px 10px; border: 1px solid #bbc6d4; border-radius: 6px; background: #fff; color: var(--fc-ink); font-family: inherit; font-size: 14px; font-weight: 400; box-shadow: none; }
+#app #content .fcl-workbench :is(input,select) { height: 42px; }
+#app #content .fcl-workbench input:is([type=checkbox],[type=radio]) { height: 16px; min-height: 16px; width: 16px; padding: 0; }
+#app #content .fcl-workbench input::placeholder { color: #738095; opacity: 1; font-weight: 400; }
+#app #content .fcl-workbench :is(input,select,textarea):hover:not(:disabled) { border-color: #8c9bb0; }
+#app #content .fcl-workbench :is(input,select,textarea):focus { border-color: var(--fc-blue); outline: 2px solid var(--fc-blue); outline-offset: -1px; }
+#app #content .fcl-workbench [aria-invalid=true] { border-color: #b13443; }
+#app #content .fcl-workbench :is(input,select,textarea):disabled { background: #f3f5f8; color: var(--fc-muted); cursor: not-allowed; }
+#app #content .fcl-workbench .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 13px; border: 1px solid #cbd4e0; border-radius: 6px; background: #fff; font-weight: 500; box-shadow: none; }
+#app #content .fcl-workbench .button:hover:not(:disabled) { background: #f4f7fb; border-color: #99a9be; }
+#app #content .fcl-workbench .button.primary,
+#app #content .fcl-workbench .ops-quote-card footer .button:first-child { background: var(--fc-blue); border-color: var(--fc-blue); color: #fff; }
+#app #content .fcl-workbench .button.primary:hover:not(:disabled),
+#app #content .fcl-workbench .ops-quote-card footer .button:first-child:hover:not(:disabled) { background: #2849c5; border-color: #2849c5; }
+#app #content .fcl-workbench .button.danger { color: #b13443; border-color: #e4bfc4; }
+#app #content .fcl-workbench :is(button,a,summary):focus-visible { outline: 2px solid var(--fc-blue); outline-offset: 2px; }
+#app #content .fcl-workbench :is(.button,.text-button) svg { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 17px; height: 17px; }
+#app #content .fcl-workbench .console-tab svg { width: 18px; height: 18px; }
+
+/* Four business tabs and a quieter secondary settings area. */
+#app #content .fcl-workbench .ops-heading { margin-bottom: 18px; }
+#app #content .fcl-workbench .ops-tabs { margin-bottom: 20px; gap: 24px; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-tabs .console-tab { padding: 10px 2px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--fc-muted); box-shadow: none; font-weight: 500; }
+#app #content .fcl-workbench .ops-tabs .console-tab[aria-current] { color: var(--fc-blue); border-bottom-color: var(--fc-blue); font-weight: 600; }
+#app #content .fcl-workbench .ops-tabs .console-tab:hover { color: var(--fc-blue); }
+#app #content .fcl-workbench .ops-workspace > :is(.ops-advanced,.ops-publication) { margin: 16px 0 0; padding: 0; background: transparent; border: 0; border-top: 1px solid var(--fc-line); border-radius: 0; }
+#app #content .fcl-workbench .ops-workspace > :is(.ops-advanced,.ops-publication) > summary { min-height: 42px; padding: 12px 2px; font-size: 13px; font-weight: 500; color: #46556c; }
+#app #content .fcl-workbench .ops-workspace > :is(.ops-advanced,.ops-publication)[open] > summary { border: 0; }
+#app #content .fcl-workbench .ops-savebar { margin: 8px 0; border-radius: 6px; }
+
+/* Quote entry keeps the same spacing rhythm as the maintenance table. */
+#app #content .fcl-workbench .ops-workspace .field { margin: 0; }
+#app #content .fcl-workbench .ops-editor .field-grid { row-gap: 16px; }
+#app #content .fcl-workbench .ops-query > h2 { margin: 0 0 10px; }
+#app #content .fcl-workbench .ops-query > p { margin: 8px 0 16px; }
+#app #content .fcl-workbench .ops-query-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; }
+#app #content .fcl-workbench .ops-query-grid .field:nth-last-child(-n+2) { grid-column: span 2; }
+#app #content .fcl-workbench .ops-query-step { border-top: 1px solid var(--fc-line); margin-top: 16px; padding-top: 16px; }
+#app #content .fcl-workbench .ops-query-step h3 { margin: 0; }
+#app #content .fcl-workbench .ops-query-step p { margin: 8px 0; }
+#app #content .fcl-workbench .ops-query-step .ops-toolbar { margin: 10px 0; align-items: flex-end; }
+#app #content .fcl-workbench .ops-query-step .field { min-width: 280px; flex: 1; max-width: 560px; }
+#app #content .fcl-workbench .ops-query-bottom > p { margin: 0; }
+#app #content .fcl-workbench .ops-query-advanced { margin-top: 14px; }
+#app #content .fcl-workbench .ops-result-title { margin-top: 24px; }
+#app #content .fcl-workbench .ops-quote-card h2 { font-size: 20px; }
+#app #content .fcl-workbench .ops-cost-summary { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+#app #content .fcl-workbench .ops-cost-summary dd { font-weight: 500; font-size: 14px; }
+#app #content .fcl-workbench .ops-card-meta { font-size: 12px; gap: 10px; color: var(--fc-muted); }
+#app #content .fcl-workbench .ops-totals strong { font-weight: 600; letter-spacing: 0; }
+#app #content .fcl-workbench .ops-breakdown :is(th,td) { font-size: 12px !important; }
+#app #content .fcl-workbench .ops-breakdown li { font-size: 12px; }
+
+/* Editable cells read as a table; hover and keyboard focus reveal the field. */
+#app #content .fcl-workbench .ops-ocean-table { min-width: 1280px; font-variant-numeric: tabular-nums; }
+#app #content .fcl-workbench .ops-ocean-table :is(th,td) { padding: 10px 6px; vertical-align: top; white-space: normal; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-ocean-table th { padding-block: 12px; white-space: nowrap; font-size: 12px; font-weight: 500; color: #56647a; background: #f5f7fa; }
+#app #content .fcl-workbench .ops-ocean-table tbody tr:last-child td { border-bottom: 0; }
+#app #content .fcl-workbench .ops-ocean-table tbody tr:hover { background: #f8fafd; }
+#app #content .fcl-workbench .ops-ocean-table :is(input,select) { background: #fff; border-color: transparent; border-radius: 4px; min-width: 76px; font-size: 13px; }
+#app #content .fcl-workbench .ops-ocean-table tbody tr:hover :is(input,select) { border-color: #cbd4e0; }
+#app #content .fcl-workbench .ops-ocean-table :is(input,select):hover { border-color: #8c9bb0; }
+#app #content .fcl-workbench .ops-ocean-table :is(input,select):focus { border-color: var(--fc-blue); outline: 2px solid var(--fc-blue); outline-offset: -1px; }
+#app #content .fcl-workbench .ops-ocean-table input[data-ocean-key^="price:"] { text-align: right; font-weight: 500; font-size: 14px; }
+#app #content .fcl-workbench .ops-ocean-table th:nth-child(n+4):nth-child(-n+7) { text-align: right; padding-right: 16px; }
+#app #content .fcl-workbench .ops-ocean-table td:first-child { min-width: 115px; }
+#app #content .fcl-workbench .ops-ocean-table td:first-child input { font-weight: 600; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(2),
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(3) { min-width: 105px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(8) { min-width: 102px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(8) select { min-width: 90px; padding-inline: 8px 20px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) { min-width: 140px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) input { font-size: 12px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) input + input { margin-top: 5px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(10) { min-width: 148px; padding-top: 20px; font-size: 12px; color: #46556c; }
+#app #content .fcl-workbench .ops-ocean-table :is(th,td):last-child { position: sticky; right: 0; background: #fff; box-shadow: -1px 0 0 var(--fc-line); min-width: 100px; }
+#app #content .fcl-workbench .ops-ocean-table th:last-child { background: #f5f7fa; }
+#app #content .fcl-workbench .ops-ocean-table .button { padding: 8px; font-size: 12px; font-weight: 500; margin: 2px 0; border-color: transparent; color: #3a58a3; background: transparent; }
+#app #content .fcl-workbench .ops-ocean-table .button:hover { border-color: transparent; background: #edf2fc; color: #2849c5; }
+#app #content .fcl-workbench .ops-ocean-table [data-action="ops-ocean-disable"] { color: var(--fc-muted); }
+#app #content .fcl-workbench .ops-ocean-table [data-action="ops-ocean-disable"]:hover { color: #b13443; background: #fff1f2; }
+#app #content .fcl-workbench .ops-ocean-table td:last-child .button { display: inline-flex; width: calc(50% - 2px); margin: 0 2px 0 0; padding-inline: 4px; }
+#app #content .fcl-workbench .ops-ocean-table td:last-child .button:first-child { display: flex; width: 100%; margin: 0 0 4px; }
+#app #content .fcl-workbench .ops-ocean-table + p { margin-top: 12px; font-size: 12px; line-height: 1.7; }
+#app #content .fcl-workbench .ops-schedule { margin: 18px 0; }
+#app #content .fcl-workbench .ops-schedule table { min-width: 740px; }
+#app #content .fcl-workbench .ops-schedule td strong { display: block; }
+#app #content .fcl-workbench .ops-schedule > p:last-child { margin-top: 12px; }
+
+@media(min-width:761px) {
+  #app #content:has(.ops-workspace) { width: calc(100% - 48px); max-width: 1680px; }
+}
+@media(max-width:760px) {
+  #app #content .fcl-workbench h1 { font-size: 23px; }
+  #app #content .fcl-workbench .ops-query-grid,
+  #app #content .fcl-workbench .ops-editor .field-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #app #content .fcl-workbench .ops-query-grid .field:nth-last-child(-n+2) { grid-column: auto; }
+  #app #content .fcl-workbench .ops-query-step .field { min-width: 0; flex-basis: 100%; }
+  #app #content .fcl-workbench .ops-tabs { gap: 20px; }
+  #app #content .fcl-workbench .ops-query-bottom > p { width: 100%; }
+}

@@ -106,3 +106,8 @@ describe("schedule first-screen access matrix", () => {
     expect(access.organizations).toEqual([]);
   });
 });
+
+it('allows the server-confirmed FCL receiver to query without an organization',()=>{
+ expect(scheduleAccessState({session:{authenticated:true,identity:identity(),organization_id:null,fcl_capability:{fcl_personal:true}}})).toMatchObject({canQuery:true,phase:'personal'});
+ expect(scheduleAccessState({session:{authenticated:false,fcl_capability:{fcl_personal:true}}}).canQuery).toBe(false);
+});

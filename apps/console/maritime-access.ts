@@ -4,7 +4,8 @@ export type ScheduleAccessPhase =
   | "select-org"
   | "no-membership"
   | "viewer"
-  | "ready";
+  | "ready"
+  | "personal";
 
 export interface ScheduleAccessState {
   readonly authenticated: boolean;
@@ -23,6 +24,7 @@ export interface ScheduleAccessState {
 export interface ScheduleAccessInput {
   readonly session?: {
     readonly authenticated?: boolean;
+    readonly fcl_capability?: {readonly fcl_personal?: boolean};
     readonly organization_id?: string | null;
     readonly identity?: {
       readonly user_id?: string;
@@ -69,10 +71,13 @@ export function scheduleAccessState(input: ScheduleAccessInput = {}): ScheduleAc
       )
     : null;
   const role = membership?.role || null;
-  const canQuery = authenticated && Boolean(organizationId) && QUERY_ROLES.includes(role ?? "");
+  const personal = authenticated && session?.fcl_capability?.fcl_personal === true;
+  const canQuery = personal || authenticated && Boolean(organizationId) && QUERY_ROLES.includes(role ?? "");
   const phase: ScheduleAccessPhase = !authenticated
     ? "anonymous"
-    : platform && !organizationId
+    : personal
+      ? "personal"
+      : platform && !organizationId
       ? "platform-no-org"
       : !organizationId
         ? organizations.length ? "select-org" : "no-membership"

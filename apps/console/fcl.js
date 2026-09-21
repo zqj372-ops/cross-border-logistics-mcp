@@ -17,7 +17,6 @@ const serviceLabels = {
   delivery: '加拿大派送',
 };
 
-const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 
 export function selectWorkspaceQuoteRef(items, requestedRef) {
   if (requestedRef && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(requestedRef)) throw Object.assign(new Error('fcl_quote_not_found'), {code:'fcl_quote_not_found'});
@@ -88,14 +87,13 @@ export async function verifyPdfOutput(value, cryptoApi = globalThis.crypto) {
 }
 
 export function createFclWorkspace({api, mutate, model, esc, head, panel, empty, note, field:renderField, actions, formError, icon, rerender, notify}) {
-  let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', rateView = null, rateDraft = null, rateError = '', ratePreview = null, rateDirty = false, configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
+  let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
   let workspaceStep = 'requirements';
   const field=(label,id,body)=>renderField(fclFieldLabel(label),id,body);
   let operations;
-  const isDirty = () => operations?.isDirty() || rateDirty || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty || handoffDirty;
+  const isDirty = () => operations?.isDirty() || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty || handoffDirty;
   const discardDrafts = () => {
     operations?.reset();
-    rateDraft = clone(rateView?.draft) || rateDraft; rateDirty = false;
     issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false;
     matchResult = null; editingQuoteRef = null; quoteDraft = null; quoteDirty = false; reviewView = null; exportView = null;
     documentDisplayDraft = null; documentDisplayDirty = false;
@@ -108,7 +106,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const reset = () => {
     operations?.reset();
-    epoch += 1; activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = ''; rateView = null; rateDraft = null; rateError = ''; ratePreview = null; rateDirty = false;
+    epoch += 1; activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = '';
     configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const clearCaseDependents = () => {
@@ -131,7 +129,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const current = route(), key = `${current.page}/${current.action}/${current.id}/${current.quoteRef}`;
     if (key === activeRouteKey) return current;
     const leftCase = activeRouteKey.startsWith('fcl/case/');
-    if (activeRouteKey.startsWith('fcl/compare/') && key !== activeRouteKey) operations?.reset();
+    if ((activeRouteKey.startsWith('fcl/compare/') || activeRouteKey.startsWith('fcl/rates/')) && key !== activeRouteKey) operations?.reset();
     activeRouteKey = key;
     if (current.action === 'case' && current.quoteRef) workspaceStep = 'quote';
     message = '';
@@ -156,7 +154,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const result = await mutate(`/fcl/${action}`, 'POST', body, { acceptBusiness: true });
     return validateResponse(action, result);
   };
-  operations = createFclOperations({call,write,esc,rerender,notify,model});
+  operations = createFclOperations({call,write,esc,rerender,notify,model,api});
   const valueField = (title, id, value = '', attributes = '') => {
     const match = /\bname="([^"]+)"/u.exec(attributes);
     const name = match?.[1] || id;
@@ -260,18 +258,6 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       if (e === epoch && activeCaseId === id) { message = fclError(error); relatedCaseId = ''; }
     } finally { if (e === epoch && activeCaseId === id) { loadingRelated = false; rerender(); } }
   };
-  const loadRate = async () => {
-    if (rateView && !rateError) return;
-    const e = epoch;
-    rateError = '';
-    try {
-      const response = await call('rate-get', null, 'GET');
-      if (e !== epoch) return;
-      if (response.status === 'success') { rateView = response.data; rateDraft = clone(response.data.draft) || { contract_version: 'fcl-rate-dataset@2026-09-20.v1', label: '个人 FCL 运价', rates: [] }; }
-      else rateError = response.reason_codes?.[0] || 'fcl_unavailable';
-    } catch (error) { if (e === epoch) rateError = error.code || 'network'; }
-    if (e === epoch) rerender();
-  };
   const loadConfig = async () => {
     if (configView && notificationView) return;
     const e = epoch;
@@ -342,9 +328,8 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const detailPage = (id) => {
     selectCase(id);
     void loadDetail(id);
-    void loadRate();
     if (detail?.case_id === id && activeCaseId === id) void loadRelated(id);
-    let heading = head('整柜报价', detail ? `${detail.inquiry_no} · 需求第 ${detail.case_version} 版` : '正在读取询价需求', `<a class="button primary" href="#fcl/compare/${esc(id)}">多方案比价</a><a class="button" href="#fcl">返回询价列表</a>`);
+    let heading = head('整柜报价', detail ? `${detail.inquiry_no} · 需求第 ${detail.case_version} 版` : '正在读取询价需求', `<a class="button primary" href="#fcl/compare/${esc(id)}">整柜报价工作台</a><a class="button" href="#fcl">返回询价列表</a>`);
     if (detailError) return heading + note(fclError({code: detailError}), 'error');
     if (!detail) return heading + '<p role="status">正在读取询价…</p>';
     const inputValue = detail.current_input, originalValue = detail.original_input;
@@ -394,10 +379,10 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (!detail) return '';
     if (quoteView && !quoteDraft && !matchResult) {
       const source = quoteView.source_snapshot;
-      return panel('已保存的报价', '核对费用明细，或继续编辑售价与服务范围。', `<div class="panel-body"><div class="fcl-source-selected">运价来源：${esc(source.rate.supplier_label)} · ${esc(source.valid_from)} 至 ${esc(source.valid_until)}</div><div class="fcl-saved-fees">${quoteView.cost_rows.map(row => `<article><div><strong>${esc(row.source_kind === 'ocean_freight' ? `${row.container_type || ''} 海运费` : row.name)}</strong><small>${esc(row.quantity)} ${esc(fclLabel(row.unit))} · ${esc(row.currency)}</small></div><dl><div><dt>${fclField("cost_price")}</dt><dd>${esc(row.cost_price ?? '待补')}</dd></div><div><dt>${fclField("sell_price")}</dt><dd>${esc(row.sell_price ?? '待补')}</dd></div><div><dt>${fclField("sell_total")}</dt><dd>${esc(row.sell_amount ?? '待补')}</dd></div></dl>${row.customer_note ? `<p>${esc(row.customer_note)}</p>` : ''}</article>`).join('')}</div><div class="head-actions">${quoteView.currentness.valid_now && !quoteView.extensions?.fcl_estimate_v1 ? '<button class="button primary" data-action="fcl-edit-quote">继续编辑此报价</button>' : ''}<button class="button" data-action="fcl-match" data-id="${esc(id)}"${detail.review_context.review_required ? ' disabled' : ''}>重新选择运价</button><a class="button" href="#fcl/rates">管理运价</a></div></div>`);
+      return panel('已保存的报价', '核对费用明细，或继续编辑售价与服务范围。', `<div class="panel-body"><div class="fcl-source-selected">运价来源：${esc(source.rate.supplier_label)} · ${esc(source.valid_from)} 至 ${esc(source.valid_until)}</div><div class="fcl-saved-fees">${quoteView.cost_rows.map(row => `<article><div><strong>${esc(row.source_kind === 'ocean_freight' ? `${row.container_type || ''} 海运费` : row.name)}</strong><small>${esc(row.quantity)} ${esc(fclLabel(row.unit))} · ${esc(row.currency)}</small></div><dl><div><dt>${fclField("cost_price")}</dt><dd>${esc(row.cost_price ?? '待补')}</dd></div><div><dt>${fclField("sell_price")}</dt><dd>${esc(row.sell_price ?? '待补')}</dd></div><div><dt>${fclField("sell_total")}</dt><dd>${esc(row.sell_amount ?? '待补')}</dd></div></dl>${row.customer_note ? `<p>${esc(row.customer_note)}</p>` : ''}</article>`).join('')}</div><div class="head-actions">${quoteView.currentness.valid_now && !quoteView.extensions?.fcl_estimate_v1 ? '<button class="button primary" data-action="fcl-edit-quote">继续编辑此报价</button>' : ''}<button class="button" data-action="fcl-match" data-id="${esc(id)}"${detail.review_context.review_required ? ' disabled' : ''}>重新选择运价</button><a class="button" href="#fcl/rates">海运费表</a></div></div>`);
     }
     const matchButton = `<button class="button primary" data-action="fcl-match" data-id="${esc(id)}" ${detail.review_context.review_required ? 'disabled' : ''}>查找适用运价</button>`;
-    let body = `<p>按本票线路、柜型和备货日期查找可用运价。多个来源时，请选择实际采用的一项。</p><div class="head-actions">${matchButton}<a class="button" href="#fcl/rates">管理运价</a></div>`;
+    let body = `<p>按本票线路、柜型和备货日期查找可用运价。多个来源时，请选择实际采用的一项。</p><div class="head-actions">${matchButton}<a class="button" href="#fcl/rates">海运费表</a></div>`;
     if (matchResult) {
       if (matchResult.status === 'manual_review') body += note(`匹配需要人工选择：${matchResult.reason_codes.map(fclIssue).join('、')}`, 'warning');
       if (matchResult.status === 'success') body += `<p class="fcl-source-selected">已选择：${esc(matchResult.data.selected?.rate.supplier_label || '运价来源')} · 有效期至 ${esc(matchResult.data.selected?.valid_until || '')}</p>`;
@@ -527,22 +512,9 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     return `<section class="panel"><div class="panel-body"><h3>运营交接</h3><p class="fcl-handoff-status">${esc(fclLabel(handoffView.status))}</p>${handoffView.reason_codes.length ? `<p class="muted">${esc(handoffView.reason_codes.map(fclIssue).join('；'))}</p>` : ''}${current ? `<dl class="case-details"><div><dt>报价单</dt><dd>v${current.document_version}</dd></div><div><dt>报价</dt><dd>第 ${current.quote_version} 版</dd></div><div><dt>PDF</dt><dd><code>${esc(current.pdf_sha256.slice(0, 16))}…</code> · ${current.pdf_byte_length} bytes</dd></div><div><dt>交接记录</dt><dd>已保存本人操作记录</dd></div></dl>` : ''}<form data-fcl-form="handoff-note"><div class="field"><label for="fcl-handoff-note">本次交接备注</label><textarea id="fcl-handoff-note" name="fcl-handoff-note" rows="2" maxlength="2000" placeholder="仅在内部事件中保留">${esc(handoffDraft)}</textarea></div></form><button class="button primary" data-action="fcl-handoff"${ready ? '' : ' disabled'} title="${esc(reason || '交接前置条件已满足')}">${handoffView.status === 'handed_off' ? '再次交接' : '确认交接'}</button>${reason ? `<p class="muted">${esc(reason)}</p>` : ''}${handoffView.history.length ? `<details><summary>历史交接（${handoffView.history.length}）</summary><ul>${handoffView.history.map(item => `<li>${esc(item.recorded_at)} · quote v${item.quote_version} · doc v${item.document_version} · <code>${esc(item.pdf_sha256.slice(0, 12))}…</code></li>`).join('')}</ul></details>` : ''}<p class="muted">交接后请按实际业务安排后续操作；此处不会自动订舱。</p></div></section>`;
   };
 
-  const ratePage = () => {
-    void loadRate();
-    const heading = head('运价管理', '维护来源、有效期、柜型海运费和附费；草稿保存不会立刻成为当前报价来源。', '<a class="button primary" href="#fcl">返回询价列表</a>');
-    if (rateError) return heading + note(fclError({code: rateError}), 'error');
-    if (!rateView) return heading + '<p role="status">正在读取运价草稿…</p>';
-    const active = rateView.active_release;
-    const history = rateView.history?.length ? `<details class="panel"><summary>历史发布</summary><div class="panel-body">${rateView.history.map(item => `<div class="field-grid"><span>第 ${item.version} 版 · ${esc(item.label)} · ${esc(item.published_at)}</span><button class="button" data-action="fcl-rate-rollback" data-release="${esc(item.release_id)}">回退并创建新发布</button></div>`).join('')}</div></details>` : '';
-    const preview = ratePreview ? `<section class="inline-note ${ratePreview.can_publish ? '' : 'warning'}">${ratePreview.can_publish ? '预览通过，可确认发布。' : `预览未通过：${esc(ratePreview.blockers.join('、'))}`}<details class="fcl-technical"><summary>查看预览凭证</summary><code>${esc(ratePreview.preview_hash)}</code></details></section>` : '';
-    return heading + messageNote() + preview + `<section class="inline-note">当前发布：${active ? `第 ${active.version} 版 · ${esc(active.input.label)}` : '尚未发布运价，请先保存并发布'}<span> 草稿版本 v${rateView.version}</span><div class="head-actions"><button type="button" class="button primary" data-action="fcl-rate-save">保存草稿</button><button type="button" class="button" data-action="fcl-rate-preview">预览草稿</button><button type="button" class="button" data-action="fcl-rate-publish"${ratePreview?.can_publish && ratePreview.preview_hash ? '' : ' disabled'}>确认发布</button>${active ? '<button type="button" class="button danger" data-action="fcl-rate-disable">停用当前发布</button>' : ''}</div></section>${rateEditor()}${history}`;
-  };
-  const rateEditor = () => `<form data-fcl-form="rate-save">${formError}<section class="panel"><div class="panel-body"><div class="field-grid">${valueField('运价表名称', 'fcl-rate-label', rateDraft.label || '', 'name="fcl-rate-label"')}</div><div data-fcl-rates>${(rateDraft.rates || []).map((rate, index) => rateRow(rate, index)).join('')}</div><button type="button" class="button" data-action="fcl-rate-add">添加来源</button><button class="button primary" type="submit">保存草稿</button></div></section></form>`;
-  const rateRow = (rate, index) => `<details open class="panel" data-fcl-rate-index="${index}"><summary>${esc(rate.supplier_label || `来源 ${index + 1}`)} · ${esc(rate.pol || '起运港待填')} → ${esc(rate.pod || '目的港待填')}</summary><div class="panel-body"><div class="field-grid">${valueField('来源/供应商', `fcl-rate-${index}-supplier`, rate.supplier_label || '', `name="fcl-rate-${index}-supplier"`)}${valueField('起运港（POL）', `fcl-rate-${index}-pol`, rate.pol || '', `name="fcl-rate-${index}-pol"`)}${valueField('目的港（POD）', `fcl-rate-${index}-pod`, rate.pod || '', `name="fcl-rate-${index}-pod"`)}${valueField('有效起', `fcl-rate-${index}-from`, rate.valid_from || '', `name="fcl-rate-${index}-from" type="date"`)}${valueField('有效止', `fcl-rate-${index}-until`, rate.valid_until || '', `name="fcl-rate-${index}-until" type="date"`)}${valueField('运价依据（文件或邮件编号）', `fcl-rate-${index}-source`, rate.source_ref || '', `name="fcl-rate-${index}-source"`)}${valueField('依据版本', `fcl-rate-${index}-source-version`, rate.source_version || 'v1', `name="fcl-rate-${index}-source-version"`)}</div><div class="field"><label for="fcl-rate-${index}-note">来源备注</label><textarea id="fcl-rate-${index}-note" name="fcl-rate-${index}-note" rows="2" maxlength="2000">${esc(rate.note || '')}</textarea></div>${containerTypes.map(type => { const item = rate.items?.find(candidate => candidate.container_type === type); return `<div class="field-grid" data-fcl-rate-item="${index}:${type}"><strong>${type}</strong>${valueField('海运费 / 柜', `fcl-rate-${index}-${type}-price`, item?.ocean_freight || '', `name="fcl-rate-${index}-${type}-price"`)}${field('币种', `fcl-rate-${index}-${type}-currency`, `<select id="fcl-rate-${index}-${type}-currency" name="fcl-rate-${index}-${type}-currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${(item?.currency || 'USD') === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`)}</div>`; }).join('')}<div class="field-grid">${(rate.additional_fees || []).map((fee, feeIndex) => `<div class="field-grid" data-fcl-rate-fee="${index}:${feeIndex}">${valueField('附费名称', `fcl-rate-${index}-fee-${feeIndex}-name`, fee.name || '', `name="fcl-rate-${index}-fee-${feeIndex}-name"`)}${field('服务', `fcl-rate-${index}-fee-${feeIndex}-service`, `<select id="fcl-rate-${index}-fee-${feeIndex}-service" name="fcl-rate-${index}-fee-${feeIndex}-service">${Object.entries(serviceLabels).map(([id, label]) => `<option value="${id}"${fee.service === id ? ' selected' : ''}>${label}</option>`).join('')}</select>`)}${field('分组', `fcl-rate-${index}-fee-${feeIndex}-group`, `<select id="fcl-rate-${index}-fee-${feeIndex}-group" name="fcl-rate-${index}-fee-${feeIndex}-group">${['A','B','C'].map(group => `<option value="${group}"${fee.group === group ? ' selected' : ''}>${esc(configView?.catalog?.groups.find(item => item.group === group)?.label || {A:'起运段',B:'干线运输',C:'目的段'}[group])}</option>`).join('')}</select>`)}${field('单位', `fcl-rate-${index}-fee-${feeIndex}-unit`, `<select id="fcl-rate-${index}-fee-${feeIndex}-unit" name="fcl-rate-${index}-fee-${feeIndex}-unit"><option value="SHIPMENT"${fee.unit === 'SHIPMENT' ? ' selected' : ''}>按票计费</option><option value="CNTR"${fee.unit === 'CNTR' ? ' selected' : ''}>按柜计费</option></select>`)}${field('柜型', `fcl-rate-${index}-fee-${feeIndex}-container`, `<select id="fcl-rate-${index}-fee-${feeIndex}-container" name="fcl-rate-${index}-fee-${feeIndex}-container">${containerTypes.map(type => `<option value="${type}"${fee.container_type === type ? ' selected' : ''}>${type}</option>`).join('')}</select>`)}${valueField('成本', `fcl-rate-${index}-fee-${feeIndex}-cost`, fee.cost_price || '', `name="fcl-rate-${index}-fee-${feeIndex}-cost"`)}${field('币种', `fcl-rate-${index}-fee-${feeIndex}-currency`, `<select id="fcl-rate-${index}-fee-${feeIndex}-currency" name="fcl-rate-${index}-fee-${feeIndex}-currency">${['USD','CAD','CNY'].map(code => `<option value="${code}"${(fee.currency || 'USD') === code ? ' selected' : ''}>${code}</option>`).join('')}</select>`)}${valueField('备注', `fcl-rate-${index}-fee-${feeIndex}-note`, fee.note || '', `name="fcl-rate-${index}-fee-${feeIndex}-note"`)}<button type="button" class="text-button" data-action="fcl-rate-fee-remove" data-index="${index}" data-fee="${feeIndex}">删除附费</button></div>`).join('')}</div><button type="button" class="button" data-action="fcl-rate-fee-add" data-index="${index}">添加附费</button><button type="button" class="text-button" data-action="fcl-rate-remove" data-index="${index}">删除来源</button></div></details>`;
-
   const configPage = () => {
     void loadConfig();
-    const heading = head('报价与通知设置', '设置客户报价单上的出具人信息，以及新询价的内部通知收件人。', '<a class="button primary" href="#fcl/compare">多方案比价</a><a class="button" href="#fcl">返回询价列表</a>');
+    const heading = head('报价与通知设置', '设置客户报价单上的出具人信息，以及新询价的内部通知收件人。', '<a class="button primary" href="#fcl/compare">整柜报价工作台</a><a class="button" href="#fcl">返回询价列表</a>');
     if (configError) return heading + note(fclError({code: configError}), 'error');
     if (!configView || !notificationView) return heading + '<p role="status">正在读取配置…</p>';
     const savedConfig = configView.input || {};
@@ -556,32 +528,6 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     return heading + messageNote() + `<div class="form-layout"><form class="panel" data-fcl-form="issuer-config-save" data-version="${configView.version}">${formError}<div class="panel-body"><h2>报价出具人</h2><div class="field-grid">${valueField('出具人名称', 'fcl-issuer-name', config.issuer_name || '', 'name="fcl-issuer-name"')}${valueField('邮箱', 'fcl-issuer-email', config.issuer_email || '', 'name="fcl-issuer-email" type="email"')}${valueField('电话', 'fcl-issuer-phone', config.issuer_phone || '', 'name="fcl-issuer-phone"')}${valueField('地址', 'fcl-issuer-address', config.issuer_address || '', 'name="fcl-issuer-address"')}</div><div class="field"><label for="fcl-issuer-terms">报价条款</label><textarea id="fcl-issuer-terms" name="fcl-issuer-terms" rows="3" maxlength="4000">${esc(config.terms || '')}</textarea></div>${templatePicker}<button class="button primary" type="submit">保存出具人资料</button></div></form><form class="panel" data-fcl-form="notification-save" data-version="${notificationView.version}">${formError}<div class="panel-body"><h2>内部通知</h2><label class="check-row"><input type="checkbox" name="enabled"${notification.enabled ? ' checked' : ''}>启用内部通知</label>${valueField('收件人', 'fcl-notification-recipient', notification.recipient || '', 'name="fcl-notification-recipient" type="email"')}${valueField('抄送（逗号分隔）', 'fcl-notification-cc', (notification.cc || []).join(','), 'name="fcl-notification-cc"')}<button class="button primary" type="submit">保存通知配置</button><p class="muted">这里设置新询价的内部通知收件人。邮件发送成功后，仍需以收件箱实际收到为准。</p></div></form></div>`;
   };
 
-  const captureRateForm = (form) => {
-    const label = form.querySelector('[name=fcl-rate-label]').value.trim();
-    const rates = [...form.querySelectorAll('[data-fcl-rate-index]')].map(section => {
-      const index = Number(section.dataset.fclRateIndex);
-      const previous = rateDraft.rates[index] || {};
-      const value = (key) => section.querySelector(`[name=fcl-rate-${index}-${key}]`)?.value.trim() || null;
-      const items = containerTypes.flatMap(type => {
-        const row = section.querySelector(`[data-fcl-rate-item="${index}:${type}"]`);
-        const price = row?.querySelector(`[name=fcl-rate-${index}-${type}-price]`)?.value.trim();
-        return price ? [{ container_type: type, ocean_freight: price, currency: row.querySelector(`[name=fcl-rate-${index}-${type}-currency]`)?.value.trim() || 'USD' }] : [];
-      });
-      const additional_fees = [...section.querySelectorAll(`[data-fcl-rate-fee^="${index}:"]`)].map(feeRow => {
-        const feeIndex = Number(feeRow.dataset.fclRateFee.split(':')[1]);
-        const previousFee = previous.additional_fees?.[feeIndex] || {};
-        const read = (key) => feeRow.querySelector(`[name="fcl-rate-${index}-fee-${feeIndex}-${key}"]`)?.value.trim() || null;
-        const unit = read('unit') || 'SHIPMENT';
-        return { name: read('name') || '', group: read('group') || previousFee.group || 'C', service: read('service') || previousFee.service || 'delivery', cost_price: read('cost'), currency: read('currency') || previousFee.currency || 'USD', note: read('note') || null, unit, container_type: unit === 'CNTR' ? (read('container') || previousFee.container_type || '40HQ') : null };
-      });
-      return { rate_id: previous.rate_id || crypto.randomUUID(), supplier_label: value('supplier') || '', pol: value('pol') || '', pod: value('pod') || '', valid_from: value('from') || '', valid_until: value('until') || '', source_ref: value('source') || '', source_version: value('source-version') || 'v1', note: section.querySelector(`[name="fcl-rate-${index}-note"]`)?.value.trim() || null, items, additional_fees };
-    });
-    rateDraft = { ...rateDraft, label: label || '个人 FCL 运价', rates };
-  };
-  const assertRateDraft = (value) => {
-    const invalid = !value.label || !value.rates.length || value.rates.some(rate => !rate.supplier_label || !rate.pol || !rate.pod || !rate.valid_from || !rate.valid_until || !rate.source_ref || !rate.source_version || !rate.items.length) || value.rates.some(rate => rate.additional_fees.some(fee => !fee.name || !fee.cost_price));
-    if (invalid) throw Object.assign(new Error('fcl_rate_input_invalid'), { code: 'fcl_rate_input_invalid' });
-  };
   const captureQuoteForm = (form) => {
     if (!quoteDraft) return;
     quoteDraft.source_sell_prices = [...form.querySelectorAll('[data-fcl-source-price]')].map(row => {
@@ -623,7 +569,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     sync();
     const routeValue = syncRoute();
     if (!hasCapability()) return empty('当前账号没有整柜受理权限', '请使用指定的受理人账号登录。');
-    const body = routeValue.action === 'compare' ? operations.render(routeValue.id) : routeValue.action === 'rates' ? ratePage() : routeValue.action === 'config' ? configPage() : routeValue.action === 'case' && routeValue.id ? detailPage(routeValue.id) : listPage();
+    const body = routeValue.action === 'compare' ? operations.render(routeValue.id) : routeValue.action === 'rates' ? operations.render('', 'rates') : routeValue.action === 'config' ? configPage() : routeValue.action === 'case' && routeValue.id ? detailPage(routeValue.id) : listPage();
     return `<div class="fcl-workbench">${body}</div>`;
   };
 
@@ -652,7 +598,6 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const captureFormDraft = (form) => {
     const type = form.dataset.fclForm;
-    if (type === 'rate-save') { captureRateForm(form); rateDirty = true; ratePreview = null; return; }
     if (type === 'quote-save') {
       captureQuoteForm(form);
       quoteDirty = true;
@@ -723,16 +668,6 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (!form.dataset.fclForm) return false;
     const type = form.dataset.fclForm;
     const e = epoch;
-    if (type === 'rate-save') {
-      captureRateForm(form);
-      assertRateDraft(rateDraft);
-      const response = await write('rate-save', { expected_version: rateView.version, input: rateDraft });
-      if (e !== epoch) return true;
-      if (response.data) { rateView = response.data; rateDraft = clone(response.data.draft); ratePreview = null; rateDirty = false; }
-      message = responseMessage(response, '运价草稿已保存；当前发布未改变。', '运价草稿已保存，但仍待补齐。');
-      rerender();
-      return true;
-    }
     if (type === 'issuer-config-save') {
       captureFormDraft(form);
       const catalogItems = configView.catalog.groups.flatMap(group => group.items);
@@ -849,34 +784,9 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (!name?.startsWith('fcl-')) return false;
     const e = epoch;
     if (name === 'fcl-workspace-step' && ['requirements', 'quote', 'documents'].includes(button.dataset.step)) { workspaceStep = button.dataset.step; rerender(); const heading = document.querySelector(`#fcl-step-${workspaceStep} h2`); heading?.setAttribute('tabindex', '-1'); heading?.focus({ preventScroll: true }); return true; }
-    if (name === 'fcl-rate-add') { const form = document.querySelector('[data-fcl-form="rate-save"]'); if (form) captureRateForm(form); rateDraft.rates.push({ rate_id: crypto.randomUUID(), supplier_label: '', pol: '', pod: '', valid_from: '', valid_until: '', source_ref: '', source_version: 'v1', note: null, items: [], additional_fees: [] }); ratePreview = null; rateDirty = true; rerender(); return true; }
-    if (name === 'fcl-rate-remove') { const form = document.querySelector('[data-fcl-form="rate-save"]'); if (form) captureRateForm(form); rateDraft.rates.splice(Number(button.dataset.index), 1); ratePreview = null; rateDirty = true; rerender(); return true; }
-    if (name === 'fcl-rate-fee-add') { const form = document.querySelector('[data-fcl-form="rate-save"]'); if (form) captureRateForm(form); rateDraft.rates[Number(button.dataset.index)].additional_fees.push({ name:'', group:'C', service:'delivery', cost_price:null, currency:'USD', note:null, unit:'SHIPMENT', container_type:null }); ratePreview = null; rateDirty=true; rerender(); return true; }
-    if (name === 'fcl-rate-fee-remove') { const form = document.querySelector('[data-fcl-form="rate-save"]'); if (form) captureRateForm(form); rateDraft.rates[Number(button.dataset.index)].additional_fees.splice(Number(button.dataset.fee),1); ratePreview = null; rateDirty=true; rerender(); return true; }
     if (name === 'fcl-manual-add') { const form = document.querySelector('[data-fcl-form="quote-save"]'); if (form) captureQuoteForm(form); quoteDraft.manual_fees.push(blankManualFee()); quoteDirty = true; rerender(); return true; }
     if (name === 'fcl-manual-remove') { const form = document.querySelector('[data-fcl-form="quote-save"]'); if (form) captureQuoteForm(form); quoteDraft.manual_fees.splice(Number(button.dataset.index), 1); quoteDirty = true; rerender(); return true; }
-    if (name === 'fcl-rate-save') { const form = document.querySelector('[data-fcl-form="rate-save"]'); if (form) await submit(form); return true; }
     if (name === 'fcl-cases-more') { if (casesNextCursor) await loadCases(casesNextCursor, true); return true; }
-    if (name === 'fcl-rate-preview') { if (rateDirty) { message = '请先保存运价草稿，再预览服务器版本。'; rerender(); return true; } const response = await call('rate-preview', null, 'GET'); if (e !== epoch) return true; ratePreview = response.data; message = response.data?.can_publish ? '预览通过，可确认发布。' : `预览未通过：${response.reason_codes.map(fclIssue).join('、') || response.data?.blockers?.join('、') || '请核对草稿'}`; if (!response.data) notify(message, true); rerender(); return true; }
-    if (name === 'fcl-rate-publish') {
-      if (!ratePreview?.preview_hash || !confirm('确认发布当前运价草稿？发布后报价来源会更新。')) return true;
-      const response = await write('rate-publish', { expected_version: rateView.version, preview_hash: ratePreview.preview_hash, confirmation: 'reviewed_sources_and_conditions' });
-      if (e !== epoch) return true;
-      if (response.data) { rateView = response.data; rateDraft = clone(response.data.draft); ratePreview = null; clearCaseDependents(); }
-      message = responseMessage(response, '运价已发布；请重新匹配报价来源。', '发布已保存，但仍需人工复核。'); rerender(); return true;
-    }
-    if (name === 'fcl-rate-disable') { if (!confirm('停用当前 FCL 运价发布？')) return true; const response = await write('rate-disable', { expected_version: rateView.version }); if (e !== epoch) return true; if (response.data) { rateView = response.data; rateDraft = clone(response.data.draft); ratePreview = null; clearCaseDependents(); } message = responseMessage(response, '当前运价发布已停用。', '停用请求已保存，但仍需人工复核。'); rerender(); return true; }
-    if (name === 'fcl-rate-rollback') {
-      const releaseId = button.dataset.release;
-      if (!releaseId || !confirm('按所选历史版本创建新的 FCL 发布？')) return true;
-      const preview = await call('rate-preview', null, 'GET', `?release_id=${encodeURIComponent(releaseId)}`);
-      if (e !== epoch) return true;
-      if (!preview.data?.preview_hash || !preview.data.can_publish) { message = `历史版本预览未通过：${preview.reason_codes.map(fclIssue).join('、') || preview.data?.blockers?.join('、') || '不可回退'}`; rerender(); return true; }
-      const response = await write('rate-rollback', { expected_version: rateView.version, preview_hash: preview.data.preview_hash, confirmation: 'reviewed_sources_and_conditions', release_id: releaseId });
-      if (e !== epoch) return true;
-      if (response.data) { rateView = response.data; rateDraft = clone(response.data.draft); ratePreview = null; clearCaseDependents(); }
-      message = responseMessage(response, '已按历史版本创建新的发布。', '回退已保存，但仍需人工复核。'); rerender(); return true;
-    }
     if (['fcl-match','fcl-select-candidate'].includes(name) && quoteDirty && !window.confirm('重新选择运价会清空尚未保存的费用和售价。是否继续？')) return true;
     if (name === 'fcl-match') {
       const response = await call('quote-match', { contract_version: QUOTE_VERSION, case_ref: detail.case_id, expected_case_version: detail.case_version, expected_customer_supplement_ref: detail.review_context.latest_customer_supplement_ref, selected_rate_id: selectedRateId });
@@ -964,7 +874,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       const response = await write('handoff-save', { contract_version: HANDOFF_VERSION, case_ref: detail.case_id, expected_case_version: detail.case_version, expected_customer_supplement_ref: detail.review_context.latest_customer_supplement_ref, quote_ref: quoteView.quote_ref, expected_quote_version: quoteView.version, expected_quote_digest: quoteView.content_digest, document_id: documentView.document_id, expected_document_version: documentView.version, expected_pdf_sha256: exportView.sha256, confirmed: true, note: noteValue });
       if (e !== epoch) return true;
       if (response.data) { handoffView = response.data; handoffDraft = ''; handoffDirty = false; requestRelatedRefresh(); }
-      message = responseMessage(response, '交接事件已记录，未创建 Booking/SO。', '交接仍待人工处理。'); rerender(); return true;
+      message = responseMessage(response, '已记录交接，请按实际业务安排后续订舱。', '交接仍待人工处理。'); rerender(); return true;
     }
     return false;
   };
