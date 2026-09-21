@@ -1,4 +1,5 @@
 import {expect,it} from 'vitest';
+import {inspect} from 'node:util';
 import {
   AuthentikFclReceiverAuthority,
   currentFclReceiverAuthorized,
@@ -53,10 +54,26 @@ it.each([
   await expect(authority.runVerified(()=>undefined)).rejects.toThrow('fcl_receiver_authority_unavailable');
 });
 
-it('rejects unsafe configuration and does not reflect the authority token',()=>{
+it('rejects unsafe configuration and does not retain or reflect authority failures',async()=>{
   expect(()=>new AuthentikFclReceiverAuthority({...options,endpoint:'http://www.freightclaw.net/api/v3/core/users/4/',fetch:()=>Promise.resolve(response({}))})).toThrow('fcl_receiver_authority_configuration_invalid');
   expect(()=>new AuthentikFclReceiverAuthority({...options,endpoint:'https://www.freightclaw.net/api/v3/core/users/4/?x=1',fetch:()=>Promise.resolve(response({}))})).toThrow('fcl_receiver_authority_configuration_invalid');
   expect(()=>new AuthentikFclReceiverAuthority({...options,endpoint:'https://identity.example.test/api/v3/core/users/4/',fetch:()=>Promise.resolve(response({}))})).toThrow('fcl_receiver_authority_configuration_invalid');
   const authority=new AuthentikFclReceiverAuthority({...options,fetch:()=>Promise.reject(new Error(token))});
-  return expect(authority.runVerified(()=>undefined)).rejects.toSatisfy(error=>!(error instanceof Error)||!error.message.includes(token));
+  let failure:unknown;
+  try{await authority.runVerified(()=>undefined);}catch(error){failure=error;}
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe('fcl_receiver_authority_unavailable');
+  expect((failure as Error).stack).not.toContain(token);
+  expect(inspect(failure,{depth:5})).not.toContain(token);
+  expect((failure as {cause?:Error}).cause?.message).toBe('authority_transport_failed');
+
+  const malformed='synthetic-authority-token-fragment';
+  const malformedAuthority=new AuthentikFclReceiverAuthority({...options,fetch:()=>Promise.resolve(new Response(malformed,{status:200,headers:{'content-type':'application/json'}}))});
+  let malformedFailure:unknown;
+  try{await malformedAuthority.runVerified(()=>undefined);}catch(error){malformedFailure=error;}
+  expect(malformedFailure).toBeInstanceOf(Error);
+  expect((malformedFailure as Error).message).toBe('fcl_receiver_authority_unavailable');
+  expect((malformedFailure as Error).stack).not.toContain(malformed);
+  expect(inspect(malformedFailure,{depth:5})).not.toContain(malformed);
+  expect((malformedFailure as {cause?:Error}).cause?.message).toBe('authority_response_invalid');
 });

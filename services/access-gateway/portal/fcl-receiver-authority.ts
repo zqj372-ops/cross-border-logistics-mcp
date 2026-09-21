@@ -49,6 +49,10 @@ function endpoint(value:string|URL,oidcIssuer:string|URL):URL{
   return url;
 }
 
+function unavailable(causeCode:'authority_response_invalid'|'authority_transport_failed'):never{
+  throw new Error('fcl_receiver_authority_unavailable',{cause:new Error(causeCode)});
+}
+
 async function boundedJson(response:Response,maximum:number):Promise<unknown>{
   const contentType=response.headers.get('content-type')?.split(';',1)[0]?.trim().toLowerCase();
   if(contentType!=='application/json')throw new Error('fcl_receiver_authority_unavailable');
@@ -66,7 +70,7 @@ async function boundedJson(response:Response,maximum:number):Promise<unknown>{
     return JSON.parse(Buffer.concat(chunks.map(chunk=>Buffer.from(chunk)),size).toString('utf8')) as unknown;
   }catch(error){
     if(error instanceof Error&&error.message==='fcl_receiver_authority_unavailable')throw error;
-    throw new Error('fcl_receiver_authority_unavailable',{cause:error});
+    unavailable('authority_response_invalid');
   }finally{reader.releaseLock();}
 }
 
@@ -107,7 +111,7 @@ export class AuthentikFclReceiverAuthority implements FclReceiverAuthority{
       return Object.freeze({sub:parsed.data.uuid,active:true,emailVerified:true});
     }catch(error){
       if(error instanceof Error&&(error.message==='fcl_receiver_authority_unavailable'||error.message==='fcl_receiver_authority_denied'))throw error;
-      throw new Error(controller.signal.aborted?'fcl_receiver_authority_unavailable':'fcl_receiver_authority_unavailable',{cause:error});
+      unavailable('authority_transport_failed');
     }finally{clearTimeout(timer);}
   }
 

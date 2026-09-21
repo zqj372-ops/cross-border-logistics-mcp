@@ -1,6 +1,7 @@
 import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {inspect} from 'node:util';
 import {expect,it} from 'vitest';
 import {
   ChildProcessFclSmtpRunner,
@@ -49,7 +50,7 @@ it('rejects injected headers before starting a child process',async()=>{
   expect(()=>new SmtpFclMailTransport({...config,secure:false as never})).toThrow('fcl_smtp_config_invalid');
 });
 
-it('reads only a closed private SMTP JSON file',()=>{
+it('reads only a closed private SMTP JSON file and sanitizes malformed secret JSON',()=>{
   const root=mkdtempSync(join(tmpdir(),'fcl-smtp-config-')),path=join(root,'smtp.json');
   try{
     writeFileSync(path,JSON.stringify(config),{mode:0o400});
@@ -57,6 +58,16 @@ it('reads only a closed private SMTP JSON file',()=>{
     rmSync(path);
     writeFileSync(path,JSON.stringify({...config,extra:true}),{mode:0o400});
     expect(()=>readFclSmtpConfigFile(path)).toThrow('fcl_smtp_config_invalid');
+    rmSync(path);
+    const secretFragment='synthetic-smtp-password-fragment';
+    writeFileSync(path,`{"password":"${secretFragment}"`,{mode:0o400});
+    let failure:unknown;
+    try{readFclSmtpConfigFile(path);}catch(error){failure=error;}
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe('fcl_smtp_config_invalid');
+    expect((failure as Error).stack).not.toContain(secretFragment);
+    expect(inspect(failure,{depth:5})).not.toContain(secretFragment);
+    expect((failure as {cause?:unknown}).cause).toBeUndefined();
   }finally{rmSync(root,{recursive:true,force:true});}
 });
 

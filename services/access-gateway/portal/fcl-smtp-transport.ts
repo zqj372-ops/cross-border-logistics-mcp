@@ -17,8 +17,8 @@ export type FclSmtpConfig=z.infer<typeof configSchema>;
 export const FCL_SMTP_CHILD_TIMEOUT_MS=8_000;
 export const FCL_SMTP_NOTIFICATION_TIMEOUT_MS=10_000;
 
-function fail(code:string,cause?:unknown):never{
-  throw new Error(code,cause===undefined?undefined:{cause});
+function fail(code:string):never{
+  throw new Error(code);
 }
 
 export function parseFclSmtpConfig(value:unknown):FclSmtpConfig{
@@ -31,10 +31,10 @@ export function parseFclSmtpConfig(value:unknown):FclSmtpConfig{
 export function readFclSmtpConfigFile(filename:string):FclSmtpConfig{
   if(!isAbsolute(filename)||resolve(filename)!==filename)fail('fcl_smtp_config_invalid');
   let stat;
-  try{stat=lstatSync(filename);}catch(cause){fail('fcl_smtp_config_invalid',cause);}
+  try{stat=lstatSync(filename);}catch{fail('fcl_smtp_config_invalid');}
   if(!stat.isFile()||stat.isSymbolicLink()||(stat.mode&0o077)!==0||stat.size<2||stat.size>16*1024)fail('fcl_smtp_config_invalid');
   let value:unknown;
-  try{value=JSON.parse(readFileSync(filename,'utf8')) as unknown;}catch(cause){fail('fcl_smtp_config_invalid',cause);}
+  try{value=JSON.parse(readFileSync(filename,'utf8')) as unknown;}catch{fail('fcl_smtp_config_invalid');}
   return parseFclSmtpConfig(value);
 }
 
