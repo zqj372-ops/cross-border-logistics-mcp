@@ -60,6 +60,9 @@ const issues: Record<string, string> = {
   fcl_document_case_closed: '本票已结束或取消，不能重新出具报价单',
   fcl_currentness_manual_review: '资料或价格已发生变化，请核对提示后处理',
 
+  fcl_handoff_not_recorded: '尚未完成报价交接',
+  fcl_handoff_source_changed: '运价或报价条款已变化，请重新核对后交接',
+  fcl_handoff_pdf_unavailable: '交接文件暂时不可用，请重新下载并校验',
   fcl_handoff_quote_changed: '报价已更新，需要重新完成审核和交接',
   fcl_handoff_document_changed: '报价单已更新，请下载最新的正式文件后交接',
   fcl_handoff_case_changed: '需求已更新，请重新核对',
