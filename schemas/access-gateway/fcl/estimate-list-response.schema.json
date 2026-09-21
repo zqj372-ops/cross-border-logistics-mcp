@@ -1,0 +1,2034 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "maxItems": 500,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "contract_version": {
+                    "type": "string",
+                    "const": "fcl-operations@2026-09-21.v1"
+                  },
+                  "estimate_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "revision_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "request": {
+                    "type": "object",
+                    "properties": {
+                      "shipping_date": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "pol": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "rate_ids": {
+                        "maxItems": 30,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "template_ids": {
+                        "maxItems": 30,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100,
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$"
+                        }
+                      },
+                      "containers": {
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "20GP",
+                                "40GP",
+                                "40HQ",
+                                "45HQ"
+                              ]
+                            },
+                            "quantity": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "quantity"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "weight_kg": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "volume_cbm": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "postal_code": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "zone": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "case_ref": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "shipping_date",
+                      "pol",
+                      "rate_ids",
+                      "template_ids",
+                      "containers",
+                      "weight_kg",
+                      "volume_cbm",
+                      "postal_code",
+                      "zone",
+                      "case_ref"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "calculation": {
+                    "type": "object",
+                    "properties": {
+                      "engine_version": {
+                        "type": "string",
+                        "const": "fcl-operations@2026-09-21.v1"
+                      },
+                      "quote_status": {
+                        "type": "string",
+                        "const": "system_estimated"
+                      },
+                      "send_status": {
+                        "type": "string",
+                        "const": "not_sent"
+                      },
+                      "rate_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "template_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$"
+                      },
+                      "template_version": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "carrier": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "routing": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "pol": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "pod": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "destination": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "schedule": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "rate_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "carrier": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "routing": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "vessel": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "voyage": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "etd": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "eta": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "transit_days": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 180
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "rate_id",
+                              "carrier",
+                              "routing",
+                              "vessel",
+                              "voyage",
+                              "etd",
+                              "eta",
+                              "transit_days"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "valid_from": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "valid_until": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "lines": {
+                        "maxItems": 120,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "code": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "name_zh": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "name_en": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "category": {
+                              "type": "string",
+                              "enum": [
+                                "ocean",
+                                "origin",
+                                "destination",
+                                "customs",
+                                "inland",
+                                "other",
+                                "risk"
+                              ]
+                            },
+                            "source_ref": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "source_version": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "valid_from": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "valid_until": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "unit": {
+                              "type": "string",
+                              "enum": [
+                                "FIXED",
+                                "CNTR",
+                                "SHIPMENT"
+                              ]
+                            },
+                            "container_type": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "20GP",
+                                    "40GP",
+                                    "40HQ",
+                                    "45HQ"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "quantity": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                            },
+                            "cost_price": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                            },
+                            "sell_price": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                            },
+                            "currency": {
+                              "type": "string",
+                              "enum": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ]
+                            },
+                            "cost_amount": {
+                              "type": "string",
+                              "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                            },
+                            "sell_amount": {
+                              "type": "string",
+                              "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                            },
+                            "editable": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "code",
+                            "name_zh",
+                            "name_en",
+                            "category",
+                            "source_ref",
+                            "source_version",
+                            "valid_from",
+                            "valid_until",
+                            "unit",
+                            "container_type",
+                            "quantity",
+                            "cost_price",
+                            "sell_price",
+                            "currency",
+                            "cost_amount",
+                            "sell_amount",
+                            "editable"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "totals": {
+                        "type": "object",
+                        "properties": {
+                          "currency": {
+                            "type": "string",
+                            "enum": [
+                              "USD",
+                              "CAD",
+                              "CNY"
+                            ]
+                          },
+                          "cost_total": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "sell_total": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "gross_profit": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "gross_margin": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "currency",
+                          "cost_total",
+                          "sell_total",
+                          "gross_profit",
+                          "gross_margin"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "by_currency": {
+                        "maxItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "currency": {
+                              "type": "string",
+                              "enum": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ]
+                            },
+                            "cost_total": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "sell_total": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "gross_profit": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "gross_margin": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "currency",
+                            "cost_total",
+                            "sell_total",
+                            "gross_profit",
+                            "gross_margin"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "breakdown": {
+                        "maxItems": 21,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "category": {
+                              "type": "string",
+                              "enum": [
+                                "ocean",
+                                "origin",
+                                "destination",
+                                "customs",
+                                "inland",
+                                "other",
+                                "risk"
+                              ]
+                            },
+                            "currency": {
+                              "type": "string",
+                              "enum": [
+                                "USD",
+                                "CAD",
+                                "CNY"
+                              ]
+                            },
+                            "amount": {
+                              "type": "string",
+                              "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                            }
+                          },
+                          "required": [
+                            "category",
+                            "currency",
+                            "amount"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "margin_rule": {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "cost_markup",
+                              "gross_margin"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "exchange_rates": {
+                        "type": "object",
+                        "properties": {
+                          "USD": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "CAD": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "USD",
+                          "CAD"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "source_refs": {
+                        "maxItems": 150,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "ref": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "version": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          },
+                          "required": [
+                            "ref",
+                            "version"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "assumptions": {
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "warnings": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "blockers": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "calculation_trace": {
+                        "maxItems": 200,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "step": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "detail": {
+                              "type": "string",
+                              "maxLength": 1000
+                            }
+                          },
+                          "required": [
+                            "step",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "engine_version",
+                      "quote_status",
+                      "send_status",
+                      "rate_id",
+                      "template_id",
+                      "template_version",
+                      "carrier",
+                      "routing",
+                      "pol",
+                      "pod",
+                      "destination",
+                      "schedule",
+                      "valid_from",
+                      "valid_until",
+                      "lines",
+                      "totals",
+                      "by_currency",
+                      "breakdown",
+                      "margin_rule",
+                      "exchange_rates",
+                      "source_refs",
+                      "assumptions",
+                      "warnings",
+                      "blockers",
+                      "calculation_trace"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "source_release_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "source_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "dependency_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "actor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "recommended": {
+                    "type": "boolean"
+                  },
+                  "adjustments": {
+                    "maxItems": 120,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "line_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "original_amount": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                        },
+                        "adjusted_amount": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "actor": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "modified_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "line_id",
+                        "original_amount",
+                        "adjusted_amount",
+                        "reason",
+                        "actor",
+                        "modified_at"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "copied_from": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "estimate_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "estimate_id",
+                          "version"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "content_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "historical": {
+                    "type": "boolean"
+                  },
+                  "current_version": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "currentness": {
+                    "type": "object",
+                    "properties": {
+                      "valid_now": {
+                        "type": "boolean"
+                      },
+                      "reason_codes": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "required": [
+                      "valid_now",
+                      "reason_codes"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "contract_version",
+                  "estimate_id",
+                  "version",
+                  "revision_id",
+                  "request",
+                  "calculation",
+                  "source_release_id",
+                  "source_digest",
+                  "dependency_digest",
+                  "actor",
+                  "created_at",
+                  "locked",
+                  "recommended",
+                  "adjustments",
+                  "copied_from",
+                  "content_digest",
+                  "historical",
+                  "current_version",
+                  "currentness"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "needs_input",
+            "manual_review"
+          ]
+        },
+        "data": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "maxItems": 500,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "contract_version": {
+                        "type": "string",
+                        "const": "fcl-operations@2026-09-21.v1"
+                      },
+                      "estimate_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "revision_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "request": {
+                        "type": "object",
+                        "properties": {
+                          "shipping_date": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "pol": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "rate_ids": {
+                            "maxItems": 30,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            }
+                          },
+                          "template_ids": {
+                            "maxItems": 30,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100,
+                              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$"
+                            }
+                          },
+                          "containers": {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "20GP",
+                                    "40GP",
+                                    "40HQ",
+                                    "45HQ"
+                                  ]
+                                },
+                                "quantity": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 1000
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "quantity"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "weight_kg": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "volume_cbm": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "postal_code": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "zone": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "case_ref": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "shipping_date",
+                          "pol",
+                          "rate_ids",
+                          "template_ids",
+                          "containers",
+                          "weight_kg",
+                          "volume_cbm",
+                          "postal_code",
+                          "zone",
+                          "case_ref"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "calculation": {
+                        "type": "object",
+                        "properties": {
+                          "engine_version": {
+                            "type": "string",
+                            "const": "fcl-operations@2026-09-21.v1"
+                          },
+                          "quote_status": {
+                            "type": "string",
+                            "const": "system_estimated"
+                          },
+                          "send_status": {
+                            "type": "string",
+                            "const": "not_sent"
+                          },
+                          "rate_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "template_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$"
+                          },
+                          "template_version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "carrier": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "routing": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "pol": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "pod": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "destination": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "schedule": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "rate_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "carrier": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "routing": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "vessel": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "voyage": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "etd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "format": "date",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "eta": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "format": "date",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "transit_days": {
+                                    "anyOf": [
+                                      {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 180
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "rate_id",
+                                  "carrier",
+                                  "routing",
+                                  "vessel",
+                                  "voyage",
+                                  "etd",
+                                  "eta",
+                                  "transit_days"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "valid_from": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "valid_until": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "lines": {
+                            "maxItems": 120,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "code": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "name_zh": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "name_en": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "category": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ocean",
+                                    "origin",
+                                    "destination",
+                                    "customs",
+                                    "inland",
+                                    "other",
+                                    "risk"
+                                  ]
+                                },
+                                "source_ref": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "source_version": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "valid_from": {
+                                  "type": "string",
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                },
+                                "valid_until": {
+                                  "type": "string",
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": [
+                                    "FIXED",
+                                    "CNTR",
+                                    "SHIPMENT"
+                                  ]
+                                },
+                                "container_type": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "20GP",
+                                        "40GP",
+                                        "40HQ",
+                                        "45HQ"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "quantity": {
+                                  "type": "string",
+                                  "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                                },
+                                "cost_price": {
+                                  "type": "string",
+                                  "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                                },
+                                "sell_price": {
+                                  "type": "string",
+                                  "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                                },
+                                "currency": {
+                                  "type": "string",
+                                  "enum": [
+                                    "USD",
+                                    "CAD",
+                                    "CNY"
+                                  ]
+                                },
+                                "cost_amount": {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                },
+                                "sell_amount": {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                },
+                                "editable": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "code",
+                                "name_zh",
+                                "name_en",
+                                "category",
+                                "source_ref",
+                                "source_version",
+                                "valid_from",
+                                "valid_until",
+                                "unit",
+                                "container_type",
+                                "quantity",
+                                "cost_price",
+                                "sell_price",
+                                "currency",
+                                "cost_amount",
+                                "sell_amount",
+                                "editable"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "totals": {
+                            "type": "object",
+                            "properties": {
+                              "currency": {
+                                "type": "string",
+                                "enum": [
+                                  "USD",
+                                  "CAD",
+                                  "CNY"
+                                ]
+                              },
+                              "cost_total": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "sell_total": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "gross_profit": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "gross_margin": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "currency",
+                              "cost_total",
+                              "sell_total",
+                              "gross_profit",
+                              "gross_margin"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "by_currency": {
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "currency": {
+                                  "type": "string",
+                                  "enum": [
+                                    "USD",
+                                    "CAD",
+                                    "CNY"
+                                  ]
+                                },
+                                "cost_total": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "sell_total": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "gross_profit": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "gross_margin": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "currency",
+                                "cost_total",
+                                "sell_total",
+                                "gross_profit",
+                                "gross_margin"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "breakdown": {
+                            "maxItems": 21,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "category": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ocean",
+                                    "origin",
+                                    "destination",
+                                    "customs",
+                                    "inland",
+                                    "other",
+                                    "risk"
+                                  ]
+                                },
+                                "currency": {
+                                  "type": "string",
+                                  "enum": [
+                                    "USD",
+                                    "CAD",
+                                    "CNY"
+                                  ]
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "pattern": "^-?\\d{1,32}(?:\\.\\d{1,6})?$"
+                                }
+                              },
+                              "required": [
+                                "category",
+                                "currency",
+                                "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "margin_rule": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "cost_markup",
+                                  "gross_margin"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                              }
+                            },
+                            "required": [
+                              "mode",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "exchange_rates": {
+                            "type": "object",
+                            "properties": {
+                              "USD": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "CAD": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "USD",
+                              "CAD"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "source_refs": {
+                            "maxItems": 150,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ref": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "version": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "ref",
+                                "version"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "assumptions": {
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          },
+                          "warnings": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          },
+                          "blockers": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          },
+                          "calculation_trace": {
+                            "maxItems": 200,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "step": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "detail": {
+                                  "type": "string",
+                                  "maxLength": 1000
+                                }
+                              },
+                              "required": [
+                                "step",
+                                "detail"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "engine_version",
+                          "quote_status",
+                          "send_status",
+                          "rate_id",
+                          "template_id",
+                          "template_version",
+                          "carrier",
+                          "routing",
+                          "pol",
+                          "pod",
+                          "destination",
+                          "schedule",
+                          "valid_from",
+                          "valid_until",
+                          "lines",
+                          "totals",
+                          "by_currency",
+                          "breakdown",
+                          "margin_rule",
+                          "exchange_rates",
+                          "source_refs",
+                          "assumptions",
+                          "warnings",
+                          "blockers",
+                          "calculation_trace"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "source_release_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "source_digest": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64
+                      },
+                      "dependency_digest": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64
+                      },
+                      "actor": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                      },
+                      "locked": {
+                        "type": "boolean"
+                      },
+                      "recommended": {
+                        "type": "boolean"
+                      },
+                      "adjustments": {
+                        "maxItems": 120,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "line_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "original_amount": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                            },
+                            "adjusted_amount": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9]\\d{0,9})(?:\\.\\d{1,6})?$"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "actor": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "modified_at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                            }
+                          },
+                          "required": [
+                            "line_id",
+                            "original_amount",
+                            "adjusted_amount",
+                            "reason",
+                            "actor",
+                            "modified_at"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "copied_from": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "estimate_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "estimate_id",
+                              "version"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "content_digest": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64
+                      },
+                      "historical": {
+                        "type": "boolean"
+                      },
+                      "current_version": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "currentness": {
+                        "type": "object",
+                        "properties": {
+                          "valid_now": {
+                            "type": "boolean"
+                          },
+                          "reason_codes": {
+                            "maxItems": 10,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          }
+                        },
+                        "required": [
+                          "valid_now",
+                          "reason_codes"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "contract_version",
+                      "estimate_id",
+                      "version",
+                      "revision_id",
+                      "request",
+                      "calculation",
+                      "source_release_id",
+                      "source_digest",
+                      "dependency_digest",
+                      "actor",
+                      "created_at",
+                      "locked",
+                      "recommended",
+                      "adjustments",
+                      "copied_from",
+                      "content_digest",
+                      "historical",
+                      "current_version",
+                      "currentness"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

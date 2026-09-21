@@ -62,7 +62,7 @@ function caseInput(overrides: Partial<ReturnType<typeof createFclInquiryDraft>> 
   };
 }
 
-function rateDataset(overrides: Partial<FclRateDataset> = {}): FclRateDataset {
+function rateDataset(overrides: Partial<Extract<FclRateDataset,{contract_version:typeof FCL_RATE_DATASET_VERSION}>> = {}): FclRateDataset {
   return {
     contract_version: FCL_RATE_DATASET_VERSION,
     label: 'Synthetic current FCL rates',

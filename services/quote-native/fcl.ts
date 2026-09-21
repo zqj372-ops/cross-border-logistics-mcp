@@ -108,6 +108,54 @@ const rowWithAmounts=(row:Omit<FclQuoteCostRow,'cost_amount'|'sell_amount'|'full
   return {...row,cost_amount:costAmount,sell_amount:sellAmount,fully_priced:costAmount!==null&&sellAmount!==null&&evidenceComplete};
 };
 
+export function calculateFclMoney(rows: Pick<FclQuoteCostRow,'currency'|'fully_priced'|'cost_amount'|'sell_amount'>[], exchangeRates: FclQuoteDraftInput['exchange_rates']) {
+  const currencies=['USD','CAD','CNY'] as const;
+  const byCurrency=Object.fromEntries(currencies.map(currencyCode=>{
+    const currencyRows=rows.filter(row=>row.currency===currencyCode);
+    if(currencyRows.length===0)return [currencyCode,{cost_subtotal:'0.00',revenue_subtotal:'0.00',gp_subtotal:'0.00',margin:null,complete:true}];
+    const complete=currencyRows.every(row=>row.fully_priced);
+    const knownCost=currencyRows.filter(row=>row.cost_amount!==null);
+    const knownRevenue=currencyRows.filter(row=>row.sell_amount!==null);
+    const cost=knownCost.length===0?null:roundMoney(knownCost.reduce((sum,row)=>sum.add(row.cost_amount!),new D(0)));
+    const revenue=knownRevenue.length===0?null:roundMoney(knownRevenue.reduce((sum,row)=>sum.add(row.sell_amount!),new D(0)));
+    if(!complete)return [currencyCode,{cost_subtotal:cost,revenue_subtotal:revenue,gp_subtotal:null,margin:null,complete:false}];
+    const gp=roundMoney(new D(revenue!).minus(cost!));
+    return [currencyCode,{cost_subtotal:cost,revenue_subtotal:revenue,gp_subtotal:gp,margin:divideRatio(gp,revenue!),complete:true}];
+  })) as FclQuoteSnapshot['calculation']['by_currency'];
+
+  const allRowsPriced=rows.every(row=>row.fully_priced);
+  const nonZeroCurrencies=currencies.filter(currencyCode=>{
+    const breakdown=byCurrency[currencyCode];
+    return (breakdown.cost_subtotal??'0')!=='0.00'||(breakdown.revenue_subtotal??'0')!=='0.00';
+  });
+  const conversionCurrencies=nonZeroCurrencies.filter(currencyCode=>currencyCode!=='CNY');
+  const missingFx:Array<'USD'|'CAD'>=conversionCurrencies.filter(currencyCode=>exchangeRates[currencyCode]===null);
+  const mixedCurrencies=nonZeroCurrencies.length>1;
+  const unifiedComplete=allRowsPriced&&missingFx.length===0;
+  let unified:FclQuoteSnapshot['calculation']['unified_profit'];
+  if(!unifiedComplete){
+    unified={currency:'CNY',cost_subtotal:null,revenue_subtotal:null,gp_subtotal:null,margin:null,complete:false,missing_fx:[...missingFx]};
+  }else{
+    const cnyCost=currencies.reduce((sum,currencyCode)=>{
+      const amount=byCurrency[currencyCode].cost_subtotal??'0.00';
+      const revenue=byCurrency[currencyCode].revenue_subtotal??'0.00';
+      if(amount==='0.00'&&revenue==='0.00')return sum;
+      const rate=currencyCode==='CNY'?'1':exchangeRates[currencyCode]!;
+      return sum.add(new D(amount).mul(rate));
+    },new D(0));
+    const cnyRevenue=currencies.reduce((sum,currencyCode)=>{
+      const amount=byCurrency[currencyCode].cost_subtotal??'0.00';
+      const revenue=byCurrency[currencyCode].revenue_subtotal??'0.00';
+      if(amount==='0.00'&&revenue==='0.00')return sum;
+      const rate=currencyCode==='CNY'?'1':exchangeRates[currencyCode]!;
+      return sum.add(new D(revenue).mul(rate));
+    },new D(0));
+    const cost=roundMoney(cnyCost),revenue=roundMoney(cnyRevenue),gp=roundMoney(new D(revenue).minus(cost));
+    unified={currency:'CNY',cost_subtotal:cost,revenue_subtotal:revenue,gp_subtotal:gp,margin:divideRatio(gp,revenue),complete:true,missing_fx:[]};
+  }
+  return {currencies,byCurrency,unified,missingFx,mixedCurrencies,allRowsPriced};
+}
+
 export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):FclQuoteSnapshot{
   const noInput=()=>{throw new PortalError('fcl_quote_input_invalid');};
   const sourceOverrides=new Map(input.input.source_sell_prices.map(row=>[row.row_key,row]));
@@ -247,50 +295,7 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
     if(entry.disposition==='pending')missing.push(`/service_coverage/${index}`);
   });
 
-  const currencies=['USD','CAD','CNY'] as const;
-  const byCurrency=Object.fromEntries(currencies.map(currencyCode=>{
-    const currencyRows=rows.filter(row=>row.currency===currencyCode);
-    if(currencyRows.length===0)return [currencyCode,{cost_subtotal:'0.00',revenue_subtotal:'0.00',gp_subtotal:'0.00',margin:null,complete:true}];
-    const complete=currencyRows.every(row=>row.fully_priced);
-    const knownCost=currencyRows.filter(row=>row.cost_amount!==null);
-    const knownRevenue=currencyRows.filter(row=>row.sell_amount!==null);
-    const cost=knownCost.length===0?null:roundMoney(knownCost.reduce((sum,row)=>sum.add(row.cost_amount!),new D(0)));
-    const revenue=knownRevenue.length===0?null:roundMoney(knownRevenue.reduce((sum,row)=>sum.add(row.sell_amount!),new D(0)));
-    if(!complete)return [currencyCode,{cost_subtotal:cost,revenue_subtotal:revenue,gp_subtotal:null,margin:null,complete:false}];
-    const gp=roundMoney(new D(revenue!).minus(cost!));
-    return [currencyCode,{cost_subtotal:cost,revenue_subtotal:revenue,gp_subtotal:gp,margin:divideRatio(gp,revenue!),complete:true}];
-  })) as FclQuoteSnapshot['calculation']['by_currency'];
-
-  const allRowsPriced=rows.every(row=>row.fully_priced);
-  const nonZeroCurrencies=currencies.filter(currencyCode=>{
-    const breakdown=byCurrency[currencyCode];
-    return (breakdown.cost_subtotal??'0')!=='0.00'||(breakdown.revenue_subtotal??'0')!=='0.00';
-  });
-  const conversionCurrencies=nonZeroCurrencies.filter(currencyCode=>currencyCode!=='CNY');
-  const missingFx:Array<'USD'|'CAD'>=conversionCurrencies.filter(currencyCode=>input.input.exchange_rates[currencyCode]===null);
-  const mixedCurrencies=nonZeroCurrencies.length>1;
-  const unifiedComplete=allRowsPriced&&missingFx.length===0;
-  let unified:FclQuoteSnapshot['calculation']['unified_profit'];
-  if(!unifiedComplete){
-    unified={currency:'CNY',cost_subtotal:null,revenue_subtotal:null,gp_subtotal:null,margin:null,complete:false,missing_fx:[...missingFx]};
-  }else{
-    const cnyCost=currencies.reduce((sum,currencyCode)=>{
-      const amount=byCurrency[currencyCode].cost_subtotal??'0.00';
-      const revenue=byCurrency[currencyCode].revenue_subtotal??'0.00';
-      if(amount==='0.00'&&revenue==='0.00')return sum;
-      const rate=currencyCode==='CNY'?'1':input.input.exchange_rates[currencyCode]!;
-      return sum.add(new D(amount).mul(rate));
-    },new D(0));
-    const cnyRevenue=currencies.reduce((sum,currencyCode)=>{
-      const amount=byCurrency[currencyCode].cost_subtotal??'0.00';
-      const revenue=byCurrency[currencyCode].revenue_subtotal??'0.00';
-      if(amount==='0.00'&&revenue==='0.00')return sum;
-      const rate=currencyCode==='CNY'?'1':input.input.exchange_rates[currencyCode]!;
-      return sum.add(new D(revenue).mul(rate));
-    },new D(0));
-    const cost=roundMoney(cnyCost),revenue=roundMoney(cnyRevenue),gp=roundMoney(new D(revenue).minus(cost));
-    unified={currency:'CNY',cost_subtotal:cost,revenue_subtotal:revenue,gp_subtotal:gp,margin:divideRatio(gp,revenue),complete:true,missing_fx:[]};
-  }
+  const {currencies,byCurrency,unified,missingFx,mixedCurrencies,allRowsPriced}=calculateFclMoney(rows,input.input.exchange_rates);
   const warnings:string[]=[];
   for(const currencyCode of currencies){const gp=byCurrency[currencyCode].gp_subtotal;if(gp!==null&&new D(gp).isNegative())warnings.push(`negative_gp:${currencyCode}`);}
   if(caseProjection.incoterm==='DDP')warnings.push('ddp_tax_coverage_not_inferred');
@@ -308,6 +313,7 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
     {step:'unified_profit',detail:`CNY cost=${unified.cost_subtotal??'null'} revenue=${unified.revenue_subtotal??'null'} GP=${unified.gp_subtotal??'null'} margin=${unified.margin??'null'}`},
   ];
   const payload={
+    ...(input.input.extensions?{extensions:input.input.extensions}:{}),
     contract_version:input.contract_version,
     schema_version:'fcl-cost-sell-snapshot@2026-09-20.v1' as const,
     quote_ref:input.quote_ref,
@@ -356,6 +362,7 @@ type MatchInput = {
   caseView: FclCaseView;
   rateView: FclRateAdminView;
   now: string;
+  shippingDate?: string;
 };
 
 const caseBinding = (caseView: FclCaseView) => ({
@@ -406,9 +413,9 @@ const candidateFromRate = (release: FclRatePublication, rate: FclRatePublication
   rate,
 });
 
-const rateMatches = (input: FclCaseView['current_input'], rate: FclRateDataset['rates'][number]): boolean => {
+const rateMatches = (input: FclCaseView['current_input'], rate: FclRateDataset['rates'][number], shippingDate?:string): boolean => {
   if (input.pol !== rate.pol || input.pod !== rate.pod || input.cargo_ready_date === null) return false;
-  if (input.cargo_ready_date < rate.valid_from || input.cargo_ready_date > rate.valid_until) return false;
+  if ((shippingDate??input.cargo_ready_date) < rate.valid_from || (shippingDate??input.cargo_ready_date) > rate.valid_until) return false;
   const containers = new Set(rate.items.map((item) => item.container_type));
   return input.containers.every((container) => containers.has(container.type));
 };
@@ -477,7 +484,7 @@ export function preflightFclMatch(request: FclQuoteMatchRequest, caseView: FclCa
   return null;
 }
 
-export function matchFclRateSources({ request, caseView, rateView, now }: MatchInput): FclQuoteResponse {
+export function matchFclRateSources({ request, caseView, rateView, now, shippingDate }: MatchInput): FclQuoteResponse {
   const preflight = preflightFclMatch(request, caseView);
   if (preflight) return preflight;
   const baseTrace: FclQuoteTraceStep[] = [
@@ -497,7 +504,7 @@ export function matchFclRateSources({ request, caseView, rateView, now }: MatchI
 
   const release = rateView.active_release;
   const candidates = release.input.rates
-    .filter((rate) => rateMatches(caseView.current_input, rate))
+    .filter((rate) => rateMatches(caseView.current_input, rate, shippingDate))
     .map((rate) => candidateFromRate(release, rate))
     .sort((left, right) => left.rate_id.localeCompare(right.rate_id));
   const sourceRefs = candidates.map((candidate) => ({
@@ -598,7 +605,8 @@ export class FclQuoteService {
     this.#rateReader = options.rateReader;
     this.#now = options.now;
   }
-  match(ctx: PortalContext, input: unknown): FclQuoteResponse {
+  match(ctx: PortalContext, input: unknown, shippingDate?:string): FclQuoteResponse {
+    if(shippingDate!==undefined&&!z.iso.date().safeParse(shippingDate).success)throw new PortalError('fcl_quote_input_invalid');
     let request: FclQuoteMatchRequest;
     try {
       request = fclQuoteMatchRequestSchema.parse(input);
@@ -629,7 +637,7 @@ export class FclQuoteService {
         reason_codes: ['fcl_rate_source_unavailable'],
       });
     }
-    return matchFclRateSources({ request, caseView, rateView, now: this.#safeNow() });
+    return matchFclRateSources({ request, caseView, rateView, now: this.#safeNow(),...(shippingDate?{shippingDate}:{}) });
   }
   #safeNow() {
     try {

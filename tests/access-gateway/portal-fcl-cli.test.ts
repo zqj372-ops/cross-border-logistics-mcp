@@ -1,10 +1,12 @@
+import type {FclEstimateView} from '../../services/quote-native/fcl-operations-contracts';
+import {operationsFixture,estimateRequest,cosco} from '../quote-native/fixtures/fcl-operations';
 import {lstat,mkdir,mkdtemp,readFile,rename,rm,stat,symlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Readable} from 'node:stream';
 import {afterEach,describe,expect,it} from 'vitest';
 import {runCli} from '../../deploy/cli/cli';
-import {FCL_HTTP_VERSION,fclHttpActions} from '../../services/access-gateway/portal/fcl-http-contracts';
+import {FCL_HTTP_VERSION,fclHttpActions,FCL_STAFF_WRITE_ACTIONS} from '../../services/access-gateway/portal/fcl-http-contracts';
 import {createFclCliFixture,fclCliInquiry,fclCliRates} from './fcl-cli-fixture';
 
 const directories:string[]=[];
@@ -31,8 +33,23 @@ describe('FCL CLI parity',()=>{
       const inquiry=commands.find(entry=>entry.command===`workspace fcl inquiry ${action}`);
       expect(inquiry,action).toMatchObject({auth:'public_inquiry_session',scope:'public_inquiry_ticket'});
     }
-    expect(commands.filter(entry=>entry.command.startsWith('workspace fcl ')&&!entry.command.startsWith('workspace fcl inquiry '))).toHaveLength(28);
+    expect(commands.filter(entry=>entry.command.startsWith('workspace fcl ')&&!entry.command.startsWith('workspace fcl inquiry '))).toHaveLength(fclHttpActions.length);
     expect(commands.filter(entry=>entry.command.startsWith('workspace fcl inquiry '))).toHaveLength(6);
+  });
+
+  it('uses the same persisted estimate and bulk repricing through CLI commands',async()=>{
+    const root=await mkdtemp(join(tmpdir(),'fcl-cli-operations-')),f=await createFclCliFixture();directories.push(root);
+    try{
+      const staff=join(root,'staff.json');await f.staffSessionFile(staff);let index=0;
+      const run=async<T=unknown>(action:string,input?:unknown):Promise<T>=>{const args=['workspace','fcl',action,'--session-file',staff,'--endpoint',f.origin,'--json'];if(input!==undefined){const path=join(root,`input-${++index}.json`);await privateJson(path,input);args.push('--input',path);if(FCL_STAFF_WRITE_ACTIONS.includes(action as never))args.push('--idempotency-key',`fcl-cli-operations-key-${index}`);}const result=await invoke(args);expect([0,4],result.stderr||result.stdout).toContain(result.code);return (JSON.parse(result.stdout) as {data:T}).data;};
+      await run('rate-save',{expected_version:0,input:operationsFixture()});const preview=await run<{preview_hash:string}>('rate-preview');await run('rate-publish',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'});
+      const initial=await run<{items:FclEstimateView[]}>('estimate-run',estimateRequest());expect(initial.items).toHaveLength(3);
+      const quote=initial.items.find((item:{calculation:{rate_id:string}})=>item.calculation.rate_id===cosco)!;
+      const changes={expected_version:2,reason:'Synthetic CLI carrier update',changes:[{rate_id:cosco,container_type:'40HQ',ocean_freight:'3500',valid_from:'2026-10-01',valid_until:'2026-12-31',source_ref:'synthetic:cli',source_version:'2'}]};
+      const bulk=await run<{preview_hash:string}>('rate-bulk-preview',changes);await run('rate-bulk-publish',{...changes,preview_hash:bulk.preview_hash,confirmation:'reviewed_sources_and_conditions'});
+      expect((await run<FclEstimateView>('estimate-get',{estimate_id:quote.estimate_id,version:null})).calculation.totals.cost_total).toBe('32900.00');
+      expect((await run<FclEstimateView>('estimate-get',{estimate_id:quote.estimate_id,version:1})).calculation.totals.cost_total).toBe('30800.00');
+    }finally{directories.push(f.root);await f.close();}
   });
 
   it('runs the staff FCL chain through the canonical HTTP actions and writes a verified PDF',async()=>{

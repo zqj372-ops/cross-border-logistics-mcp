@@ -15,6 +15,7 @@ import {
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from './production-persistence';
 import { PortalError, type PortalContext } from './contracts';
 import {SyncTransactionGuard} from './sync-transaction';
+import {FclOperationsService} from './fcl-operations';
 import type { PortalService } from './service';
 import {
   nativePublishSchema,
@@ -136,6 +137,7 @@ export class NativeAdminStore {
 }
 
 export class NativeAdminService {
+  readonly fclOperations:FclOperationsService;
   readonly #fcl: NormalizedFclOptions | null;
   readonly #fclNotificationTransaction=new SyncTransactionGuard();
   constructor(
@@ -145,6 +147,7 @@ export class NativeAdminService {
   ) {
     this.#fcl = fcl ? this.normalizeFclOptions(fcl) : null;
     if (this.#fcl !== null) this.assertFclStartup(this.#fcl);
+    this.fclOperations=new FclOperationsService({store:this.store,authorize:ctx=>this.fclReceiverScope(ctx),getRates:ctx=>this.get(ctx,'fcl') as FclRateAdminView});
   }
   private normalizeFclOptions(options: FclNativeAdminOptions): NormalizedFclOptions {
     if (!options.receiverUserId.trim()) throw new Error('fcl_receiver_configuration_invalid');
@@ -164,9 +167,9 @@ export class NativeAdminService {
     } catch {
       throw new Error('fcl_receiver_unavailable');
     }
-    const scopes = this.store.db.prepare(`SELECT scope FROM native_configs WHERE kind IN ('fcl','fcl-notification')
-      UNION SELECT scope FROM native_releases WHERE kind='fcl'
-      UNION SELECT scope FROM native_audit WHERE kind IN ('fcl','fcl-notification')
+    const scopes = this.store.db.prepare(`SELECT scope FROM native_configs WHERE (kind IN ('fcl','fcl-notification','fcl-operations') OR kind LIKE 'fcl-estimate%')
+      UNION SELECT scope FROM native_releases WHERE kind IN ('fcl','fcl-estimate')
+      UNION SELECT scope FROM native_audit WHERE (kind IN ('fcl','fcl-notification','fcl-operations') OR kind LIKE 'fcl-estimate%')
       UNION SELECT json_extract(scope,'$[0]') AS scope FROM native_idempotency WHERE json_valid(scope) AND json_extract(scope,'$[0]') LIKE 'fcl-person:%'`).all() as { scope: string }[];
     if (scopes.some((row) => row.scope !== options.scope)) throw new Error('fcl_receiver_configuration_mismatch');
   }
@@ -503,6 +506,7 @@ export class NativeAdminService {
       if (kind === 'fcl') expectedRelease = release as NativePublication<FclRateDataset>;
       this.store.db.prepare('INSERT INTO native_releases VALUES(?,?,?,?)').run(release.release_id, scope, kind, JSON.stringify(release));
       this.store.db.prepare('UPDATE native_configs SET active=?,version=version+1 WHERE scope=? AND kind=?').run(release.release_id, scope, kind);
+      if(kind==='fcl')this.fclOperations.reprice(ctx,release as FclRatePublication);
     }, kind === 'fcl'
       ? (scope, actionDigest) => {
           if (!expectedRelease) throw new PortalError('native_readback_failed');
@@ -545,6 +549,7 @@ export class NativeAdminService {
         expectedRelease = release;
         this.store.db.prepare('INSERT INTO native_releases VALUES(?,?,?,?)').run(release.release_id, scope, kind, JSON.stringify(release));
         this.store.db.prepare('UPDATE native_configs SET active=?,version=version+1 WHERE scope=? AND kind=?').run(release.release_id, scope, kind);
+        this.fclOperations.reprice(ctx,release);
       } else {
         this.store.db.prepare('UPDATE native_configs SET active=?,version=version+1 WHERE scope=? AND kind=?').run(rollback.release_id, scope, kind);
       }

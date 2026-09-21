@@ -1,3 +1,5 @@
+import {operationsFixture,estimateRequest,cosco} from '../quote-native/fixtures/fcl-operations';
+import type {FclEstimateView} from '../../services/quote-native/fcl-operations-contracts';
 import {createServer} from 'node:http';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -161,6 +163,46 @@ it('runs the staff Quote, document, PDF, and handoff chain over real HTTP',async
     const exportedBody=await exported.json() as {data:{sha256:string;revision_id:string}};
     const handoff=await call('handoff-save',{contract_version:'fcl-handoff@2026-09-21.v1',case_ref:submission.case_id,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,quote_ref:quoteBody.data.quote_ref,expected_quote_version:quoteBody.data.version,expected_quote_digest:quoteBody.data.content_digest,document_id:docBody.data.document_id,expected_document_version:approvedBody.data.version,expected_pdf_sha256:exportedBody.data.sha256,confirmed:true,note:'HTTP handoff'},'fcl-http-flow-handoff-01');expect(handoff.status).toBe(200);
     expect((await handoff.json() as {data:{status:string}}).data.status).toBe('handed_off');
+  }finally{await f.close();}
+});
+
+it('selects a calculated estimate with protected component validity through review, PDF and handoff',async()=>{
+  const f=await fclHttpFixture();
+  try{
+    const session=await staffSession(f),call=(action:string,payload:unknown,key:string)=>fetch(`${f.origin}/console/api/v1/fcl/${action}`,{method:'POST',headers:{cookie:session.cookie,origin:f.origin,'x-csrf-token':session.csrf,'idempotency-key':key,'content-type':'application/json'},body:JSON.stringify(payload)});
+    expect((await fetch(f.origin+'/console/api/v1/fcl/case-list?limit=1',{headers:{cookie:session.cookie}})).status).toBe(200);
+    const rateSave=await call('rate-save',{expected_version:0,input:operationsFixture()},'fcl-http-flow-rate-save-01');
+    expect(rateSave.status).toBe(200);
+    const preview=await fetch(f.origin+'/console/api/v1/fcl/rate-preview',{headers:{cookie:session.cookie}});expect(preview.status).toBe(200);
+    const previewBody=await preview.json() as {data:{preview_hash:string}};
+    const publish=await call('rate-publish',{expected_version:1,preview_hash:previewBody.data.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fcl-http-flow-rate-publish-01');expect(publish.status).toBe(200);
+    const config=await call('issuer-config-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,expected_version:0,input:{issuer_name:'Issuer',issuer_address:'Address',issuer_phone:'',issuer_email:'',terms:'Terms',standard_fee_template_v1:null},confirmed:true},'fcl-http-flow-config-0001');expect(config.status).toBe(200);
+    const submission=await f.caseService.submitFclInquiry('fcl-http-flow-case-session','fcl-http-flow-case-submit-01',{...inquiry(),pol:'Shanghai',final_destination:'Calgary',cargo_ready_date:'2026-09-28',selected_services:['ocean_freight','canada_customs','delivery']});
+    const confirmed=await call('case-confirm',{case_id:submission.case_id,expected_version:submission.case_version,expected_customer_supplement_ref:null,confirmed_fields:{changes:[]},reason:'Confirmed'},'fcl-http-flow-case-confirm-01');expect(confirmed.status).toBe(200);
+    const confirmedBody=await confirmed.json() as {data:{case_version:number}};
+    const estimated=await call('estimate-run',{...estimateRequest(),case_ref:submission.case_id},'fcl-http-estimate-run-01');expect(estimated.status).toBe(200);
+    const estimatedBody=await estimated.json() as {data:{items:FclEstimateView[]}};expect(estimatedBody.data.items).toHaveLength(3);
+    const selected=estimatedBody.data.items.find(item=>item.calculation.rate_id===cosco)!;
+    const quote=await call('estimate-select',{estimate_id:selected.estimate_id,expected_version:selected.version,case_ref:submission.case_id,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null},'fcl-http-estimate-select-01');
+    const selectedResult=await quote.clone().json() as {data:{calculation:{unified_profit:unknown};extensions:{fcl_estimate_v1:{estimate_id:string}}}};expect(quote.status,JSON.stringify(selectedResult)).toBe(200);
+    expect(selectedResult.data.calculation.unified_profit).toMatchObject({cost_subtotal:'30800.00',revenue_subtotal:'33880.00',gp_subtotal:'3080.00'});
+    expect(selectedResult.data.extensions.fcl_estimate_v1.estimate_id).toBe(selected.estimate_id);
+    const quoteBody=await quote.json() as {data:{quote_ref:string;version:number;content_digest:string}};
+    const excessive=await call('document-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'create',quote_ref:quoteBody.data.quote_ref,expected_quote_version:quoteBody.data.version,expected_quote_digest:quoteBody.data.content_digest,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,expected_config_version:1,quote_no:'FCL-INVALID',quote_date:'2026-10-08',valid_until:'2027-01-01',remark:null},'fcl-http-invalid-validity-01');expect(excessive.status).not.toBe(200);
+    const doc=await call('document-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'create',quote_ref:quoteBody.data.quote_ref,expected_quote_version:quoteBody.data.version,expected_quote_digest:quoteBody.data.content_digest,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,expected_config_version:1,quote_no:'FCL-HTTP-001',quote_date:'2026-10-08',valid_until:'2026-10-15',remark:null},'fcl-http-flow-document-01');expect(doc.status).toBe(200);
+    const docBody=await doc.json() as {data:{document_id:string;version:number}};
+    const review=await call('document-review',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:docBody.data.document_id,expected_version:docBody.data.version},'fcl-http-flow-review-01');expect(review.status).toBe(200);
+    const reviewBody=await review.json() as {data:{review_hash:string}};
+    const approved=await call('document-approve',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:docBody.data.document_id,expected_version:docBody.data.version,review_hash:reviewBody.data.review_hash,confirmed:true},'fcl-http-flow-approve-01');expect(approved.status).toBe(200);
+    const approvedBody=await approved.json() as {data:{version:number}};
+    const exported=await call('document-export',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,mode:'formal',document_id:docBody.data.document_id,expected_version:approvedBody.data.version},'fcl-http-flow-export-01');expect(exported.status).toBe(200);
+    const exportedBody=await exported.json() as {data:{sha256:string;revision_id:string}};
+    const handoff=await call('handoff-save',{contract_version:'fcl-handoff@2026-09-21.v1',case_ref:submission.case_id,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,quote_ref:quoteBody.data.quote_ref,expected_quote_version:quoteBody.data.version,expected_quote_digest:quoteBody.data.content_digest,document_id:docBody.data.document_id,expected_document_version:approvedBody.data.version,expected_pdf_sha256:exportedBody.data.sha256,confirmed:true,note:'HTTP handoff'},'fcl-http-flow-handoff-01');expect(handoff.status).toBe(200);
+    expect((await handoff.json() as {data:{status:string}}).data.status).toBe('handed_off');
+    await call('estimate-adjust',{estimate_id:selected.estimate_id,expected_version:selected.version,reason:'New human price',locked:false,recommended:true,changes:[{line_id:'ocean_freight:40HQ',sell_price:'3900'}]},'fcl-http-estimate-adjust-01');
+    const replay=await call('estimate-select',{estimate_id:selected.estimate_id,expected_version:selected.version,case_ref:submission.case_id,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null},'fcl-http-estimate-select-01');
+    const replayBody=await replay.json() as {data:{quote_ref:string;currentness:{valid_now:boolean}}};expect(replay.status,JSON.stringify(replayBody)).toBe(200);expect(replayBody.data.quote_ref).toBe(quoteBody.data.quote_ref);expect(replayBody.data.currentness.valid_now).toBe(false);
+
   }finally{await f.close();}
 });
 
