@@ -8,6 +8,30 @@ import {operationsFixture} from '../quote-native/fixtures/fcl-operations';
 afterEach(()=>vi.unstubAllGlobals());
 const record={operating_carrier:'COSCO',routing:'direct',transit:{source_total_days:'18'},legs:[{mode:'ocean',vessel_name:'TEST VESSEL',voyage:'068E',events:[{event_type:'departure',event_kind:'planned',local_date:'2026-10-15'},{event_type:'arrival',event_kind:'estimated',local_date:'2026-11-02'}]}]};
 describe('FCL simplified workbench',()=>{
+ it('filters fees without changing the source row used by edit and copy',async()=>{
+  const draft=operationsFixture();
+  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:null,history:[]}:{items:[]}}));
+  const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
+  ops.render('', 'charges');await new Promise(r=>setTimeout(r,0));
+  vi.stubGlobal('FormData',class {get(){return 'customs';}});
+  await ops.submit({dataset:{fclForm:'ops-fee-search'}});
+  const filtered=ops.render('', 'charges');
+  expect(filtered).toMatch(/data-fcl-form="ops-fee-search"[^>]*><div class="form-error" hidden>/);
+  expect(filtered).toContain('1 / 3 项');expect(filtered).not.toContain('码头操作费');
+  expect(filtered).toContain('data-index="1" data-kind="charges"');
+  await ops.action({dataset:{action:'ops-edit',kind:'charges',index:'1'}});
+  expect(ops.render('', 'charges')).toContain('name="amount" value="200"');
+  await ops.action({dataset:{action:'ops-close-editor'}});
+  await ops.action({dataset:{action:'ops-copy-record',kind:'charges',index:'1'}});
+  expect(ops.render('', 'charges')).toContain('name="name_zh" value="清关费"');
+  await ops.action({dataset:{action:'ops-close-editor'}});
+  vi.stubGlobal('FormData',class {get(){return 'no matching fee';}});
+  await ops.submit({dataset:{fclForm:'ops-fee-search'}});
+  expect(ops.render('', 'charges')).toContain('没有匹配的费用');
+  vi.stubGlobal('FormData',class {get(){return '';}});
+  await ops.submit({dataset:{fclForm:'ops-fee-search'}});
+  expect(ops.render('', 'charges')).toContain('3 / 3 项');expect(draft.operations.charges).toHaveLength(3);
+ });
  it('projects sailing fields without changing or inventing price evidence',()=>{
   const rate=operationsFixture().rates[0]!;const before=structuredClone(rate);
   const detail=scheduleToRateDetail(record,rate.rate_id);

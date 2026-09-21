@@ -266,3 +266,45 @@
   #app #content .fcl-workbench .ops-tabs { gap: 20px; }
   #app #content .fcl-workbench .ops-query-bottom > p { width: 100%; }
 }
+
+/* Fee maintenance is a compact ledger; advanced conditions remain available. */
+#app #content .fcl-workbench .ops-charge-editor { padding: 12px 16px; margin-bottom: 12px; }
+#app #content .fcl-workbench .ops-charge-editor header { margin-bottom: 8px; }
+#app #content .fcl-workbench .ops-charge-editor > .field-grid { grid-template-columns: minmax(220px,2fr) repeat(4,minmax(100px,1fr)); gap: 10px 12px; margin: 8px 0; }
+#app #content .fcl-workbench .ops-charge-editor .ops-advanced .field-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px 12px; }
+#app #content .fcl-workbench .ops-charge-editor .field { gap: 4px; font-size: 12px; }
+#app #content .fcl-workbench .ops-charge-editor .fcl-field-en { display: none; }
+#app #content .fcl-workbench .ops-charge-editor :is(input:not([type=checkbox]),select),
+#app #content .fcl-workbench .ops-charges input[type=search] { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+#app #content .fcl-workbench :is(.ops-charge-editor,.ops-charges) .button { min-height: 34px; padding: 6px 10px; font-size: 12px; }
+#app #content .fcl-workbench .ops-charge-editor .ops-advanced { margin: 4px 0 8px; }
+#app #content .fcl-workbench .ops-charge-editor .ops-advanced > summary { padding: 8px 0; }
+#app #content .fcl-workbench .ops-charge-toolbar { gap: 10px; margin: 12px 0 8px; }
+#app #content .fcl-workbench .ops-charge-toolbar h2 { margin: 0 auto 0 0; }
+#app #content .fcl-workbench .ops-charge-toolbar form { display: flex; gap: 6px; width: min(360px,100%); }
+#app #content .fcl-workbench .ops-charge-toolbar input { width: 100%; min-width: 0; }
+#app #content .fcl-workbench .ops-charges .table-wrap { padding: 0; }
+#app #content .fcl-workbench .ops-charge-table { min-width: 800px; font-variant-numeric: tabular-nums; }
+#app #content .fcl-workbench .ops-charge-table :is(th,td) { padding: 7px 12px; vertical-align: middle; font-size: 12px; }
+#app #content .fcl-workbench .ops-charge-table strong { font-weight: 500; font-size: 13px; }
+#app #content .fcl-workbench .ops-charge-table td small { font-size: 11px; margin-top: 2px; }
+#app #content .fcl-workbench .ops-charge-table .ops-money { text-align: right; white-space: nowrap; }
+#app #content .fcl-workbench .ops-charge-table .ops-money small { display: inline; margin-left: 4px; }
+#app #content .fcl-workbench .ops-charge-table th:nth-child(2),
+#app #content .fcl-workbench .ops-charge-table th:nth-child(3) { text-align: right; }
+#app #content .fcl-workbench .ops-charge-table :is(.ops-validity,.ops-row-actions) { white-space: nowrap; }
+#app #content .fcl-workbench .ops-charge-table .button { margin: 0; background: transparent; border-color: transparent; color: #3456a0; }
+#app #content .fcl-workbench .ops-charge-table .button:hover { background: #edf2fc; }
+#app #content .fcl-workbench .ops-charge-table tr:last-child td { border-bottom: 0; }
+@media(max-width:1000px) {
+  #app #content .fcl-workbench .ops-charge-editor > .field-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  #app #content .fcl-workbench .ops-charge-editor > .field-grid > .field:first-child { grid-column: 1 / -1; }
+}
+@media(max-width:760px) {
+  #app #content .fcl-workbench .ops-charge-editor > .field-grid,
+  #app #content .fcl-workbench .ops-charge-editor .ops-advanced .field-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #app #content .fcl-workbench .ops-charge-editor :is(input:not([type=checkbox]),select),
+  #app #content .fcl-workbench .ops-charges input[type=search],
+  #app #content .fcl-workbench :is(.ops-charge-editor,.ops-charges) .button { min-height: 44px; }
+  #app #content .fcl-workbench .ops-charge-toolbar form { order: 1; width: 100%; }
+}
