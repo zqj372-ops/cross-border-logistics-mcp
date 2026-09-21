@@ -335,3 +335,33 @@ describe("schedule live service audit and isolation", () => {
     expect(entries.some((entry) => entry.status === "error")).toBe(true);
   });
 });
+
+
+describe('fixed FCL personal receiver schedule access',()=>{
+  it('requires current personal authorization and deployment enablement; other callers stay denied',async()=>{
+    const audit=new InMemoryScheduleLiveAuditSink();let active=true;let enabled=true;let checks=0;
+    const service=createScheduleLiveService({portal:portalStub({}),policy:{liveEnabled:scope=>enabled&&scope==='fcl-personal-test'},clock:{now:()=>new Date('2026-10-01T00:00:00Z')},audit,evidenceRoot:await evidenceRoot(),adapters:[],http:{request:()=>Promise.reject(new Error('no external access'))},personalAccess:{scopeId:'fcl-personal-test',authorize:ctx=>{checks++;return Promise.resolve(active&&ctx.identity.userId==='receiver');}}});
+    const receiver={...context('unused','receiver'),organizationId:null};
+    await expect(service.carriers(receiver)).resolves.toMatchObject({status:'success'});expect(checks).toBe(1);
+    await expect(service.carriers({...receiver,identity:{...receiver.identity,userId:'other'}})).rejects.toMatchObject({code:'schedule_live_membership_required'});
+    await expect(service.carriers({...receiver,identity:{...receiver.identity,emailVerified:false}})).rejects.toMatchObject({code:'schedule_live_membership_required'});
+    active=false;await expect(service.carriers(receiver)).rejects.toMatchObject({code:'schedule_live_membership_required'});
+    active=true;enabled=false;await expect(service.locations(receiver,{carrier:'ONE',text:'Shanghai'})).rejects.toMatchObject({code:'schedule_live_disabled'});
+  });
+  it('uses the personal evidence scope for search and rejects a revoked identity before another query',async()=>{
+    const audit=new InMemoryScheduleLiveAuditSink();let active=true;
+    const service=createScheduleLiveService({portal:portalStub({}),policy:{liveEnabled:scope=>scope==='fcl-personal-test'},clock:{now:()=>new Date('2026-09-18T00:00:00Z')},audit,evidenceRoot:await evidenceRoot(),adapters:[quickAdapter()],http:unusableHttp,personalAccess:{scopeId:'fcl-personal-test',authorize:ctx=>Promise.resolve(active&&ctx.identity.userId==='receiver')}});
+    const receiver={...context('unused','receiver'),organizationId:null};
+    const result=await service.search(receiver,searchInput);
+    expect(result.status).toBe('success');
+    expect((await service.machineExecute({tool:'maritime.schedule.search',tenantId:'fcl-personal-test',actorId:'receiver',input:searchInput})).status).toBe('blocked');
+    const data=(result.body as {data:{provenance:{source_refs:string[]}}}).data;
+    const ref=data.provenance.source_refs[0]!;
+    expect((await service.readEvidence(receiver,ref)).byte_length).toBeGreaterThan(0);
+    expect(audit.entries.filter(e=>e.action==='search').every(e=>e.tenant_id==='fcl-personal-test'&&e.actor_id==='receiver')).toBe(true);
+    active=false;
+    await expect(service.search(receiver,searchInput)).rejects.toMatchObject({code:'schedule_live_membership_required'});
+    await expect(service.readEvidence(receiver,ref)).rejects.toMatchObject({code:'schedule_live_membership_required'});
+  });
+
+});

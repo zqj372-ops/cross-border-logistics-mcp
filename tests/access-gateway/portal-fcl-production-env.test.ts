@@ -25,3 +25,9 @@ it('requires the complete private FCL authority, secret, renderer and SMTP proje
     env.PORTAL_FCL_RECEIVER_AUTHORITY_TOKEN_FILE=join(root,'does-not-exist');expect(()=>validateProductionPortalEnvironment(env)).toThrow('portal_secret_file_invalid');
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+it('rejects personal schedule activation without the FCL authority configuration',()=>{
+ const root=mkdtempSync(join(tmpdir(),'portal-fcl-schedule-env-'));
+ try{const env=environment(root,false);env.PORTAL_FCL_SCHEDULE_LIVE_ENABLED='true';expect(()=>validateProductionPortalEnvironment(env)).toThrow('fcl_personal_schedule_configuration_invalid');const ready=environment(root,true);ready.PORTAL_FCL_SCHEDULE_LIVE_ENABLED='true';expect(()=>validateProductionPortalEnvironment(ready)).not.toThrow();}
+ finally{rmSync(root,{recursive:true,force:true});}
+});

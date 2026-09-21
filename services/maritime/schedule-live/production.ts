@@ -14,6 +14,7 @@ import {
   createScheduleLiveService,
   type ScheduleLiveAuditSink,
   type ScheduleLivePolicy,
+  type ScheduleLivePersonalAccess,
   type ScheduleLiveServiceApi,
 } from "./service";
 
@@ -72,6 +73,7 @@ function liveHttpPort(policy: TransportPolicy): CarrierHttpPort {
  */
 export function createProductionScheduleLiveService(options: {
   readonly portal: Pick<PortalService, "getState">;
+  readonly personalAccess?: ScheduleLivePersonalAccess;
   readonly audit: ScheduleLiveAuditSink;
   readonly evidenceRoot: string;
   readonly tenantAllowlist: readonly string[];
@@ -81,7 +83,7 @@ export function createProductionScheduleLiveService(options: {
   if (!isAbsolute(options.evidenceRoot)) {
     throw new Error("schedule_live_evidence_root_invalid");
   }
-  const allowedTenants = new Set(options.tenantAllowlist);
+  const allowedTenants = new Set([...options.tenantAllowlist, ...(options.personalAccess ? [options.personalAccess.scopeId] : [])]);
   if ([...allowedTenants].some((tenant) => !TENANT.test(tenant))) {
     throw new Error("schedule_live_tenant_allowlist_invalid");
   }
@@ -110,15 +112,19 @@ export function createProductionScheduleLiveService(options: {
   const policy: ScheduleLivePolicy = {
     liveEnabled: (tenantId) => allowedTenants.has(tenantId),
     carrierEnabled: (tenantId, carrier) => {
+      const normalized = normalizeCarrierId(carrier) ?? carrier;
+      // The personal FCL workflow currently accepts COSCO schedules only.
+      // Tenant-specific restrictions still apply and cannot widen this scope.
+      if (tenantId === options.personalAccess?.scopeId && normalized !== "COSCO") return false;
       const allowed = carrierAllowlist[tenantId];
       if (allowed === undefined) return true;
-      const normalized = normalizeCarrierId(carrier) ?? carrier;
       return allowed.some((entry) => (normalizeCarrierId(entry) ?? entry) === normalized);
     },
   };
   const now = options.now ?? (() => new Date());
   return createScheduleLiveService({
     portal: options.portal,
+    ...(options.personalAccess ? {personalAccess: options.personalAccess} : {}),
     policy,
     clock: { now },
     audit: options.audit,

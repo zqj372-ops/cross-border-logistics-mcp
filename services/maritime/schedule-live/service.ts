@@ -67,7 +67,13 @@ export interface ScheduleLiveEvidenceReader {
   }>;
 }
 
+export interface ScheduleLivePersonalAccess {
+  readonly scopeId: string;
+  authorize(ctx: PortalContext): Promise<boolean>;
+}
+
 export interface ScheduleLiveServiceOptions {
+  readonly personalAccess?: ScheduleLivePersonalAccess;
   readonly portal: Pick<PortalService, "getState">;
   readonly policy: ScheduleLivePolicy;
   readonly clock: Clock;
@@ -140,10 +146,16 @@ export function createScheduleLiveService(
 ): ScheduleLiveServiceApi {
   const evidenceRoot = resolve(options.evidenceRoot);
 
-  function member(ctx: PortalContext, action: "carriers" | "locations" | "search"): {
+  async function member(ctx: PortalContext, action: "carriers" | "locations" | "search"): Promise<{
     readonly tenantId: string;
     readonly role: string;
-  } {
+  }> {
+    if (ctx.identity.emailVerified && options.personalAccess && await options.personalAccess.authorize(ctx)) {
+      const tenantId = options.personalAccess.scopeId;
+      tenantDirectory(evidenceRoot, tenantId);
+      if (action !== "carriers" && !options.policy.liveEnabled(tenantId)) throw new PortalError("schedule_live_disabled");
+      return {tenantId, role: "fcl_receiver"};
+    }
     if (!ctx.identity.emailVerified || !ctx.organizationId) {
       throw new PortalError("schedule_live_membership_required");
     }
@@ -281,7 +293,7 @@ export function createScheduleLiveService(
       const auditId = identifier("schedule-live-audit");
       let tenantId: string;
       try {
-        tenantId = member(ctx, "carriers").tenantId;
+        tenantId = (await member(ctx, "carriers")).tenantId;
       } catch (error) {
         const code = error instanceof PortalError ? error.code : "schedule_live_membership_required";
         await denialAudit(ctx, "carriers", requestId, auditId, code, undefined);
@@ -309,7 +321,7 @@ export function createScheduleLiveService(
       const parsed = parseScheduleLiveLocationsRequest(input);
       let tenantId: string;
       try {
-        tenantId = member(ctx, "locations").tenantId;
+        tenantId = (await member(ctx, "locations")).tenantId;
         if (!carrierAllowed(tenantId, parsed.carrier)) {
           throw new PortalError("schedule_live_carrier_denied");
         }
@@ -349,7 +361,7 @@ export function createScheduleLiveService(
       const parsed = parseScheduleLiveSearchRequest(input);
       let tenantId: string;
       try {
-        tenantId = member(ctx, "search").tenantId;
+        tenantId = (await member(ctx, "search")).tenantId;
         if (!carrierAllowed(tenantId, parsed.carrier)) {
           throw new PortalError("schedule_live_carrier_denied");
         }
@@ -381,7 +393,7 @@ export function createScheduleLiveService(
     async readEvidence(ctx, reference, operation) {
       const requestId = operation?.requestId ?? identifier("schedule-live-req");
       const auditId = identifier("schedule-live-audit");
-      const tenantId = member(ctx, "carriers").tenantId;
+      const tenantId = (await member(ctx, "carriers")).tenantId;
       const match = EVIDENCE_REFERENCE.exec(reference);
       if (match === null) {
         await denialAudit(ctx, "evidence_read", requestId, auditId, "evidence_reference_invalid", undefined);
@@ -434,7 +446,8 @@ export function createScheduleLiveService(
         }),
       });
       try {
-        if (action !== "carriers" && !options.policy.liveEnabled(request.tenantId)) {
+        // Personal access is session-bound; it does not grant machine/API Key access.
+        if (request.tenantId === options.personalAccess?.scopeId || action !== "carriers" && !options.policy.liveEnabled(request.tenantId)) {
           await options.audit.record({
             tenant_id: request.tenantId,
             actor_id: request.actorId,
