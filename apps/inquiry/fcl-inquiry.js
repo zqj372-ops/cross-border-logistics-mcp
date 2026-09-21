@@ -1,3 +1,4 @@
+import { fclLabel, fclValue, fclEventMessage } from '../inquiry/fcl-presentation.ts';
 import {
   buildFclInquirySummary,
   createFclInquiryDraft,
@@ -10,6 +11,7 @@ import { fclPublicOutputSchemas } from '../../services/access-gateway/portal/fcl
 const API = '/inquiry/api/v1';
 const containerTypes = ['20GP', '40GP', '40HQ', '45HQ'];
 const containerLabels = { '20GP': '20GP', '40GP': '40GP', '40HQ': '40HQ', '45HQ': '45HQ' };
+const containerDescriptions = { '20GP': '20 尺普柜', '40GP': '40 尺普柜', '40HQ': '40 尺高柜', '45HQ': '45 尺高柜' };
 const cargoTypes = [
   ['general', '普通货物'],
   ['battery', '含电池'],
@@ -32,7 +34,6 @@ const steps = ['运输需求', '货物与服务', '联系确认'];
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/gu, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const sameJson = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
-const displayChange = (value) => value === null || value === undefined ? '未填写' : typeof value === 'string' ? value : JSON.stringify(value);
 
 export function buildFclSupplementChanges(current, next) {
   const candidates = [
@@ -72,8 +73,8 @@ function field(label, id, value, options = {}) {
   const type = options.type || 'text';
   const required = options.required ? ' required' : '';
   const placeholder = options.placeholder ? ` placeholder="${esc(options.placeholder)}"` : '';
-  const error = options.error ? `<p class="field-error" role="alert">${esc(options.error)}</p>` : '';
-  const aria = options.error ? ' aria-invalid="true"' : '';
+  const error = options.error ? `<p id="${id}-error" class="field-error" role="alert">${esc(options.error)}</p>` : '';
+  const aria = options.error ? ` aria-invalid="true" aria-describedby="${id}-error"` : '';
   if (options.options) return `<div class="field"><label for="${id}">${esc(label)}${options.optional ? '<span class="optional">选填</span>' : ''}</label><select id="${id}" name="${id}"${required}${aria}>${options.options.map(([optionValue, text]) => `<option value="${esc(optionValue)}"${String(optionValue) === String(value ?? '') ? ' selected' : ''}>${esc(text)}</option>`).join('')}</select>${error}</div>`;
   if (options.textarea) return `<div class="field"><label for="${id}">${esc(label)}${options.optional ? '<span class="optional">选填</span>' : ''}</label><textarea id="${id}" name="${id}" rows="${options.rows || 3}" maxlength="${options.maxlength || 4000}"${required}${aria}${placeholder}>${esc(value)}</textarea>${error}</div>`;
   return `<div class="field"><label for="${id}">${esc(label)}${options.optional ? '<span class="optional">选填</span>' : ''}</label><input id="${id}" name="${id}" type="${type}" value="${esc(value)}"${required}${aria}${placeholder}${options.step ? ' step="0.000001"' : ''}${options.maxlength ? ` maxlength="${options.maxlength}"` : ''}>${error}</div>`;
@@ -81,16 +82,16 @@ function field(label, id, value, options = {}) {
 
 function routeFields(draft, errors) {
   const containerError = Object.entries(errors).find(([path]) => path.startsWith('containers'))?.[1];
-  return `<h2 id="fcl-step-title" tabindex="-1">${steps[0]}</h2><p class="section-intro">请填写已知信息；不确定的柜数可以留空，不要用 0 代替。</p>
-    <div class="field-grid">${field('中国起运城市', 'origin_city', draft.origin_city, { optional: true, error: errors.origin_city })}${field('起运港 POL', 'pol', draft.pol, { error: errors.pol, placeholder: '例如 Yantian' })}</div>
-    <div class="field-grid">${field('目的港 POD', 'pod', draft.pod, { error: errors.pod, placeholder: '例如 Vancouver' })}${field('最终目的地', 'final_destination', draft.final_destination, { optional: true, error: errors.final_destination })}</div>
-    <fieldset class="fcl-container-grid"${containerError ? ' aria-invalid="true"' : ''}><legend>柜型与柜数</legend>${containerTypes.map(type => { const row = draft.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="container-${type}">${containerLabels[type]}${row ? '<span class="optional">已填写</span>' : ''}</label><label class="check-small"><input type="checkbox" name="container-pending-${type}"${row && row.quantity === null ? ' checked' : ''}>柜数待确认</label><input id="container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}${containerError ? `<p class="field-error" role="alert">${esc(containerError)}</p>` : ''}</fieldset>
-    <div class="field-grid">${field('预计备货日期', 'cargo_ready_date', draft.cargo_ready_date || '', { optional: true, type: 'date' })}${field('贸易条款', 'incoterm', draft.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value])] })}</div>
+  return `<h2 id="fcl-step-title" tabindex="-1">${steps[0]}</h2><p class="section-intro">从哪里出发，运到哪里？填写已确认的信息，不确定的内容可以稍后补充。</p>
+    <div class="field-grid">${field('中国起运城市', 'origin_city', draft.origin_city, { optional: true, error: errors.origin_city })}${field('起运港（POL）', 'pol', draft.pol, { error: errors.pol, placeholder: '例如 Yantian（盐田）' })}</div>
+    <div class="field-grid">${field('目的港（POD）', 'pod', draft.pod, { error: errors.pod, placeholder: '例如 Vancouver（温哥华）' })}${field('最终目的地', 'final_destination', draft.final_destination, { optional: true, error: errors.final_destination })}</div>
+    <fieldset class="fcl-container-grid"${containerError ? ' aria-invalid="true"' : ''}><legend>柜型与柜数</legend>${containerTypes.map(type => { const row = draft.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="container-${type}">${containerLabels[type]}<small>${containerDescriptions[type]}</small></label><label class="check-small"><input type="checkbox" name="container-pending-${type}"${row && row.quantity === null ? ' checked' : ''}>数量待确认</label><input id="container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}${containerError ? `<p class="field-error" role="alert">${esc(containerError)}</p>` : ''}</fieldset>
+    <div class="field-grid">${field('预计备货日期', 'cargo_ready_date', draft.cargo_ready_date || '', { optional: true, type: 'date' })}${field('贸易条款', 'incoterm', draft.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value === 'Other' ? '其他条款' : value])] })}</div>
     ${field('其他条款说明', 'incoterm_other', draft.incoterm_other || '', { optional: true })}`;
 }
 
 function cargoFields(draft, errors) {
-  return `<h2 id="fcl-step-title" tabindex="-1">${steps[1]}</h2><p class="section-intro">货物、日期和服务范围按实际填写；服务范围不会被自动补全。</p>
+  return `<h2 id="fcl-step-title" tabindex="-1">${steps[1]}</h2><p class="section-intro">告诉我们运输什么货物，以及需要哪些服务。可以同时选择多项。</p>
     <div class="field-grid">${field('货物品名', 'cargo_name', draft.cargo_name, { optional: true, error: errors.cargo_name })}${field('货物属性', 'cargo_type', draft.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div>
     <div class="field-grid">${field('预计毛重（kg）', 'estimated_weight', draft.estimated_weight?.value || '', { optional: true, placeholder: '例如 18000', step: true })}</div>
     <fieldset class="fcl-service-grid"><legend>需要的服务</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${draft.selected_services.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset>
@@ -99,8 +100,8 @@ function cargoFields(draft, errors) {
 
 function contactFields(draft, errors) {
   const summary = buildFclInquirySummary(draft);
-  return `<h2 id="fcl-step-title" tabindex="-1">${steps[2]}</h2><p class="section-intro">提交后保存的只是询价需求，不代表报价、订舱或邮件已送达。</p>
-    <div class="fcl-summary"><dl><dt>起运城市</dt><dd>${esc(summary.route.origin_city || '待确认')}</dd><dt>POL</dt><dd>${esc(summary.route.pol || '待确认')}</dd><dt>POD</dt><dd>${esc(summary.route.pod || '待确认')}</dd><dt>最终目的地</dt><dd>${esc(summary.route.final_destination || '待确认')}</dd><dt>柜型</dt><dd>${esc(summary.containers.map(item => `${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待确认')}</dd><dt>备货日期</dt><dd>${esc(summary.cargo.cargo_ready_date || '待确认')}</dd><dt>贸易条款</dt><dd>${esc(summary.cargo.incoterm || '待确认')}${summary.cargo.incoterm === 'Other' && summary.cargo.incoterm_other ? ` · ${esc(summary.cargo.incoterm_other)}` : ''}</dd><dt>服务</dt><dd>${esc(draft.selected_services.map(serviceLabel).join('、') || '待确认')}</dd></dl></div>
+  return `<h2 id="fcl-step-title" tabindex="-1">${steps[2]}</h2><p class="section-intro">请留下联系方式，工作人员核对需求后会与你联系并提供报价。</p>
+    <div class="fcl-summary"><dl><dt>起运城市</dt><dd>${esc(summary.route.origin_city || '待确认')}</dd><dt>起运港</dt><dd>${esc(summary.route.pol || '待确认')}</dd><dt>目的港</dt><dd>${esc(summary.route.pod || '待确认')}</dd><dt>最终目的地</dt><dd>${esc(summary.route.final_destination || '待确认')}</dd><dt>柜型</dt><dd>${esc(summary.containers.map(item => `${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待确认')}</dd><dt>备货日期</dt><dd>${esc(summary.cargo.cargo_ready_date || '待确认')}</dd><dt>贸易条款</dt><dd>${esc(summary.cargo.incoterm || '待确认')}${summary.cargo.incoterm === 'Other' && summary.cargo.incoterm_other ? ` · ${esc(summary.cargo.incoterm_other)}` : ''}</dd><dt>服务</dt><dd>${esc(draft.selected_services.map(serviceLabel).join('、') || '待确认')}</dd></dl></div>
     <div class="field-grid">${field('联系人姓名', 'contact.name', draft.contact.name || '', { required: true, error: errors['contact.name'] })}${field('电子邮箱', 'contact.email', draft.contact.email || '', { required: true, type: 'email', error: errors['contact.email'] })}</div>
     <div class="field-grid">${field('公司名称', 'contact.company', draft.contact.company || '', { optional: true })}${field('联系电话', 'contact.phone', draft.contact.phone || '', { optional: true, type: 'tel' })}</div>
     <label class="consent"><input type="checkbox" name="consent"${draft.consent ? ' checked' : ''}><span>我已核对需求，并同意保存询价以获取后续联系。</span></label>${errors.consent ? '<p class="field-error" role="alert">请确认已核对需求。</p>' : ''}`;
@@ -108,7 +109,13 @@ function contactFields(draft, errors) {
 
 function summaryPanel(draft) {
   const summary = buildFclInquirySummary(draft);
-  return `<aside class="summary-panel"><details open><summary>询价摘要</summary><dl><dt>线路</dt><dd>${esc([summary.route.origin_city, summary.route.pol, summary.route.pod, summary.route.final_destination].filter(Boolean).join(' → ') || '待确认')}</dd><dt>柜型</dt><dd>${esc(summary.containers.map(item => `${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待确认')}</dd><dt>Ready</dt><dd>${esc(summary.cargo.cargo_ready_date || '待确认')}</dd><dt>Incoterm</dt><dd>${esc(summary.cargo.incoterm || '待确认')}</dd><dt>服务</dt><dd>${esc(draft.selected_services.length ? draft.selected_services.map(serviceLabel).join('、') : '待选择')}</dd><dt>完整度</dt><dd>${isFclInquiryComplete(draft) ? '基础需求已完整' : '仍可保存，工作人员会提示待补字段'}</dd></dl></details></aside>`;
+  const rows = [
+    ['柜型与柜数', summary.containers.map(item => `${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待填写'],
+    ['备货日期', summary.cargo.cargo_ready_date || '待确认'],
+    ['贸易条款', summary.cargo.incoterm || '待确认'],
+    ['所需服务', draft.selected_services.length ? draft.selected_services.map(serviceLabel).join('、') : '待选择'],
+  ];
+  return `<aside class="summary-panel"><details open><summary>本次询价</summary><div class="fcl-summary-route"><span>起运港</span><strong>${esc(summary.route.pol || '待填写')}</strong><span class="fcl-route-line" aria-hidden="true">↓</span><span>目的港</span><strong>${esc(summary.route.pod || '待填写')}</strong>${summary.route.final_destination ? `<small>最终送达 ${esc(summary.route.final_destination)}</small>` : ''}</div><dl class="fcl-summary-list">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl><p class="fcl-summary-help">${isFclInquiryComplete(draft) ? '基础资料已齐全，提交后等待工作人员核对。' : '信息不齐也可以提交，我们会与你联系确认。'}</p></details></aside>`;
 }
 
 export function mountFclInquiry(root) {
@@ -156,18 +163,18 @@ export function mountFclInquiry(root) {
   const render = () => {
     const rootState = root;
     if (ticket) {
-      rootState.innerHTML = `<div class="fcl-public-page"><div class="page-heading"><div><h1>中国 → 加拿大 · FCL整柜询价</h1><p>本票进度与补充资料</p></div><button type="button" class="button secondary" data-action="fcl-new"${ticketBusy ? ' disabled' : ''}>新询价</button></div>${notice ? `<p class="inline-note" role="status">${esc(notice)}</p>` : ''}${ticketLoading ? '<p role="status">正在读取本票…</p>' : ticketView(ticket)}</div>`;
+      rootState.innerHTML = `<div class="fcl-public-page"><div class="page-heading"><div><h1>整柜海运询价</h1><p>本票进度与补充资料</p></div><button type="button" class="button secondary" data-action="fcl-new"${ticketBusy ? ' disabled' : ''}>新询价</button></div>${notice ? `<p class="inline-note" role="status">${esc(notice)}</p>` : ''}${ticketLoading ? '<p role="status">正在读取本票…</p>' : ticketView(ticket)}</div>`;
       if (ticketBusy) rootState.querySelectorAll('[data-fcl-supplement] input,[data-fcl-supplement] select,[data-fcl-supplement] textarea,[data-fcl-supplement] button').forEach(control => { control.disabled = true; });
       return;
     }
     if (submission) {
       const notification = submission.notification || { status: 'not_attempted', reason_code: null };
-      const notificationText = notification.status === 'sent' ? '内部通知已接受，尚未确认送达。' : notification.status === 'disabled' ? '内部通知未启用或未配置。' : notification.status === 'failed' ? '内部通知失败，询价保存不受影响。' : '内部通知尚未确认。';
+      const notificationText = notification.status === 'sent' ? '通知已提交发送，送达状态待确认。' : notification.status === 'disabled' ? '通知未启用，工作人员仍可查看你的询价。' : notification.status === 'failed' ? '通知发送失败，你的询价已经保存。' : '通知发送状态待确认。';
       const complete = submission.complete ?? isFclInquiryComplete(draft);
-      rootState.innerHTML = `<div class="fcl-public-page"><div class="generated submission-success"><div class="generated-heading"><span class="document-icon">✓</span><div><h2 tabindex="-1">询价已保存</h2><p>需求已经保存；报价、审核和文件仍待后续处理。</p></div></div><dl class="mail-meta"><div><dt>Inquiry No</dt><dd>${esc(submission.inquiry_no)}</dd></div><div><dt>状态</dt><dd>${esc(submission.case_status)}</dd></div><div><dt>基础完整度</dt><dd>${complete ? '基础需求已完整' : '仍有待补字段'}</dd></div><div><dt>通知</dt><dd>${esc(notificationText)}</dd></div></dl><div class="mail-actions"><button type="button" class="button primary" data-action="fcl-open-ticket">查看本票进度</button><button type="button" class="button secondary" data-action="fcl-copy-link">复制个人访问链接</button></div><p class="mail-note">链接包含本票访问权，请只保存到自己信任的地方；不要转发给无关人员。</p></div></div>`;
+      rootState.innerHTML = `<div class="fcl-public-page"><div class="generated submission-success"><div class="generated-heading"><span class="document-icon">✓</span><div><h2 tabindex="-1">询价已保存</h2><p>我们已收到你的需求。你可以查看处理进度，并在需要时补充资料。</p></div></div><dl class="mail-meta"><div><dt>询价编号</dt><dd>${esc(submission.inquiry_no)}</dd></div><div><dt>状态</dt><dd>${esc(fclLabel(submission.case_status))}</dd></div><div><dt>基础完整度</dt><dd>${complete ? '基础需求已完整' : '仍有待补字段'}</dd></div><div><dt>通知</dt><dd>${esc(notificationText)}</dd></div></dl><div class="mail-actions"><button type="button" class="button primary" data-action="fcl-open-ticket">查看本票进度</button><button type="button" class="button secondary" data-action="fcl-copy-link">复制个人访问链接</button></div><p class="mail-note">链接包含本票访问权，请只保存到自己信任的地方；不要转发给无关人员。</p></div></div>`;
       return;
     }
-    rootState.innerHTML = `<div class="fcl-public-page"><div class="page-heading"><div><h1>中国 → 加拿大 · FCL整柜询价</h1><p>先整理需求；缺项可保存待补，不自动猜测港口、价格或服务范围。</p></div><span class="route-label">中国 → 加拿大</span></div>${notice ? `<p class="inline-note" role="status">${esc(notice)}</p>` : ''}<nav class="steps" aria-label="FCL询价步骤"><ol>${steps.map((label, index) => `<li${step === index + 1 ? ' class="current"' : ''}><button type="button" data-step="${index + 1}"${step === index + 1 ? ' aria-current="step"' : ''}><span class="step-number">${index + 1 < step ? '✓' : index + 1}</span>${esc(label)}</button></li>`).join('')}</ol></nav><form novalidate class="inquiry-layout" aria-busy="${busy}"><section class="form-content" aria-labelledby="fcl-step-title">${Object.keys(errors).length ? '<p class="error-summary" role="alert">请检查标注字段，保留的输入不会被清空。</p>' : ''}${step === 1 ? routeFields(draft, errors) : step === 2 ? cargoFields(draft, errors) : contactFields(draft, errors)}</section>${summaryPanel(draft)}<div class="actions">${step > 1 ? '<button type="button" class="button secondary" data-action="fcl-back">上一步</button>' : '<span class="action-note">仅 FCL 整柜</span>'}<button type="submit" class="button primary"${busy ? ' disabled' : ''}>${step === 3 ? (busy ? '正在提交…' : '提交询价') : `下一步：${esc(steps[step])}`}</button></div></form></div>`;
+    rootState.innerHTML = `<div class="fcl-public-page"><div class="page-heading"><div><h1>整柜海运询价</h1><p>填写运输需求，我们为你核对运价与服务方案。暂不确定的信息可以稍后补充。</p></div><span class="route-label">中国 → 加拿大 <span>FCL</span></span></div>${notice ? `<p class="inline-note" role="status">${esc(notice)}</p>` : ''}<nav class="steps" aria-label="FCL询价步骤"><ol>${steps.map((label, index) => `<li${step === index + 1 ? ' class="current"' : ''}><button type="button" data-step="${index + 1}"${step === index + 1 ? ' aria-current="step"' : ''}><span class="step-number">${index + 1 < step ? '✓' : index + 1}</span>${esc(label)}</button></li>`).join('')}</ol></nav><form novalidate class="inquiry-layout" aria-busy="${busy}"><section class="form-content" aria-labelledby="fcl-step-title">${Object.keys(errors).length ? '<p class="error-summary" role="alert">请检查标注字段，保留的输入不会被清空。</p>' : ''}${step === 1 ? routeFields(draft, errors) : step === 2 ? cargoFields(draft, errors) : contactFields(draft, errors)}</section>${summaryPanel(draft)}<div class="actions">${step > 1 ? '<button type="button" class="button secondary" data-action="fcl-back">上一步</button>' : '<span class="action-note">无需注册 · 提交后可查看处理进度</span>'}<button type="submit" class="button primary"${busy ? ' disabled' : ''}>${step === 3 ? (busy ? '正在提交…' : '提交询价') : `下一步：${esc(steps[step])}`}</button></div></form></div>`;
     if (busy) rootState.querySelectorAll('input,select,textarea,button').forEach(control => { control.disabled = true; });
   };
 
@@ -204,7 +211,7 @@ export function mountFclInquiry(root) {
     }
   };
 
-  const fieldErrors = (issues) => Object.fromEntries(issues.map(issue => [issue.path.join('.'), issue.message]));
+  const fieldErrors = (issues) => Object.fromEntries(issues.map(issue => { const path = issue.path.join('.'); const label = fclLabel(path); return [path, /[\u4e00-\u9fff]/u.test(issue.message) ? issue.message : path === 'contact.name' ? '请填写联系人姓名' : path === 'contact.email' ? '请填写有效的电子邮箱' : path.startsWith('containers') ? '柜数请填写 1–9999 的整数，或勾选数量待确认' : `请检查${label === '待核对' ? '此项' : label}的填写格式`]; }));
 
   const submit = async () => {
     if (busy) return;
@@ -247,11 +254,11 @@ export function mountFclInquiry(root) {
     const input = value.input;
     const events = value.events || [];
     const canSupplement = value.case_status === 'needs_input';
-    return `<section class="fcl-ticket-card"><div class="case-status-line"><span class="badge warning">${esc(value.case_status)}</span><span>Inquiry ${esc(value.inquiry_no)}</span><span>Case v${value.case_version}</span></div><dl class="case-details"><div><dt>线路</dt><dd>${esc([input.pol, input.pod, input.final_destination].filter(Boolean).join(' → ') || '待确认')}</dd></div><div><dt>柜型</dt><dd>${esc(input.containers.map(item => `${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待确认')}</dd></div><div><dt>通知</dt><dd>${esc(value.complete ? '基础需求已完整' : '仍有待补字段')}</dd></div></dl></section><section class="panel"><div class="panel-body"><h2>处理进展</h2><ol class="case-timeline">${events.map(event => `<li><div class="case-event-head"><strong>${esc(event.actor_label)}</strong><time>${esc(new Date(event.created_at).toLocaleString('zh-CN'))}</time></div><p>${esc(event.message)}</p><small>${esc(event.status)}</small></li>`).join('')}</ol></div></section>${canSupplement ? supplementForm(value) : ''}`;
+    return `<section class="fcl-ticket-card"><div class="case-status-line"><span class="badge warning">${esc(fclLabel(value.case_status))}</span><span>询价编号 ${esc(value.inquiry_no)}</span><span>第 ${value.case_version} 版资料</span></div><dl class="case-details"><div><dt>线路</dt><dd>${esc([input.pol, input.pod, input.final_destination].filter(Boolean).join(' → ') || '待确认')}</dd></div><div><dt>柜型</dt><dd>${esc(input.containers.map(item => `${item.type} × ${item.quantity ?? '待确认'}`).join('、') || '待确认')}</dd></div><div><dt>资料完整度</dt><dd>${esc(value.complete ? '基础需求已完整' : '仍有待补字段')}</dd></div></dl></section><section class="panel"><div class="panel-body"><h2>处理进展</h2><ol class="case-timeline">${events.map(event => `<li><div class="case-event-head"><strong>${esc(['Anonymous customer', 'Customer'].includes(event.actor_label) ? '客户' : event.actor_label)}</strong><time>${esc(new Date(event.created_at).toLocaleString('zh-CN'))}</time></div><p>${esc(fclEventMessage(event.message))}</p><small>${esc(fclLabel(event.kind))}</small></li>`).join('')}</ol></div></section>${canSupplement ? supplementForm(value) : ''}`;
   };
   const supplementForm = (value) => {
     const input = ticketDraft ? { ...value.input, ...ticketDraft, contact: { ...value.input.contact, ...ticketDraft.contact } } : value.input;
-    return `<section class="panel"><div class="panel-body"><h2>补充本票资料</h2><p>提交后追加客户补充事件，原 Inquiry 不会被覆盖；未修改字段保持原值。</p><form data-fcl-supplement><div class="field-grid">${field('中国起运城市', 'supply-origin_city', input.origin_city || '', { optional: true })}${field('起运港 POL', 'supply-pol', input.pol || '', { optional: true })}</div><div class="field-grid">${field('目的港 POD', 'supply-pod', input.pod || '', { optional: true })}${field('最终目的地', 'supply-final_destination', input.final_destination || '', { optional: true })}</div><fieldset class="fcl-container-grid"><legend>柜型与柜数</legend>${containerTypes.map(type => { const row = input.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="supply-container-${type}">${containerLabels[type]}</label><label class="check-small"><input type="checkbox" name="supply-container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>柜数待确认</label><input id="supply-container-${type}" name="supply-container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${field('货物品名', 'supply-cargo_name', input.cargo_name || '', { optional: true })}${field('货物属性', 'supply-cargo_type', input.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div><div class="field-grid">${field('预计毛重 kg', 'supply-estimated_weight', input.estimated_weight?.value || '', { optional: true })}${field('备货日期', 'supply-cargo_ready_date', input.cargo_ready_date || '', { optional: true, type: 'date' })}</div><div class="field-grid">${field('贸易条款', 'supply-incoterm', input.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value])] })}${field('其他条款说明', 'supply-incoterm_other', input.incoterm_other || '', { optional: true })}</div><div class="field-grid">${field('联系人', 'supply-contact-name', input.contact?.name || '', { optional: true })}${field('邮箱', 'supply-contact-email', input.contact?.email || '', { optional: true, type: 'email' })}</div><div class="field-grid">${field('公司', 'supply-contact-company', input.contact?.company || '', { optional: true })}${field('电话', 'supply-contact-phone', input.contact?.phone || '', { optional: true, type: 'tel' })}</div><div class="field"><label for="supply-notes">补充说明</label><textarea id="supply-notes" name="supply-notes" rows="3" maxlength="4000">${esc(input.notes || '')}</textarea></div><fieldset class="fcl-service-grid"><legend>服务范围</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${input.selected_services?.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset><div data-fcl-supplement-diff>${supplementDiff(value.input, ticketDraft || value.input)}</div><div class="field"><label for="supply-message">补充说明消息</label><textarea id="supply-message" name="supply-message" rows="2" maxlength="2000">${esc(ticketMessageDraft)}</textarea></div><button class="button primary" type="submit"${ticketBusy ? ' disabled' : ''}>提交客户补充</button></form></div></section>`;
+    return `<section class="panel"><div class="panel-body"><h2>补充本票资料</h2><p>修改需要补充的资料，提交后工作人员会重新核对。原始内容和修改记录都会保留。</p><form data-fcl-supplement><div class="field-grid">${field('中国起运城市', 'supply-origin_city', input.origin_city || '', { optional: true })}${field('起运港（POL）', 'supply-pol', input.pol || '', { optional: true })}</div><div class="field-grid">${field('目的港（POD）', 'supply-pod', input.pod || '', { optional: true })}${field('最终目的地', 'supply-final_destination', input.final_destination || '', { optional: true })}</div><fieldset class="fcl-container-grid"><legend>柜型与柜数</legend>${containerTypes.map(type => { const row = input.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="supply-container-${type}">${containerLabels[type]}<small>${containerDescriptions[type]}</small></label><label class="check-small"><input type="checkbox" name="supply-container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>数量待确认</label><input id="supply-container-${type}" name="supply-container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${field('货物品名', 'supply-cargo_name', input.cargo_name || '', { optional: true })}${field('货物属性', 'supply-cargo_type', input.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div><div class="field-grid">${field('预计毛重 kg', 'supply-estimated_weight', input.estimated_weight?.value || '', { optional: true })}${field('备货日期', 'supply-cargo_ready_date', input.cargo_ready_date || '', { optional: true, type: 'date' })}</div><div class="field-grid">${field('贸易条款', 'supply-incoterm', input.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value === 'Other' ? '其他条款' : value])] })}${field('其他条款说明', 'supply-incoterm_other', input.incoterm_other || '', { optional: true })}</div><div class="field-grid">${field('联系人', 'supply-contact-name', input.contact?.name || '', { optional: true })}${field('邮箱', 'supply-contact-email', input.contact?.email || '', { optional: true, type: 'email' })}</div><div class="field-grid">${field('公司', 'supply-contact-company', input.contact?.company || '', { optional: true })}${field('电话', 'supply-contact-phone', input.contact?.phone || '', { optional: true, type: 'tel' })}</div><div class="field"><label for="supply-notes">补充说明</label><textarea id="supply-notes" name="supply-notes" rows="3" maxlength="4000">${esc(input.notes || '')}</textarea></div><fieldset class="fcl-service-grid"><legend>服务范围</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${input.selected_services?.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset><div data-fcl-supplement-diff>${supplementDiff(value.input, ticketDraft || value.input)}</div><div class="field"><label for="supply-message">给工作人员留言</label><textarea id="supply-message" name="supply-message" rows="2" maxlength="2000">${esc(ticketMessageDraft)}</textarea></div><button class="button primary" type="submit"${ticketBusy ? ' disabled' : ''}>提交补充资料</button></form></div></section>`;
   };
 
   const supplementDiff = (current, next) => {
@@ -259,7 +266,7 @@ export function mountFclInquiry(root) {
     if (!changes.length) return '<p class="muted">尚未修改字段；如需纯文字说明，可直接填写下方消息。</p>';
     return `<div class="table-wrap"><table><thead><tr><th>字段</th><th>变更前</th><th>变更后</th></tr></thead><tbody>${changes.map(change => {
       const before = change.field.startsWith('contact.') ? current.contact?.[change.field.slice(8)] : current[change.field];
-      return `<tr><td>${esc(change.field)}</td><td>${esc(displayChange(before))}</td><td>${esc(displayChange(change.value))}</td></tr>`;
+      return `<tr><td>${esc(fclLabel(change.field))}</td><td>${esc(fclValue(change.field, before))}</td><td>${esc(fclValue(change.field, change.value))}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   };
 
@@ -364,7 +371,7 @@ export function mountFclInquiry(root) {
       if (!result.response.ok || result.body.status !== 'success') throw Object.assign(new Error(result.body.reason_codes?.[0] || 'fcl_unavailable'), { code: result.body.reason_codes?.[0] });
       const parsed = fclPublicOutputSchemas.supplement.safeParse(result.body);
       if (!parsed.success) throw Object.assign(new Error('fcl_response_invalid'), { code: 'fcl_response_invalid' });
-      ticket = parsed.data.data; ticketDraft = null; ticketMessageDraft = ''; ticketBusy = false; notice = '补充已保存并生成新的客户补充事件。'; render();
+      ticket = parsed.data.data; ticketDraft = null; ticketMessageDraft = ''; ticketBusy = false; notice = '补充资料已保存，工作人员会重新核对。'; render();
     } catch (error) {
       if (attempt !== ticketEpoch || !isFclMode()) return;
       ticketBusy = false; notice = reasonMessage(error.code || error.message); render();
@@ -399,6 +406,12 @@ export function mountFclInquiry(root) {
       return;
     }
     capture();
+    const summaryElement = root.querySelector('.summary-panel');
+    if (summaryElement) {
+      const wasOpen = summaryElement.querySelector('details').open;
+      summaryElement.outerHTML = summaryPanel(draft);
+      root.querySelector('.summary-panel details').open = wasOpen;
+    }
   }, { signal: lifecycle.signal });
   window.addEventListener('hashchange', () => {
     if (!isFclMode()) { cleanup(); return; }
