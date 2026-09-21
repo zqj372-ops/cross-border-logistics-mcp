@@ -85,7 +85,10 @@ def build_backup_plan(root, state):
     if environment.get('PORTAL_NATIVE_BUSINESS_ENABLED') == 'true' or environment.get('PORTAL_FCL_ENABLED') == 'true':
         native_database = state_root / 'native-business.sqlite'
         databases.append(native_database)
-        private_state.append(Path(str(native_database) + '.encryption-key'))
+        native_key = Path(str(native_database) + '.encryption-key')
+        # Freightcom creates this key; personal FCL alone has no encrypted Freightcom store.
+        if environment.get('PORTAL_NATIVE_BUSINESS_ENABLED') == 'true' or native_key.exists() or native_key.is_symlink():
+            private_state.append(native_key)
     quote_path = environment.get('PORTAL_QUOTE_DOCUMENTS_SQLITE_PATH', '')
     if quote_path:
         databases.append(mapped_database_path(quote_path, container_root, state_root))
