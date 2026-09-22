@@ -5,8 +5,11 @@ import {
   buildFclCostSellSnapshot,
   fclQuoteDraftInputSchema,
   fclQuoteSnapshotSchema,
+  fclQuoteSnapshotDigest,
+  validateFclQuoteSnapshot,
   type FclQuoteSelectedSnapshot,
 } from '../../services/quote-native/fcl';
+import {fclRowAdjustmentsSchema} from '../../services/quote-native/fcl-contracts';
 
 const caseView={
   case_id:'00000000-0000-4000-8000-000000000001',
@@ -231,4 +234,127 @@ it('compares manual quantities numerically and accepts the source version bounda
   const boundary={...selected,source_version:'v'.repeat(200)};
   expect(build({selected:boundary,input:input({source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:null}]})}).source_snapshot.source_version).toHaveLength(200);
   expect(()=>build({selected:{...selected,source_version:'v'.repeat(201)},input:input({source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:null}]})})).toThrow();
+});
+
+it('applies audited per-ticket cost, sell and billing overrides without mutating the source snapshot',()=>{
+  const source={...selected,rate:{...selected.rate,additional_fees:[
+    {name:'Destination delivery',group:'C' as const,service:'delivery' as const,cost_price:'200',currency:'CAD' as const,note:null,unit:'CNTR' as const,container_type:'40HQ' as const},
+  ]}};
+  const projectedCase={...caseView,current_input:{...caseView.current_input,selected_services:['ocean_freight','delivery'] as const}};
+  const sourceBefore=structuredClone(source),caseBefore=structuredClone(projectedCase);
+  const adjustments={
+    fcl_row_adjustments_v1:{changes:[
+      {row_key:'ocean_freight:40HQ',operation:'override' as const,cost_price:'3250',reason:'Supplier corrected the ticket cost'},
+      {row_key:'rate_fee:0:delivery:CNTR:40HQ',operation:'override' as const,unit:'SHIPMENT' as const,cost_price:'260',sell_price:'300',reason:'One delivery charge for this shipment'},
+    ]},
+  };
+  const value=input({source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:null}],extensions:adjustments,exchange_rates:{USD:'7',CAD:'5'}});
+  const inputBefore=structuredClone(value);
+  const snapshot=build({selected:source,caseView:projectedCase,input:value});
+  expect(source).toEqual(sourceBefore);expect(projectedCase).toEqual(caseBefore);expect(value).toEqual(inputBefore);
+  expect(snapshot.source_snapshot).toEqual(source);
+  expect(snapshot.cost_rows).toEqual(expect.arrayContaining([
+    expect.objectContaining({row_key:'ocean_freight:40HQ',quantity:'2',cost_price:'3250',sell_price:'3500',cost_amount:'6500.00',sell_amount:'7000.00'}),
+    expect.objectContaining({row_key:'rate_fee:0:delivery:CNTR:40HQ',quantity:'1',unit:'SHIPMENT',container_type:null,cost_price:'260',sell_price:'300',cost_amount:'260.00',sell_amount:'300.00'}),
+  ]));
+  expect(snapshot.extensions?.fcl_row_adjustments_v1).toMatchObject(adjustments.fcl_row_adjustments_v1);
+  expect(snapshot.extensions?.fcl_row_adjustment_audit_v1).toMatchObject({changes:[
+    {row_key:'ocean_freight:40HQ',operation:'override',actor:'fcl-document-receiver',created_at:'2026-10-08T12:00:00.000Z',original:{quantity:'2',cost_price:'3200'},effective:{quantity:'2',cost_price:'3250'}},
+    {row_key:'rate_fee:0:delivery:CNTR:40HQ',operation:'override',actor:'fcl-document-receiver',original:{quantity:'2',unit:'CNTR',container_type:'40HQ'},effective:{quantity:'1',unit:'SHIPMENT',container_type:null}},
+  ]});
+  expect(snapshot.calculation.unified_profit).toMatchObject({cost_subtotal:'46800.00',revenue_subtotal:'50500.00',gp_subtotal:'3700.00'});
+  expect(snapshot.calculation.assumptions).toContain('per_quote_adjustments_audited');
+  expect(snapshot.calculation.calculation_trace.some(entry=>entry.step==='per_quote_adjustment'&&entry.detail.includes('ocean_freight:40HQ'))).toBe(true);
+});
+
+it('supports explicit zero/null and removal while retaining service-coverage blockers',()=>{
+  const zero=input({extensions:{fcl_row_adjustments_v1:{changes:[
+    {row_key:'ocean_freight:40HQ',operation:'override',cost_price:'0',sell_price:'0',reason:'Explicit zero fixture'},
+  ]}}});
+  const zeroSnapshot=build({input:zero,caseView:{...caseView,current_input:{...caseView.current_input,containers:[{type:'40HQ' as const,quantity:1}]}}});
+  expect(zeroSnapshot.cost_rows[0]).toMatchObject({cost_price:'0',sell_price:'0',cost_amount:'0.00',sell_amount:'0.00',fully_priced:true});
+  expect(zeroSnapshot.calculation.by_currency.USD).toMatchObject({cost_subtotal:'0.00',revenue_subtotal:'0.00',gp_subtotal:'0.00'});
+
+  const blank=input({extensions:{fcl_row_adjustments_v1:{changes:[
+    {row_key:'ocean_freight:40HQ',operation:'override',cost_price:null,sell_price:null,reason:'Clear both amounts'},
+  ]}}});
+  const blankSnapshot=build({input:blank});
+  expect(blankSnapshot.cost_rows[0]).toMatchObject({cost_price:null,sell_price:null,cost_amount:null,sell_amount:null,fully_priced:false});
+  expect(blankSnapshot.completeness.complete).toBe(false);
+  expect(blankSnapshot.completeness.missing_fields).toEqual(expect.arrayContaining(['/cost_rows/0/cost_price','/cost_rows/0/sell_price','/service_coverage/0']));
+
+  const removed=input({extensions:{fcl_row_adjustments_v1:{changes:[
+    {row_key:'ocean_freight:40HQ',operation:'remove',reason:'Removed from this ticket'},
+  ]}}});
+  const removedSnapshot=build({input:removed});
+  expect(removedSnapshot.cost_rows).toHaveLength(0);
+  expect(removedSnapshot.service_coverage[0]).toMatchObject({service:'ocean_freight',disposition:'pending'});
+  expect(removedSnapshot.completeness.missing_fields).toContain('/service_coverage/0');
+  expect(removedSnapshot.extensions?.fcl_row_adjustment_audit_v1?.changes[0]).toMatchObject({operation:'remove',effective:null});
+
+  const includedRemoved=input({source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:null}],service_scopes:[{service:'canada_customs',disposition:'included',note:'Included in ocean',included_row_refs:['ocean_freight:40HQ']}],extensions:{fcl_row_adjustments_v1:{changes:[{row_key:'ocean_freight:40HQ',operation:'remove',reason:'No included source row remains'}]}}});
+  expect(()=>build({caseView:{...caseView,current_input:{...caseView.current_input,selected_services:['ocean_freight','canada_customs']}},input:includedRemoved})).toThrow('fcl_quote_scope_invalid');
+});
+
+it('derives CNTR quantities from the case and rejects unknown, duplicate or invalid container rows',()=>{
+  const multi={...selected,rate:{...selected.rate,items:[
+    {container_type:'40HQ' as const,ocean_freight:'3200',currency:'USD' as const},
+    {container_type:'20GP' as const,ocean_freight:'1800',currency:'USD' as const},
+  ]}};
+  const multiCase={...caseView,current_input:{...caseView.current_input,containers:[{type:'40HQ' as const,quantity:2},{type:'20GP' as const,quantity:1}]}};
+  const adjusted=input({source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:null},{row_key:'ocean_freight:20GP',sell_price:'2000',customer_note:null}],extensions:{fcl_row_adjustments_v1:{changes:[
+    {row_key:'ocean_freight:40HQ',operation:'override',cost_price:'3250',reason:'Keep both containers'},
+    {row_key:'ocean_freight:20GP',operation:'override',unit:'CNTR',container_type:'20GP',sell_price:'2100',reason:'Explicit 20GP pricing'},
+  ]}}});
+  const snapshot=build({selected:multi,caseView:multiCase,input:adjusted});
+  expect(snapshot.cost_rows).toEqual(expect.arrayContaining([
+    expect.objectContaining({row_key:'ocean_freight:40HQ',quantity:'2',unit:'CNTR',container_type:'40HQ'}),
+    expect.objectContaining({row_key:'ocean_freight:20GP',quantity:'1',unit:'CNTR',container_type:'20GP'}),
+  ]));
+  expect(()=>build({input:input({extensions:{fcl_row_adjustments_v1:{changes:[{row_key:'unknown:row',operation:'remove',reason:'Unknown'}]}}})})).toThrow('fcl_quote_source_row_unknown');
+  expect(fclRowAdjustmentsSchema.safeParse({changes:[{row_key:'ocean_freight:40HQ',operation:'override',cost_price:'1',reason:'one'},{row_key:'ocean_freight:40HQ',operation:'remove',reason:'duplicate'}]}).success).toBe(false);
+  expect(()=>build({input:input({extensions:{fcl_row_adjustments_v1:{changes:[{row_key:'ocean_freight:40HQ',operation:'override',unit:'CNTR',container_type:'20GP',reason:'Missing case container'}]}}})})).toThrow('fcl_quote_scope_invalid');
+});
+
+it('keeps legacy estimate-only extensions unchanged and does not forge missing FX totals',()=>{
+  const estimate={estimate_id:'00000000-0000-4000-8000-000000000501',version:1,content_digest:'b'.repeat(64),valid_from:'2026-10-01',valid_until:'2026-10-15'};
+  const legacy=input({source_sell_prices:[{row_key:'ocean_freight:40HQ',sell_price:'3500',customer_note:null}],extensions:{fcl_estimate_v1:estimate}});
+  const legacySnapshot=build({input:legacy});
+  expect(legacySnapshot.extensions).toEqual({fcl_estimate_v1:estimate});
+  expect(Object.keys(legacySnapshot.extensions??{})).toEqual(['fcl_estimate_v1']);
+  expect(legacySnapshot.calculation.assumptions).toEqual(['source_costs_server_derived','fx_is_explicit_snapshot','no_inferred_included_services']);
+
+  const missingFx=input({extensions:{fcl_row_adjustments_v1:{changes:[{row_key:'ocean_freight:40HQ',operation:'override',cost_price:'3250',sell_price:'3500',reason:'Keep FX incomplete'}]}}});
+  const missing=build({input:missingFx});
+  expect(missing.calculation.by_currency.USD).toMatchObject({cost_subtotal:'6500.00',revenue_subtotal:'7000.00'});
+  expect(missing.calculation.unified_profit).toMatchObject({complete:false,cost_subtotal:null,revenue_subtotal:null,gp_subtotal:null,missing_fx:['USD']});
+});
+
+it('rejects re-digested audit or override tampering with all effective fields checked',()=>{
+  const adjusted=input({extensions:{fcl_row_adjustments_v1:{changes:[
+    {row_key:'ocean_freight:40HQ',operation:'override',cost_price:'0',sell_price:null,reason:'Explicit audited values'},
+  ]}},exchange_rates:{USD:'7',CAD:null}});
+  const snapshot=build({input:adjusted});
+  const reDigest=(candidate:typeof snapshot)=>{
+    const {content_digest:_content,...body}=candidate;
+    void _content;
+    return fclQuoteSnapshotSchema.parse({...body,content_digest:fclQuoteSnapshotDigest(body)});
+  };
+  const forgedAudit=structuredClone(snapshot);
+  forgedAudit.extensions!.fcl_row_adjustment_audit_v1!.changes[0]!.actor='forged-actor';
+  expect(()=>validateFclQuoteSnapshot(reDigest(forgedAudit))).toThrow('fcl_quote_readback_failed');
+  const forgedAuditTime=structuredClone(snapshot);
+  forgedAuditTime.extensions!.fcl_row_adjustment_audit_v1!.changes[0]!.created_at='2026-10-08T12:00:01.000Z';
+  expect(()=>validateFclQuoteSnapshot(reDigest(forgedAuditTime))).toThrow('fcl_quote_readback_failed');
+
+  const tamperedEffective=structuredClone(snapshot);
+  tamperedEffective.extensions!.fcl_row_adjustment_audit_v1!.changes[0]!.effective!.cost_price='1';
+  expect(()=>validateFclQuoteSnapshot(reDigest(tamperedEffective))).toThrow('fcl_quote_readback_failed');
+  const tamperedQuantity=structuredClone(snapshot);
+  tamperedQuantity.extensions!.fcl_row_adjustment_audit_v1!.changes[0]!.effective!.quantity='1';
+  expect(()=>validateFclQuoteSnapshot(reDigest(tamperedQuantity))).toThrow('fcl_quote_readback_failed');
+
+  const tamperedInput=structuredClone(snapshot);
+  tamperedInput.extensions!.fcl_row_adjustments_v1!.changes[0]!.sell_price='0';
+  expect(()=>validateFclQuoteSnapshot(reDigest(tamperedInput))).toThrow('fcl_quote_readback_failed');
 });

@@ -5,7 +5,10 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
   FCL_RATE_DATASET_VERSION,
+  fclQuoteDraftInputSchema,
   fclQuoteSchemas,
+  fclQuoteSnapshotExtensionsSchema,
+  fclRowAdjustmentsSchema,
   fclRateDatasetSchema,
   validateFclRateDataset,
 } from '../../services/quote-native/fcl-contracts';
@@ -147,5 +150,79 @@ describe('FCL rate dataset contract', () => {
       expect(generated).toEqual(z.toJSONSchema(schema, { target: 'draft-2020-12' }));
       expect(() => ajv.compile(generated as object)).not.toThrow();
     }
+  });
+});
+
+describe('FCL per-ticket row adjustment contract', () => {
+  const changes = {
+    changes: [
+      {
+        row_key: 'ocean_freight:40HQ',
+        operation: 'override' as const,
+        cost_price: '3250',
+        sell_price: null,
+        unit: 'CNTR' as const,
+        container_type: '40HQ' as const,
+        reason: 'Ticket-specific supplier correction',
+      },
+    ],
+  };
+
+  const input = (extensions: unknown) => ({
+    extensions,
+    source_sell_prices: [],
+    manual_fees: [],
+    service_scopes: [],
+    exchange_rates: { USD: null, CAD: null },
+    remark: null,
+  });
+
+  it('accepts override/remove, decimal null/zero and explicit billing basis', () => {
+    expect(fclRowAdjustmentsSchema.parse(changes)).toEqual(changes);
+    expect(fclRowAdjustmentsSchema.safeParse({
+      changes: [
+        { row_key: 'rate_fee:0:delivery:CNTR:40HQ', operation: 'override', cost_price: '0', unit: 'SHIPMENT', reason: 'Bill once' },
+        { row_key: 'ocean_freight:20GP', operation: 'remove', reason: 'Combined into another line' },
+      ],
+    }).success).toBe(true);
+    expect(fclQuoteDraftInputSchema.safeParse(input({ fcl_row_adjustments_v1: changes })).success).toBe(true);
+  });
+
+  it('rejects duplicate/unknown or forged adjustment fields', () => {
+    expect(fclRowAdjustmentsSchema.safeParse({ changes: [...changes.changes, changes.changes[0]] }).success).toBe(false);
+    for (const forged of [
+      { ...changes.changes[0], quantity: '2' },
+      { ...changes.changes[0], actor: 'forged' },
+      { ...changes.changes[0], created_at: '2026-10-08T12:00:00.000Z' },
+      { ...changes.changes[0], original_cost_price: '3200' },
+      { ...changes.changes[0], cost_amount: '6400.00' },
+      { row_key: 'ocean_freight:40HQ', operation: 'remove', cost_price: null, reason: 'invalid removal' },
+      { row_key: 'ocean_freight:40HQ', operation: 'override', reason: 'no actual field' },
+      { row_key: 'ocean_freight:40HQ', operation: 'override', container_type: null, reason: 'unit is required with container_type' },
+      { row_key: 'ocean_freight:40HQ', operation: 'override', unit: 'CNTR', reason: 'missing container' },
+      { row_key: 'ocean_freight:40HQ', operation: 'override', unit: 'SHIPMENT', container_type: '40HQ', reason: 'invalid shipment container' },
+    ]) {
+      expect(fclRowAdjustmentsSchema.safeParse({ changes: [forged] }).success).toBe(false);
+    }
+  });
+
+  it('accepts the read-only audit only on snapshots and keeps legacy input closed', () => {
+    const audit = {
+      fcl_row_adjustments_v1: changes,
+      fcl_row_adjustment_audit_v1: {
+        changes: [{
+          row_key: 'ocean_freight:40HQ',
+          operation: 'override',
+          reason: 'Ticket-specific supplier correction',
+          original: { quantity: '2', unit: 'CNTR', container_type: '40HQ', cost_price: '3200', sell_price: null },
+          effective: { quantity: '2', unit: 'CNTR', container_type: '40HQ', cost_price: '3250', sell_price: null },
+          actor: 'fcl-document-receiver',
+          created_at: '2026-10-08T12:00:00.000Z',
+        }],
+      },
+    };
+    expect(fclQuoteSnapshotExtensionsSchema.safeParse(audit).success).toBe(true);
+    expect(fclQuoteDraftInputSchema.safeParse(input(audit)).success).toBe(false);
+    expect(fclQuoteDraftInputSchema.safeParse(input(undefined)).success).toBe(true);
   });
 });

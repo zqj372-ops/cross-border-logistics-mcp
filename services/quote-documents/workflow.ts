@@ -986,9 +986,16 @@ export class DocumentWorkflowService{
         dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
         return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:true,submittedVersion:submitted.version},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
       }
-      const binding=request.input.extensions?.fcl_estimate_v1;
-      const estimate=binding?dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:binding.estimate_id,version:binding.version}):undefined;
-      if(binding&&(!estimate||!estimate.currentness.valid_now||estimate.content_digest!==binding.content_digest||canonicalHash(estimateToQuoteDraft(estimate))!==canonicalHash(request.input)))throw new PortalError('fcl_estimate_binding_invalid');
+      const requestBinding=request.input.extensions?.fcl_estimate_v1;
+      const readEstimate=(binding:{estimate_id:string;version:number})=>dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:binding.estimate_id,version:binding.version});
+      let estimate:ReturnType<typeof readEstimate>=undefined;
+      if(requestBinding){
+        try{estimate=readEstimate(requestBinding);}catch(error){
+          if(request.operation==='create')throw error;
+        }
+      }
+      if(request.operation==='create'&&requestBinding&&(!estimate||!estimate.currentness.valid_now||estimate.content_digest!==requestBinding.content_digest||canonicalHash(estimateToQuoteDraft(estimate))!==canonicalHash(request.input)))throw new PortalError('fcl_estimate_binding_invalid');
+      let effectiveInput=request.input;
       let quoteRef:string,version:number,selected;
       let caseBinding,caseProjection,caseView;
       if(request.operation==='create'){
@@ -1001,11 +1008,31 @@ export class DocumentWorkflowService{
         caseBinding={case_ref:request.case_ref,case_version:request.expected_case_version,latest_customer_supplement_ref:request.expected_customer_supplement_ref};
       }else{
         const existing=this.readFclQuote(options.receiverUserId,request.quote_ref,null);
-        if(existing.snapshot.extensions?.fcl_estimate_v1)throw new PortalError('fcl_estimate_adjust_in_workbench');
         if(existing.snapshot.version!==request.expected_version)throw new PortalError('version_conflict');
+        const existingBinding=existing.snapshot.extensions?.fcl_estimate_v1;
+        if(existingBinding){
+          if(request.source_binding.mode!=='retain')throw new PortalError('fcl_estimate_replace_rejected');
+          if(!requestBinding)throw new PortalError('fcl_estimate_binding_required');
+          if(canonicalHash(requestBinding)!==canonicalHash(existingBinding))throw new PortalError('fcl_estimate_binding_immutable');
+          let exact;
+          try{exact=dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:existingBinding.estimate_id,version:existingBinding.version});}catch{throw new PortalError('fcl_estimate_binding_invalid');}
+          let canonicalBinding;
+          try{canonicalBinding=exact?estimateToQuoteDraft(exact).extensions?.fcl_estimate_v1:undefined;}catch{throw new PortalError('fcl_estimate_binding_invalid');}
+          if(!exact||!exact.currentness.valid_now||exact.content_digest!==existingBinding.content_digest||exact.version!==existingBinding.version||!canonicalBinding||canonicalHash(canonicalBinding)!==canonicalHash(existingBinding))throw new PortalError('fcl_estimate_binding_invalid');
+          estimate=exact;
+          effectiveInput={...request.input,extensions:{...request.input.extensions,fcl_estimate_v1:existingBinding}};
+        }else if(requestBinding){
+          if(!estimate||!estimate.currentness.valid_now||estimate.content_digest!==requestBinding.content_digest||canonicalHash(estimateToQuoteDraft(estimate))!==canonicalHash(request.input))throw new PortalError('fcl_estimate_binding_invalid');
+        }
         const caseRef=existing.snapshot.case_binding.case_ref;
         caseView=dependencies.caseReader.getFclCase(ctx,caseRef);
         if(caseView.case_status==='closed'||caseView.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');
+        if(existingBinding){
+          if(caseView.case_status==='submitted'||caseView.case_status==='needs_input'||caseView.review_context.review_required)throw new PortalError('fcl_quote_case_review_required');
+          if(caseView.case_version!==existing.snapshot.case_binding.case_version)throw new PortalError('fcl_quote_case_version_changed');
+          if(caseView.review_context.latest_customer_supplement_ref!==existing.snapshot.case_binding.latest_customer_supplement_ref)throw new PortalError('fcl_quote_case_supplement_changed');
+          if(!this.fclQuoteCurrentness(ctx,existing.snapshot,existing.currentVersion,options).valid_now)throw new PortalError('fcl_quote_source_changed');
+        }
         quoteRef=request.quote_ref;version=request.expected_version+1;
         if(request.source_binding.mode==='retain'){
           selected=existing.snapshot.source_snapshot;
@@ -1025,7 +1052,7 @@ export class DocumentWorkflowService{
         if(demand.cargo_ready_date!==null&&estimate.request.shipping_date<demand.cargo_ready_date)throw new PortalError('fcl_estimate_shipping_date_invalid');
         if(estimate.request.weight_kg!==null&&(!demand.estimated_weight||!new Decimal(estimate.request.weight_kg).eq(demand.estimated_weight.value)))throw new PortalError('fcl_estimate_case_mismatch');
       }
-      const snapshot=buildFclCostSellSnapshot({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:quoteRef,version,actor:ctx.identity.userId,created_at:createdAt,caseView,selected,input:request.input,...(caseBinding===undefined?{}:{case_binding:caseBinding}),...(caseProjection===undefined?{}:{case_projection:caseProjection})});
+      const snapshot=buildFclCostSellSnapshot({contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:quoteRef,version,actor:ctx.identity.userId,created_at:createdAt,caseView,selected,input:effectiveInput,...(caseBinding===undefined?{}:{case_binding:caseBinding}),...(caseProjection===undefined?{}:{case_projection:caseProjection})});
       db.prepare('INSERT INTO fcl_quote_revisions(quote_id,version,personal_owner_id,case_ref,payload,content_digest,actor,created_at) VALUES(?,?,?,?,?,?,?,?)').run(quoteRef,version,options.receiverUserId,snapshot.case_binding.case_ref,JSON.stringify(snapshot),snapshot.content_digest,ctx.identity.userId,createdAt);
       const auditId=randomUUID();
       db.prepare('INSERT INTO document_audit(id,org,personal_owner_id,actor,action,digest,created) VALUES(?,?,?,?,?,?,?)').run(auditId,null,options.receiverUserId,ctx.identity.userId,`fcl-quote-${request.operation}`,requestDigest,createdAt);

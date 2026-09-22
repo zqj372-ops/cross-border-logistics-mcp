@@ -16,6 +16,7 @@ import {NativeAdminService,NativeAdminStore} from '../../services/access-gateway
 import {DocumentService,DocumentStore} from '../../services/quote-documents/service';
 import {DocumentWorkflowService,DocumentWorkflowStore} from '../../services/quote-documents/workflow';
 import {FclQuoteService} from '../../services/quote-native/fcl';
+import {estimateToQuoteDraft} from '../../services/quote-native/fcl-operations';
 import {FCL_QUOTE_WORKFLOW_VERSION,FCL_RATE_DATASET_VERSION,type FclRateDataset} from '../../services/quote-native/fcl-contracts';
 import {FCL_DOCUMENT_WORKFLOW_VERSION} from '../../services/quote-documents/fcl-contracts';
 import {createPortalFixtureRuntime} from '../../services/access-gateway/portal/fixture';
@@ -187,7 +188,12 @@ it('selects a calculated estimate with protected component validity through revi
     const selectedResult=await quote.clone().json() as {data:{calculation:{unified_profit:unknown};extensions:{fcl_estimate_v1:{estimate_id:string}}}};expect(quote.status,JSON.stringify(selectedResult)).toBe(200);
     expect(selectedResult.data.calculation.unified_profit).toMatchObject({cost_subtotal:'30800.00',revenue_subtotal:'33880.00',gp_subtotal:'3080.00'});
     expect(selectedResult.data.extensions.fcl_estimate_v1.estimate_id).toBe(selected.estimate_id);
-    const quoteBody=await quote.json() as {data:{quote_ref:string;version:number;content_digest:string}};
+    const createdQuote=await quote.json() as {data:{quote_ref:string;version:number;content_digest:string}};
+    const baseInput=estimateToQuoteDraft(selected),adjustedInput={...baseInput,extensions:{...baseInput.extensions,fcl_row_adjustments_v1:{changes:[{row_key:'ocean_freight:40HQ',operation:'override' as const,cost_price:'3250',sell_price:'3600',reason:'HTTP ticket-specific adjustment'}]}}};
+    const updated=await call('quote-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:createdQuote.data.quote_ref,expected_version:createdQuote.data.version,source_binding:{mode:'retain'},input:adjustedInput},'fcl-http-estimate-quote-update-01');expect(updated.status).toBe(200);
+    const quoteBody=await updated.json() as {data:{quote_ref:string;version:number;content_digest:string;extensions:{fcl_estimate_v1:{estimate_id:string};fcl_row_adjustments_v1:{changes:unknown[]}};cost_rows:Array<{row_key:string;cost_price:string|null;sell_price:string|null}>}};
+    expect(quoteBody.data).toMatchObject({quote_ref:createdQuote.data.quote_ref,version:2,extensions:{fcl_estimate_v1:{estimate_id:selected.estimate_id},fcl_row_adjustments_v1:{changes:[expect.objectContaining({row_key:'ocean_freight:40HQ'})]}}});
+    expect(quoteBody.data.cost_rows.find(row=>row.row_key==='ocean_freight:40HQ')).toMatchObject({cost_price:'3250',sell_price:'3600'});
     const excessive=await call('document-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'create',quote_ref:quoteBody.data.quote_ref,expected_quote_version:quoteBody.data.version,expected_quote_digest:quoteBody.data.content_digest,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,expected_config_version:1,quote_no:'FCL-INVALID',quote_date:'2026-10-08',valid_until:'2027-01-01',remark:null},'fcl-http-invalid-validity-01');expect(excessive.status).not.toBe(200);
     const doc=await call('document-save',{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'create',quote_ref:quoteBody.data.quote_ref,expected_quote_version:quoteBody.data.version,expected_quote_digest:quoteBody.data.content_digest,expected_case_version:confirmedBody.data.case_version,expected_customer_supplement_ref:null,expected_config_version:1,quote_no:'FCL-HTTP-001',quote_date:'2026-10-08',valid_until:'2026-10-15',remark:null},'fcl-http-flow-document-01');expect(doc.status).toBe(200);
     const docBody=await doc.json() as {data:{document_id:string;version:number}};

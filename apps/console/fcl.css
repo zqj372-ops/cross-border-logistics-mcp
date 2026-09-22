@@ -21,7 +21,8 @@
 .fcl-workbench .fcl-step-index { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: #e6ebf3; color: #687891; flex-shrink: 0; font-size: 14px; font-weight: 700; }
 .fcl-workbench [aria-current] .fcl-step-index { color: #fff; background: #3659db; }
 .fcl-workbench .fcl-review-layout { display: grid; grid-template-columns: minmax(0,1fr) 350px; align-items: start; gap: 24px; }
-.fcl-workbench .fcl-quote-layout { display: grid; grid-template-columns: minmax(0,1fr) 310px; align-items: start; gap: 24px; }
+.fcl-workbench .fcl-quote-layout { display: grid; grid-template-columns: minmax(0,1fr); align-items: start; gap: 18px; }
+.fcl-workbench .fcl-quote-layout > aside { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; gap: 18px; }
 .fcl-workbench :is(.fcl-review-layout,.fcl-quote-layout) > * { min-width: 0; }
 .fcl-workbench .fcl-next-action p { color: #617087; margin: 12px 0 20px; }
 .fcl-workbench .fcl-next-action .button { width: 100%; }
@@ -36,19 +37,6 @@
 .fcl-workbench [data-fcl-scope] { border: 1px solid #e1e7f0; border-radius: 8px; padding: 16px; margin-top: 12px; }
 .fcl-workbench [data-fcl-scope] > strong { grid-column: 1 / -1; padding-bottom: 10px; }
 .fcl-workbench [data-fcl-scope] > .field:last-child { grid-column: 1 / -1; }
-.fcl-workbench .fcl-profit-total { background: #f0f4ff; padding: 18px; border-radius: 8px; margin: 18px 0; }
-.fcl-workbench .fcl-profit-total > span { font-size: 12px; color: #54688c; }
-.fcl-workbench .fcl-profit-total strong { display: block; font-size: 26px; font-weight: 750; color: #294dbc; margin-top: 5px; font-variant-numeric: tabular-nums; }
-.fcl-workbench .fcl-profit-total small { font-size: 12px; font-weight: 500; color: #617087; }
-.fcl-workbench .fcl-profit-total p { font-size: 12px; color: #916715; margin-top: 8px; }
-.fcl-workbench .fcl-currency { padding: 16px 0; border-bottom: 1px solid #e6ebf3; }
-.fcl-workbench .fcl-currency:first-child { padding-top: 0; }
-.fcl-workbench .fcl-currency:last-child { border: 0; }
-.fcl-workbench .fcl-currency h3 { color: #64748b; font-size: 13px; margin-bottom: 10px; }
-.fcl-workbench .fcl-currency dl { display: grid; gap: 7px; margin: 0; }
-.fcl-workbench .fcl-currency dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.fcl-workbench .fcl-currency dt { font-size: 13px; color: #617087; }
-.fcl-workbench .fcl-currency dd { margin: 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .fcl-workbench .fcl-document-status { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-bottom: 20px; }
 .fcl-workbench .fcl-document-status strong { color: #3659db; }
 .fcl-workbench .fcl-document-status span { color: #617087; font-size: 13px; }
@@ -265,6 +253,113 @@
   #app #content .fcl-workbench .ops-query-step .field { min-width: 0; flex-basis: 100%; }
   #app #content .fcl-workbench .ops-tabs { gap: 20px; }
   #app #content .fcl-workbench .ops-query-bottom > p { width: 100%; }
+}
+
+/* B1: one compact ticket worksheet from published template to quote preview. */
+#app #content .fcl-workbench .ops-flow-steps { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; color: var(--fc-muted); font-size: 12px; }
+#app #content .fcl-workbench .ops-flow-steps span { padding: 5px 9px; border: 1px solid var(--fc-line); border-radius: 999px; background: #fff; }
+#app #content .fcl-workbench .ops-flow-steps span[aria-current] { color: var(--fc-blue); border-color: #b9c7f2; background: #f3f6ff; font-weight: 600; }
+#app #content .fcl-workbench .ops-daily-sheet .ops-query-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px 14px; }
+#app #content .fcl-workbench .ops-daily-sheet .ops-query-step { margin-top: 12px; padding-top: 12px; }
+#app #content .fcl-workbench .ops-daily-sheet .ops-query-step .ops-query-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+#app #content .fcl-workbench .ops-daily-sheet .ops-query-step .head-actions { margin: 8px 0; }
+
+#app #content .fcl-workbench .ops-ticket-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-ticket-head h3 { margin: 4px 0 2px; font-size: 18px; }
+#app #content .fcl-workbench .ops-ticket-head p { margin: 0; color: var(--fc-muted); font-size: 12px; }
+#app #content .fcl-workbench :is(.ops-ticket-panel,.ops-ticket-panel .panel-body,.ops-ticket-panel form,.fcl-ticket-summary,.fcl-ticket-summary .panel-body) { min-width: 0; max-width: 100%; }
+#app #content .fcl-workbench .ops-ticket-table-wrap { width: 100%; max-width: 100%; margin-top: 8px; overflow-x: auto; overscroll-behavior-x: contain; }
+#app #content .fcl-workbench .ops-ticket-table { min-width: 1080px; table-layout: fixed; font-variant-numeric: tabular-nums; }
+#app #content .fcl-workbench .ops-ticket-table th,
+#app #content .fcl-workbench .ops-ticket-table td { height: 40px; padding: 7px 8px; vertical-align: middle; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-ticket-table th { background: #f6f8fb; color: #55647a; font-size: 12px; font-weight: 500; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(1) { width: 180px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(2),
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(7) { width: 120px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(3) { width: 72px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(4) { width: 104px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(5) { width: 98px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(6) { width: 72px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(8) { width: 104px; }
+#app #content .fcl-workbench .ops-ticket-table th:nth-child(9) { width: 72px; }
+#app #content .fcl-workbench .ops-ticket-table .field { margin: 0; gap: 0; }
+#app #content .fcl-workbench .ops-ticket-table .field > label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+#app #content .fcl-workbench .ops-ticket-table :is(input,select) { min-height: 34px; height: 34px; padding: 5px 8px; font-size: 13px; }
+#app #content .fcl-workbench .ops-ticket-table [name="cost_price"],
+#app #content .fcl-workbench .ops-ticket-table [name="sell_price"] { text-align: right; }
+#app #content .fcl-workbench .ops-ticket-table .num { text-align: right; }
+#app #content .fcl-workbench .ops-ticket-table td strong,
+#app #content .fcl-workbench .ops-ticket-table td small { display: block; }
+#app #content .fcl-workbench .ops-ticket-table td small { margin-top: 2px; color: var(--fc-muted); font-size: 11px; }
+#app #content .fcl-workbench .ops-fee-group th { padding: 7px 10px; background: #f1f4f8; color: #43536b; font-size: 12px; text-align: left; }
+#app #content .fcl-workbench .ops-fee-more td { padding: 0; background: #fbfcfe; }
+#app #content .fcl-workbench .ops-fee-more details { padding: 0 10px; }
+#app #content .fcl-workbench .ops-fee-more summary { padding: 8px 0; }
+#app #content .fcl-workbench .ops-fee-more .field-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px 12px; padding: 0 0 12px; }
+#app #content .fcl-workbench .ops-fee-currency { display: inline-block; color: #43536b; font-size: 13px; font-weight: 600; }
+#app #content .fcl-workbench .ops-ticket-table .text-button { min-height: 32px; padding: 5px 7px; color: #a63d4d; }
+
+#app #content .fcl-workbench .ops-adjustment-reason { display: grid; grid-template-columns: 150px minmax(0,1fr); align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--fc-line); color: #43536b; font-size: 13px; }
+#app #content .fcl-workbench .ops-adjustment-reason input { min-height: 36px; }
+#app #content .fcl-workbench .ops-ticket-details { border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-ticket-details > summary { padding: 10px 0; color: #56657b; font-size: 12px; }
+#app #content .fcl-workbench .ops-ticket-details[open] { padding-bottom: 12px; }
+#app #content .fcl-workbench .ops-ticket-settings { display: grid; gap: 14px; }
+#app #content .fcl-workbench .ops-ticket-settings > section { padding: 12px 0 0; border-top: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-ticket-settings h4 { margin: 0 0 8px; color: #43536b; font-size: 13px; font-weight: 600; }
+#app #content .fcl-workbench .ops-ticket-settings .head-actions { margin: 0 0 8px; }
+#app #content .fcl-workbench .ops-ticket-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 16px; }
+#app #content .fcl-workbench .ops-ticket-actions .button { min-width: 128px; }
+#app #content .fcl-workbench .ops-ticket-actions .button:active:not(:disabled) { transform: scale(.98); }
+.fcl-workbench .fcl-ticket-summary { margin-top: 18px; }
+.fcl-workbench .fcl-ticket-summary .inline-note { margin-bottom: 12px; padding: 9px 12px; }
+.fcl-workbench .fcl-ticket-summary-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.fcl-workbench .fcl-ticket-summary-head h3 { margin: 0; font-size: 15px; }
+.fcl-workbench .fcl-ticket-summary-head span { color: var(--fc-muted); font-size: 12px; }
+.fcl-workbench .fcl-ticket-next { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 14px; }
+.fcl-workbench .fcl-ticket-next strong,
+.fcl-workbench .fcl-ticket-next small { display: block; }
+.fcl-workbench .fcl-ticket-next small { margin-top: 2px; color: var(--fc-muted); font-size: 12px; }
+#app #content .fcl-workbench .ops-summary-table table { min-width: 0; font-size: 12px; }
+#app #content .fcl-workbench .ops-summary-table :is(th,td) { height: 34px; padding: 6px 8px; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-summary-table th:first-child,
+#app #content .fcl-workbench .ops-summary-table td:first-child { width: 58px; font-weight: 600; }
+#app #content .fcl-workbench .ops-summary-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-summary-total span { color: var(--fc-muted); font-size: 12px; }
+#app #content .fcl-workbench .ops-summary-total strong { color: var(--fc-blue); font-size: 18px; font-variant-numeric: tabular-nums; }
+#app #content .fcl-workbench .ops-summary-total small { font-size: 11px; }
+#app #content .fcl-workbench .ops-stale-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px; margin-top: 14px; border: 1px solid #edd7a6; border-radius: 6px; background: #fff9e8; color: #815f18; }
+#app #content .fcl-workbench .ops-stale-total strong { font-size: 18px; }
+#app #content .fcl-workbench .ops-stale-total span { font-size: 12px; }
+
+@media(max-width:760px) {
+  #app #content .fcl-workbench .ops-daily-sheet .ops-query-grid,
+  #app #content .fcl-workbench .ops-daily-sheet .ops-query-step .ops-query-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #app #content .fcl-workbench .ops-daily-sheet .ops-query-bottom { align-items: stretch; }
+  #app #content .fcl-workbench .ops-ticket-head { display: block; }
+  #app #content .fcl-workbench .ops-ticket-head .button { width: 100%; margin-top: 12px; }
+  #app #content .fcl-workbench .ops-ticket-table { display: block; min-width: 0; width: 100%; }
+  #app #content .fcl-workbench .ops-ticket-table thead { display: none; }
+  #app #content .fcl-workbench .ops-ticket-table tbody { display: block; }
+  #app #content .fcl-workbench .ops-ticket-table tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; padding: 10px 0; }
+  #app #content .fcl-workbench .ops-ticket-table tr[data-fcl-fee-row] > td { display: block; height: auto; min-width: 0; padding: 0; border: 0; }
+  #app #content .fcl-workbench .ops-ticket-table tr[data-fcl-fee-row] > td::before { display: block; margin-bottom: 3px; color: var(--fc-muted); font-size: 10px; font-weight: 500; content: attr(data-label); }
+  #app #content .fcl-workbench .ops-ticket-table tr[data-fcl-fee-row] > td:first-child,
+  #app #content .fcl-workbench .ops-ticket-table tr[data-fcl-fee-row] > td:last-child { grid-column: 1 / -1; }
+  #app #content .fcl-workbench .ops-ticket-table tr[data-fcl-fee-row] > td:last-child { text-align: right; }
+  #app #content .fcl-workbench .ops-ticket-table tr.ops-fee-group { display: block; padding: 0; }
+  #app #content .fcl-workbench .ops-ticket-table tr.ops-fee-group > th { display: block; width: auto; }
+  #app #content .fcl-workbench .ops-ticket-table tr.ops-fee-more { display: block; padding: 0; }
+  #app #content .fcl-workbench .ops-ticket-table tr.ops-fee-more > td { display: block; width: auto; height: auto; padding: 0; }
+  #app #content .fcl-workbench .ops-fee-more .field-grid { grid-template-columns: minmax(0,1fr); }
+  #app #content .fcl-workbench .ops-adjustment-reason { grid-template-columns: minmax(0,1fr); gap: 6px; }
+  #app #content .fcl-workbench .ops-ticket-actions { display: block; }
+  #app #content .fcl-workbench .ops-ticket-actions .button { width: 100%; min-height: 44px; margin-top: 10px; }
+  #app #content .fcl-workbench .ops-ticket-actions .muted { display: block; }
+  #app #content .fcl-workbench .ops-ticket-table :is(input,select) { min-height: 44px; height: 44px; }
+  #app #content .fcl-workbench .ops-ticket-table .text-button { min-height: 44px; padding: 8px; }
+  #app #content .fcl-workbench .fcl-ticket-next { align-items: stretch; flex-direction: column; }
+  #app #content .fcl-workbench .fcl-ticket-next .button { width: 100%; min-height: 44px; }
 }
 
 /* Fee maintenance is a compact ledger; advanced conditions remain available. */
