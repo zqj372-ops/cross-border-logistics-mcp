@@ -206,37 +206,39 @@
 #app #content .fcl-workbench .ops-breakdown :is(th,td) { font-size: 12px !important; }
 #app #content .fcl-workbench .ops-breakdown li { font-size: 12px; }
 
-/* Editable cells read as a table; hover and keyboard focus reveal the field. */
-#app #content .fcl-workbench .ops-ocean-table { min-width: 1280px; font-variant-numeric: tabular-nums; }
-#app #content .fcl-workbench .ops-ocean-table :is(th,td) { padding: 10px 6px; vertical-align: top; white-space: normal; border-bottom: 1px solid var(--fc-line); }
-#app #content .fcl-workbench .ops-ocean-table th { padding-block: 12px; white-space: nowrap; font-size: 12px; font-weight: 500; color: #56647a; background: #f5f7fa; }
+/* Ocean rates stay in one light, compact ledger. */
+#app #content .fcl-workbench .ops-rate-filter { display: grid; grid-template-columns: repeat(3,minmax(160px,1fr)) auto auto; align-items: end; gap: 10px; margin-bottom: 14px; }
+#app #content .fcl-workbench .ops-rate-filter .field { margin: 0; }
+#app #content .fcl-workbench .ops-rate-filter .field > span { font-size: 12px; }
+#app #content .fcl-workbench .ops-rate-filter :is(input,button) { min-height: 38px; font-size: 13px; }
+#app #content .fcl-workbench .ops-rate-panel { background: #fff; border-top: 1px solid var(--fc-line); border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-rate-panel > .ops-toolbar { padding: 10px 0; }
+#app #content .fcl-workbench .ops-rate-pending { margin-bottom: 18px; padding: 12px 0; border-top: 1px solid var(--fc-line); border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-rate-pending > .ops-toolbar { margin-bottom: 4px; }
+#app #content .fcl-workbench .ops-rate-pending > p { margin: 0 0 10px; font-size: 13px; }
+#app #content .fcl-workbench .ops-rate-pending table { min-width: 860px; width: 100%; }
+#app #content .fcl-workbench .ops-rate-pending :is(th,td) { padding: 8px; border-bottom: 1px solid var(--fc-line); text-align: left; }
+#app #content .fcl-workbench .ops-ocean-table { min-width: 1120px; background: #fff; font-variant-numeric: tabular-nums; }
+#app #content .fcl-workbench .ops-ocean-table :is(th,td) { height: 46px; padding: 6px 8px; white-space: nowrap; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-ocean-table th { color: #56647a; background: #fff; font-size: 12px; font-weight: 500; }
 #app #content .fcl-workbench .ops-ocean-table tbody tr:last-child td { border-bottom: 0; }
-#app #content .fcl-workbench .ops-ocean-table tbody tr:hover { background: #f8fafd; }
-#app #content .fcl-workbench .ops-ocean-table :is(input,select) { background: #fff; border-color: transparent; border-radius: 4px; min-width: 76px; font-size: 13px; }
-#app #content .fcl-workbench .ops-ocean-table tbody tr:hover :is(input,select) { border-color: #cbd4e0; }
-#app #content .fcl-workbench .ops-ocean-table :is(input,select):hover { border-color: #8c9bb0; }
-#app #content .fcl-workbench .ops-ocean-table :is(input,select):focus { border-color: var(--fc-blue); outline: 2px solid var(--fc-blue); outline-offset: -1px; }
-#app #content .fcl-workbench .ops-ocean-table input[data-ocean-key^="price:"] { text-align: right; font-weight: 500; font-size: 14px; }
-#app #content .fcl-workbench .ops-ocean-table th:nth-child(n+4):nth-child(-n+7) { text-align: right; padding-right: 16px; }
-#app #content .fcl-workbench .ops-ocean-table td:first-child { min-width: 115px; }
-#app #content .fcl-workbench .ops-ocean-table td:first-child input { font-weight: 600; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(2),
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(3) { min-width: 105px; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(8) { min-width: 102px; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(8) select { min-width: 90px; padding-inline: 8px 20px; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) { min-width: 140px; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) input { font-size: 12px; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) input + input { margin-top: 5px; }
-#app #content .fcl-workbench .ops-ocean-table td:nth-child(10) { min-width: 148px; padding-top: 20px; font-size: 12px; color: #46556c; }
-#app #content .fcl-workbench .ops-ocean-table :is(th,td):last-child { position: sticky; right: 0; background: #fff; box-shadow: -1px 0 0 var(--fc-line); min-width: 100px; }
-#app #content .fcl-workbench .ops-ocean-table th:last-child { background: #f5f7fa; }
-#app #content .fcl-workbench .ops-ocean-table .button { padding: 8px; font-size: 12px; font-weight: 500; margin: 2px 0; border-color: transparent; color: #3a58a3; background: transparent; }
+#app #content .fcl-workbench .ops-ocean-table tbody tr:hover { background: #fafbfc; }
+#app #content .fcl-workbench .ops-ocean-table :is(input,select) { min-width: 76px; min-height: 34px; padding: 5px 7px; border-color: transparent; border-radius: 4px; background: transparent; font-size: 13px; }
+#app #content .fcl-workbench .ops-ocean-table tbody tr:hover :is(input,select) { border-color: #d6dce5; background: #fff; }
+#app #content .fcl-workbench .ops-ocean-table :is(input,select):focus { border-color: var(--fc-blue); outline: 2px solid var(--fc-blue); outline-offset: -1px; background: #fff; }
+#app #content .fcl-workbench .ops-ocean-table input[data-ocean-key^="price:"] { width: 88px; text-align: right; font-weight: 500; }
+#app #content .fcl-workbench .ops-ocean-table th:nth-child(n+4):nth-child(-n+7),
+#app #content .fcl-workbench .ops-ocean-table td.num { text-align: right; }
+#app #content .fcl-workbench .ops-ocean-table td:first-child,
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(2) { min-width: 108px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(3) { min-width: 132px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(8) { min-width: 88px; }
+#app #content .fcl-workbench .ops-ocean-table td:nth-child(9) { min-width: 126px; color: #667085; font-size: 12px; }
+#app #content .fcl-workbench .ops-ocean-table td:last-child { min-width: 190px; }
+#app #content .fcl-workbench .ops-ocean-table .button { min-height: 32px; padding: 5px 7px; border-color: transparent; background: transparent; color: #3a58a3; font-size: 12px; }
 #app #content .fcl-workbench .ops-ocean-table .button:hover { border-color: transparent; background: #edf2fc; color: #2849c5; }
-#app #content .fcl-workbench .ops-ocean-table [data-action="ops-ocean-disable"] { color: var(--fc-muted); }
-#app #content .fcl-workbench .ops-ocean-table [data-action="ops-ocean-disable"]:hover { color: #b13443; background: #fff1f2; }
-#app #content .fcl-workbench .ops-ocean-table td:last-child .button { display: inline-flex; width: calc(50% - 2px); margin: 0 2px 0 0; padding-inline: 4px; }
-#app #content .fcl-workbench .ops-ocean-table td:last-child .button:first-child { display: flex; width: 100%; margin: 0 0 4px; }
-#app #content .fcl-workbench .ops-ocean-table + p { margin-top: 12px; font-size: 12px; line-height: 1.7; }
+#app #content .fcl-workbench .ops-ocean-table .button:disabled { color: #8b94a6; background: transparent; }
+#app #content .fcl-workbench .ops-rate-panel > p { margin: 10px 0 0; color: var(--fc-muted); font-size: 12px; line-height: 1.7; }
 #app #content .fcl-workbench .ops-schedule { margin: 18px 0; }
 #app #content .fcl-workbench .ops-schedule table { min-width: 740px; }
 #app #content .fcl-workbench .ops-schedule td strong { display: block; }
@@ -247,6 +249,8 @@
 }
 @media(max-width:760px) {
   #app #content .fcl-workbench h1 { font-size: 23px; }
+  #app #content .fcl-workbench .ops-rate-filter { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #app #content .fcl-workbench .ops-rate-filter .field:last-of-type { grid-column: 1 / -1; }
   #app #content .fcl-workbench .ops-query-grid,
   #app #content .fcl-workbench .ops-editor .field-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   #app #content .fcl-workbench .ops-query-grid .field:nth-last-child(-n+2) { grid-column: auto; }
@@ -412,23 +416,14 @@
 #app #content .fcl-workbench .ops-template-head { display: grid; grid-template-columns: minmax(260px,380px) minmax(0,1fr) auto; align-items: end; gap: 14px; }
 #app #content .fcl-workbench .ops-template-head > p { margin: 0 0 8px; }
 #app #content .fcl-workbench .ops-template-head .head-actions { margin: 0 0 5px; }
-#app #content .fcl-workbench .ops-template-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--fc-line); border-radius: 6px; background: #f8fafc; }
-#app #content .fcl-workbench .ops-template-summary > div { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--fc-line); }
-#app #content .fcl-workbench .ops-template-summary > div:last-child { border-right: 0; }
-#app #content .fcl-workbench .ops-template-summary span,
-#app #content .fcl-workbench .ops-template-summary strong { display: block; }
-#app #content .fcl-workbench .ops-template-summary span { color: var(--fc-muted); font-size: 11px; }
-#app #content .fcl-workbench .ops-template-summary strong { margin-top: 3px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 #app #content .fcl-workbench .ops-template-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; }
-#app #content .fcl-workbench .ops-template-table { min-width: 820px; table-layout: fixed; font-size: 14px; }
-#app #content .fcl-workbench .ops-template-table.is-reference { min-width: 720px; }
+#app #content .fcl-workbench .ops-template-table { min-width: 680px; table-layout: fixed; font-size: 14px; }
+#app #content .fcl-workbench .ops-template-table.is-reference { min-width: 620px; }
 #app #content .fcl-workbench .ops-template-table :is(th,td) { height: 44px; padding: 5px 8px; vertical-align: middle; border-bottom: 1px solid var(--fc-line); }
 #app #content .fcl-workbench .ops-template-table th { background: #f6f8fb; color: #56647a; font-size: 12px; font-weight: 500; }
 #app #content .fcl-workbench .ops-template-table th:first-child { width: 260px; }
 #app #content .fcl-workbench .ops-template-table :is(input,select) { height: 36px; min-height: 36px; padding: 5px 8px; font-size: 13px; }
 #app #content .fcl-workbench .ops-template-table td strong { display: block; font-size: 13px; font-weight: 500; }
-#app #content .fcl-workbench .ops-template-version { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--fc-muted); font-size: 11px; }
-#app #content .fcl-workbench .ops-template-version select { width: auto; min-width: 170px; }
 #app #content .fcl-workbench .ops-template-details { border-top: 1px solid var(--fc-line); border-bottom: 1px solid var(--fc-line); }
 #app #content .fcl-workbench .ops-template-details > summary { padding: 10px 0; color: #46556c; font-size: 13px; }
 #app #content .fcl-workbench .ops-template-settings { display: grid; gap: 16px; padding: 4px 0 14px; }
@@ -455,9 +450,6 @@
   #app #content .fcl-workbench .ops-template-source-tabs { gap: 16px; overflow-x: auto; }
   #app #content .fcl-workbench .ops-template-head { grid-template-columns: minmax(0,1fr); }
   #app #content .fcl-workbench .ops-template-head > p { margin: 0; }
-  #app #content .fcl-workbench .ops-template-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  #app #content .fcl-workbench .ops-template-summary > div:nth-child(2) { border-right: 0; }
-  #app #content .fcl-workbench .ops-template-summary > div:nth-child(n+3) { border-top: 1px solid var(--fc-line); }
   #app #content .fcl-workbench .ops-template-table,
   #app #content .fcl-workbench .ops-template-table.is-reference { display: block; min-width: 0; width: 100%; }
   #app #content .fcl-workbench .ops-template-table thead { display: none; }
