@@ -144,7 +144,15 @@ export function buildFclQuoteInputDraft({draft, rows, sourceBaselines = new Map(
   });
   const manualRows = rows.filter(row => row.source_kind === 'manual').map(row => {
     const base = manualBases.get(row.row_key) || row;
-    return { ...structuredClone(base), name: row.name, evidence_ref: row.evidence_ref, evidence_version: row.evidence_version };
+    return {
+      ...structuredClone(base),
+      name: row.name,
+      evidence_ref: row.evidence_ref,
+      evidence_version: row.evidence_version,
+      quantity_conditions: row.quantity_conditions ?? null,
+      customer_note: row.customer_note ?? null,
+      internal_note: row.internal_note ?? null,
+    };
   });
   for (const rowKey of removedManualKeys) {
     const base = manualBases.get(rowKey);

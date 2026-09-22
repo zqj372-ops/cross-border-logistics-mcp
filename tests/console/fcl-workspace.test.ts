@@ -131,6 +131,63 @@ describe('FCL workspace state transitions and PDF verification',()=>{
     expect(nextSnapshot.extensions?.fcl_row_adjustment_audit_v1).toBeUndefined();
   });
 
+  it('preserves editable metadata on an existing manual fee without promoting adjusted values into its audit base',()=>{
+    const rowKey='manual:00000000-0000-4000-8000-000000000030';
+    const base={row_key:rowKey,source_kind:'manual',id:'00000000-0000-4000-8000-000000000030',template_ref:null,name:'Original name',group:'C',service:'delivery',quantity:'2',unit:'CNTR',container_type:'40HQ',cost_price:'200',sell_price:'220',currency:'CAD',internal_note:'Original internal',customer_note:'Original customer',evidence_ref:'fixture:original',evidence_version:'v1',quantity_conditions:'Original conditions',cost_amount:'400.00',sell_amount:'440.00',fully_priced:true};
+    const effective={...base,name:'Updated name',cost_price:'260',sell_price:'300',unit:'SHIPMENT',container_type:null,quantity:'1',internal_note:'Updated internal',customer_note:'Updated customer',evidence_ref:'fixture:updated',evidence_version:'v2',quantity_conditions:'Updated conditions'};
+    const changes=[{row_key:rowKey,operation:'override' as const,reason:'Correct the saved fee',cost_price:'260',sell_price:'300',unit:'SHIPMENT' as const,container_type:null}];
+    const input=buildFclQuoteInputDraft({draft:{source_sell_prices:[],manual_fees:[],service_scopes:[],exchange_rates:{USD:null,CAD:null},remark:null},rows:[effective],manualBases:new Map([[rowKey,base]]),changes});
+    expect(input.manual_fees[0]).toMatchObject({
+      name:'Updated name',
+      evidence_ref:'fixture:updated',
+      evidence_version:'v2',
+      quantity_conditions:'Updated conditions',
+      customer_note:'Updated customer',
+      internal_note:'Updated internal',
+      cost_price:'200',
+      sell_price:'220',
+      unit:'CNTR',
+      container_type:'40HQ',
+      quantity:'2',
+      group:'C',
+      service:'delivery',
+      currency:'CAD',
+    });
+    expect(input.extensions?.fcl_row_adjustments_v1?.changes).toEqual(changes);
+  });
+
+  it('retains manual-fee metadata after reload while preserving the original A1 adjustment baseline',()=>{
+    const rowKey='manual:00000000-0000-4000-8000-000000000031';
+    const original={row_key:rowKey,source_kind:'manual',id:'00000000-0000-4000-8000-000000000031',template_ref:null,name:'Saved fee',group:'C',service:'delivery',quantity:'2',unit:'CNTR',container_type:'40HQ',cost_price:'100',sell_price:'120',currency:'CAD',internal_note:'Old internal',customer_note:'Old customer',evidence_ref:'fixture:old',evidence_version:'v1',quantity_conditions:'Old conditions',cost_amount:'200.00',sell_amount:'240.00',fully_priced:true};
+    const effective={...original,name:'Reloaded fee',cost_price:'150',sell_price:'180',internal_note:'Reloaded internal',customer_note:'Reloaded customer',evidence_ref:'fixture:reloaded',evidence_version:'v2',quantity_conditions:'Reloaded conditions'};
+    const changes=[{row_key:rowKey,operation:'override' as const,reason:'Keep original baseline',cost_price:'150',sell_price:'180'}];
+    const draft=quoteDraftFromView({
+      cost_rows:[effective],
+      service_coverage:[],
+      exchange_rates:{USD:null,CAD:null},
+      remark:null,
+      extensions:{
+        fcl_row_adjustments_v1:{changes},
+        fcl_row_adjustment_audit_v1:{changes:[{row_key:rowKey,operation:'override',reason:'Keep original baseline',original:{quantity:'2',unit:'CNTR',container_type:'40HQ',cost_price:'100',sell_price:'120'},effective:{quantity:'2',unit:'CNTR',container_type:'40HQ',cost_price:'150',sell_price:'180'},actor:'receiver',created_at:'2026-10-08T12:00:00.000Z'}]},
+      },
+    });
+    const input=buildFclQuoteInputDraft({draft,rows:[effective],manualBases:new Map([[rowKey,original]]),changes});
+    expect(input.manual_fees[0]).toMatchObject({
+      name:'Reloaded fee',
+      evidence_ref:'fixture:reloaded',
+      evidence_version:'v2',
+      quantity_conditions:'Reloaded conditions',
+      customer_note:'Reloaded customer',
+      internal_note:'Reloaded internal',
+      cost_price:'100',
+      sell_price:'120',
+      quantity:'2',
+      unit:'CNTR',
+      container_type:'40HQ',
+    });
+    expect(input.extensions?.fcl_row_adjustments_v1?.changes).toEqual(changes);
+  });
+
   it('requires an audited reason before removing a saved manual fee from this ticket',()=>{
     const rowKey='manual:00000000-0000-4000-8000-000000000020';
     const base={row_key:rowKey,source_kind:'manual',id:'00000000-0000-4000-8000-000000000020',template_ref:null,name:'Saved ticket fee',group:'C',service:'delivery',quantity:'1',unit:'SHIPMENT',container_type:null,cost_price:'10',sell_price:'20',currency:'CAD',internal_note:null,customer_note:null,evidence_ref:'fixture:saved-fee',evidence_version:'v1',quantity_conditions:null,cost_amount:'10.00',sell_amount:'20.00',fully_priced:true};

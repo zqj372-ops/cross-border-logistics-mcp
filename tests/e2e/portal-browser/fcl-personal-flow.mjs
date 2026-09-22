@@ -381,6 +381,37 @@ try {
   assert.equal(editedRow.cost_amount, '18.00');
   assert.equal(editedRow.fully_priced, true);
 
+  await manualDetails.locator('details > summary').click();
+  await manualDetails.locator('[name="quantity_conditions"]').fill('Updated confirmation cycle.');
+  await manualDetails.locator('[name="customer_note"]').fill('Updated customer-visible note.');
+  await manualDetails.locator('[name="internal_note"]').fill('Updated internal note.');
+  await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').fill('Save updated fee notes.');
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
+  await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
+  const updatedMetadataQuote = await responseJson(await responsePromise);
+  const updatedMetadataRow = updatedMetadataQuote.data.cost_rows.find(row => row.row_key === manualKey);
+  assert.equal(updatedMetadataRow.quantity_conditions, 'Updated confirmation cycle.');
+  assert.equal(updatedMetadataRow.customer_note, 'Updated customer-visible note.');
+  assert.equal(updatedMetadataRow.internal_note, 'Updated internal note.');
+  assert.equal(updatedMetadataRow.cost_price, '18');
+  assert.equal(updatedMetadataRow.sell_price, '30');
+  const metadataAudit = updatedMetadataQuote.data.extensions?.fcl_row_adjustment_audit_v1?.changes?.find(change => change.row_key === manualKey);
+  assert.equal(metadataAudit.original.cost_price, '15');
+  assert.equal(metadataAudit.original.sell_price, '25');
+  assert.equal(metadataAudit.effective.cost_price, '18');
+  assert.equal(metadataAudit.effective.sell_price, '30');
+
+  await page.reload({waitUntil: 'networkidle'});
+  await openWorkspaceStep('quote');
+  await openQuoteEditor();
+  const reloadedManualDetails = page.locator(`[data-fcl-fee-detail][data-key="${manualKey}"]`);
+  assert.equal(await reloadedManualDetails.locator('[name="quantity_conditions"]').inputValue(), 'Updated confirmation cycle.');
+  assert.equal(await reloadedManualDetails.locator('[name="customer_note"]').inputValue(), 'Updated customer-visible note.');
+  assert.equal(await reloadedManualDetails.locator('[name="internal_note"]').inputValue(), 'Updated internal note.');
+  assert.equal(await page.locator(`[data-fcl-fee-row][data-key="${manualKey}"] [name="cost_price"]`).inputValue(), '18');
+  assert.equal(await page.locator(`[data-fcl-fee-row][data-key="${manualKey}"] [name="sell_price"]`).inputValue(), '30');
+  assert.equal(await page.locator('[data-fcl-fee-row][data-source-kind="ocean_freight"] [name="customer_note"]').count(), 0);
+
   await page.getByRole('button', {name: '添加人工费用', exact: true}).click();
   const unsavedManual = page.locator('[data-fcl-fee-row][data-source-kind="manual"]').last();
   const unsavedKey = await unsavedManual.getAttribute('data-key');
