@@ -1,6 +1,6 @@
 # FreightClaw CLI 交付与验证
 
-版本：0.005。入口为 `deploy/cli`，二进制命令为 `freightclaw`。这是现有固定 REST 路由的客户端，适用已接受的 [统一应用 Key 合同](../rfcs/2026-09-06-unified-application-key-v1.md)；没有新增服务端模块、工具合同、身份或业务写权限。
+版本：0.006。入口为 `deploy/cli`，二进制命令为 `freightclaw`。这是现有固定 REST 路由的客户端，适用已接受的 [统一应用 Key 合同](../rfcs/2026-09-06-unified-application-key-v1.md)；没有新增服务端模块、工具合同、身份或业务写权限。
 
 使用方法、命令表、输入示例、退出码和凭证方式见 [CLI 使用说明](../../deploy/cli/README.md)。当前通过 npm tarball 交付，未发布到公共 npm registry。此客户端发布无需重启 Portal、迁移数据库或改动来源服务。
 
@@ -31,7 +31,7 @@ CLI 请求/响应校验直接复用 `apps/console/openapi.json` 的已发布 Sch
 ```sh
 npm run build:cli
 npm pack ./dist/cli
-npm install --global /absolute/path/freightclaw-cli-0.005.tgz
+npm install --global /absolute/path/freightclaw-cli-0.006.tgz
 freightclaw --version
 freightclaw commands --json
 freightclaw schema customs query --json

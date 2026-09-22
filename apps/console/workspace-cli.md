@@ -1,6 +1,6 @@
 # FreightClaw workspace CLI
 
-本页对应当前产品版本 `0.005`。public FCL inquiry 无需登录；staff 人员操作使用独立 device flow，API Key 不能替代本人身份。已有查询 Key 与权限继续保留。
+本页对应当前产品版本 `0.006`。public FCL inquiry 无需登录；staff 人员操作使用独立 device flow，API Key 不能替代本人身份。已有查询 Key 与权限继续保留。
 
 ## 构建与登录
 

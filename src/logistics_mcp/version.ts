@@ -1,1 +1,1 @@
-export const FREIGHTCLAW_VERSION = "0.005";
+export const FREIGHTCLAW_VERSION = "0.006";
