@@ -2,7 +2,7 @@
 import {createHash} from 'node:crypto';
 import {describe,expect,it} from 'vitest';
 // @ts-expect-error Browser ESM module intentionally has no TypeScript declaration.
-import {assembleFclQuoteRowAdjustments,buildFclQuoteInputDraft,canEditFclQuote,selectWorkspaceQuoteRef,nextDocumentOperation,nextQuoteOperation,quoteDraftFromView,verifyPdfOutput} from '../../apps/console/fcl.js';
+import {assembleFclQuoteRowAdjustments,buildFclQuoteInputDraft,canEditFclQuote,canViewFclDocuments,selectWorkspaceQuoteRef,nextDocumentOperation,nextQuoteOperation,quoteDraftFromView,verifyPdfOutput} from '../../apps/console/fcl.js';
 import {FCL_DOCUMENT_WORKFLOW_VERSION,buildFclCostSellSnapshot} from '../../services/quote-native/fcl';
 
 describe('FCL workspace state transitions and PDF verification',()=>{
@@ -21,6 +21,14 @@ describe('FCL workspace state transitions and PDF verification',()=>{
     expect(canEditFclQuote({...detail,case_status:'closed'},quote)).toBe(false);
     expect(canEditFclQuote({...detail,review_context:{review_required:true}},quote)).toBe(false);
     expect(canEditFclQuote(detail,{currentness:{valid_now:false}})).toBe(false);
+  });
+
+  it('keeps historical documents reachable when a quote is invalid or its case is closed',()=>{
+    expect(canViewFclDocuments({currentness:{valid_now:true}},null,null)).toBe(true);
+    expect(canViewFclDocuments({currentness:{valid_now:false}},{document_id:'doc-1'},null)).toBe(true);
+    expect(canViewFclDocuments({currentness:{valid_now:false}},null,{items:[{document_id:'doc-1'}]})).toBe(true);
+    expect(canViewFclDocuments({currentness:{valid_now:false}},null,{items:[]})).toBe(false);
+    expect(canViewFclDocuments({currentness:{valid_now:false}},{document_id:'doc-1'},null,true)).toBe(false);
   });
 
   it('opens the explicitly selected quote even when same-time list order or pagination differs',()=>{
@@ -121,6 +129,13 @@ describe('FCL workspace state transitions and PDF verification',()=>{
     const nextSnapshot=build(asInput({...nextInput,service_scopes:[{service:'delivery',disposition:'free',note:'Removed from this ticket',included_row_refs:[]}]}));
     expect(nextSnapshot.cost_rows).toHaveLength(0);
     expect(nextSnapshot.extensions?.fcl_row_adjustment_audit_v1).toBeUndefined();
+  });
+
+  it('requires an audited reason before removing a saved manual fee from this ticket',()=>{
+    const rowKey='manual:00000000-0000-4000-8000-000000000020';
+    const base={row_key:rowKey,source_kind:'manual',id:'00000000-0000-4000-8000-000000000020',template_ref:null,name:'Saved ticket fee',group:'C',service:'delivery',quantity:'1',unit:'SHIPMENT',container_type:null,cost_price:'10',sell_price:'20',currency:'CAD',internal_note:null,customer_note:null,evidence_ref:'fixture:saved-fee',evidence_version:'v1',quantity_conditions:null,cost_amount:'10.00',sell_amount:'20.00',fully_priced:true};
+    expect(()=>{assembleFclQuoteRowAdjustments({rows:[],manualBases:new Map([[rowKey,base]]),manualRemovals:new Set([rowKey])});}).toThrow('移除费用时请填写本票修改说明。');
+    expect(assembleFclQuoteRowAdjustments({rows:[],manualBases:new Map([[rowKey,base]]),manualRemovals:new Set([rowKey]),reason:'Remove this ticket fee'})).toEqual([{row_key:rowKey,operation:'remove',reason:'Remove this ticket fee'}]);
   });
 
   it('verifies PDF bytes and sha256 before exposing the formal export reference',async()=>{

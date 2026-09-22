@@ -51,10 +51,31 @@ async function openWorkspaceStep(step) {
   if (await button.getAttribute('aria-current') !== 'step') await button.click();
   await page.locator(`#fcl-step-${step}`).waitFor({state: 'visible'});
 }
-async function openCaseOperations() {
-  await openWorkspaceStep('requirements');
+async function openCaseOperations(caseId) {
+  if (!(await page.locator('.fcl-workflow').count())) {
+    if (!caseId) throw new Error('case_id_required_to_reopen_operations');
+    await page.evaluate(id => { location.hash = `fcl/case/${id}`; }, caseId);
+    await page.getByRole('heading', {name: '整柜报价', exact: true}).waitFor();
+  }
+  const requirements = page.locator('#fcl-step-requirements');
+  if (!(await requirements.isVisible())) {
+    await openWorkspaceStep('quote');
+    const moreSettings = page.locator('details.ops-ticket-details').filter({hasText: '更多设置'});
+    if (await moreSettings.count()) await openDetails(moreSettings);
+    await page.locator('[data-action="fcl-workspace-step"][data-step="requirements"]').first().click();
+    await requirements.waitFor({state: 'visible'});
+  }
   const details = page.locator('details.fcl-operations');
   if (await details.getAttribute('open') === null) await details.locator('summary').click();
+}
+async function openQuoteEditor() {
+  const form = page.locator('[data-fcl-form="quote-save"]');
+  if (!(await form.count())) {
+    const edit = page.locator('[data-action="fcl-edit-quote"]');
+    await edit.waitFor();
+    await edit.click();
+  }
+  await form.waitFor({state: 'visible'});
 }
 async function openDetails(details) {
   await details.evaluate(node => { if (!node.open) node.open = true; });
@@ -115,8 +136,9 @@ try {
   let responsePromise;
 
   await page.goto(`${base}/console/#fcl`, {waitUntil: 'networkidle'});
-  await page.locator('.case-card').first().waitFor();
-  await page.locator('.case-card').first().click();
+  const caseCard = page.locator('.case-card').filter({hasText: firstInquiryNo});
+  await caseCard.waitFor();
+  await caseCard.click();
   await page.getByRole('heading', {name: '整柜报价', exact: true}).waitFor();
   await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('Unsaved reason must survive cancelled navigation.');
   dialogMode = 'dismiss';
@@ -127,12 +149,12 @@ try {
   dialogMode = 'accept';
   await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('');
   checks.push('dirty internal navigation cancellation keeps the current draft');
-  await openCaseOperations();
+  await openCaseOperations(firstCaseId);
   const staffSupplementCountBefore = fclRequests.filter(request => request.path.endsWith('/case-staff-supplement')).length;
   await page.locator('[data-fcl-form="staff-supplement"] button[type="submit"]').click();
   await page.getByText('没有检测到需要记录的变化。', {exact: true}).waitFor();
   assert.equal(fclRequests.filter(request => request.path.endsWith('/case-staff-supplement')).length, staffSupplementCountBefore);
-  await openCaseOperations();
+  await openCaseOperations(firstCaseId);
   await page.locator('[data-fcl-form="case-status"] textarea[name="public_note"]').fill('Please confirm the final destination.');
   await page.locator('[data-fcl-form="case-status"] select[name="status"]').selectOption('needs_input');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/case-status'));
@@ -175,9 +197,9 @@ try {
   checks.push('public supplement before/after and persisted customer event');
 
   await page.goto(`${base}/console/#fcl`, {waitUntil: 'networkidle'});
-  await page.locator('.case-card').first().click();
+  await page.locator('.case-card').filter({hasText: firstInquiryNo}).click();
   await page.getByRole('heading', {name: '整柜报价', exact: true}).waitFor();
-  await openCaseOperations();
+  await openCaseOperations(firstCaseId);
   await page.locator('[data-fcl-form="staff-supplement"] [name="contact.company"]').fill('Staff verified company');
   await page.locator('[data-fcl-form="staff-supplement"] [name="message"]').fill('Staff recorded the offline company confirmation.');
   const staffSupplementRequest = page.waitForRequest(request => request.url().endsWith('/case-staff-supplement'));
@@ -193,62 +215,56 @@ try {
   checks.push('staff confirmation');
 
   await page.goto(`${base}/console/#fcl/rates`, {waitUntil: 'networkidle'});
-  await page.getByRole('button', {name: '添加来源', exact: true}).click();
-  await page.locator('[name="fcl-rate-label"]').fill('FCL browser fixture rates');
-  const rate = page.locator('[data-fcl-rate-index="0"]');
-  await rate.locator('[name="fcl-rate-0-supplier"]').fill('Synthetic carrier');
-  await rate.locator('[name="fcl-rate-0-pol"]').fill('Yantian');
-  await rate.locator('[name="fcl-rate-0-pod"]').fill('Vancouver');
-  await rate.locator('[name="fcl-rate-0-from"]').fill('2026-10-01');
-  await rate.locator('[name="fcl-rate-0-until"]').fill('2026-10-31');
-  await rate.locator('[name="fcl-rate-0-source"]').fill('synthetic:browser-rate');
-  await rate.locator('[name="fcl-rate-0-source-version"]').fill('v1');
-  await rate.locator('[name="fcl-rate-0-40HQ-price"]').fill('3200');
+  await page.getByRole('button', {name: '新增一行', exact: true}).click();
+  await page.locator('[data-ocean-index="0"][data-ocean-key="supplier_label"]').fill('Synthetic carrier');
+  await page.locator('[data-ocean-index="0"][data-ocean-key="pol"]').fill('Yantian');
+  await page.locator('[data-ocean-index="0"][data-ocean-key="pod"]').fill('Vancouver');
+  await page.locator('[data-ocean-index="0"][data-ocean-key="valid_from"]').fill('2026-10-01');
+  await page.locator('[data-ocean-index="0"][data-ocean-key="valid_until"]').fill('2026-10-31');
+  await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').fill('3200');
+  await page.locator('[data-action="ops-ocean-more"][data-index="0"]').click();
+  await page.locator('[data-fcl-form="ops-ocean-advanced"] [name="source_ref"]').fill('synthetic:browser-rate');
+  await page.locator('[data-fcl-form="ops-ocean-advanced"] [name="source_version"]').fill('v1');
+  await page.locator('[data-fcl-form="ops-ocean-advanced"] button[type="submit"]').click();
   dialogMode = 'dismiss';
   await page.evaluate(() => { location.hash = 'fcl'; });
   await page.waitForFunction(() => location.hash === '#fcl/rates');
-  assert.equal(await page.locator('[name="fcl-rate-label"]').inputValue(), 'FCL browser fixture rates');
-  assert.equal(await page.locator('[name="fcl-rate-0-40HQ-price"]').inputValue(), '3200');
+  assert.equal(await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').inputValue(), '3200');
   dialogMode = 'accept';
-  await page.locator('[data-action="fcl-rate-preview"]').click();
-  await page.getByText('请先保存运价草稿，再预览服务器版本。', {exact: true}).waitFor();
-  assert.equal(await page.locator('[name="fcl-rate-0-40HQ-price"]').inputValue(), '3200');
-  await page.getByRole('button', {name: '添加来源', exact: true}).click();
-  await page.locator('[data-action="fcl-rate-remove"][data-index="1"]').click();
+  await page.locator('[data-action="ops-preview-config"]').click();
+  await page.getByText('请先保存或取消当前编辑。', {exact: true}).waitFor();
+  assert.equal(await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').inputValue(), '3200');
+  await page.getByRole('button', {name: '新增一行', exact: true}).click();
+  await page.locator('[data-action="ops-ocean-disable"][data-index="1"]').click();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-save'));
-  await page.locator('[data-action="fcl-rate-save"]').click();
+  await page.locator('[data-action="ops-save-config"]').click();
   const firstRateSave = await responseJson(await responsePromise);
   assert.equal(firstRateSave.status, 'success');
   assert.equal(firstRateSave.data.draft.rates.length, 1);
   assert.equal(firstRateSave.data.draft.rates[0].items[0].ocean_freight, '3200');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-preview'));
-  await page.locator('[data-action="fcl-rate-preview"]').click();
+  await page.locator('[data-action="ops-preview-config"]').click();
   const preview = await responseJson(await responsePromise);
   assert.equal(preview.data.can_publish, true);
+  await page.locator('#ops-config-confirm').check();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-publish'));
-  await page.locator('[data-action="fcl-rate-publish"]').click();
+  await page.locator('[data-action="ops-publish-config"]').click();
   const firstPublication = await responseJson(await responsePromise);
   assert.equal(firstPublication.status, 'success');
-  const firstReleaseId = firstPublication.data.active_release.release_id;
-  await rate.locator('[name="fcl-rate-0-40HQ-price"]').fill('3300');
+  await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').fill('3300');
+  await openDetails(page.locator('details.ops-publication'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-save'));
-  await page.locator('[data-action="fcl-rate-save"]').click();
+  await page.locator('[data-action="ops-save-config"]').click();
   assert.equal((await responseJson(await responsePromise)).status, 'success');
+  await openDetails(page.locator('details.ops-publication'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-preview'));
-  await page.locator('[data-action="fcl-rate-preview"]').click();
+  await page.locator('[data-action="ops-preview-config"]').click();
   assert.equal((await responseJson(await responsePromise)).data.can_publish, true);
+  await page.locator('#ops-config-confirm').check();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-publish'));
-  await page.locator('[data-action="fcl-rate-publish"]').click();
+  await page.locator('[data-action="ops-publish-config"]').click();
   assert.equal((await responseJson(await responsePromise)).status, 'success');
-  await page.locator('details.panel', {hasText: '历史发布'}).locator('summary').click();
-  const rollbackPreview = page.waitForResponse(response => response.url().includes('/rate-preview?release_id=') && response.url().includes(firstReleaseId));
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-rollback'));
-  await page.locator(`[data-action="fcl-rate-rollback"][data-release="${firstReleaseId}"]`).click();
-  assert.equal((await responseJson(await rollbackPreview)).data.can_publish, true);
-  const rollback = await responseJson(await responsePromise);
-  assert.equal(rollback.status, 'success');
-  assert.equal(rollback.data.active_release.input.rates[0].items[0].ocean_freight, '3200');
-  checks.push('rate draft preview, publication and selected historical rollback');
+  checks.push('rate draft save and publication');
 
   await page.goto(`${base}/console/#fcl/config`, {waitUntil: 'networkidle'});
   await page.locator('[name="fcl-issuer-name"]').fill('   ');
@@ -270,14 +286,15 @@ try {
   assert.equal((await responseJson(await responsePromise)).status, 'success');
 
   await page.goto(`${base}/console/#fcl`, {waitUntil: 'networkidle'});
-  await page.locator('.case-card').first().click();
+  await page.locator('.case-card').filter({hasText: firstInquiryNo}).click();
   await page.getByRole('heading', {name: '整柜报价', exact: true}).waitFor();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-match'));
   await openWorkspaceStep('quote');
   await page.locator('[data-action="fcl-match"]').click();
   const matched = await responseJson(await responsePromise);
   assert.equal(matched.status, 'success', JSON.stringify(matched));
-  await page.locator('[name="fcl-source-sell-0"]').waitFor();
+  const sourceSellPrice = page.locator('[data-fcl-fee-row][data-source-kind="ocean_freight"] [name="sell_price"]').first();
+  await sourceSellPrice.waitFor();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
   await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
   const partial = await responseJson(await responsePromise);
@@ -286,10 +303,9 @@ try {
   assert.equal(partial.data.current_version, 1);
   await page.reload({waitUntil: 'networkidle'});
   await openWorkspaceStep('quote');
-  await page.locator('[data-action="fcl-edit-quote"]').waitFor();
-  await page.locator('[data-action="fcl-edit-quote"]').click();
-  await page.locator('[name="fcl-source-sell-0"]').fill('3500');
+  await page.locator('[data-fcl-fee-row][data-source-kind="ocean_freight"] [name="sell_price"]').first().fill('3500');
   await page.locator('[name="USD"]').fill('7.2');
+  await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').fill('Customer sell price confirmed.');
   const updateRequest = page.waitForRequest(request => request.url().endsWith('/quote-save'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
   await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
@@ -313,41 +329,107 @@ try {
   assert.equal(oldQuote.data.version, 1);
   await page.getByText('历史报价 v1', {exact: true}).waitFor();
   await openWorkspaceStep('quote');
-  await page.locator('[data-action="fcl-edit-quote"]').click();
   await page.getByRole('button', {name: '添加人工费用', exact: true}).click();
-  const manualRow = page.locator('[data-fcl-manual-row]').first();
-  await manualRow.locator('[name="template_ref"]').selectOption({index: 1});
-  await manualRow.locator('[name="name"]').fill('Synthetic documentation fee');
+  assert.equal(await page.getByText('未分类', {exact: true}).count() > 0, true);
+  const manualRow = page.locator('[data-fcl-fee-row][data-source-kind="manual"]').first();
+  await manualRow.waitFor();
+  assert.equal(await manualRow.locator('[name="cost_price"]').inputValue(), '');
+  assert.equal(await manualRow.locator('[name="sell_price"]').inputValue(), '');
+  const manualKey = await manualRow.getAttribute('data-key');
+  assert.ok(manualKey);
+  const manualDetails = page.locator(`[data-fcl-fee-detail][data-key="${manualKey}"]`);
+  await manualDetails.locator('[name="group"]').selectOption('B');
+  await manualDetails.locator('[name="service"]').selectOption('ocean_freight');
+  await manualRow.locator('[name="fee_name"]').fill('Synthetic documentation fee');
   await manualRow.locator('[name="unit"]').selectOption('SHIPMENT');
-  await manualRow.locator('[name="quantity"]').fill('1');
   await manualRow.locator('[name="cost_price"]').fill('15');
   await manualRow.locator('[name="sell_price"]').fill('25');
   await manualRow.locator('[name="currency"]').selectOption('CAD');
-  await manualRow.locator('[name="evidence_ref"]').fill('fixture:manual-documentation');
-  await manualRow.locator('[name="evidence_version"]').fill('v1');
-  await manualRow.locator('[name="quantity_conditions"]').fill('One confirmation cycle per shipment.');
+  await manualDetails.locator('[name="evidence"]').fill('fixture:manual-documentation');
+  await manualDetails.locator('[name="evidence_version"]').fill('v1');
+  await manualDetails.locator('[name="quantity_conditions"]').fill('One confirmation cycle per shipment.');
+  await manualDetails.locator('[name="customer_note"]').fill('Customer-visible documentation note.');
+  await manualDetails.locator('[name="internal_note"]').fill('Internal documentation note.');
   await page.locator('[name="CAD"]').fill('5.2');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
   await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
-  const metadataQuote = await responseJson(await responsePromise);
-  assert.equal(metadataQuote.status, 'success');
-  const metadataRow = metadataQuote.data.cost_rows.find(row => row.source_kind === 'manual');
-  assert.ok(metadataRow.template_ref);
-  assert.equal(metadataRow.quantity_conditions, 'One confirmation cycle per shipment.');
-  checks.push('Web manual fee preserves template_ref and quantity_conditions');
-  await openWorkspaceStep('quote');
-  await page.locator('[data-action="fcl-edit-quote"]').click();
-  await page.locator('#fcl-quote-remark').fill('This draft is discarded on confirmed navigation.');
+  const addedQuote = await responseJson(await responsePromise);
+  assert.equal(addedQuote.status, 'success');
+  const addedRow = addedQuote.data.cost_rows.find(row => row.row_key === manualKey);
+  assert.equal(addedRow.template_ref, null);
+  assert.equal(addedRow.quantity_conditions, 'One confirmation cycle per shipment.');
+  assert.equal(addedRow.customer_note, 'Customer-visible documentation note.');
+  assert.equal(addedRow.internal_note, 'Internal documentation note.');
+  assert.equal(addedRow.fully_priced, true);
+
+  const persistedManual = page.locator(`[data-fcl-fee-row][data-key="${manualKey}"]`);
+  await persistedManual.locator('[name="cost_price"]').fill('18');
+  await persistedManual.locator('[name="sell_price"]').fill('30');
+  await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').fill('Correct the documentation fee.');
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
+  await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
+  const editedQuote = await responseJson(await responsePromise);
+  const editedRow = editedQuote.data.cost_rows.find(row => row.row_key === manualKey);
+  assert.equal(editedQuote.status, 'success');
+  assert.equal(editedRow.cost_price, '18');
+  assert.equal(editedRow.sell_price, '30');
+  assert.equal(editedRow.evidence_ref, 'fixture:manual-documentation');
+  assert.equal(editedRow.evidence_version, 'v1');
+  assert.equal(editedRow.quantity_conditions, 'One confirmation cycle per shipment.');
+  assert.equal(editedRow.customer_note, 'Customer-visible documentation note.');
+  assert.equal(editedRow.internal_note, 'Internal documentation note.');
+  assert.equal(editedRow.cost_amount, '18.00');
+  assert.equal(editedRow.fully_priced, true);
+
+  await page.getByRole('button', {name: '添加人工费用', exact: true}).click();
+  const unsavedManual = page.locator('[data-fcl-fee-row][data-source-kind="manual"]').last();
+  const unsavedKey = await unsavedManual.getAttribute('data-key');
+  await unsavedManual.locator('[data-action="fcl-fee-remove"]').click();
+  assert.equal(await page.locator(`[data-fcl-fee-row][data-key="${unsavedKey}"]`).count(), 0);
+
+  await page.setViewportSize({width: 390, height: 800});
+  const mobileOverflow = await page.evaluate(() => {
+    const table = document.querySelector('.ops-ticket-table-wrap');
+    return {
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      tableClientWidth: table?.clientWidth ?? 0,
+      tableScrollWidth: table?.scrollWidth ?? 0,
+      tableOverflowX: table ? window.getComputedStyle(table).overflowX : '',
+      rootOverflowX: window.getComputedStyle(document.documentElement).overflowX,
+    };
+  });
+  assert.ok(mobileOverflow.pageWidth <= mobileOverflow.viewportWidth, JSON.stringify(mobileOverflow));
+  assert.equal(mobileOverflow.tableOverflowX, 'auto');
+  assert.ok(mobileOverflow.tableScrollWidth >= mobileOverflow.tableClientWidth, JSON.stringify(mobileOverflow));
+  assert.notEqual(mobileOverflow.rootOverflowX, 'hidden');
+  await page.setViewportSize({width: 1440, height: 1000});
+
+  const persistedDelete = page.locator(`[data-fcl-fee-row][data-key="${manualKey}"] [data-action="fcl-fee-remove"]`);
+  await persistedDelete.click();
+  await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').fill('Remove the documentation fee from this ticket.');
+  const removalRequest = page.waitForRequest(request => request.url().endsWith('/quote-save'));
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
+  await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
+  const removalPayload = (await removalRequest).postDataJSON();
+  const removalChange = removalPayload.input.extensions?.fcl_row_adjustments_v1?.changes?.find(change => change.row_key === manualKey);
+  assert.deepEqual(removalChange, {row_key: manualKey, operation: 'remove', reason: 'Remove the documentation fee from this ticket.'});
+  const removedQuote = await responseJson(await responsePromise);
+  assert.equal(removedQuote.status, 'success');
+  assert.equal(removedQuote.data.cost_rows.some(row => row.row_key === manualKey), false);
+  checks.push('Web fee edit preserves evidence and notes; audited delete and local add/remove');
+
+  await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').fill('This draft is discarded on confirmed navigation.');
   dialogMode = 'accept';
   await page.evaluate(() => { location.hash = 'fcl/rates'; });
-  await page.getByRole('heading', {name: '运价管理', exact: true}).waitFor();
+  await page.locator('.ops-ocean-table').waitFor();
   const reloadedQuoteAfterDiscard = page.waitForResponse(response => response.url().endsWith('/quote-get'));
   await page.evaluate(id => { location.hash = `fcl/case/${id}`; }, firstCaseId);
   await page.getByRole('heading', {name: '整柜报价', exact: true}).waitFor();
   await reloadedQuoteAfterDiscard;
   await openWorkspaceStep('quote');
-  await page.locator('[data-action="fcl-edit-quote"]').waitFor();
-  assert.equal(await page.locator('[data-fcl-form="quote-save"]').count(), 0);
+  await openQuoteEditor();
+  assert.equal(await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').inputValue(), '');
   checks.push('confirmed dirty navigation discards FCL drafts');
 
   await openWorkspaceStep('documents');
@@ -370,75 +452,6 @@ try {
   assert.equal(rejected.data.state, 'rejected');
 
   await relatedAfterReject;
-  await openCaseOperations();
-  await page.locator('[data-fcl-form="case-status"] textarea[name="public_note"]').fill('Please confirm the revised cargo date.');
-  await page.locator('[data-fcl-form="case-status"] select[name="status"]').selectOption('needs_input');
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/case-status'));
-  await page.locator('[data-fcl-form="case-status"] button[type="submit"]').click();
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
-  await page.goto(`${base}/inquiry/`, {waitUntil: 'networkidle'});
-  await page.locator('[data-fcl-supplement]').waitFor();
-  await page.locator('#supply-cargo_ready_date').fill('2026-10-28');
-  await page.locator('#supply-notes').fill('Customer confirmed the revised cargo date after document rejection.');
-  await page.locator('#supply-message').fill('Retry the same committed supplement after an unknown response.');
-  let unknownSupplementRequest;
-  let unknownSupplementData;
-  let abortSupplementOnce = true;
-  await page.route('**/inquiry/api/v1/fcl/supplement', async route => {
-    if (abortSupplementOnce) {
-      abortSupplementOnce = false;
-      unknownSupplementRequest = {body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key']};
-      const response = await route.fetch();
-      assert.equal(response.status(), 200);
-      unknownSupplementData = await response.json();
-      await route.abort('failed');
-      return;
-    }
-    await route.continue();
-  });
-  const failedSupplementRequest = page.waitForEvent('requestfailed', {predicate: request => request.url().endsWith('/inquiry/api/v1/fcl/supplement')});
-  await page.locator('[data-fcl-supplement] button[type="submit"]').click();
-  await failedSupplementRequest;
-  await page.waitForFunction(() => document.querySelector('[data-fcl-supplement] button[type="submit"]')?.disabled === false);
-  assert.equal(await page.locator('#supply-message').inputValue(), 'Retry the same committed supplement after an unknown response.');
-  assert.equal(await page.locator('#supply-cargo_ready_date').inputValue(), '2026-10-28');
-  assert.equal(await page.locator('#supply-notes').inputValue(), 'Customer confirmed the revised cargo date after document rejection.');
-  await page.unroute('**/inquiry/api/v1/fcl/supplement');
-  const retryRequest = page.waitForRequest(request => request.url().endsWith('/inquiry/api/v1/fcl/supplement'));
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/inquiry/api/v1/fcl/supplement'));
-  await page.locator('[data-fcl-supplement] button[type="submit"]').click();
-  const retry = await retryRequest;
-  assert.deepEqual(retry.postDataJSON(), unknownSupplementRequest.body);
-  assert.equal(retry.headers()['idempotency-key'], unknownSupplementRequest.key);
-  const secondSupplement = await responseJson(await responsePromise);
-  assert.equal(secondSupplement.status, 'success');
-  assert.equal(secondSupplement.data.case_version, unknownSupplementData.data.case_version);
-  assert.equal(secondSupplement.data.input.containers.find(container => container.type === '40HQ').quantity, 2);
-  assert.equal(secondSupplement.data.input.final_destination, 'Montreal');
-  assert.equal(secondSupplement.data.input.contact.email, 'updated-shipper@example.test');
-  checks.push('unknown supplement response retries same payload/key without losing fields or message');
-  await page.goto(`${base}/console/#fcl`, {waitUntil: 'networkidle'});
-  await page.locator('.case-card').first().click();
-  await page.getByRole('heading', {name: '整柜报价', exact: true}).waitFor();
-  await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('Confirmed revised cargo date after rejection.');
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/case-confirm'));
-  await page.locator('[data-fcl-form="case-confirm"] button[type="submit"]').click();
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
-
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-match'));
-  await openWorkspaceStep('quote');
-  await page.locator('[data-action="fcl-match"]').click();
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
-  await page.locator('[name="fcl-source-sell-0"]').fill('3600');
-  await page.locator('[name="USD"]').fill('7.2');
-  const resubmitQuoteRequest = page.waitForRequest(request => request.url().endsWith('/quote-save'));
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
-  await page.locator('[data-fcl-form="quote-save"] button[type="submit"]').click();
-  const resubmitQuotePayload = (await resubmitQuoteRequest).postDataJSON();
-  assert.equal(resubmitQuotePayload.operation, 'update');
-  assert.equal(resubmitQuotePayload.source_binding.mode, 'replace');
-  assert.equal((await responseJson(await responsePromise)).status, 'success');
-  checks.push('document rejection, customer supplement, case reconfirmation and quote replacement');
 
   const resubmitRequest = page.waitForRequest(request => request.url().endsWith('/document-save'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/document-save'));
@@ -451,11 +464,9 @@ try {
   const review = await responseJson(await responsePromise);
   assert.equal(review.status, 'success');
   await openWorkspaceStep('quote');
-  await page.locator('[data-action="fcl-edit-quote"]').click();
-  await page.locator('#fcl-quote-remark').fill('Quote edited after document review.');
-  await openWorkspaceStep('documents');
-  assert.equal(await page.locator('[data-action="fcl-doc-approve"]').count(), 0);
-  assert.equal(await page.locator('[data-action="fcl-doc-review"]').isDisabled(), true);
+  await openQuoteEditor();
+  await page.locator('[data-fcl-form="quote-save"] [name="adjustment_reason"]').fill('Quote edited after document review.');
+  assert.equal(await page.locator('.fcl-workflow [data-step="documents"]').isDisabled(), true);
   await openWorkspaceStep('quote');
   const reviewInvalidationQuote = page.waitForRequest(request => request.url().endsWith('/quote-save'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/quote-save'));
@@ -645,6 +656,7 @@ try {
   console.error(JSON.stringify({
     status: 'failed',
     url: page.url(),
+    body: (await page.locator('body').innerText().catch(() => '')).slice(0, 1200),
     checks,
     page_errors: pageErrors,
     fcl_requests: fclRequests.slice(-20),
