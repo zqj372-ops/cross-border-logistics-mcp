@@ -359,8 +359,9 @@ describe('FCL simplified workbench',()=>{
  });
  it('uses only published data for daily quoting even when an unrelated public draft exists',async()=>{
   const published=operationsFixture(),draft=structuredClone(published);draft.rates[0]!.items[0]!.ocean_freight='9999';draft.operations.templates[0]!.label='Draft template only';
-  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft,active_release:{input:published},history:[]}:{items:[]}}));
-  const write=vi.fn((action:string,body?:unknown)=>{void action;void body;return Promise.resolve({status:'success',data:{items:[]}});});
+  let releaseId='publication-before-fx';
+  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft,active_release:{release_id:releaseId,input:published},history:[]}:{items:[]}}));
+  const write=vi.fn((action:string,body?:unknown,intentScope?:string)=>{void action;void body;void intentScope;return Promise.resolve({status:'success',data:{items:[]}});});
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
   ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
   const html=ops.render();
@@ -369,10 +370,18 @@ describe('FCL simplified workbench',()=>{
   await ops.submit({dataset:{fclForm:'ops-run'}});
   expect(write.mock.calls[0]?.[0]).toBe('estimate-run');
   expect(write.mock.calls[0]?.[1]).toMatchObject({rate_ids:[published.rates[0]!.rate_id],template_ids:[published.operations.templates[0]!.id]});
+  expect(write.mock.calls[0]?.[2]).toBe('publication-before-fx');
+  await ops.submit({dataset:{fclForm:'ops-run'}});
+  expect(write.mock.calls[1]?.[2]).toBe('publication-before-fx');
+  releaseId='publication-after-fx';
+  call.mockClear();await ops.action({dataset:{action:'ops-reload'}});
+  await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  await ops.submit({dataset:{fclForm:'ops-run'}});
+  expect(write.mock.calls[2]?.[2]).toBe('publication-after-fx');
  });
  it('auto-selects one explicit case candidate and leaves multiple candidates for human choice',async()=>{
   const published=operationsFixture(),caseView={case_id:'00000000-0000-4000-8000-000000000901',case_status:'in_review',case_version:2,current_input:{pol:'Shanghai',pod:'Vancouver',final_destination:'Calgary',containers:[{type:'40HQ',quantity:1}],cargo_ready_date:'2026-10-15',estimated_weight:null,selected_services:['ocean_freight','canada_customs','delivery']},review_context:{latest_customer_supplement_ref:null,review_required:false}};
-  const estimate={estimate_id:'00000000-0000-4000-8000-000000000902',version:1,calculation:{rate_id:published.rates[0]!.rate_id},request:{case_ref:caseView.case_id}};
+  const estimate={estimate_id:'00000000-0000-4000-8000-000000000902',version:1,calculation:{rate_id:published.rates[0]!.rate_id,blockers:[] as string[]},currentness:{valid_now:true,reason_codes:[] as string[]},request:{case_ref:caseView.case_id}};
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft:published,active_release:{input:published},history:[]}:action==='case-get'?caseView:{items:[]}}));
   const writes:string[]=[];const write=vi.fn((action:string)=>{writes.push(action);return Promise.resolve({status:'success',data:action==='estimate-run'?{items:[estimate]}:{quote_ref:'00000000-0000-4000-8000-000000000903',version:1}});});
   const location={hash:''};vi.stubGlobal('location',location);
@@ -385,6 +394,15 @@ describe('FCL simplified workbench',()=>{
   multiple.render(caseView.case_id);await vi.waitFor(()=>expect(call.mock.calls.length).toBeGreaterThanOrEqual(8));await new Promise(r=>setTimeout(r,0));
   await multiple.submit({dataset:{fclForm:'ops-run'}});
   expect(multiple.render(caseView.case_id)).toContain('已生成 2 个候选');
+  const blockedWrite=vi.fn(()=>Promise.resolve({status:'success',data:{items:[{...estimate,calculation:{...estimate.calculation,blockers:['fx_missing:USD','fx_missing:CAD']},currentness:{valid_now:false,reason_codes:['fcl_estimate_incomplete']}}]}}));
+  call.mockClear();
+  const blocked=createFclOperations({call,write:blockedWrite,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
+  blocked.render(caseView.case_id);await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(4));await new Promise(r=>setTimeout(r,0));
+  await blocked.submit({dataset:{fclForm:'ops-run'}});
+  expect(blockedWrite).toHaveBeenCalledTimes(1);
+  expect(blocked.render(caseView.case_id)).toContain('缺少对人民币汇率：USD');
+  expect(blocked.render(caseView.case_id)).toContain('缺少对人民币汇率：CAD');
+  expect(blocked.render(caseView.case_id)).not.toContain('fcl_estimate_binding_invalid');
  });
  it('keeps prices and sources when cancelling advanced edits, and clears only stale sailing associations',async()=>{
   vi.stubGlobal('document',{querySelector:()=>null});

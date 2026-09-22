@@ -270,8 +270,8 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const result = await api(`/fcl/${action}${query}`, { method, ...(method === 'GET' ? {} : { body }), acceptBusiness: true });
     return validateResponse(action, result);
   };
-  const write = async (action, body) => {
-    const result = await mutate(`/fcl/${action}`, 'POST', body, { acceptBusiness: true });
+  const write = async (action, body, intentScope) => {
+    const result = await mutate(`/fcl/${action}`, 'POST', body, { acceptBusiness: true, ...(intentScope ? { intentScope } : {}) });
     return validateResponse(action, result);
   };
   operations = createFclOperations({call,write,esc,rerender,notify,model,api});

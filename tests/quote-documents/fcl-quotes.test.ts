@@ -131,7 +131,7 @@ function estimateCaseInput(){
   };
 }
 
-async function estimateSetup(){
+async function estimateSetup(configure?:(dataset:ReturnType<typeof operationsFixture>)=>void){
   const root=mkdtempSync(join(tmpdir(),'fcl-estimate-quotes-'));roots.push(root);
   const caseStore=new CaseStore(join(root,'cases.sqlite'),fclStore);
   const rateStore=new NativeAdminStore(join(root,'rates.sqlite'),fclStore);
@@ -140,7 +140,8 @@ async function estimateSetup(){
   const rateService=new NativeAdminService(rateStore,portal,{receiverUserId:receiverId,receiverIsActive:()=>true,now:()=>now});
   const submitted=await caseService.submitFclInquiry('fcl-estimate-session','fcl-estimate-submit-01',estimateCaseInput());
   const confirmed=caseService.confirmFclCase(receiver,submitted.case_id,{expected_version:1,expected_customer_supplement_ref:null,confirmed_fields:{changes:[]},reason:'Confirmed estimate fixture'},'fcl-estimate-confirm-01');
-  rateService.save(receiver,'fcl',{expected_version:0,input:operationsFixture()},'fcl-estimate-rate-save-01');
+  const dataset=operationsFixture();configure?.(dataset);
+  rateService.save(receiver,'fcl',{expected_version:0,input:dataset},'fcl-estimate-rate-save-01');
   const preview=rateService.preview(receiver,'fcl');
   rateService.publish(receiver,'fcl',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'},'fcl-estimate-rate-publish-01');
   const quoteService=new FclQuoteService({caseReader:caseService,rateReader:rateService,now:()=>now});
@@ -161,6 +162,16 @@ function withAdjustments(base:ReturnType<typeof estimateToQuoteDraft>,changes:un
 }
 
 describe('personal FCL cost sell quotes',()=>{
+  it('selects an undated ocean and ancillary template as a quote without a delivery tariff',async()=>{
+    const f=await estimateSetup(dataset=>{
+      for(const row of [...dataset.rates,...dataset.operations.templates,...dataset.operations.charges]){delete row.valid_from;delete row.valid_until;}
+      dataset.operations.templates[0]!.delivery_rate_id=null;
+      for(const charge of dataset.operations.charges)charge.name_en=charge.name_zh;
+    });
+    expect(f.estimate.currentness.valid_now).toBe(true);
+    expect(f.quote.cost_rows.filter(row=>row.source_kind==='ocean_freight')).toHaveLength(1);
+    expect(f.quote.currentness.valid_now).toBe(true);
+  });
   it('persists create/update snapshots, preserves history and reopens with the same amounts',async()=>{
     const f=await setup();
     const created=f.documentWorkflow.saveFclQuote(receiver,createRequest(f),'fcl-quote-create-0001');
