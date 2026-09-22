@@ -1,3 +1,4 @@
+import {isBaseOceanFreight} from '../../services/quote-native/fcl-fee-identity.ts';
 import {createFclSchedules,isCoscoScheduleRate} from './fcl-schedules.js';
 import Decimal from 'decimal.js';
 import {fclField,fclFieldHtml,FCL_FIELDS,FCL_CHARGE_CATALOG,FCL_SERVICE_MODE_LABELS} from '../inquiry/fcl-fields.ts';
@@ -11,14 +12,7 @@ const emptyCapacity={weight_min_kg:null,weight_max_kg:null,volume_min_cbm:null,v
 const emptyWindow={valid_from:'',valid_until:''};
 const sectionNames={compare:'报价',rates:'海运费表',charges:'基础费用库',history:'历史报价',delivery_rates:'内陆运价',templates:'费用模板',rate_details:'手工维护船期'};
 const businessTabs=['compare','rates','templates','history'];
-const baseOceanFreightCodes=new Set(['ocean','ocean_freight','oceanfreight','base_ocean_freight','of']);
-
-export function isBaseOceanFreight(charge){
-  const code=String(charge.code||'').trim().toLowerCase().replace(/[\s-]+/gu,'_');
-  if(baseOceanFreightCodes.has(code))return true;
-  return [charge.name_zh,charge.name_en,charge.name].filter(Boolean).some(value=>/^(?:海运费|基础海运费|海运基础运费|ocean freight)(?:$|[\s·_-])/iu.test(String(value).trim()));
-}
-
+export {isBaseOceanFreight} from '../../services/quote-native/fcl-fee-identity.ts';
 export function fclMaintenancePayload(dataset){
   const next=clone(dataset);
   const stripWindow=record=>{
@@ -32,20 +26,6 @@ export function fclMaintenancePayload(dataset){
   (next?.operations?.templates||[]).forEach(stripWindow);
   return next;
 }
-
-const maintenanceValidationDraft=dataset=>{
-  const next=clone(dataset);
-  const ensureWindow=record=>{
-    if(!record)return;
-    delete record.updated_at;
-    if(!record.valid_from)record.valid_from='2000-01-01';
-    if(!record.valid_until)record.valid_until='2099-12-31';
-  };
-  (next?.rates||[]).forEach(record=>{ensureWindow(record);(record.additional_fees||[]).forEach(fee=>{delete fee.ocean_freight_resolution;});});
-  (next?.operations?.charges||[]).forEach(record=>{ensureWindow(record);delete record.ocean_freight_resolution;});
-  (next?.operations?.templates||[]).forEach(ensureWindow);
-  return next;
-};
 
 export function sortFclEstimates(items,key,direction='asc'){
   const value=item=>{const c=item.calculation;if(key==='carrier')return c.carrier;if(key==='etd')return c.schedule?.etd??null;if(key==='transit_days')return c.schedule?.transit_days??null;if(key==='ocean')return c.lines.find(l=>l.category==='ocean')?.cost_amount??null;return c.totals[key];};
@@ -99,13 +79,14 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const publishedOptions=()=>publishedDataset()?.operations??emptyOperations;
   const draftOptions=()=>draft?.operations??emptyOperations;
   const normalizeTemplateSelection=()=>{
+    if(templateEditor?.isNew&&templateEditor.kind==='template')return -1;
     const templates=draftOptions().templates;
     if(templateIndex>=0&&templates[templateIndex]?.id===templateId)return templateIndex;
     templateIndex=templateId?templates.findIndex(template=>template.id===templateId):-1;
     if(templateIndex<0){templateIndex=templates.length?0:-1;templateId=templates[0]?.id||'';}
     return templateIndex;
   };
-  const updatedAt=row=>row?.updated_at||view?.active_release?.published_at||null;
+  const updatedAt=row=>row?.updated_at||null;
   const currentDate=()=>model().session?.fcl_capability?.business_date||'';
   const load=async(id='',force=false)=>{
     if(loading||loaded&&!force&&id===contextId)return;
@@ -166,7 +147,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   };
   const chargeList=()=>{
     const records=draftOptions().charges,needle=feeSearch.trim().toLocaleLowerCase();
-    const rows=records.map((r,index)=>({r,index})).filter(({r})=>[r.name_zh,r.name_en,r.code,r.destination,r.pod,...r.container_types].filter(Boolean).join(' ').toLocaleLowerCase().includes(needle));
+    const rows=records.map((r,index)=>({r,index})).filter(({r})=>!isBaseOceanFreight(r)).filter(({r})=>[r.name_zh,r.name_en,r.code,r.destination,r.pod,...r.container_types].filter(Boolean).join(' ').toLocaleLowerCase().includes(needle));
     return `<section class="ops-charges"><div class="ops-toolbar ops-charge-toolbar"><h2>基础费用</h2><form data-fcl-form="ops-fee-search" role="search">${errorBox}<input type="search" name="fee_search" aria-label="搜索费用" placeholder="费用名称、目的地或柜型" value="${esc(feeSearch)}"${editor?' disabled':''}><button class="button" type="submit"${editor?' disabled':''}>筛选</button></form><span class="muted">${rows.length} / ${records.length} 项</span>${btn('new','新增费用','data-kind="charges"')}</div><div class="table-wrap panel"><table class="ops-charge-table"><thead><tr><th>费用名称</th><th>成本</th><th>售价</th><th>计费 / 适用</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${rows.map(({r,index})=>`<tr><td><strong>${esc(r.name_zh)}</strong><small>${esc(r.name_en)}</small></td><td class="ops-money">${amount(r.amount,r.currency)}</td><td class="ops-money">${amount(r.sell_amount,r.currency)}</td><td>${r.unit==='CNTR'?'按柜':r.unit==='SHIPMENT'?'按票':'固定金额'} · ${esc(r.container_types.join(' / '))}<small>${esc([r.pod,r.destination].filter(Boolean).join(' → ')||'未限定地点')}</small></td><td class="ops-validity">${esc(updatedLabel(r))}</td><td class="ops-row-actions">${btn('edit','编辑',`data-index="${index}" data-kind="charges"`)}${btn('copy-record','复制',`data-index="${index}" data-kind="charges"`)}</td></tr>`).join('')||`<tr><td colspan="6" class="muted">${records.length?'没有匹配的费用，请更换关键词。':'暂无基础费用，点击“新增费用”开始填写。'}</td></tr>`}</tbody></table></div></section>`;
   };
   const recordList=()=>{
@@ -176,13 +157,13 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   };
   const chargeCandidates=chargeId=>draftOptions().charges.map((charge,index)=>({charge,index})).filter(item=>item.charge.id===chargeId);
   const templateChargeRows=chargeIds=>chargeIds.map(chargeId=>{
-    const candidates=chargeCandidates(chargeId),selected=[...candidates].sort((left,right)=>right.charge.version-left.charge.version)[0]??null;
+    const candidates=chargeCandidates(chargeId),selected=candidates.length===1?candidates[0]:null;
     return {chargeId,selectedIndex:selected?.index??null,original:selected?clone(selected.charge):null,value:selected?clone(selected.charge):null,candidates};
   }).filter(row=>row.candidates.some(candidate=>!isBaseOceanFreight(candidate.charge)));
   const createTemplateEditor=(index)=>{
     const template=draftOptions().templates[index];
     if(!template)return null;
-    const chargeIds=template.charge_ids.filter(chargeId=>chargeCandidates(chargeId).some(candidate=>!isBaseOceanFreight(candidate.charge)));
+    const chargeIds=template.charge_ids;
     return {kind:'template',index,id:template.id,isNew:false,base:clone(template),value:{...clone(template),charge_ids:chargeIds},marginPercent:new Decimal(template.margin_rule.value).mul(100).toString(),marginPercentInvalid:false,charges:templateChargeRows(chargeIds)};
   };
   const createReferenceEditor=(name)=>{
@@ -212,7 +193,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     return templateEditor.charges.some(row=>JSON.stringify(row.original)!==JSON.stringify(row.value));
   };
   const chargeDisplayName=(row,groupName=null)=>{
-    const name=row.value?.name_zh||row.original?.name_zh||'';
+    const name=row.value?.name_zh||row.original?.name_zh||row.candidates?.[0]?.charge?.name_zh||'';
     return groupName&&name.endsWith(` · ${groupName}`)?name.slice(0,-` · ${groupName}`.length):name;
   };
   const templateImpactRows=()=>{
@@ -238,7 +219,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     const data=new FormData(form);
     if(templateEditor.kind==='template'){
       const set=(name,apply)=>setFormValue(form,`template.${name}`,input=>apply(input.value));
-      for(const name of ['label','country','pod','destination','routing','service_mode','customs_mode','valid_from','valid_until','fx_source'])set(name,value=>{templateEditor.value[name]=value;});
+      for(const name of ['label','country','pod','destination','routing','service_mode','customs_mode','fx_source'])set(name,value=>{templateEditor.value[name]=value;});
       set('margin_mode',value=>{templateEditor.value.margin_rule.mode=value;});
       setFormValue(form,'template.margin_percent',input=>{
         templateEditor.marginPercent=input.value.trim();
@@ -256,15 +237,17 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
       setFormValue(root,`charges.${index}.selected`,input=>{if(input.value==='')return;const next=Number(input.value),candidate=row.candidates.find(item=>item.index===next);if(candidate&&next!==row.selectedIndex){row.selectedIndex=candidate.index;row.original=clone(candidate.charge);row.value=clone(candidate.charge);}});
       if(!row.value)return;
       const apply=(name,applyValue)=>setFormValue(root,`charges.${index}.${name}`,input=>applyValue(input.value));
+      apply('name_zh',value=>{const name=value.trim();row.value.name_zh=templateEditor.kind==='reference'?`${name} · ${templateEditor.id}`:name;if(row.isNew)row.value.name_en=name;});
       apply('amount',value=>{row.value.amount=value;});
       apply('sell_amount',value=>{row.value.sell_amount=value===''?null:value;});
       apply('currency',value=>{row.value.currency=value;});
       apply('unit',value=>{row.value.unit=value;});
-      for(const name of ['name_zh','name_en','code','country','category','pod','destination','valid_from','valid_until','source_ref','source_version','remark'])setFormValue(settings,`charges.${index}.${name}`,input=>{
+      for(const name of ['name_zh','name_en','code','country','category','pod','destination','source_ref','source_version','remark'])setFormValue(settings,`charges.${index}.${name}`,input=>{
         const value=input.value.trim();
         if(name==='name_zh'&&templateEditor.kind==='reference'&&value&&!value.endsWith(` · ${templateEditor.id}`)){row.value.name_zh=`${value} · ${templateEditor.id}`;return;}
         row.value[name]=['pod','destination','remark'].includes(name)?(value||null):value;
       });
+      if(row.isNew&&!row.value.name_en)row.value.name_en=row.value.name_zh;
       if(settings){row.value.container_types=[...settings.querySelectorAll(`[name="charges.${index}.container_types"]:checked`)].map(input=>input.value);row.value.editable=settings.querySelector(`[name="charges.${index}.editable"]`)?.checked??false;}
     });
     return before!==templateEditorSnapshot();
@@ -274,7 +257,8 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     const lastString=[...path].reverse().find(part=>typeof part==='string'&&!['operations','templates','charges'].includes(part));
     const fieldLabel=key=>key==='margin_value'||(path.includes('margin_rule')&&key==='value')?'利润百分比':key==='USD'||key==='CAD'?`${key} 汇率`:FCL_FIELDS[key]?.zh||'金额或适用条件';
     if(path[0]==='operations'&&path[1]==='charges'&&typeof path[2]==='number'){
-      const rowIndex=templateEditor.charges.findIndex(row=>row.selectedIndex===path[2]||row.chargeId===draftOptions().charges[path[2]]?.id);
+      const newRows=templateEditor.charges.filter(row=>row.isNew);
+      const rowIndex=templateEditor.charges.findIndex(row=>row.selectedIndex===path[2]||row.chargeId===draftOptions().charges[path[2]]?.id||row===newRows[path[2]-draftOptions().charges.length]);
       if(rowIndex<0)return {field:'',label:`费用配置：请核对第 ${path[2]+1} 项费用。`};
       const row=templateEditor.charges[rowIndex],name=chargeDisplayName(row)||`第 ${rowIndex+1} 项费用`;
       const key=lastString||'',uiKey=path.includes('margin_rule')&&key==='value'?'margin_percent':key;
@@ -290,6 +274,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const validatedTemplateDraft=()=>{
     if(!templateEditor)throw Object.assign(new Error('请先选择费用模板。'),{code:'fcl_template_required'});
     const next=clone(draft),issues=[];
+    templateEditor.charges.forEach((row,index)=>{if(row.candidates.length>1&&row.selectedIndex===null)issues.push({field:`charges.${index}.selected`,label:`第 ${index+1} 项存在多个历史费用版本，请先核对版本，不能自动择价。`});if(row.value&&isBaseOceanFreight(row.value))issues.push({field:`charges.${index}.name_zh`,label:'基础海运费请在海运费表维护。'});});
     if(templateEditor.kind==='reference')templateEditor.charges.forEach((row,index)=>{
       if(row.value&&referenceChargeGroup(row.value)!==templateEditor.id){
         const sourceOk=String(row.value.source_ref||'').startsWith('xlsx:'),remarkOk=String(row.value.remark||'').startsWith(`参考方案：${templateEditor.id}；`);
@@ -299,13 +284,14 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(templateEditor.kind==='template'&&templateEditor.marginPercentInvalid)issues.push({field:'template.margin_percent',label:'利润百分比必须是有效数字。'});
     templateChangedImpactRows().forEach(({row,names})=>{if(!templateSharedConfirmation)issues.push({field:'template.shared_confirm',label:`${chargeDisplayName(row)}还会影响模板：${names.join('、')}。请确认共享费用影响。`});});
     if(issues.length)return {issues,next:null};
-    for(const row of templateEditor.charges){if(row.selectedIndex!==null&&row.value&&JSON.stringify(row.original)!==JSON.stringify(row.value))next.operations.charges[row.selectedIndex]=clone(row.value);}
+    for(const row of templateEditor.charges){if(row.isNew&&row.value)next.operations.charges.push(clone(row.value));else if(row.selectedIndex!==null&&row.value&&JSON.stringify(row.original)!==JSON.stringify(row.value))next.operations.charges[row.selectedIndex]=clone(row.value);}
     if(templateEditor.kind==='template'){
       let index=templateEditor.index;
       if(index===null||next.operations.templates[index]?.id!==templateEditor.id||next.operations.templates[index]?.version!==templateEditor.value.version)index=next.operations.templates.findIndex(row=>row.id===templateEditor.id&&row.version===templateEditor.value.version);
+      if(templateEditor.isNew&&!templateEditor.value.routing)templateEditor.value.routing=`${templateEditor.value.pod} → ${templateEditor.value.destination}`;
       if(index<0)next.operations.templates.push(clone(templateEditor.value));else next.operations.templates[index]=clone(templateEditor.value);
     }
-    const checked=fclRateDatasetSchema.safeParse(maintenanceValidationDraft(next));
+    const checked=fclRateDatasetSchema.safeParse(fclMaintenancePayload(next));
     if(!checked.success)issues.push(...checked.error.issues.slice(0,12).map(templateSchemaIssue));
     return {issues,next:issues.length?null:next};
   };
@@ -327,15 +313,16 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
       const value=row.value,disabled=!value;
       const removed=reference?'':btn('template-remove-charge','移除',`data-charge="${esc(row.chargeId)}"`);
       const name=chargeDisplayName(row,group)||`第 ${index+1} 项费用`;
-      return `<tr data-template-charge="${index}" data-charge-id="${esc(row.chargeId)}"><td data-label="费用名称"><strong>${esc(name)}</strong></td><td data-label="金额"><input name="charges.${index}.amount" aria-label="${esc(name)}金额" value="${esc(value?.amount||'')}" inputmode="decimal"${disabled?' disabled':''}></td><td data-label="币种"><select name="charges.${index}.currency" aria-label="${esc(name)}币种"${disabled?' disabled':''}>${['USD','CAD','CNY'].map(code=>`<option${value?.currency===code?' selected':''}>${code}</option>`).join('')}</select></td><td data-label="单位"><select name="charges.${index}.unit" aria-label="${esc(name)}计费单位"${disabled?' disabled':''}><option value="FIXED"${value?.unit==='FIXED'?' selected':''}>固定金额</option><option value="CNTR"${value?.unit==='CNTR'?' selected':''}>按柜</option><option value="SHIPMENT"${value?.unit==='SHIPMENT'?' selected':''}>按票</option></select></td>${reference?'':`<td data-label="操作">${removed}</td>`}</tr>`;
+      const version=row.candidates.length>1?`<select name="charges.${index}.selected" aria-label="${esc(name)}历史版本"><option value="">待核对版本</option>${row.candidates.map(c=>`<option value="${c.index}"${row.selectedIndex===c.index?' selected':''}>v${c.charge.version} · ${esc(c.charge.amount)} ${esc(c.charge.currency)}</option>`).join('')}</select>`:'';
+      return `<tr data-template-charge="${index}" data-charge-id="${esc(row.chargeId)}"><td data-label="费用名称"><input name="charges.${index}.name_zh" aria-label="第 ${index+1} 项费用名称" value="${esc(disabled?name:chargeDisplayName(row,group))}" placeholder="费用名称"${disabled?' disabled':''}>${version}</td><td data-label="金额"><input name="charges.${index}.amount" aria-label="${esc(name)}金额" value="${esc(value?.amount||'')}" inputmode="decimal"${disabled?' disabled':''}></td><td data-label="币种"><select name="charges.${index}.currency" aria-label="${esc(name)}币种"${disabled?' disabled':''}>${['USD','CAD','CNY'].map(code=>`<option${value?.currency===code?' selected':''}>${code}</option>`).join('')}</select></td><td data-label="单位"><select name="charges.${index}.unit" aria-label="${esc(name)}计费单位"${disabled?' disabled':''}><option value="FIXED"${value?.unit==='FIXED'?' selected':''}>固定金额</option><option value="CNTR"${value?.unit==='CNTR'?' selected':''}>按柜</option><option value="SHIPMENT"${value?.unit==='SHIPMENT'?' selected':''}>按票</option></select></td>${reference?'':`<td data-label="操作">${removed}</td>`}</tr>`;
     }).join('');
     return `<div class="table-wrap ops-template-table-wrap"><table class="ops-template-table${reference?' is-reference':''}"><thead><tr><th>费用名称</th><th>金额</th><th>币种</th><th>单位</th>${reference?'':'<th></th>'}</tr></thead><tbody>${rows||`<tr><td colspan="${reference?'4':'5'}" class="muted">${reference?'当前参考方案没有其他费用。':'暂无费用，先添加已有费用。'}</td></tr>`}</tbody></table></div>`;
   };
   const templateMoreSettings=(editor)=>{
     const template=editor.kind==='template';
-    const chargeSettings=editor.charges.map((row,index)=>row.value?`<details class="ops-template-charge-settings" data-template-charge-settings="${index}"${templateOpenCharge===index?' open':''}><summary>${esc(chargeDisplayName(row,editor.kind==='reference'?editor.id:null))} · 来源与适用条件</summary><div class="field-grid"><label class="field">费用名称<input name="charges.${index}.name_zh" value="${esc(chargeDisplayName(row,editor.kind==='reference'?editor.id:null))}"></label><label class="field">英文名称<input name="charges.${index}.name_en" value="${esc(row.value.name_en)}"></label><label class="field">代码<input name="charges.${index}.code" value="${esc(row.value.code)}"></label><label class="field">国家<input name="charges.${index}.country" value="${esc(row.value.country)}"></label><label class="field">类别<select name="charges.${index}.category">${['ocean','origin','destination','customs','inland','other','risk'].map(value=>`<option value="${value}"${row.value.category===value?' selected':''}>${esc(categoryName(value))}</option>`).join('')}</select></label><label class="field">目的港<input name="charges.${index}.pod" value="${esc(row.value.pod||'')}"></label><label class="field">目的地<input name="charges.${index}.destination" value="${esc(row.value.destination||'')}"></label><label class="field">来源<input name="charges.${index}.source_ref" value="${esc(row.value.source_ref)}"></label><label class="field">来源版本<input name="charges.${index}.source_version" value="${esc(row.value.source_version)}"></label><label class="field">备注<textarea name="charges.${index}.remark" rows="2">${esc(row.value.remark||'')}</textarea></label></div><fieldset class="ops-inline-checks"><legend>适用柜型</legend>${types.map(type=>`<label><input type="checkbox" name="charges.${index}.container_types" value="${type}"${row.value.container_types.includes(type)?' checked':''}>${type}</label>`).join('')}</fieldset><label class="check-row"><input type="checkbox" name="charges.${index}.editable"${row.value.editable?' checked':''}>允许在报价中调整售价</label></details>`:'').join('');
-    const templateSettings=template?`<section><h3>高级规则</h3><div class="field-grid"><label class="field">模板名称<input name="template.label" value="${esc(editor.value.label)}"></label><label class="field">国家<input name="template.country" value="${esc(editor.value.country)}"></label><label class="field">目的港<input name="template.pod" value="${esc(editor.value.pod)}"></label><label class="field">目的地<input name="template.destination" value="${esc(editor.value.destination)}"></label><label class="field">路线<input name="template.routing" value="${esc(editor.value.routing)}"></label><label class="field">运输方式<select name="template.service_mode"><option value="">请选择</option>${Object.entries(FCL_SERVICE_MODE_LABELS).map(([value,label])=>`<option value="${value}"${editor.value.service_mode===value?' selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">清关方式<input name="template.customs_mode" value="${esc(editor.value.customs_mode)}"></label><label class="field">利润方式<select name="template.margin_mode"><option value="">请选择</option><option value="cost_markup"${editor.value.margin_rule.mode==='cost_markup'?' selected':''}>成本加成</option><option value="gross_margin"${editor.value.margin_rule.mode==='gross_margin'?' selected':''}>目标毛利率</option></select></label><label class="field">利润百分比<input name="template.margin_percent" value="${esc(editor.marginPercent??'')}" inputmode="decimal" placeholder="例如 10 表示 10%"></label><label class="field">USD → CNY<input name="template.USD" value="${esc(editor.value.exchange_rates.USD||'')}" inputmode="decimal"></label><label class="field">CAD → CNY<input name="template.CAD" value="${esc(editor.value.exchange_rates.CAD||'')}" inputmode="decimal"></label><label class="field">汇率来源<input name="template.fx_source" value="${esc(editor.value.fx_source)}"></label><label class="field">内陆运输<select name="template.delivery_rate_id"><option value="">不包含</option>${draftOptions().delivery_rates.map(rate=>`<option value="${esc(rate.id)}"${editor.value.delivery_rate_id===rate.id?' selected':''}>${esc(rate.origin)} → ${esc(rate.destination)} · ${esc(rate.base_rate)} ${rate.currency}</option>`).join('')}</select></label></div><fieldset class="ops-inline-checks"><legend>模板适用柜型</legend>${types.map(type=>`<label><input type="checkbox" name="template.container_types" value="${type}"${editor.value.container_types.includes(type)?' checked':''}>${type}</label>`).join('')}</fieldset><label class="check-row"><input type="checkbox" name="template.enabled"${editor.value.enabled?' checked':''}>允许用于报价</label></section>`:'';
-    return `<details class="ops-template-details"${templateMoreOpen?' open':''}><summary>高级已有规则</summary><div class="ops-template-settings">${templateSettings}<section><h3>费用来源与适用条件</h3>${chargeSettings||'<p class="muted">暂无可设置费用。</p>'}</section></div></details>`;
+    const chargeSettings=editor.charges.map((row,index)=>row.value?`<details class="ops-template-charge-settings" data-template-charge-settings="${index}"${templateOpenCharge===index?' open':''}><summary>${esc(chargeDisplayName(row,editor.kind==='reference'?editor.id:null))} · 来源与适用条件</summary><div class="field-grid"><label class="field">英文名称<input name="charges.${index}.name_en" value="${esc(row.value.name_en)}"></label><label class="field">代码<input name="charges.${index}.code" value="${esc(row.value.code)}"></label><label class="field">国家<input name="charges.${index}.country" value="${esc(row.value.country)}"></label><label class="field">类别<select name="charges.${index}.category">${['ocean','origin','destination','customs','inland','other','risk'].map(value=>`<option value="${value}"${row.value.category===value?' selected':''}>${esc(categoryName(value))}</option>`).join('')}</select></label><label class="field">目的港<input name="charges.${index}.pod" value="${esc(row.value.pod||'')}"></label><label class="field">目的地<input name="charges.${index}.destination" value="${esc(row.value.destination||'')}"></label><label class="field">来源<input name="charges.${index}.source_ref" value="${esc(row.value.source_ref)}"></label><label class="field">来源版本<input name="charges.${index}.source_version" value="${esc(row.value.source_version)}"></label><label class="field">备注<textarea name="charges.${index}.remark" rows="2">${esc(row.value.remark||'')}</textarea></label></div><fieldset class="ops-inline-checks"><legend>适用柜型</legend>${types.map(type=>`<label><input type="checkbox" name="charges.${index}.container_types" value="${type}"${row.value.container_types.includes(type)?' checked':''}>${type}</label>`).join('')}</fieldset><label class="check-row"><input type="checkbox" name="charges.${index}.editable"${row.value.editable?' checked':''}>允许在报价中调整售价</label></details>`:'').join('');
+    const templateSettings=template?`<section><h3>高级规则</h3><div class="field-grid"><label class="field">国家<input name="template.country" value="${esc(editor.value.country)}"></label><label class="field">路线<input name="template.routing" value="${esc(editor.value.routing)}"></label><label class="field">运输方式<select name="template.service_mode"><option value="">请选择</option>${Object.entries(FCL_SERVICE_MODE_LABELS).map(([value,label])=>`<option value="${value}"${editor.value.service_mode===value?' selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">清关方式<input name="template.customs_mode" value="${esc(editor.value.customs_mode)}"></label><label class="field">利润方式<select name="template.margin_mode"><option value="">请选择</option><option value="cost_markup"${editor.value.margin_rule.mode==='cost_markup'?' selected':''}>成本加成</option><option value="gross_margin"${editor.value.margin_rule.mode==='gross_margin'?' selected':''}>目标毛利率</option></select></label><label class="field">利润百分比<input name="template.margin_percent" value="${esc(editor.marginPercent??'')}" inputmode="decimal" placeholder="例如 10 表示 10%"></label><label class="field">USD → CNY<input name="template.USD" value="${esc(editor.value.exchange_rates.USD||'')}" inputmode="decimal"></label><label class="field">CAD → CNY<input name="template.CAD" value="${esc(editor.value.exchange_rates.CAD||'')}" inputmode="decimal"></label><label class="field">汇率来源<input name="template.fx_source" value="${esc(editor.value.fx_source)}"></label><label class="field">内陆运输<select name="template.delivery_rate_id"><option value="">不包含</option>${draftOptions().delivery_rates.map(rate=>`<option value="${esc(rate.id)}"${editor.value.delivery_rate_id===rate.id?' selected':''}>${esc(rate.origin)} → ${esc(rate.destination)} · ${esc(rate.base_rate)} ${rate.currency}</option>`).join('')}</select></label></div><fieldset class="ops-inline-checks"><legend>模板适用柜型</legend>${types.map(type=>`<label><input type="checkbox" name="template.container_types" value="${type}"${editor.value.container_types.includes(type)?' checked':''}>${type}</label>`).join('')}</fieldset><label class="check-row"><input type="checkbox" name="template.enabled"${editor.value.enabled?' checked':''}>允许用于报价</label></section>`:'';
+    return `<details class="ops-template-details"${templateMoreOpen?' open':''}><summary>加价、汇率与其他设置</summary><div class="ops-template-settings">${templateSettings}<section><h3>费用来源与适用条件</h3>${chargeSettings||'<p class="muted">暂无可设置费用。</p>'}</section></div></details>`;
   };
   const templateSharedNote=(editor)=>{
     const impacts=templateImpactRows();
@@ -358,10 +345,10 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     const editor=ensureTemplateEditor();
     const reference=templatePrimary==='reference';
     const selector=reference?`<label class="field">参考方案<select name="reference_plan"><option value="">请选择</option>${groups.map(group=>`<option value="${esc(group.name)}"${group.name===referencePlan?' selected':''}>${esc(group.name)} · ${group.entries.length} 项</option>`).join('')}</select></label>`:`<label class="field">费用模板<select name="template_choice"><option value="">请选择</option>${templates.map((template,index)=>`<option value="${index}"${index===templateIndex?' selected':''}>${esc(template.label)} · ${esc(template.destination)} · ${esc(templateStatus(template))}</option>`).join('')}</select></label>`;
-    const empty=reference?!groups.length:!templates.length;
+    const empty=!editor&&(reference?!groups.length:!templates.length);
     const addable=[...new Map(draftOptions().charges.map((charge,index)=>[charge.id,{charge,index}]).filter(([id,entry])=>!isBaseOceanFreight(entry.charge)&&!(editor?.value?.charge_ids||[]).includes(id))).values()];
     const applicability=reference?`${editor?.charges.length||0} 项其他费用`:`目的港 ${esc(editor?.value?.pod||'待设置')} · 目的地 ${esc(editor?.value?.destination||'待设置')} · ${esc((editor?.value?.container_types||[]).join(' / ')||'柜型待设置')}`;
-    return `<section class="ops-template-workbench"><nav class="ops-template-source-tabs" aria-label="费用模板来源"><button type="button" class="console-tab" data-action="ops-template-primary" data-primary="reference"${reference?' aria-current="page"':''}>参考费用 · ${groups.length} 组</button><button type="button" class="console-tab" data-action="ops-template-primary" data-primary="templates"${!reference?' aria-current="page"':''}>费用模板 · ${templates.length} 个</button></nav>${empty?`<div class="empty-state"><h2>${reference?'没有可用的参考费用':'还没有费用模板'}</h2><p>${reference?'参考费用只用于核对其他费用；基础海运费请在海运费表维护。':'新增模板后维护名称、适用范围和其他费用。'}</p>${reference?btn('tab','查看费用库','data-tab="charges"'):''}</div>`:''}${editor?`<form data-fcl-form="ops-template">${templateIssuePanel()}<div class="ops-template-head">${selector}<p class="muted">${applicability}</p><div class="head-actions">${reference?'':`<span class="badge${templateStatus(editor.value)==='已生效'?'':' warning'}">${esc(templateStatus(editor.value))}</span>`}${reference?btn('template-new-from-reference','设为费用模板'):''}${btn('template-cancel','取消修改')}</div></div>${templateChargeTable(editor)}${reference?'':`<div class="ops-template-add"><label class="field">添加其他费用<select name="template_add_charge"><option value="">请选择</option>${addable.map(({charge,index})=>`<option value="${index}">${esc(charge.name_zh)} · ${esc(charge.amount)} ${charge.currency}</option>`).join('')}</select></label>${btn('template-add-charge','添加')}</div>`}${templateSharedNote(editor)}${templateMoreSettings(editor)}<div class="ops-template-actions"><button class="button primary" type="submit">保存模板</button></div></form>${templateSavePanel()}`:''}</section>`;
+    return `<section class="ops-template-workbench"><div class="ops-toolbar">${btn('template-new','新增模板')}</div>${pendingOceanTable()}${groups.length?`<nav class="ops-template-source-tabs" aria-label="费用模板来源"><button type="button" class="console-tab" data-action="ops-template-primary" data-primary="reference"${reference?' aria-current="page"':''}>参考费用 · ${groups.length} 组</button><button type="button" class="console-tab" data-action="ops-template-primary" data-primary="templates"${!reference?' aria-current="page"':''}>费用模板 · ${templates.length} 个</button></nav>`:''}${empty?`<div class="empty-state"><h2>${reference?'没有可用的参考费用':'还没有费用模板'}</h2><p>${reference?'参考费用只用于核对其他费用；基础海运费请在海运费表维护。':'新增模板后维护名称、适用范围和其他费用。'}</p>${reference?btn('tab','查看费用库','data-tab="charges"'):''}</div>`:''}${editor?`<form data-fcl-form="ops-template">${templateIssuePanel()}<div class="ops-template-head">${selector}<p class="muted">${applicability}</p><div class="head-actions">${reference?'':`<span class="badge${templateStatus(editor.value)==='已生效'?'':' warning'}">${esc(templateStatus(editor.value))}</span>`}${reference?btn('template-new-from-reference','设为费用模板'):''}${btn('template-cancel','取消修改')}</div></div>${reference?'':`<div class="field-grid ops-template-basics"><label class="field">模板名称<input name="template.label" value="${esc(editor.value.label)}" required></label><label class="field">目的港<input name="template.pod" value="${esc(editor.value.pod)}" required></label><label class="field">目的地<input name="template.destination" value="${esc(editor.value.destination)}" required></label></div>`}${templateChargeTable(editor)}${reference?'':`<div class="ops-template-add">${btn('template-new-charge','新增费用')}${addable.length?`<label class="field">添加其他费用<select name="template_add_charge"><option value="">请选择</option>${addable.map(({charge,index})=>`<option value="${index}">${esc(charge.name_zh)} · ${esc(charge.amount)} ${charge.currency}</option>`).join('')}</select></label>${btn('template-add-charge','添加')}`:''}</div>`}${templateSharedNote(editor)}${templateMoreSettings(editor)}<div class="ops-template-actions"><button class="button primary" type="submit">保存模板</button></div></form>${templateSavePanel()}`:''}</section>`;
   };
   const configurationChangeScope=()=>{
     const active=publishedDataset();
@@ -421,27 +408,36 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const pendingOceanTable=()=>{
     const entries=pendingOceanEntries();
     if(!entries.length)return '';
-    return `<section class="ops-rate-pending"><div class="ops-toolbar"><h2>待核对海运费</h2><span class="muted">${entries.length} 项</span></div><p class="muted">历史基础海运费保留原金额、币种和单位。确认排除后只记录说明，不删除原记录，也不参与模板叠加。重复基础海运费或与模板同名的费用会阻止发布。</p><div class="table-wrap"><table><thead><tr><th>费用名称</th><th>位置</th><th>金额</th><th>币种</th><th>单位</th><th>来源</th><th>状态</th><th></th></tr></thead><tbody>${entries.map(entry=>{const excluded=entry.resolution?.action==='exclude';return `<tr><td><strong>${esc(entry.name)}</strong><small>${esc(entry.code)}</small></td><td>${entry.kind==='fee'?'海运费附费':'基础费用库'}</td><td class="num">${esc(entry.amount)}</td><td>${esc(entry.currency)}</td><td>${entry.unit==='CNTR'?'按柜':entry.unit==='SHIPMENT'?'按票':'固定金额'}</td><td>${esc(entry.source_ref||'—')}</td><td><span class="badge${excluded?' success':' warning'}">${excluded?'已确认排除':'待核对'}</span>${excluded&&entry.resolution?.reason?`<small>${esc(entry.resolution.reason)}</small>`:''}</td><td>${excluded?'—':btn('ocean-exclude','确认排除',`data-id="${esc(entry.id)}"`)}</td></tr>`;}).join('')}</tbody></table></div></section>`;
+    return `<details class="ops-rate-pending"><summary>历史基础海运费 · ${entries.filter(entry=>entry.resolution?.action!=='exclude').length} 项待核对</summary><p class="muted">历史基础海运费保留原金额、币种和单位。确认排除后只记录说明，不删除原记录，也不参与模板叠加。未核对的重复费用会阻止生成报价。</p><div class="table-wrap"><table><thead><tr><th>费用名称</th><th>位置</th><th>金额</th><th>币种</th><th>单位</th><th>来源</th><th>状态</th><th></th></tr></thead><tbody>${entries.map(entry=>{const excluded=entry.resolution?.action==='exclude';return `<tr><td><strong>${esc(entry.name)}</strong><small>${esc(entry.code)}</small></td><td>${entry.kind==='fee'?'海运费附费':'基础费用库'}</td><td class="num">${esc(entry.amount)}</td><td>${esc(entry.currency)}</td><td>${entry.unit==='CNTR'?'按柜':entry.unit==='SHIPMENT'?'按票':'固定金额'}</td><td>${esc(entry.source_ref||'—')}</td><td><span class="badge${excluded?' success':' warning'}">${excluded?'已确认排除':'待核对'}</span>${excluded&&entry.resolution?.reason?`<small>${esc(entry.resolution.reason)}</small>`:''}</td><td>${excluded?'—':btn('ocean-exclude','确认排除',`data-id="${esc(entry.id)}"`)}</td></tr>`;}).join('')}</tbody></table></div></details>`;
   };
   const filteredRates=()=>draft.rates.map((rate,index)=>({rate,index})).filter(({rate})=>{
-    const carrier=String(rate.supplier_label||'').toLocaleLowerCase(),pol=String(rate.pol||'').toLocaleLowerCase(),pod=String(rate.pod||'').toLocaleLowerCase();
+    const carrier=String(draftOptions().rate_details.find(detail=>detail.rate_id===rate.rate_id)?.carrier||rate.supplier_label||'').toLocaleLowerCase(),pol=String(rate.pol||'').toLocaleLowerCase(),pod=String(rate.pod||'').toLocaleLowerCase();
     return (!rateFilter.pol||pol.includes(rateFilter.pol.toLocaleLowerCase()))&&(!rateFilter.pod||pod.includes(rateFilter.pod.toLocaleLowerCase()))&&(!rateFilter.carrier||carrier.includes(rateFilter.carrier.toLocaleLowerCase()));
   });
   const oceanTable=()=>{
     const rows=filteredRates();
-    return `${rateFilterForm()}${pendingOceanTable()}<section class="ops-rate-panel"><div class="ops-toolbar">${btn('ocean-add','新增海运费')}<span class="muted">${rows.length} / ${draft.rates.length} 条</span></div><div class="table-wrap"><table class="ops-ocean-table"><thead><tr><th>起运港</th><th>目的港</th><th>船公司</th>${types.map(t=>`<th>${t}</th>`).join('')}<th>币种</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${rows.map(({rate:r,index:i})=>{const detail=draftOptions().rate_details.find(d=>d.rate_id===r.rate_id),currencies=[...new Set(r.items.map(x=>x.currency))],nonZero=r.items.some(item=>{try{return new Decimal(item.ocean_freight).gt(0);}catch{return false;}});return `<tr><td>${cell(i,'pol',r.pol)}</td><td>${cell(i,'pod',r.pod)}</td><td>${cell(i,'supplier_label',r.supplier_label)}</td>${types.map(t=>`<td class="num">${cell(i,'price:'+t,r.items.find(x=>x.container_type===t)?.ocean_freight,'inputmode="decimal" placeholder="—"')}</td>`).join('')}<td><select data-ocean-index="${i}" data-ocean-key="currency" aria-label="第 ${i+1} 行币种">${currencies.length>1?'<option value="mixed">多币种</option>':''}${['USD','CAD','CNY'].map(c=>`<option${currencies.length<=1&&c===(currencies[0]||oceanCurrencies.get(r.rate_id)||'USD')?' selected':''}>${c}</option>`).join('')}</select></td><td class="ops-updated">${esc(updatedLabel(r))}</td><td class="ops-row-actions">${btn('ocean-more','来源',`data-index="${i}"`)}${btn('ocean-sailing','查船期',`data-index="${i}"${isCoscoScheduleRate(r,detail)?'':' disabled'}`)}${nonZero?'<button type="button" class="button" disabled title="非零海运费不能直接删除，请先在待核对区确认">待核对</button>':btn('ocean-disable','移除',`data-index="${i}"`)}</td></tr>`;}).join('')||`<tr><td colspan="10" class="muted">没有符合筛选条件的海运费。</td></tr>`}</tbody></table></div><p class="muted">空白柜型表示未提供价格。基础海运费只在当前表维护；船期查询不会改动金额。</p></section>`;
+    return `${rateFilterForm()}${pendingOceanTable()}<section class="ops-rate-panel"><div class="ops-toolbar">${btn('ocean-add','新增海运费')}<button type="button" class="button primary" data-action="ops-save-config">保存运价</button><span class="muted">${rows.length} / ${draft.rates.length} 条</span></div><div class="table-wrap"><table class="ops-ocean-table"><thead><tr><th>起运港</th><th>目的港</th><th>船公司</th>${types.map(t=>`<th>${t}</th>`).join('')}<th>币种</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${rows.map(({rate:r,index:i})=>{const detail=draftOptions().rate_details.find(d=>d.rate_id===r.rate_id),currencies=[...new Set(r.items.map(x=>x.currency))];return `<tr><td>${cell(i,'pol',r.pol)}</td><td>${cell(i,'pod',r.pod)}</td><td>${cell(i,'carrier',detail?.carrier,'placeholder="待补充"')}</td>${types.map(t=>`<td class="num">${cell(i,'price:'+t,r.items.find(x=>x.container_type===t)?.ocean_freight,'inputmode="decimal" placeholder="—"')}${currencies.length>1?`<small>${esc(r.items.find(x=>x.container_type===t)?.currency||'')}</small>`:''}</td>`).join('')}<td><select data-ocean-index="${i}" data-ocean-key="currency" aria-label="第 ${i+1} 行币种">${currencies.length>1?'<option value="mixed">多币种</option>':''}${['USD','CAD','CNY'].map(c=>`<option${currencies.length<=1&&c===(currencies[0]||oceanCurrencies.get(r.rate_id)||'USD')?' selected':''}>${c}</option>`).join('')}</select></td><td class="ops-updated">${esc(updatedLabel(r))}</td><td class="ops-row-actions">${btn('ocean-more','来源',`data-index="${i}"`)}${btn('ocean-sailing','查船期',`data-index="${i}"${isCoscoScheduleRate(r,detail)?'':' disabled'}`)}${btn('ocean-disable','停用',`data-index="${i}"`)}</td></tr>`;}).join('')||`<tr><td colspan="10" class="muted">没有符合筛选条件的海运费。</td></tr>`}</tbody></table></div><p class="muted">空白柜型表示未提供价格。基础海运费只在当前表维护；船期查询不会改动金额。</p></section>`;
   };
   const captureOceanCell=target=>{
     if(target.dataset.oceanIndex===undefined)return false;
     const r=draft.rates[Number(target.dataset.oceanIndex)],key=target.dataset.oceanKey,value=target.value.trim();if(!r)return true;
     if(key.startsWith('price:')){const type=key.slice(6),old=r.items.find(x=>x.container_type===type);r.items=r.items.filter(x=>x.container_type!==type);if(value)r.items.push({container_type:type,ocean_freight:value,currency:old?.currency||r.items[0]?.currency||oceanCurrencies.get(r.rate_id)||'USD'});}
     else if(key==='currency'&&value!=='mixed'){r.items=r.items.map(x=>({...x,currency:value}));oceanCurrencies.set(r.rate_id,value);}
-    else if(['supplier_label','pol','pod','valid_from','valid_until'].includes(key)){if(['supplier_label','pol','pod'].includes(key)&&r[key]!==value){draft.operations.rate_details=draftOptions().rate_details.filter(d=>d.rate_id!==r.rate_id);message='线路或供应商已改变，请重新关联船期。';}r[key]=value;schedules.invalidate();}
+    else if(['carrier','pol','pod'].includes(key)){
+      const old=draftOptions().rate_details.find(detail=>detail.rate_id===r.rate_id);
+      if(key==='carrier'&&old?.carrier===value||key!=='carrier'&&r[key]===value)return true;
+      if(key!=='carrier')r[key]=value;
+      const carrier=key==='carrier'?value:old?.carrier;
+      draft.operations.rate_details=draftOptions().rate_details.filter(detail=>detail.rate_id!==r.rate_id);
+      if(carrier)draft.operations.rate_details.push({rate_id:r.rate_id,carrier,routing:`${r.pol} → ${r.pod}`,vessel:null,voyage:null,etd:null,eta:null,transit_days:null});
+      if(old?.vessel||old?.etd)message='线路或船公司已改变，原船期已解除关联。';
+      schedules.invalidate();
+    }
     markDirty();return true;
   };
   const oceanCurrencies=new Map();
-  const oceanAdvanced=()=>{const r=editor.value,fees=r.additional_fees||[];return `<form class="panel ops-editor" data-fcl-form="ops-ocean-advanced">${errorBox}<header><h2>${esc(r.supplier_label||'海运费')} · 来源</h2>${btn('close-editor','取消')}</header><div class="field-grid">${input('source_ref',r.source_ref,'required')}${input('source_version',r.source_version,'required')}${input('note',r.note)}</div><p class="muted">填写实际文件、邮件或供应商报价编号，不要用船期查询来源代替价格依据。</p><details><summary>历史随海运附费（只读）</summary>${fees.length?`<div class="table-wrap"><table><thead><tr><th>名称</th><th>金额</th><th>币种</th><th>单位</th><th>分组</th><th>核对</th></tr></thead><tbody>${fees.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${esc(f.cost_price)}</td><td>${esc(f.currency)}</td><td>${f.unit==='CNTR'?'按柜':'按票'}${f.unit==='CNTR'&&f.container_type?` · ${esc(f.container_type)}`:''}</td><td>${esc(f.group)}</td><td>${isBaseOceanFreight({code:'',name:f.name})?(f.ocean_freight_resolution?.action==='exclude'?'已确认排除':'待核对'):'历史明细'}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">没有历史随海运附费。</p>'}<p class="muted">历史附费保留用于核对，不再从海运费表新增或修改；其他费用请在费用模板中维护。</p></details><button class="button primary" type="submit">加入草稿</button></form>`;};
-  const captureOceanAdvanced=form=>{if(!form||editor?.kind!=='ocean')return;const d=new FormData(form),r=editor.value,v=k=>String(d.get(k)||'').trim();r.source_ref=v('source_ref');r.source_version=v('source_version');r.note=v('note')||null;};
+  const oceanAdvanced=()=>{const r=editor.value,fees=r.additional_fees||[];return `<form class="panel ops-editor" data-fcl-form="ops-ocean-advanced">${errorBox}<header><h2>${esc(r.supplier_label||'海运费')} · 来源</h2>${btn('close-editor','取消')}</header><div class="field-grid">${input('supplier_label',r.supplier_label)}${input('source_ref',r.source_ref,'required')}${input('source_version',r.source_version,'required')}${input('note',r.note)}</div><p class="muted">填写实际文件、邮件或供应商报价编号，不要用船期查询来源代替价格依据。</p><details><summary>历史随海运附费（只读）</summary>${fees.length?`<div class="table-wrap"><table><thead><tr><th>名称</th><th>金额</th><th>币种</th><th>单位</th><th>分组</th><th>核对</th></tr></thead><tbody>${fees.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${esc(f.cost_price)}</td><td>${esc(f.currency)}</td><td>${f.unit==='CNTR'?'按柜':'按票'}${f.unit==='CNTR'&&f.container_type?` · ${esc(f.container_type)}`:''}</td><td>${esc(f.group)}</td><td>${isBaseOceanFreight({code:'',name:f.name})?(f.ocean_freight_resolution?.action==='exclude'?'已确认排除':'待核对'):'历史明细'}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">没有历史随海运附费。</p>'}<p class="muted">历史附费保留用于核对，不再从海运费表新增或修改；其他费用请在费用模板中维护。</p></details><button class="button primary" type="submit">加入草稿</button></form>`;};
+  const captureOceanAdvanced=form=>{if(!form||editor?.kind!=='ocean')return;const d=new FormData(form),r=editor.value,v=k=>String(d.get(k)||'').trim();r.supplier_label=v('supplier_label')||'未填写供应商';r.source_ref=v('source_ref');r.source_version=v('source_version');r.note=v('note')||null;};
   const oceanAction=async button=>{
     const name=button.dataset.action;
     if(name==='ops-disable-release'){if(!window.confirm('确认停用当前运价发布？已保存的历史报价将保留。'))return true;view=requireData(await write('rate-disable',{expected_version:view.version}));draft=clone(view.draft);publication=null;dirty=false;await refresh();rerender();return true;}
@@ -460,17 +456,15 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(name==='ops-ocean-sailing'){schedules.show(r,query.shipping_date||'',draftOptions().rate_details.find(d=>d.rate_id===r.rate_id));return true;}
     if(editor){message='请先将编辑内容加入草稿或取消。';rerender();return true;}
     if(name==='ops-ocean-more'){editor={kind:'ocean',index:i,value:clone(r)};rerender();return true;}
-    if(name==='ops-ocean-add')draft.rates.push({rate_id:crypto.randomUUID(),supplier_label:'',pol:query.pol,pod:routePod,valid_from:null,valid_until:null,source_ref:'',source_version:'v1',note:null,items:[],additional_fees:[]});
+    if(name==='ops-ocean-add')draft.rates.push({rate_id:crypto.randomUUID(),supplier_label:'未填写供应商',pol:query.pol,pod:routePod,valid_from:null,valid_until:null,source_ref:`manual:${crypto.randomUUID()}`,source_version:'v1',note:null,items:[],additional_fees:[]});
     if(name==='ops-ocean-disable'){
-      const nonZero=r.items.some(item=>{try{return new Decimal(item.ocean_freight).gt(0);}catch{return false;}});
-      if(nonZero){message='非零海运费不能直接删除，请先确认来源或使用待核对区处理。';rerender();return true;}
       if(draft.rates.length===1){message='最后一条海运费请通过高级设置中的“停用当前运价发布”停用。';rerender();return true;}
-      if(!window.confirm('移除这条空海运费？'))return true;draft.rates.splice(i,1);draft.operations.rate_details=draftOptions().rate_details.filter(d=>d.rate_id!==r.rate_id);schedules.invalidate();
+      if(!window.confirm('从今后的报价中停用这条运价？历史报价和价格版本仍保留。'))return true;draft.rates.splice(i,1);draft.operations.rate_details=draftOptions().rate_details.filter(d=>d.rate_id!==r.rate_id);schedules.invalidate();
     }
     markDirty();rerender();return true;
   };
   const unpublished=()=>!view?.active_release||JSON.stringify(draft)!==JSON.stringify(view.active_release.input);
-  const publicationPanel=()=>`<details class="panel ops-publication"${dirty||publication||unpublished()?' open':''}><summary>保存与发布${dirty?' · 有未保存修改':unpublished()?' · 草稿待发布':''}</summary><div class="ops-savebar"><span>草稿第 ${view.version} 版 · ${view.active_release?'已有发布版本':'尚未发布'}</span>${btn('save-config','保存草稿')}${btn('preview-config','预览发布')}${publication?`<label><input type="checkbox" id="ops-config-confirm">已核对来源与条件</label>${btn('publish-config','确认发布',publication.can_publish?'':'disabled')}`:''}</div><p class="muted">发布后用于报价；每次变更保留原有版本和核对记录。</p></details>`;
+  const publicationPanel=()=>section==='rates'?`<div class="ops-savebar"><span class="muted">${dirty?'有未保存修改':unpublished()?'草稿待生效':'当前运价已生效'}</span>${publication?`<label><input type="checkbox" id="ops-config-confirm">已核对价格和来源</label>${btn('publish-config','确认生效',publication.can_publish?'':'disabled')}`:''}</div>`:`<details class="panel ops-publication"${dirty||publication||unpublished()?' open':''}><summary>保存与发布${dirty?' · 有未保存修改':unpublished()?' · 草稿待发布':''}</summary><div class="ops-savebar"><span>草稿第 ${view.version} 版 · ${view.active_release?'已有发布版本':'尚未发布'}</span>${btn('save-config','保存草稿')}${btn('preview-config','预览发布')}${publication?`<label><input type="checkbox" id="ops-config-confirm">已核对来源与条件</label>${btn('publish-config','确认发布',publication.can_publish?'':'disabled')}`:''}</div><p class="muted">发布后用于报价；每次变更保留原有版本和核对记录。</p></details>`;
   const advancedPanel=()=>`<details class="panel ops-advanced"${advanced?' open':''}><summary>高级维护</summary><nav class="ops-toolbar">${['charges','delivery_rates','rate_details'].map(key=>btn('tab',sectionNames[key],`data-tab="${key}"`)).join('')}<a class="button" href="#fcl/config">报价与通知设置</a>${btn('bulk','批量调价')}${view.active_release?btn('disable-release','停用当前运价发布'):''}</nav>${['charges','delivery_rates','rate_details'].includes(section)?recordList():''}<details><summary>发布历史与回退</summary>${(view.history||[]).map(r=>`<p>第 ${r.version} 版 · ${esc(r.published_at)} ${btn('rollback','回退为新发布',`data-id="${esc(r.release_id)}"`)}</p>`).join('')||'<p>暂无发布记录</p>'}</details></details>`;
   const render=(id='',initial='')=>{
     if(initial!==entrySection){entrySection=initial;if(initial)section=initial;}
@@ -513,7 +507,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
       rerender();return true;
     }
     if(kind==='ops-ocean-advanced'){captureOceanAdvanced(form);const {source_ref,source_version,note,additional_fees}=editor.value;Object.assign(draft.rates[editor.index],{source_ref,source_version,note,additional_fees});editor=null;markDirty();rerender();return true;}
-    if(kind==='ops-record'){captureEditor(form);const group=draftOptions()[editor.kind];if(editor.index===null)group.push(clone(editor.value));else group[editor.index]=clone(editor.value);editor=null;dirty=true;publication=null;message='已加入草稿；保存并发布后用于计算。';rerender();return true;}
+    if(kind==='ops-record'){captureEditor(form);if(editor.kind==='charges'&&isBaseOceanFreight(editor.value)){message='基础海运费请在海运费表维护。';rerender();return true;}const group=draftOptions()[editor.kind];if(editor.index===null)group.push(clone(editor.value));else group[editor.index]=clone(editor.value);editor=null;dirty=true;publication=null;message='已加入草稿；保存并发布后用于计算。';rerender();return true;}
     if(kind==='ops-run'){
       captureQuery(form);
       if(!publishedDataset()){message='当前没有已发布的海运费与费用模板，请先完成模板维护并发布。';rerender();return true;}
@@ -541,6 +535,16 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(name==='ops-rate-filter-clear'){rateFilter={pol:'',pod:'',carrier:''};rerender();return true;}
     if(await oceanAction(button))return true;
     const id=button.dataset.id,estimate=items.find(i=>i.estimate_id===id);
+    if(name==='ops-template-new'){
+      if(templateEditorDirty()){message='请先保存或取消当前模板修改。';rerender();return true;}
+      const value={...newRecord('templates'),pod:routePod,destination:routeDestination,margin_rule:{mode:'cost_markup',value:'0'},service_mode:'container_drayage',customs_mode:'按本票要求',fx_source:'手工维护',enabled:true};
+      templatePrimary='templates';templateId=value.id;templateIndex=-1;templateEditor={kind:'template',index:null,id:value.id,isNew:true,base:null,value,marginPercent:'0',marginPercentInvalid:false,charges:[]};templateMoreOpen=false;templateIssues=[];rerender();return true;
+    }
+    if(name==='ops-template-new-charge'){
+      const form=document.querySelector('[data-fcl-form="ops-template"]');if(form)captureTemplateEditor(form);
+      const value={...newRecord('charges'),source_ref:`manual:${crypto.randomUUID()}`,container_types:[...templateEditor.value.container_types]};
+      templateEditor.charges.push({chargeId:value.id,selectedIndex:null,original:null,value,candidates:[],isNew:true});templateEditor.value.charge_ids.push(value.id);invalidateTemplatePublication();rerender();return true;
+    }
     if(name==='ops-template-primary'){
       if(templatePrimary===button.dataset.primary)return true;
       if(templateEditorDirty()&&!window.confirm('切换分区会取消尚未保存的费用修改，是否继续？'))return true;
@@ -590,7 +594,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(name==='ops-new'||name==='ops-copy-record'||name==='ops-next-version'||name==='ops-edit'){if(editor){message='请先保存或取消当前编辑。';rerender();return true;}const kind=button.dataset.kind,index=button.dataset.index===undefined?null:Number(button.dataset.index),value=index===null?newRecord(kind):clone(draftOptions()[kind][index]);if(name==='ops-copy-record'&&kind!=='rate_details'){value.id=crypto.randomUUID();value.version=1;}else if(index!==null&&kind!=='rate_details')value.version=Math.max(...draftOptions()[kind].filter(r=>r.id===value.id).map(r=>r.version))+1;if(name==='ops-next-version'){value.valid_from='';value.valid_until='';}editor={kind,index:['ops-copy-record','ops-next-version'].includes(name)?null:index,value};rerender();return true;}
     if(name==='ops-close-editor'){editor=null;rerender();return true;}
     if(name==='ops-add-tier'){captureEditor(document.querySelector('[data-fcl-form="ops-record"]'));editor.value.tiers.push({min_kg:'',max_kg:'',amount:''});rerender();return true;}
-    if(name==='ops-save-config'){if(editor){message='请先将编辑内容加入草稿。';rerender();return true;}const checked=fclRateDatasetSchema.safeParse(maintenanceValidationDraft(draft));if(!checked.success){message='请补充或核对：'+checked.error.issues.slice(0,4).map(issue=>{const keys=issue.path,field=FCL_FIELDS[keys.at(-1)]?.zh||'金额或适用条件',group=keys[0]==='rates'?'海运费':sectionNames[keys[1]]||'费用',index=keys.find(k=>typeof k==='number');return `${group}${index===undefined?'':`第 ${index+1} 项`}的${field}`;}).join('；')+'。价格来源等字段可在“更多信息”或“高级设置”中补充。';rerender();return true;}const data=requireData(await write('rate-save',{expected_version:view.version,input:fclMaintenancePayload(draft)}));view=data;draft=clone(data.draft);dirty=false;publication=null;message='配置草稿已保存。';rerender();return true;}
+    if(name==='ops-save-config'){if(editor){message='请先将编辑内容加入草稿。';rerender();return true;}const checked=fclRateDatasetSchema.safeParse(fclMaintenancePayload(draft));if(!checked.success){message='请补充或核对：'+checked.error.issues.slice(0,4).map(issue=>{const keys=issue.path,field=FCL_FIELDS[keys.at(-1)]?.zh||'金额或适用条件',group=keys[0]==='rates'?'海运费':sectionNames[keys[1]]||'费用',index=keys.find(k=>typeof k==='number');return `${group}${index===undefined?'':`第 ${index+1} 项`}的${field}`;}).join('；')+'。价格来源等字段可在“更多信息”或“高级设置”中补充。';rerender();return true;}const data=requireData(await write('rate-save',{expected_version:view.version,input:fclMaintenancePayload(draft)}));view=data;draft=clone(data.draft);dirty=false;publication=null;publication=requireData(await call('rate-preview',{},'GET'));message=publication.can_publish?'运价已保存，请核对后确认生效。':'运价已保存，请核对提示项目。';rerender();return true;}
     if(name==='ops-preview-config'){if(dirty||editor||batch){message='请先保存或取消当前编辑。';rerender();return true;}publication=requireData(await call('rate-preview',{},'GET'));message=publication.can_publish?'校验通过，请确认后发布。':`尚不能发布：${(publication.blockers||[]).map(fclIssue).join('、')}`;rerender();return true;}
     if(name==='ops-publish-config'){
       if(dirty||templateEditorDirty()||!publication){invalidateTemplatePublication();message='有未保存的费用修改，请先保存并重新检查。';rerender();return true;}

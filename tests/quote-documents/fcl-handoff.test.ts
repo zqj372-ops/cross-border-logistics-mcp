@@ -221,12 +221,12 @@ it('replays historical evidence without presenting it as current after a case ch
   }finally{closeFixture(f);}
 });
 
-it('rejects other people, enterprise contexts, and operators',async()=>{
+it('isolates other people and operators while ignoring the same account enterprise selection',async()=>{
   const f=await readyFixture();
   try{
     const request={contract_version:FCL_HANDOFF_VERSION,case_ref:f.confirmed.case_id};
     expect(()=>f.workflow.getFclHandoff(other,request)).toThrow('fcl_not_found');
-    expect(()=>f.workflow.getFclHandoff(enterprise,request)).toThrow('fcl_not_found');
+    expect(f.workflow.getFclHandoff(enterprise,request)).toEqual(f.workflow.getFclHandoff(receiver,request));
     expect(()=>f.workflow.getFclHandoff(operator,request)).toThrow('fcl_not_found');
   }finally{closeFixture(f);}
 });

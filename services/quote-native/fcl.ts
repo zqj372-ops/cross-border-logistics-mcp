@@ -4,6 +4,7 @@ import { PortalError } from '../access-gateway/portal/contracts';
 import type { FclRateAdminView, NativeAdminService } from '../access-gateway/portal/native-admin';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import {isBaseOceanFreight} from './fcl-fee-identity';
 import { D, divideRatio, roundMoney } from '../quote-documents/money';
 import {
   type FCL_DOCUMENT_WORKFLOW_VERSION,
@@ -230,6 +231,10 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
     }
   }
   input.selected.rate.additional_fees.forEach((fee,index)=>{
+    if(isBaseOceanFreight(fee)){
+      if(fee.ocean_freight_resolution?.action==='exclude')return;
+      throw new PortalError('fcl_legacy_ocean_fee_review');
+    }
     if(!caseProjection.services.includes(fee.service))return;
     let quantity='1';
     if(fee.unit==='CNTR'){
@@ -262,6 +267,7 @@ export function buildFclCostSellSnapshot(input:BuildFclCostSellSnapshotInput):Fc
   if(sourceOverrides.size>0)throw new PortalError('fcl_quote_source_row_unknown');
 
   const manualRows:FclRawCostRow[]=input.input.manual_fees.map(fee=>{
+    if(isBaseOceanFreight(fee))throw new PortalError('fcl_base_ocean_fee_duplicate');
     const container=fee.unit==='CNTR'&&fee.container_type!==null?caseProjection.containers.find(candidate=>candidate.type===fee.container_type):null;
     if(fee.unit==='SHIPMENT'&&!new D(fee.quantity).eq(1))throw new PortalError('fcl_quote_scope_invalid');
     if(fee.unit==='CNTR'&&(!container||!new D(container.quantity).eq(fee.quantity)))throw new PortalError('fcl_quote_scope_invalid');
@@ -482,14 +488,14 @@ const candidateFromRate = (release: FclRatePublication, rate: FclRatePublication
   dataset_digest: release.digest,
   source_ref: rate.source_ref,
   source_version: rate.source_version,
-  valid_from: rate.valid_from,
-  valid_until: rate.valid_until,
+  valid_from: null,
+  valid_until: null,
   rate,
 });
 
 const rateMatches = (input: FclCaseView['current_input'], rate: FclRateDataset['rates'][number], shippingDate?:string): boolean => {
   if (input.pol !== rate.pol || input.pod !== rate.pod || input.cargo_ready_date === null) return false;
-  if ((shippingDate??input.cargo_ready_date) < rate.valid_from || (shippingDate??input.cargo_ready_date) > rate.valid_until) return false;
+  void shippingDate;
   const containers = new Set(rate.items.map((item) => item.container_type));
   return input.containers.every((container) => containers.has(container.type));
 };

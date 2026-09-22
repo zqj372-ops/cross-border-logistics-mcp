@@ -1,10 +1,11 @@
 import {createHash,randomUUID} from 'node:crypto';
+import {prepareFclMaintenance} from '../../quote-native/fcl-maintenance';
 import {z} from 'zod';
 import {PortalError,type PortalContext} from './contracts';
 import type {NativeAdminStore,FclRateAdminView} from './native-admin';
 import {nativeDataSchema} from './native-admin-contracts';
 import {fclRateDatasetSchema,type FclRatePublication} from '../../quote-native/fcl-contracts';
-import {calculateFclEstimate,refreshFclEstimateTotals} from '../../quote-native/fcl-operations';
+import {calculateFclEstimate,refreshFclEstimateTotals,fclDeliveryValidity} from '../../quote-native/fcl-operations';
 import {
   FCL_OPERATIONS_VERSION,FCL_RATE_DATASET_V2,fclEstimateRequestSchema,fclEstimateGetSchema,fclEstimateListRequestSchema,
   fclEstimateActionSchema,fclEstimateAdjustSchema,fclEstimateSnapshotSchema,fclEstimateViewSchema,
@@ -35,7 +36,8 @@ export class FclOperationsService {
     const owner=this.deps.authorize(ctx),current=this.current(owner.scope,snapshot.estimate_id);const reasons:string[]=[];
     if(snapshot.version!==current.version)reasons.push('fcl_estimate_historical');
     try{const release=this.release(ctx);const recalculated=calculateFclEstimate(release.input,snapshot.request,snapshot.calculation.rate_id,snapshot.calculation.template_id);if(hash(recalculated)!==snapshot.dependency_digest)reasons.push('fcl_estimate_source_changed');}catch{reasons.push('fcl_estimate_source_unavailable');}
-    if(snapshot.calculation.valid_until<owner.now().slice(0,10))reasons.push('fcl_estimate_expired');
+    const deliveryWindow=fclDeliveryValidity(snapshot.calculation);
+    if(deliveryWindow.valid_until!==null&&deliveryWindow.valid_until<owner.now().slice(0,10))reasons.push('fcl_estimate_expired');
     if(snapshot.calculation.blockers.length)reasons.push('fcl_estimate_incomplete');
     return fclEstimateViewSchema.parse({...snapshot,historical:snapshot.version!==current.version,current_version:current.version,currentness:{valid_now:reasons.length===0,reason_codes:reasons}});
   }
@@ -139,8 +141,8 @@ export class FclOperationsService {
     const changes=request.changes.map(change=>{
       const rate=candidate.rates.find(r=>r.rate_id===change.rate_id),item=rate?.items.find(i=>i.container_type===change.container_type),identity=`${change.rate_id}:${change.container_type}`;
       if(!rate||!item||seen.has(identity))throw new PortalError('fcl_bulk_rate_input_invalid');seen.add(identity);
-      const window=JSON.stringify([change.valid_from,change.valid_until,change.source_ref,change.source_version]);if(windows.has(change.rate_id)&&windows.get(change.rate_id)!==window)throw new PortalError('fcl_bulk_rate_window_conflict');windows.set(change.rate_id,window);
-      const original=item.ocean_freight;item.ocean_freight=change.ocean_freight;rate.valid_from=change.valid_from;rate.valid_until=change.valid_until;rate.source_ref=change.source_ref;rate.source_version=change.source_version;
+      const window=JSON.stringify([change.source_ref,change.source_version]);if(windows.has(change.rate_id)&&windows.get(change.rate_id)!==window)throw new PortalError('fcl_bulk_rate_window_conflict');windows.set(change.rate_id,window);
+      const original=item.ocean_freight;item.ocean_freight=change.ocean_freight;delete rate.valid_from;delete rate.valid_until;rate.source_ref=change.source_ref;rate.source_version=change.source_version;
       return {rate_id:change.rate_id,container_type:change.container_type,original_amount:original,adjusted_amount:change.ocean_freight,currency:item.currency};
     });
     const validated=fclRateDatasetSchema.safeParse(candidate);if(!validated.success)throw new PortalError('fcl_bulk_rate_input_invalid');
@@ -162,7 +164,8 @@ export class FclOperationsService {
     return this.write(ctx,'rate-bulk-publish',request,key,nativeDataSchema('fcl') as z.ZodType<FclRateAdminView>,()=>{
       const {preview_hash,confirmation,...proposal}=request;void preview_hash;void confirmation;const batch=this.batch(ctx,proposal);
       if(batch.preview.preview_hash!==request.preview_hash)throw new PortalError('native_preview_mismatch');
-      const release:FclRatePublication={release_id:randomUUID(),version:request.expected_version+1,input:batch.candidate,published_at:owner.now(),digest:hash(batch.candidate)};
+      const candidate=prepareFclMaintenance(batch.candidate,this.release(ctx).input,owner.now());
+      const release:FclRatePublication={release_id:randomUUID(),version:request.expected_version+1,input:candidate,published_at:owner.now(),digest:hash(candidate)};
       const db=this.deps.store.db;db.prepare('INSERT INTO native_releases VALUES(?,?,?,?)').run(release.release_id,owner.scope,'fcl',JSON.stringify(release));
       db.prepare("UPDATE native_configs SET version=?,draft=?,active=? WHERE scope=? AND kind='fcl'").run(release.version,JSON.stringify(release.input),release.release_id,owner.scope);
       this.reprice(ctx,release);

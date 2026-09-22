@@ -125,12 +125,12 @@ describe('personal FCL document configuration',()=>{
     documentStore.close();
   });
 
-  it('rejects non-receivers, enterprise contexts, operators, inactive receivers, and missing configuration scope',()=>{
+  it('provides isolated empty configuration per account and rejects inactive identities',()=>{
     const dir=root(),documentStore=new DocumentStore(join(dir,'documents.sqlite'),freshFcl),active={value:true};
     const fcl=service(documentStore,{receiverUserId:receiverId,receiverIsActive:()=>active.value,now:()=> '2026-09-20T12:00:00.000Z'});
-    expect(()=>fcl.fclConfig(other)).toThrow('fcl_not_found');
-    expect(()=>fcl.fclConfig(enterprise)).toThrow('fcl_not_found');
-    expect(()=>fcl.fclConfig({organizationId:null,identity:{...receiver.identity,userId:'operator',platformRole:'operator'}})).toThrow('fcl_not_found');
+    expect(fcl.fclConfig(other)).toMatchObject({version:0,input:null});
+    expect(fcl.fclConfig(enterprise)).toMatchObject({version:0,input:null});
+    expect(fcl.fclConfig({organizationId:null,identity:{...receiver.identity,userId:'operator',platformRole:'operator'}})).toMatchObject({version:0,input:null});
     active.value=false;
     expect(()=>fcl.fclConfig(receiver)).toThrow('fcl_unavailable');
     documentStore.close();
@@ -216,10 +216,12 @@ describe('personal FCL document configuration',()=>{
     documentStore.close();
   });
 
-  it('blocks a receiver switch when another personal owner already exists',()=>{
+  it('preserves existing personal owners when the public receiver changes',()=>{
     const dir=root(),documentStore=new DocumentStore(join(dir,'documents.sqlite'),freshFcl);
     service(documentStore).saveFclConfig(receiver,saveBody(),'fcl-document-owner-switch-0001');
-    expect(()=>service(documentStore,{receiverUserId:otherId,receiverIsActive:()=>true})).toThrow('fcl_receiver_configuration_mismatch');
+    const next=service(documentStore,{receiverUserId:otherId,receiverIsActive:()=>true});
+    expect(next.fclConfig(other)).toMatchObject({version:0,input:null});
+    expect(next.fclConfig(receiver)).toMatchObject({version:1});
     documentStore.close();
   });
 

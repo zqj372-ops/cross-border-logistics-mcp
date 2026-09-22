@@ -186,9 +186,9 @@ describe('personal FCL cost sell quotes',()=>{
   it('enforces personal authorization, CAS, idempotency and true readback rollback',async()=>{
     const f=await setup();
     const created=f.documentWorkflow.saveFclQuote(receiver,createRequest(f),'fcl-quote-create-0002');
-    expect(()=>f.documentWorkflow.getFclQuote(other,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toThrow('fcl_not_found');
-    expect(()=>f.documentWorkflow.getFclQuote(enterprise,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toThrow('fcl_not_found');
-    expect(()=>f.documentWorkflow.getFclQuote(operator,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toThrow('fcl_not_found');
+    expect(()=>f.documentWorkflow.getFclQuote(other,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toThrow('fcl_quote_not_found');
+    expect(()=>f.documentWorkflow.getFclQuote(enterprise,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toThrow('fcl_quote_not_found');
+    expect(()=>f.documentWorkflow.getFclQuote(operator,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:created.quote_ref,version:null})).toThrow('fcl_quote_not_found');
     expect(()=>f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:created.quote_ref,expected_version:2,source_binding:{mode:'retain'},input:draftInput('3600')},'fcl-quote-update-0002')).toThrow('version_conflict');
     const replay=f.documentWorkflow.saveFclQuote(receiver,createRequest(f),'fcl-quote-create-0002');
     expect(replay.replay).toEqual({replayed:true,submitted_version:1,current:true});
@@ -280,7 +280,7 @@ describe('personal FCL cost sell quotes',()=>{
       expect(()=>f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:f.quote.quote_ref,expected_version:2,source_binding:{mode:'retain'},input:{...input,remark:'Different body'}},'fcl-estimate-quote-update-01')).toThrow('idempotency_conflict');
       expect(()=>f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:f.quote.quote_ref,expected_version:1,source_binding:{mode:'retain'},input},'fcl-estimate-quote-update-02')).toThrow('version_conflict');
       expect(()=>f.documentWorkflow.saveFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,operation:'update',quote_ref:f.quote.quote_ref,expected_version:2,source_binding:{mode:'replace',expected_case_version:f.confirmed.case_version,expected_customer_supplement_ref:null,selected_rate_id:f.quote.source_snapshot.rate_id,expected_release_id:f.quote.source_snapshot.release_id,expected_release_version:f.quote.source_snapshot.release_version,expected_dataset_digest:f.quote.source_snapshot.dataset_digest},input},'fcl-estimate-quote-update-03')).toThrow('fcl_estimate_replace_rejected');
-      expect(()=>f.documentWorkflow.getFclQuote(other,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:f.quote.quote_ref,version:null})).toThrow('fcl_not_found');
+      expect(()=>f.documentWorkflow.getFclQuote(other,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:f.quote.quote_ref,version:null})).toThrow('fcl_quote_not_found');
     }finally{f.documentStore.close();f.rateStore.close();f.caseStore.close();}
   });
 

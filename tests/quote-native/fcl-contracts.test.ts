@@ -93,10 +93,10 @@ describe('FCL rate dataset contract', () => {
     expect(validateFclRateDataset(duplicateContainer)).toContain('duplicate_container_type');
   });
 
-  it('requires real dates with valid_from not after valid_until', () => {
+  it('accepts unused historical maintenance dates without imposing their order', () => {
     const inverted = dataset();
     inverted.rates[0]!.valid_from = '2027-01-01';
-    expect(validateFclRateDataset(inverted)).toContain('rate_date_order_invalid');
+    expect(validateFclRateDataset(inverted)).toEqual([]);
 
     const impossible = dataset();
     impossible.rates[0]!.valid_from = '2026-02-30';

@@ -12,6 +12,7 @@ import { createOneLiveTransportPolicy } from "../schedule-collector/transport/on
 import type { TransportPolicy } from "../schedule-collector/transport/config";
 import {
   createScheduleLiveService,
+  isPersonalScheduleScope,
   type ScheduleLiveAuditSink,
   type ScheduleLivePolicy,
   type ScheduleLivePersonalAccess,
@@ -110,13 +111,13 @@ export function createProductionScheduleLiveService(options: {
     },
   };
   const policy: ScheduleLivePolicy = {
-    liveEnabled: (tenantId) => allowedTenants.has(tenantId),
+    liveEnabled: (tenantId) => allowedTenants.has(tenantId)||isPersonalScheduleScope(options.personalAccess,tenantId),
     carrierEnabled: (tenantId, carrier) => {
       const normalized = normalizeCarrierId(carrier) ?? carrier;
       // The personal FCL workflow currently accepts COSCO schedules only.
       // Tenant-specific restrictions still apply and cannot widen this scope.
-      if (tenantId === options.personalAccess?.scopeId && normalized !== "COSCO") return false;
-      const allowed = carrierAllowlist[tenantId];
+      if (isPersonalScheduleScope(options.personalAccess,tenantId) && normalized !== "COSCO") return false;
+      const allowed = carrierAllowlist[tenantId]??(isPersonalScheduleScope(options.personalAccess,tenantId)?carrierAllowlist[options.personalAccess!.scopeId]:undefined);
       if (allowed === undefined) return true;
       return allowed.some((entry) => (normalizeCarrierId(entry) ?? entry) === normalized);
     },

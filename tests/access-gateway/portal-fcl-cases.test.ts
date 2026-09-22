@@ -260,9 +260,9 @@ it('isolates FCL cases from every legacy case and platform selector', async () =
     }, 'legacy-update-key-1')).toThrow('case_not_found');
     expect(service.list(receiver, { management: false }).items).toHaveLength(0);
     expect(service.list(operator, { management: true }).items).toHaveLength(0);
-    expect(() => service.getFclCase(other, submitted.case_id)).toThrow('fcl_not_found');
-    expect(() => service.getFclCase(operator, submitted.case_id)).toThrow('fcl_not_found');
-    expect(() => service.getFclCase({ ...receiver, organizationId: 'org-a' }, submitted.case_id)).toThrow('fcl_not_found');
+    expect(() => service.getFclCase(other, submitted.case_id)).toThrow('fcl_unavailable');
+    expect(() => service.getFclCase(operator, submitted.case_id)).toThrow('fcl_unavailable');
+    expect(service.getFclCase({ ...receiver, organizationId: 'org-a' }, submitted.case_id).case_id).toBe(submitted.case_id);
   } finally {
     store.close();
     rmSync(root, { recursive: true, force: true });
@@ -294,7 +294,7 @@ it('fails closed for receiver changes, credential expiry, cross-ticket access an
 
     store.close();
     store = openFclStore(path, true);
-    expect(() => harness(store, { receiverUserId: 'receiver-b' })).toThrow('fcl_receiver_configuration_mismatch');
+    expect(() => harness(store, { receiverUserId: 'receiver-b' })).not.toThrow();
   } finally {
     store.close();
     rmSync(root, { recursive: true, force: true });

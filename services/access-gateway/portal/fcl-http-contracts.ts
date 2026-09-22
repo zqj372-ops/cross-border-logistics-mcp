@@ -71,6 +71,7 @@ export const fclHttpActions=[
   'rate-bulk-publish',
 
   'case-list',
+  'case-create',
   'case-get',
   'case-status',
   'case-staff-supplement',
@@ -111,6 +112,7 @@ export const FCL_STAFF_ACTION_METHODS:Readonly<Record<FclHttpAction,'GET'|'POST'
   'rate-bulk-preview':'POST',
   'rate-bulk-publish':'POST',
   'case-list':'GET',
+  'case-create':'POST',
   'case-get':'POST',
   'case-status':'POST',
   'case-staff-supplement':'POST',
@@ -146,7 +148,7 @@ export const FCL_STAFF_WRITE_ACTIONS=[
   'estimate-select',
   'rate-bulk-publish',
 
-  'case-status','case-staff-supplement','case-confirm','rate-save','rate-publish','rate-disable','rate-rollback',
+  'case-create','case-status','case-staff-supplement','case-confirm','rate-save','rate-publish','rate-disable','rate-rollback',
   'quote-save','issuer-config-save','document-save','document-approve','document-reject','document-export',
   'handoff-save','notification-save',
 ] as const satisfies readonly FclHttpAction[];
@@ -162,6 +164,7 @@ export const FCL_HTTP_BODY_LIMITS:Record<FclHttpAction,number>={
   'rate-bulk-publish':1024*1024,
 
   'case-list':16*1024,
+  'case-create':1024*1024,
   'case-get':16*1024,
   'case-status':1024*1024,
   'case-staff-supplement':1024*1024,
@@ -215,6 +218,7 @@ export const fclHttpRequestSchemas:Record<FclHttpAction,z.ZodType>={
   'rate-bulk-publish':fclBulkPublishRequestSchema,
 
   'case-list':fclCaseListQuerySchema,
+  'case-create':fclCaseInputSchema,
   'case-get':fclCaseIdRequestSchema,
   'case-status':fclCaseStatusRequestSchema,
   'case-staff-supplement':fclCaseStaffSupplementRequestSchema,
@@ -255,6 +259,7 @@ export const fclHttpOutputSchemas:Record<FclHttpAction,z.ZodType>={
   'rate-bulk-publish':nativeDataSchema('fcl'),
 
   'case-list':fclCaseListSchema,
+  'case-create':fclCaseInternalViewSchema,
   'case-get':fclCaseInternalViewSchema,
   'case-status':fclCaseInternalViewSchema,
   'case-staff-supplement':fclCaseInternalViewSchema,

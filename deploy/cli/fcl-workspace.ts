@@ -36,6 +36,7 @@ const description:Record<FclHttpAction,string>={
   'rate-bulk-preview':'预览批量海运费变更',
   'rate-bulk-publish':'发布批量海运费并重算关联方案',
   'case-list':'FCL 询价列表',
+  'case-create':'新建本人受理的整柜询价',
   'case-get':'读取 FCL 询价',
   'case-status':'更新 FCL 询价状态',
   'case-staff-supplement':'工作人员代录 FCL 询价',

@@ -114,7 +114,7 @@ describe('FCL simplified workbench',()=>{
   const header=html.match(/<header class="ops-heading">[\s\S]*?<\/header>/)?.[0]??'';
   expect(header).not.toContain('data-tab="templates"');expect(header).not.toContain('data-tab="rates"');
   expect(html).toContain('data-fcl-form="ops-template"');expect(html).toMatch(/name="charges\.0\.amount"[^>]*value="100"/u);
-  expect(html).not.toContain('charges.0.sell_amount');expect(html).toContain('<th>费用名称</th><th>金额</th><th>币种</th><th>单位</th>');expect(html).toContain('高级已有规则');
+  expect(html).not.toContain('charges.0.sell_amount');expect(html).toContain('<th>费用名称</th><th>金额</th><th>币种</th><th>单位</th>');expect(html).toContain('加价、汇率与其他设置');
   const row=html.match(/<tr data-template-charge="0"[\s\S]*?<\/tr>/)?.[0]??'';expect(row.match(/<td /g)).toHaveLength(5);
   expect(html).not.toContain('加入草稿');expect(html).not.toContain('ratio0.1');
  });
@@ -196,7 +196,7 @@ describe('FCL simplified workbench',()=>{
   expect(html).toContain('data-primary="reference" aria-current="page"');
   expect(html).toContain('参考费用 · 2 组');expect(html).toContain('合成卡尔加里 OA 40HQ · 2 项');
   const table=html.match(/<table class="ops-template-table is-reference">[\s\S]*?<\/table>/)?.[0]??'';
-  expect(table).not.toContain('<strong>海运费</strong>');expect(table).toContain('<strong>港口安保费</strong>');
+  expect(table).not.toContain('<strong>海运费</strong>');expect(table).toContain('value="港口安保费"');
   const row=table.match(/<tr data-template-charge="0"[\s\S]*?<\/tr>/)?.[0]??'';
   expect(row.match(/<td /g)).toHaveLength(4);expect(table).not.toContain('<th></th>');expect(table).not.toContain('其他普通费用');expect(table).not.toContain('合成多伦多 OA 40HQ');
  });
@@ -303,7 +303,7 @@ describe('FCL simplified workbench',()=>{
   ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   const rates=ops.render('', 'rates');
-  expect(rates).toContain('待核对海运费');expect(rates).toContain('海运费 · 合成卡尔加里 OA 40HQ');expect(rates).toContain('>100<');expect(rates).toContain('>CAD<');expect(rates).toContain('按票');
+  expect(rates).toContain('历史基础海运费');expect(rates).toContain('海运费 · 合成卡尔加里 OA 40HQ');expect(rates).toContain('>100<');expect(rates).toContain('>CAD<');expect(rates).toContain('按票');
   expect(rates).toContain('data-action="ops-ocean-exclude"');
   await ops.action({dataset:{action:'ops-template-new-from-reference'}});
   expect(ops.render('', 'templates')).toContain('还有 1 项基础海运费未确认排除');
@@ -314,22 +314,15 @@ describe('FCL simplified workbench',()=>{
   const table=converted.match(/<table class="ops-template-table">[\s\S]*?<\/table>/)?.[0]??'';
   expect(table).toContain('港口安保费');expect(table).toContain('EMF 设备管理费');expect(table).not.toContain('海运费 · 合成');
  });
- it('uses the latest charge version without exposing a validity selector',async()=>{
-  const base=operationsFixture(),draft=structuredClone(base);
-  const next={...draft.operations.charges[0]!,version:2,valid_from:'2027-01-01',valid_until:'2027-12-31',amount:'999'};
-  draft.operations.charges.push(next);
+ it('requires a choice for ambiguous historical fee versions without inventing a date',async()=>{
+  const draft=operationsFixture();draft.operations.charges.push({...draft.operations.charges[0]!,version:2,amount:'999'});
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
-  const write=vi.fn((_action:string,body:{input:ReturnType<typeof operationsFixture>})=>Promise.resolve({status:'success',data:{version:2,draft:structuredClone(body.input),active_release:{input:draft},history:[]}}));
-  const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2027-02-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
-  stubFormData();
-  const form=templateFormStub(templateRows(draft,draft.operations.templates[0]!,{0:{amount:'999'}}),{containerTypes:draft.operations.templates[0]!.container_types});
-  expect(ops.render('', 'templates')).toContain('value="999"');
-  expect(ops.render('', 'templates')).not.toContain('费用有效期');
-  await ops.submit(form);
-  const saved=write.mock.calls[0]?.[1] as {input:ReturnType<typeof operationsFixture>}|undefined;
-  expect(saved?.input.operations.charges[3]?.amount).toBe('999');
-  expect(saved?.input.operations.charges[0]?.amount).toBe('100');
+  const write=vi.fn();
+  const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  expect(ops.render('', 'templates')).toContain('待核对版本');
+  stubFormData();await ops.submit(templateFormStub(templateRows(draft,draft.operations.templates[0]!)));
+  expect(write).not.toHaveBeenCalled();expect(ops.render('', 'templates')).toContain('不能自动择价');
  });
  it('edits the selected same-id template version and keeps the other version unchanged',async()=>{
   const published=operationsFixture(),draft=structuredClone(published);
@@ -404,13 +397,16 @@ describe('FCL simplified workbench',()=>{
   const action=async(action:string,index='0'):Promise<void>=>{await ops.action({dataset:{action,index}});};
   const edit=(index:string,key:string,value:string):void=>{ops.input({target:{closest:()=>true,dataset:{oceanIndex:index,oceanKey:key},value}});};
   await action('ops-ocean-more');edit('1','price:40HQ','3350');await action('ops-close-editor');await action('ops-save-config');
-  expect(ops.render('', 'rates')).toContain('草稿待发布');
+  expect(ops.render('', 'rates')).toContain('草稿待生效');
   vi.stubGlobal('FormData',class {get(key:string){return ({pol:'Shanghai',pod:'Vancouver',destination:'Calgary',shipping_date:'2026-10-15','box-40HQ':'1'} as Record<string,string>)[key]??null;}});
   await ops.submit({dataset:{fclForm:'ops-run'}});expect(write.mock.calls.map(([name])=>name)).not.toContain('estimate-run');
   expect(saved!.rates[1]!.items[0]!.ocean_freight).toBe('3350');expect(saved!.operations.rate_details).toEqual(initial.operations.rate_details);
   expect(saved!.rates.map(r=>[r.source_ref,r.source_version])).toEqual(initial.rates.map(r=>[r.source_ref,r.source_version]));
   edit('0','pod','Prince Rupert');await action('ops-save-config');
-  expect(saved!.operations.rate_details.map(r=>r.rate_id)).toEqual(initial.operations.rate_details.slice(1).map(r=>r.rate_id));
+  expect(saved!.operations.rate_details.find(r=>r.rate_id===initial.rates[0]!.rate_id)).toMatchObject({carrier:'COSCO',routing:'Shanghai → Prince Rupert',vessel:null,voyage:null,etd:null,eta:null});
+  edit('0','carrier','COSCO SHIPPING');await action('ops-save-config');
+  expect(saved!.rates[0]!.supplier_label).toBe(initial.rates[0]!.supplier_label);
+  expect(saved!.operations.rate_details.find(r=>r.rate_id===initial.rates[0]!.rate_id)?.carrier).toBe('COSCO SHIPPING');
   expect(saved!.rates[0]!.items).toEqual(initial.rates[0]!.items);
  });
 

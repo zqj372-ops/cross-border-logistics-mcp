@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {prepareFclMaintenance} from '../../quote-native/fcl-maintenance';
 import { maritimeSaveSchema, validateMaritimeDataset, queryMaritime, type MaritimeKind, type MaritimeDataset } from '../../maritime/contracts';
 import type { CustomsPackages } from '../../customs-native/packages';
 import { type CustomsDataset } from '../../customs-native/contracts';
@@ -167,11 +168,7 @@ export class NativeAdminService {
     } catch {
       throw new Error('fcl_receiver_unavailable');
     }
-    const scopes = this.store.db.prepare(`SELECT scope FROM native_configs WHERE (kind IN ('fcl','fcl-notification','fcl-operations') OR kind LIKE 'fcl-estimate%')
-      UNION SELECT scope FROM native_releases WHERE kind IN ('fcl','fcl-estimate')
-      UNION SELECT scope FROM native_audit WHERE (kind IN ('fcl','fcl-notification','fcl-operations') OR kind LIKE 'fcl-estimate%')
-      UNION SELECT json_extract(scope,'$[0]') AS scope FROM native_idempotency WHERE json_valid(scope) AND json_extract(scope,'$[0]') LIKE 'fcl-person:%'`).all() as { scope: string }[];
-    if (scopes.some((row) => row.scope !== options.scope)) throw new Error('fcl_receiver_configuration_mismatch');
+    // Existing scopes retain their owners. Enterprise scopes are never adopted by a personal account.
   }
   private fclOptions() {
     if (this.#fcl === null) throw new PortalError('fcl_unavailable');
@@ -188,16 +185,16 @@ export class NativeAdminService {
   }
   private fclReceiverScope(ctx: PortalContext): NormalizedFclOptions {
     const options = this.fclOptions();
-    if (!ctx.identity.emailVerified || ctx.organizationId !== null || ctx.identity.userId !== options.receiverUserId) {
+    if (!ctx.identity.emailVerified || !ctx.identity.userId.trim()) {
       throw new PortalError('fcl_not_found');
     }
     try {
-      if (!options.receiverIsActive(options.receiverUserId)) throw new PortalError('fcl_unavailable');
+      if (!options.receiverIsActive(ctx.identity.userId)) throw new PortalError('fcl_unavailable');
     } catch (error) {
       if (error instanceof PortalError && error.code === 'fcl_unavailable') throw error;
       throw new PortalError('fcl_unavailable');
     }
-    return options;
+    return {...options,receiverUserId:ctx.identity.userId,scope:`fcl-person:${ctx.identity.userId}`};
   }
   private scope(ctx: PortalContext, write = false, kind?: NativeKind) {
     if (kind === 'fcl') return this.fclReceiverScope(ctx).scope;
@@ -477,13 +474,15 @@ export class NativeAdminService {
           : maritimeSaveSchema(kind)).safeParse(input);
     if (!parsed.success) throw new PortalError('native_input_invalid');
     const change = parsed.data;
+    let savedInput=change.input;
     let expectedActive: string | null = null;
     return this.mutate(ctx, kind, 'save', change, key, (scope) => {
       expectedActive = this.expected(scope, kind, change.expected_version)?.active ?? null;
+      if(kind==='fcl')savedInput=prepareFclMaintenance(change.input as FclRateDataset,this.fclGet(scope).draft,this.time(kind));
       this.store.db.prepare('INSERT INTO native_configs VALUES(?,?,?,?,NULL) ON CONFLICT(scope,kind) DO UPDATE SET draft=excluded.draft,version=excluded.version')
-        .run(scope, kind, change.expected_version + 1, JSON.stringify(change.input));
+        .run(scope, kind, change.expected_version + 1, JSON.stringify(savedInput));
     }, kind === 'fcl'
-      ? (scope, actionDigest) => this.verifyFclDraft(scope, change.expected_version + 1, change.input, expectedActive, 'save', actionDigest, ctx.identity.userId)
+      ? (scope, actionDigest) => this.verifyFclDraft(scope, change.expected_version + 1, savedInput, expectedActive, 'save', actionDigest, ctx.identity.userId)
       : undefined);
   }
   publish(ctx: PortalContext, kind: NativeKind, input: unknown, key: string) {

@@ -31,7 +31,8 @@ it('publishes one ocean change, appends affected estimate versions, preserves lo
     expect(service.fclOperations.duplicate(receiver,{estimate_id:quote.estimate_id,expected_version:1},'ops-estimate-copy-key').version).toBe(1);
     expect(service.fclOperations.get(receiver,{estimate_id:quote.estimate_id,version:1}).calculation.totals.cost_total).toBe('30800.00');
     expect(service.fclOperations.get(receiver,{estimate_id:copy.estimate_id,version:null}).currentness.valid_now).toBe(false);
-    expect(()=>service.fclOperations.list({...receiver,identity:{...receiver.identity,userId:'other'}},{case_ref:null,destination:null,shipping_date:null})).toThrow('fcl_not_found');
+    expect(service.fclOperations.list({...receiver,identity:{...receiver.identity,userId:'other'}},{case_ref:null,destination:null,shipping_date:null}).items).toEqual([]);
+    expect(()=>service.fclOperations.get({...receiver,identity:{...receiver.identity,userId:'other'}},{estimate_id:quote.estimate_id,version:null})).toThrow('fcl_estimate_not_found');
     store.close();store=new NativeAdminStore(path,{fcl:{mode:'reopen'}});service=new NativeAdminService(store,{} as never,options);
     expect(service.fclOperations.get(receiver,{estimate_id:quote.estimate_id,version:null}).version).toBe(2);
     const latest=service.get(receiver,'fcl');service.save(receiver,'fcl',{expected_version:latest.version,input:latest.draft},'ops-later-save-config');

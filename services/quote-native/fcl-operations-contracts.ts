@@ -13,6 +13,9 @@ const currency=z.enum(['USD','CAD','CNY']);
 const container=z.enum(FCL_CONTAINER_TYPES);
 const date=z.iso.date();
 const validity={valid_from:date,valid_until:date};
+// Legacy maintenance dates are read-only compatibility data, not price eligibility.
+const maintenance={valid_from:date.nullable().optional(),valid_until:date.nullable().optional(),updated_at:z.iso.datetime().optional()};
+const calculationValidity={valid_from:date.nullable(),valid_until:date.nullable()};
 const source={source_ref:text,source_version:text};
 const capacity={weight_min_kg:decimal.nullable(),weight_max_kg:decimal.nullable(),volume_min_cbm:decimal.nullable(),volume_max_cbm:decimal.nullable()};
 export const fclChargeCategories=['ocean','origin','destination','customs','inland','other','risk'] as const;
@@ -22,7 +25,8 @@ export const fclChargeSchema=z.object({
   category:z.enum(fclChargeCategories),amount:decimal,currency,
   unit:z.enum(['FIXED','CNTR','SHIPMENT']),container_types:z.array(container).min(1).max(4),
   sell_amount:decimal.nullable(),editable:z.boolean(),country:z.string().length(2),pod:text.nullable(),destination:text.nullable(),
-  ...validity,...source,remark:z.string().max(500).nullable(),
+  ...maintenance,...source,remark:z.string().max(500).nullable(),
+  ocean_freight_resolution:z.object({action:z.literal('exclude'),reason:z.string().trim().min(1).max(500)}).strict().optional(),
 }).strict();
 export const fclDeliveryRateSchema=z.object({
   id,version:z.number().int().positive(),origin:text,destination:text,country:z.string().length(2),
@@ -38,7 +42,7 @@ export const fclDestinationTemplateSchema=z.object({
   service_mode:z.enum(fclDeliveryModes),customs_mode:text,container_types:z.array(container).min(1).max(4),...capacity,
   charge_ids:z.array(id).max(40),delivery_rate_id:id.nullable(),
   margin_rule:fclMarginRuleSchema,exchange_rates:z.object({USD:positive.nullable(),CAD:positive.nullable()}).strict(),
-  fx_source:text,...validity,enabled:z.boolean(),
+  fx_source:text,...maintenance,enabled:z.boolean(),
 }).strict();
 export const fclRateDetailSchema=z.object({rate_id:z.string().uuid(),carrier:text,routing:text,vessel:text.nullable(),voyage:text.nullable(),etd:date.nullable(),eta:date.nullable(),transit_days:z.number().int().min(1).max(180).nullable()}).strict();
 export const fclOperationsSchema=z.object({
@@ -50,11 +54,11 @@ export function validateFclOperations(ops:z.infer<typeof fclOperationsSchema>,ra
   const unique=(values:string[])=>new Set(values).size===values.length;
   for(const records of [ops.charges,ops.delivery_rates,ops.templates]){
     records.forEach((row,index)=>{
-      if(row.valid_from>row.valid_until)errors.add('operations_date_order_invalid');
+      if('base_rate' in row&&row.valid_from>row.valid_until)errors.add('operations_date_order_invalid');
       if(!unique(row.container_types))errors.add('duplicate_container_type');
       for(const other of records.slice(index+1))if(row.id===other.id){
         if(row.version===other.version)errors.add('operations_duplicate_version');
-        if(row.valid_from<=other.valid_until&&other.valid_from<=row.valid_until)errors.add('operations_validity_overlap');
+        if('base_rate' in row&&'base_rate' in other&&row.valid_from<=other.valid_until&&other.valid_from<=row.valid_until)errors.add('operations_validity_overlap');
       }
     });
   }
@@ -88,7 +92,7 @@ export const fclEstimateRequestSchema=z.object({
 export type FclEstimateRequest=z.infer<typeof fclEstimateRequestSchema>;
 export const fclEstimateLineSchema=z.object({
   id:text,code:text,name_zh:text,name_en:text,category:z.enum(fclChargeCategories),
-  source_ref:text,source_version:text,...validity,
+  source_ref:text,source_version:text,...calculationValidity,
   unit:z.enum(['FIXED','CNTR','SHIPMENT']),container_type:container.nullable(),quantity:positive,
   cost_price:decimal,sell_price:decimal,currency,cost_amount:money,sell_amount:money,editable:z.boolean(),
 }).strict();
@@ -96,7 +100,7 @@ const totalSchema=z.object({currency,cost_total:money.nullable(),sell_total:mone
 export const fclEstimateCalculationSchema=z.object({
   engine_version:z.literal(FCL_OPERATIONS_VERSION),quote_status:z.literal('system_estimated'),send_status:z.literal('not_sent'),
   rate_id:z.string().uuid(),template_id:id,template_version:z.number().int().positive(),carrier:text,routing:text,pol:text,pod:text,destination:text,
-  schedule:fclRateDetailSchema.nullable(),...validity,
+  schedule:fclRateDetailSchema.nullable(),...calculationValidity,
   lines:z.array(fclEstimateLineSchema).max(120),totals:totalSchema,
   by_currency:z.array(totalSchema).max(3),breakdown:z.array(z.object({category:z.enum(fclChargeCategories),currency,amount:money}).strict()).max(21),
   margin_rule:fclMarginRuleSchema,exchange_rates:fclDestinationTemplateSchema.shape.exchange_rates,
@@ -123,7 +127,7 @@ export const fclEstimateGetSchema=z.object({estimate_id:z.string().uuid(),versio
 export const fclEstimateActionSchema=z.object({estimate_id:z.string().uuid(),expected_version:z.number().int().positive()}).strict();
 export const fclEstimateAdjustSchema=fclEstimateActionSchema.extend({locked:z.boolean(),recommended:z.boolean(),reason:z.string().trim().min(1).max(500),changes:z.array(z.object({line_id:text,sell_price:decimal}).strict()).max(120)}).strict();
 export const fclEstimateSelectSchema=fclEstimateActionSchema.extend({case_ref:z.string().uuid(),expected_case_version:z.number().int().positive(),expected_customer_supplement_ref:z.string().uuid().nullable()}).strict();
-export const fclBulkChangeSchema=z.object({rate_id:z.string().uuid(),container_type:container,ocean_freight:decimal,...validity,source_ref:text,source_version:text}).strict();
+export const fclBulkChangeSchema=z.object({rate_id:z.string().uuid(),container_type:container,ocean_freight:decimal,...maintenance,source_ref:text,source_version:text}).strict();
 export const fclBulkPreviewRequestSchema=z.object({expected_version:z.number().int().nonnegative(),estimate_request:fclEstimateRequestSchema.nullable().optional(),changes:z.array(fclBulkChangeSchema).min(1).max(100),reason:z.string().trim().min(1).max(500)}).strict();
 export const fclBulkPublishRequestSchema=fclBulkPreviewRequestSchema.extend({preview_hash:z.string().length(64),confirmation:z.literal('reviewed_sources_and_conditions')}).strict();
 export const fclBulkPreviewSchema=z.object({preview_hash:z.string().length(64),expected_version:z.number().int().nonnegative(),changes:z.array(z.object({rate_id:z.string().uuid(),container_type:container,original_amount:decimal,adjusted_amount:decimal,currency}).strict()).max(100),new_estimates:z.number().int().nonnegative(),affected_estimates:z.number().int().nonnegative(),locked_estimates:z.number().int().nonnegative()}).strict();

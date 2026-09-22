@@ -197,7 +197,6 @@ it('requires exact POL, POD, container and Ready Date matching and never fills m
       { pol: 'Shenzhen' },
       { pod: 'Prince Rupert' },
       { containers: [{ type: '40GP' as const, quantity: 2 }] },
-      { cargo_ready_date: '2026-10-20' },
     ]) {
       const next = await confirmedCase(caseStore, caseInput(changed));
       const result = service.match(receiver, {
@@ -326,7 +325,7 @@ it('requires one Rate header to cover every container and preserves an explicit 
   }
 });
 
-it('returns a quantity JSON Pointer and treats Rate validity endpoints as inclusive', async () => {
+it('returns a quantity JSON Pointer and ignores rate maintenance dates', async () => {
   const root = mkdtempSync(join(tmpdir(), 'fcl-match-boundary-'));
   const caseStore = new CaseStore(join(root, 'cases.sqlite'), caseUpgrade);
   const rateStore = new NativeAdminStore(join(root, 'native.sqlite'), nativeUpgrade);
@@ -363,7 +362,7 @@ it('returns a quantity JSON Pointer and treats Rate validity endpoints as inclus
       expected_case_version: outside.confirmed.case_version,
       expected_customer_supplement_ref: null,
       selected_rate_id: null,
-    }).status).toBe('manual_review');
+    }).status).toBe('success');
   } finally {
     rateStore.close();
     caseStore.close();

@@ -38,6 +38,7 @@ const fclAdditionalFeeBase = {
   cost_price: decimal(),
   currency,
   note: note(),
+  ocean_freight_resolution:z.object({action:z.literal('exclude'),reason:z.string().trim().min(1).max(500)}).strict().optional(),
 };
 const fclAdditionalFeeSchema = z.discriminatedUnion('unit', [
   z.object({ ...fclAdditionalFeeBase, unit: z.literal('CNTR'), container_type: containerType }).strict(),
@@ -49,8 +50,9 @@ export const fclRateSchema = z.object({
   supplier_label: identifier(),
   pol: identifier(),
   pod: identifier(),
-  valid_from: date(),
-  valid_until: date(),
+  valid_from: date().nullable().optional(),
+  valid_until: date().nullable().optional(),
+  updated_at: z.iso.datetime().optional(),
   source_ref: identifier(),
   source_version: identifier(),
   note: note(),
@@ -72,10 +74,6 @@ export const fclRateDatasetSchema = z.union([fclRateDatasetV1Schema,fclRateDatas
       context.addIssue({ code: 'custom', path: ['rates', rateIndex, 'rate_id'], message: 'duplicate_rate_id' });
     }
     seenRateIds.add(rate.rate_id);
-
-    if (rate.valid_from > rate.valid_until) {
-      context.addIssue({ code: 'custom', path: ['rates', rateIndex, 'valid_until'], message: 'rate_date_order_invalid' });
-    }
 
     const containers = new Set(rate.items.map((item) => item.container_type));
     if (containers.size !== rate.items.length) {
@@ -140,8 +138,8 @@ export const fclQuoteSourceRefSchema = z.object({
   dataset_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   source_ref: identifier(),
   source_version: identifier(),
-  valid_from: date(),
-  valid_until: date(),
+  valid_from: date().nullable(),
+  valid_until: date().nullable(),
 }).strict();
 
 export const fclQuoteCandidateSchema = fclQuoteSourceRefSchema.extend({
@@ -287,7 +285,7 @@ export const fclQuoteServiceScopeInputSchema = z.object({
   }
 });
 
-export const fclEstimateBindingSchema=z.object({estimate_id:z.string().uuid(),version:z.number().int().positive(),content_digest:z.string().length(64),valid_from:date(),valid_until:date()}).strict();
+export const fclEstimateBindingSchema=z.object({estimate_id:z.string().uuid(),version:z.number().int().positive(),content_digest:z.string().length(64),valid_from:date().nullable(),valid_until:date().nullable()}).strict();
 export const fclQuoteInputExtensionsSchema=z.object({fcl_estimate_v1:fclEstimateBindingSchema.optional(),fcl_row_adjustments_v1:fclRowAdjustmentsSchema.optional()}).strict();
 export const fclQuoteExtensionsSchema=fclQuoteInputExtensionsSchema;
 export const fclQuoteSnapshotExtensionsSchema=fclQuoteInputExtensionsSchema.extend({fcl_row_adjustment_audit_v1:fclRowAdjustmentAuditSchema.optional()}).strict().superRefine((value,context)=>{
