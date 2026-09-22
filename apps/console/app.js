@@ -22,6 +22,7 @@ import { createApiKeysUi } from './api-keys.js';
 import { createServiceAccessUi } from './service-access.js';
 import { createOperationManual } from './manual.js';
 import { verifyCredentialAfterDelivery } from './credential-verification.js';
+import { createFclWorkspaceEntryController } from './fcl-workspace-entry.ts';
 const PUBLIC_PAGES = ['home', 'market', 'catalog', 'service', 'guide', 'cli', 'customs', 'tax', 'schedules', 'terminal-efficiency'];
 const API = '/console/api/v1';
 const app = document.querySelector('#app');
@@ -85,6 +86,7 @@ const errors = {
   credential_bridge_unavailable: '接入服务未配置，暂时无法签发凭证。请联系平台运维。', active_organization_membership_required: '当前企业或成员资格已停用。请退出并重新登录，选择有效企业。', organization_membership_required: '请先接受邀请，取得有效成员资格后再进入企业。', application_access_denied: '当前账号不是应用负责人，无法操作凭证。请联系企业管理员转交负责人。', state_conflict: '记录状态已经变化。请刷新后按照最新状态继续操作。', grant_expiry_invalid: '请选择未来的有效日期；修改授权时只能缩短现有有效期。', grant_scope_expansion_forbidden: '本次只能减少已有授权。新增服务需要重新申请。', membership_required: '当前账号没有有效企业成员资格。请先接受邀请或重新登录。', organization_role_required: '当前企业角色不允许执行此操作。请联系企业管理员。', 'credential_secret.withheld': '完整 Key 不会重复显示。请撤销这枚凭证后创建新的 Key。',
   authentication_required: '登录已过期，请重新登录后继续。', csrf_invalid: '会话已更新，请刷新后重试。', version_conflict: '这条记录已被其他人更新。请刷新页面，核对最新状态。', idempotency_conflict: '该操作的内容已经改变。请刷新后重新提交。',
   organization_required: '请先选择要操作的企业。', member_required: '当前账号没有这家企业的有效成员权限。', role_required: '当前账号没有执行此操作的权限。', grant_required: '所选服务尚未取得有效授权，请先完成申请与开通。', grant_provisioning_readback_unverified: '尚未确认企业和应用的接入状态，暂时无法开通。',
+  fcl_personal_workspace_switch_failed: '整柜业务工作区没有切换成功，请重试。',
   last_owner_protected: '企业至少需要一位有效的所有者，请先转交管理权。', application_owner_protected: '请先将该成员负责的应用转交给其他负责人。', application_owner_invalid: '应用负责人必须是本企业的有效管理或开发成员。', invitation_unavailable: '邀请已失效或不属于当前登录邮箱。',
   credential_not_found: '凭证不可用或不属于当前应用。', credential_delivery_unconfirmed: '请先确认上一枚凭证已保存。', fixture_identity_forbidden: '当前环境不允许测试身份登录。', body_invalid: '请检查填写内容与所选权限。', portal_unavailable: '服务暂时不可用，请稍后重试。', bridge_unavailable: '接入服务尚未配置，请联系平台管理员。',
   capability_unavailable: '该服务尚未开放申请。', request_state_invalid: '当前申请状态不支持此操作，请刷新查看最新状态。', request_transition_invalid: '当前申请状态不支持此操作，请刷新查看最新状态。', machine_authentication_failed: '凭证验证未通过，请核对 Key 与有效期。', business_grant_not_provisionable: '业务服务连接尚未就绪，或应用状态已变化。请先完成源服务接入，再开通授权。', business_operation_unavailable: '业务服务尚未接通，暂时无法签发或使用凭证。', business_operations_invalid: '请至少选择一项有效的业务服务。', business_credential_conflict: '业务凭证状态已经变化，请刷新后重试。', business_authorization_denied: '当前业务权限已到期、暂停或不包含该操作。', business_application_denied: '企业、应用或负责人已停用，请核对当前接入状态。', business_review_denied: '无法审核当前版本，或申请人与审核人相同。请刷新状态。', business_body_invalid: '请完整填写内容，并使用当前页面提供的选项。', tool_entitlement_denied: '该应用当前没有这项服务的有效权限。',
@@ -340,6 +342,14 @@ function render() {
   if (model.session?.authenticated && !model.state && !publicPages.includes(page)) { document.querySelector('#content').innerHTML = '<p role="status">正在读取个人中心…</p>'; return; }
   if (page === 'account') page = reviewer() ? 'platform' : orgRole() === 'developer' ? 'api-keys' : model.session.organization_id ? 'workbench' : 'members';
   const main = document.querySelector('#content');
+  const fclWorkspaceEntryRequired = fclWorkspaceEntry.gateRequired();
+  if (fclWorkspaceEntryRequired) {
+    fclWorkspaceEntry.begin();
+    main.innerHTML = fclWorkspaceEntryPanel();
+    main.setAttribute('aria-busy', fclWorkspaceEntry.errorCode() ? 'false' : 'true');
+    document.title = fclWorkspaceEntry.errorCode() ? '进入失败 · FreightClaw' : '正在进入整柜工作区 · FreightClaw';
+    return;
+  }
   if (reviewer() && !model.session.organization_id && ![...PUBLIC_PAGES, 'platform', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant', 'channels', 'cli-authorize', 'cases', 'operations', 'case', 'fcl'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'platform')); return; }
   if (platformIdentity() && model.session.organization_id && ['api-keys', 'credential-new', 'business-credential'].includes(page)) { main.innerHTML = empty('平台身份不能管理客户凭证', '当前工作区可管理企业应用与成员，但完整 Key 仍只由非平台身份的应用负责人领取。', link('返回企业应用', 'applications')); return; }
   const pages = { 'quote-documents': () => quoteDocuments.page(), fcl: () => fcl.page(), schedules:()=>maritime.page('schedules'), 'terminal-efficiency':()=>maritime.page('terminals'), configure: () => ['ocean.schedules','port.efficiency'].includes(id) ? maritime.admin(id==='ocean.schedules'?'schedules':'terminals') : id === 'quote.documents' ? quoteDocuments.page() : nativeAdmin.page(id), channels: () => channels.page(id), 'cli-authorize': () => cliAuthorization.page(id), cases: () => cases.page(), operations: () => cases.page(true), case: () => cases.detail(id), apply: () => serviceAccess.page(id || undefined), 'api-keys': () => apiKeys.page(id), home: () => serviceHome(), platform: () => reviewer() ? dashboard() : serviceHome(), cli: () => cli.page(), market: () => id === 'configure' && !manager() ? empty('需要企业管理权限', '请使用当前企业的负责人或管理员账号配置模块。', link('返回服务市场','market')) : market.page(), catalog: () => market.page(), service: () => market.detail(id), workbench: () => workspaceHome.page(), guide: () => manual.page(id || undefined), diagnostics: guidePage, tax: () => tax.page(), customs: () => business.customsPage(), quote: () => business.quotePage(id), 'quote-history': () => business.historyPage(), applications: applicationsPage, 'app-new': applicationForm, app: () => applicationPage(id), requests: () => requestsPage() + businessAccess.requestsPanel(), 'request-new': () => requestForm(id), request: () => requestDetail(id), 'request-edit': () => requestDetail(id), grants: () => grantsPage() + businessAccess.grantsPanel(), 'grant-edit': () => grantForm(id), members: membersPage, 'member-new': () => memberForm(), 'member-edit': () => memberForm(id), 'credential-new': () => credentialForm(id), 'business-request-new': () => businessAccess.form(id), 'business-request': () => businessAccess.requestPage(id), 'business-request-edit': () => businessAccess.requestPage(id, true), 'business-grant': () => businessAccess.grantPage(id), 'business-credential': () => businessAccess.credentialPage(id), 'customs-history': () => customsHistory.page(), calls: () => calls.page(), activity: activityPage, organizations: organizationsPage, 'organization-new': () => organizationForm(), organization: () => organizationForm(id) };
@@ -389,6 +399,10 @@ function showSecret(result, applicationId, kind = 't0') {
   model.secret = { key, credentialId, applicationId, kind, version: data?.credential?.version }; document.querySelector('#secret-value').textContent = key; dialog.showModal();
 }
 async function runAction(button) {
+  if (button.dataset.action === 'fcl-personal-workspace-retry') {
+    await fclWorkspaceEntry.retry();
+    return;
+  }
   if (await loginForm.action(button)) return;
   if (workspaceHome.action(button)) return;
   if (await maritime.action(button)) return;
@@ -411,8 +425,8 @@ async function runAction(button) {
   if (action === 'menu') { closeAccount(); const open = !document.querySelector('#sidebar').classList.contains('open'); if (!open) closeMenu(); else { document.querySelector('#sidebar').classList.add('open'); button.setAttribute('aria-expanded', 'true'); document.querySelector('#content').inert = true; document.querySelector('#sidebar .nav-item')?.focus(); } return; }
   if (action === 'close-secret') { closeSecret(); return; }
   if (action === 'copy-secret') { if (model.secret) { await navigator.clipboard.writeText(model.secret.key); notify('Key 已复制，请妥善保存。'); } return; }
-  if (action === 'login') { model.session = await mutate('/fixture-login', 'POST', { identity_id: id }); await refresh(); go(consumeLoginDestination(loginStorage()) || 'home'); render(); return; }
-  if (action === 'logout') { model.sessionGeneration = (model.sessionGeneration || 0) + 1; consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); fcl.reset(); maritime.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); model.directory = null; model.businessCatalog = []; go('home'); render(); return; }
+  if (action === 'login') { await fclWorkspaceEntry.cancel(); model.session = await mutate('/fixture-login', 'POST', { identity_id: id }); await refresh(); go(consumeLoginDestination(loginStorage()) || 'home'); render(); return; }
+  if (action === 'logout') { await fclWorkspaceEntry.cancel(); model.sessionGeneration = (model.sessionGeneration || 0) + 1; consumeLoginDestination(loginStorage()); closeSecret(); model.verificationAbort?.abort(); model.verification = null; channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); fcl.reset(); maritime.reset(); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.credentials.clear(); model.state = null; model.session = await mutate('/logout', 'POST', {}); model.requestKeys.clear(); model.directory = null; model.businessCatalog = []; go('home'); render(); return; }
   if (action === 'ack-secret') { await acknowledgeSecret(); return; }
   const currentRequest = model.state?.requests.find((v) => v.request_id === id);
   const currentGrant = model.state?.grants.find((v) => v.grant_id === id);
@@ -461,7 +475,7 @@ async function submitForm(form) {
   else return;
   await refresh(); go(next); render(); notify('已保存，页面已读取最新记录。');
 }
-const loginForm = createLoginForm({ api: request, esc, formError, authenticated: async session => { model.session = session; await refresh(); go(consumeLoginDestination(loginStorage()) || (reviewer() ? 'operations' : 'cases')); render(); } });
+const loginForm = createLoginForm({ api: request, esc, formError, authenticated: async session => { await fclWorkspaceEntry.cancel(); model.session = session; await refresh(); go(consumeLoginDestination(loginStorage()) || (reviewer() ? 'operations' : 'cases')); render(); } });
 const workspaceHome = createWorkspaceHome({api:request,model:()=>model,head,esc,icon,rerender:render});
 const maritime=createMaritimeWorkspace({api:request,mutate,esc,head,note,icon,model:()=>model,rerender:render,canConfigure:manager});
 const quoteDocuments = createQuoteDocuments({api:request,mutate,model:()=>model,esc,head,icon,rerender:render,canConfigure:manager});
@@ -482,6 +496,67 @@ const cli = createCliGuide({ esc, icon, link, notify });
 const serviceHome = createServiceHome({ icon, link });
 const apiKeys = createApiKeysUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, showSecret, render, businessAccess, model: () => model });
 const serviceAccess = createServiceAccessUi({ esc, icon, head, panel, table, note, empty, link, badge, date, canCredential, effectiveGrants, request, mutate, refresh, go, notify, render, businessAccess, model: () => model });
+
+function resetWorkspaceViews(stayOnSchedules = false) {
+  closeSecret();
+  channels.reset();
+  nativeAdmin.reset();
+  quoteDocuments.reset();
+  fcl.reset();
+  maritime.reset(stayOnSchedules);
+  workspaceHome.reset();
+  cases.reset();
+  business.reset();
+  tax.reset();
+  customsHistory.reset();
+  calls.reset();
+  developerGuide.reset();
+  businessAccess.reset();
+  serviceAccess.reset();
+  model.verificationAbort?.abort();
+  model.verification = null;
+}
+
+async function switchOrganization(organizationId, { stayOnSchedules = false, onSessionSelected } = {}) {
+  const nextGeneration = (model.sessionGeneration || 0) + 1;
+  model.sessionGeneration = nextGeneration;
+  const session = await mutate('/session/organization', 'POST', { organization_id: organizationId });
+  if ((model.sessionGeneration || 0) !== nextGeneration) throw Object.assign(new Error('account_changed'), { code: 'account_changed' });
+  model.session = session;
+  resetWorkspaceViews(stayOnSchedules);
+  onSessionSelected?.();
+  await refresh();
+  return model.session;
+}
+
+const fclWorkspaceEntry = createFclWorkspaceEntryController({
+  getPage: () => route().page,
+  getSession: () => model.session,
+  getUserId: () => model.session?.identity?.user_id,
+  switchToPersonal: async ({ onSessionSelected }) => {
+    const session = await switchOrganization(null, { onSessionSelected });
+    return { organization_id: session?.organization_id ?? null };
+  },
+  completePreparation: async () => {
+    await refresh();
+    return { organization_id: model.session?.organization_id ?? null };
+  },
+  loadWorkspace: () => {},
+  render,
+});
+
+function fclWorkspaceEntryPanel() {
+  if (fclWorkspaceEntry.errorCode()) {
+    return empty(
+      '进入失败，请重试',
+      '整柜工作区没有准备完成。请检查网络后重试。',
+      `<div class="head-actions"><button type="button" class="button primary" data-action="fcl-personal-workspace-retry">重试</button>${link('返回企业工作台', 'workbench')}</div>`,
+      'container',
+    );
+  }
+  return `<div class="empty-state" role="status" aria-live="polite"><div class="empty-symbol">${icon('container')}</div><h2>正在进入整柜工作区</h2><p>正在准备当前账号的整柜业务数据。</p></div>`;
+}
+
 document.addEventListener('click', async (event) => {
   maritime.click(event);
   if (!event.target.closest('.account-disclosure')) closeAccount();
@@ -515,8 +590,16 @@ document.addEventListener('change', async (event) => {
   if (developerGuide.change(event)) return;
   if (cli.change(event)) return;
   if (event.target.id !== 'organization') return;
+  await fclWorkspaceEntry.cancel();
   const stayOnSchedules = route().page === 'schedules';
-  try { model.sessionGeneration = (model.sessionGeneration || 0) + 1; model.session = await mutate('/session/organization', 'POST', { organization_id: event.target.value || null }); closeSecret(); channels.reset(); nativeAdmin.reset(); quoteDocuments.reset(); fcl.reset(); maritime.reset(stayOnSchedules); workspaceHome.reset(); cases.reset(); business.reset(); tax.reset(); customsHistory.reset(); calls.reset(); developerGuide.reset(); businessAccess.reset(); serviceAccess.reset(); model.verificationAbort?.abort(); model.verification = null; await refresh(); go(stayOnSchedules ? 'schedules' : (model.session.organization_id ? 'workbench' : model.session.fcl_capability?.fcl_personal ? 'fcl' : 'platform')); render(); } catch (error) { notify(errorMessage(error), true); render(); }
+  try {
+    await switchOrganization(event.target.value || null, { stayOnSchedules });
+    go(stayOnSchedules ? 'schedules' : (model.session.organization_id ? 'workbench' : model.session.fcl_capability?.fcl_personal ? 'fcl' : 'platform'));
+    render();
+  } catch (error) {
+    notify(errorMessage(error), true);
+    render();
+  }
 });
 document.addEventListener('toggle', (event) => { fcl.toggle(event); }, true);
 document.addEventListener('input', (event) => { if (maritime.input(event)) return; if (quoteDocuments.input(event)) return; if (fcl.input(event)) return; business.input(event); if (nativeAdmin.input(event)) return; if (market.input(event)) return; if (event.target.closest('form[data-form^="business-"]')) { document.querySelectorAll('[data-save-preview]').forEach((button) => { button.disabled = true; }); document.querySelectorAll('[data-result-state]').forEach((element) => { element.textContent = '资料已修改，请重新查询后使用结果。'; }); } });

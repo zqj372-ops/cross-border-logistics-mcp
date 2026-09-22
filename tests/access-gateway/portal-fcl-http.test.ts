@@ -125,10 +125,14 @@ it('switches from an organization back to personal only with a fresh receiver pr
     expect(organization.status).toBe(200);
     const organizationBody=await organization.json() as {csrf_token:string};
     expect(organizationBody).toMatchObject({organization_id:'org_fixture',fcl_capability:{fcl_personal:true,receiver_user_id:receiverId}});
+    const blocked=await fetch(`${f.origin}/console/api/v1/fcl/case-list?limit=1`,{headers:{cookie:session.cookie}});
+    expect(blocked.status).toBe(403);
+    expect((await blocked.json() as {reason_codes:string[]}).reason_codes).toEqual(['fcl_not_found']);
     const personal=await select(null,'fcl-http-switch-personal-01',organizationBody.csrf_token);
     const personalBody=await personal.json() as {organization_id:string|null;fcl_capability:{fcl_personal:boolean;receiver_user_id:string|null}};
     expect(personal.status,JSON.stringify(personalBody)).toBe(200);
     expect(personalBody).toMatchObject({organization_id:null,fcl_capability:{fcl_personal:true,receiver_user_id:receiverId}});
+    expect((await fetch(`${f.origin}/console/api/v1/fcl/case-list?limit=1`,{headers:{cookie:session.cookie}})).status).toBe(200);
     expect(calls).toBeGreaterThanOrEqual(4);
   }finally{await f.close();}
 });
