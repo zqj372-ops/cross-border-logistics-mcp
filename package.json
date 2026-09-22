@@ -1,7 +1,7 @@
 {
   "name": "cross-border-logistics-mcp",
-  "version": "0.0.4",
-  "freightclawVersion": "0.004",
+  "version": "0.0.5",
+  "freightclawVersion": "0.005",
   "private": true,
   "type": "module",
   "engines": {

@@ -1,7 +1,7 @@
 {
   "name": "@freightclaw/cli",
-  "version": "0.0.4",
-  "freightclawVersion": "0.004",
+  "version": "0.0.5",
+  "freightclawVersion": "0.005",
   "description": "FreightClaw command line client for the existing application-key APIs",
   "private": true,
   "type": "module",

@@ -54,7 +54,7 @@ async function installed(args: string[], credential = false) {
 
 describe("standalone CLI installation", () => {
   it("runs outside the repository with embedded contracts and no runtime install dependencies", async () => {
-    expect((await installed(["--version"])).stdout.trim()).toBe("0.004");
+    expect((await installed(["--version"])).stdout.trim()).toBe("0.005");
     const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { dependencies?: unknown };
     expect(metadata.dependencies).toBeUndefined();
     expect(await readFile(join(packageRoot, "bin/freightclaw.mjs"), "utf8")).not.toContain("node:sqlite");
