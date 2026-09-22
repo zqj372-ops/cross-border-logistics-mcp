@@ -54,14 +54,15 @@ async function installed(args: string[], credential = false) {
 
 describe("standalone CLI installation", () => {
   it("runs outside the repository with embedded contracts and no runtime install dependencies", async () => {
-    expect((await installed(["--version"])).stdout.trim()).toBe("0.007");
+    expect((await installed(["--version"])).stdout.trim()).toBe("0.008");
     const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { dependencies?: unknown };
     expect(metadata.dependencies).toBeUndefined();
     expect(await readFile(join(packageRoot, "bin/freightclaw.mjs"), "utf8")).not.toContain("node:sqlite");
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
     const workspaceCommands=(await installed(["workspace","commands","--json"])).stdout;
-    expect(JSON.parse(workspaceCommands)).toHaveLength(120);
+    expect(JSON.parse(workspaceCommands)).toHaveLength(121);
+    expect(workspaceCommands).toContain("fcl case-create");
     expect(workspaceCommands).toContain("schedules live-search");
     expect(workspaceCommands).toContain("fcl document-export");
     expect(workspaceCommands).toContain("fcl inquiry submit");
