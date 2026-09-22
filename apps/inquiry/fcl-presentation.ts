@@ -22,6 +22,17 @@ export function displayMargin(value: string | null | undefined): string {
   try { return `${new Decimal(value).mul(100).toFixed(2)}%`; } catch { return '—'; }
 }
 
+export function displayAmount(value: string | null | undefined, empty = '—'): string {
+  if (value == null || value === '') return empty;
+  try { return new Decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(); } catch { return value; }
+}
+
+// A rounded display must not rewrite an untouched source price when another field is saved.
+export function readAmountInput(value: string, original: string | null | undefined): string | null {
+  const entered = value.trim();
+  return entered === displayAmount(original, '') ? original ?? null : entered || null;
+}
+
 export function fclValue(field: string, value: unknown): string {
   if (value == null || value === '') return '未填写';
   if (field === 'containers' && Array.isArray(value)) return value.map((row: {type: string; quantity: number | null}) => `${row.type} × ${row.quantity ?? '待确认'}`).join('、') || '未选择';

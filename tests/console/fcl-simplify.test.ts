@@ -40,6 +40,16 @@ const stubFormData=()=>vi.stubGlobal('FormData',class{
 const inputTemplate=(ops:ReturnType<typeof createFclOperations>,form:FormStub,name:string,value:string='')=>{void ops.input({target:{closest:(selector:string)=>selector==='.ops-workspace'||selector==='[data-fcl-form="ops-template"]',dataset:{},name,form,value,checked:false}});};
 const changeTemplate=(ops:ReturnType<typeof createFclOperations>,form:FormStub,name:string,value:string,checked=false)=>{void ops.change({target:{closest:(selector:string)=>selector==='.ops-workspace'||selector==='[data-fcl-form="ops-template"]',dataset:{},name,form,value,checked}});};
 describe('FCL simplified workbench',()=>{
+ it('returns from template maintenance to the quote form without keeping the last maintenance tab',async()=>{
+  const draft=operationsFixture();
+  const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
+  const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
+  ops.render('', 'templates');await new Promise(r=>setTimeout(r,0));
+  await ops.action({dataset:{action:'ops-tab',tab:'rates'}});
+  expect(ops.render('', 'templates')).toContain('ops-ocean-table');
+  expect(ops.render()).toContain('data-fcl-form="ops-run"');
+  expect(ops.render()).not.toContain('ops-ocean-table');
+ });
  it('filters fees without changing the source row used by edit and copy',async()=>{
   const draft=operationsFixture();
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:null,history:[]}:{items:[]}}));

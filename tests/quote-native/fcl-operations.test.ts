@@ -84,3 +84,12 @@ it('keeps a legacy fee identity through reorder and maps it back to the current 
  data.rates[0]!.additional_fees.push({...fee,cost_price:'300'});
  expect(calculateFclEstimate(data,estimateRequest(),cosco,'calgary').blockers).toContain('legacy_fee_identity_ambiguous');
 });
+
+it('does not repeat a fee name when its Chinese and English labels are identical',async()=>{
+ const {estimateToQuoteDraft}=await import('../../services/quote-native/fcl-operations');
+ const calculation=calculateFclEstimate(operationsFixture(),estimateRequest(),cosco,'calgary');
+ const fee=calculation.lines.find(l=>!l.id.startsWith('ocean_freight:')&&!l.id.startsWith('rate_fee:'))!;
+ fee.name_zh='文件费';fee.name_en='文件费';const before=structuredClone(calculation);
+ const draft=estimateToQuoteDraft({calculation,estimate_id:'00000000-0000-4000-8000-000000000001',version:1,content_digest:'0'.repeat(64)} as Parameters<typeof estimateToQuoteDraft>[0]);
+ expect(draft.manual_fees.some(l=>l.name==='文件费')).toBe(true);expect(draft.manual_fees.some(l=>l.name==='文件费 文件费')).toBe(false);expect(calculation).toEqual(before);
+});
