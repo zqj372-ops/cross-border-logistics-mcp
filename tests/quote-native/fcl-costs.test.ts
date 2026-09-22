@@ -257,13 +257,11 @@ it('applies audited per-ticket cost, sell and billing overrides without mutating
     expect.objectContaining({row_key:'ocean_freight:40HQ',quantity:'2',cost_price:'3250',sell_price:'3500',cost_amount:'6500.00',sell_amount:'7000.00'}),
     expect.objectContaining({row_key:'rate_fee:0:delivery:CNTR:40HQ',quantity:'1',unit:'SHIPMENT',container_type:null,cost_price:'260',sell_price:'300',cost_amount:'260.00',sell_amount:'300.00'}),
   ]));
-  expect(snapshot.extensions).toMatchObject({
-    fcl_row_adjustments_v1:adjustments.fcl_row_adjustments_v1,
-    fcl_row_adjustment_audit_v1:{changes:[
-      expect.objectContaining({row_key:'ocean_freight:40HQ',operation:'override',actor:'fcl-document-receiver',created_at:'2026-10-08T12:00:00.000Z',original:expect.objectContaining({quantity:'2',cost_price:'3200'}),effective:expect.objectContaining({quantity:'2',cost_price:'3250'})}),
-      expect.objectContaining({row_key:'rate_fee:0:delivery:CNTR:40HQ',operation:'override',actor:'fcl-document-receiver',original:expect.objectContaining({quantity:'2',unit:'CNTR',container_type:'40HQ'}),effective:expect.objectContaining({quantity:'1',unit:'SHIPMENT',container_type:null})}),
-    ]},
-  });
+  expect(snapshot.extensions?.fcl_row_adjustments_v1).toMatchObject(adjustments.fcl_row_adjustments_v1);
+  expect(snapshot.extensions?.fcl_row_adjustment_audit_v1).toMatchObject({changes:[
+    {row_key:'ocean_freight:40HQ',operation:'override',actor:'fcl-document-receiver',created_at:'2026-10-08T12:00:00.000Z',original:{quantity:'2',cost_price:'3200'},effective:{quantity:'2',cost_price:'3250'}},
+    {row_key:'rate_fee:0:delivery:CNTR:40HQ',operation:'override',actor:'fcl-document-receiver',original:{quantity:'2',unit:'CNTR',container_type:'40HQ'},effective:{quantity:'1',unit:'SHIPMENT',container_type:null}},
+  ]});
   expect(snapshot.calculation.unified_profit).toMatchObject({cost_subtotal:'46800.00',revenue_subtotal:'50500.00',gp_subtotal:'3700.00'});
   expect(snapshot.calculation.assumptions).toContain('per_quote_adjustments_audited');
   expect(snapshot.calculation.calculation_trace.some(entry=>entry.step==='per_quote_adjustment'&&entry.detail.includes('ocean_freight:40HQ'))).toBe(true);
