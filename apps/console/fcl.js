@@ -431,8 +431,8 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const heading = head('整柜询价', '选运价和模板，调整本票费用，生成客户报价。', '<button class="button primary" data-action="fcl-case-new">新增询价</button>');
     const draft = newCaseDraft;
     const createForm = draft ? `<form class="panel" data-fcl-form="case-create"><div class="panel-body"><div class="form-error" role="alert" hidden></div><h2>录入客户需求</h2><div class="field-grid">${valueField('联系人', 'new-case-name', draft.name || '', 'name="name" required maxlength="80"')}${valueField('邮箱', 'new-case-email', draft.email || '', 'name="email" type="email" required')}${valueField('公司（选填）', 'new-case-company', draft.company || '', 'name="company" maxlength="200"')}${valueField('起运港', 'new-case-pol', draft.pol || '', 'name="pol" maxlength="200"')}${valueField('目的港', 'new-case-pod', draft.pod || '', 'name="pod" maxlength="200"')}</div><label class="check-row"><input type="checkbox" name="consent" required${draft.consent ? ' checked' : ''}>已取得客户授权，保存联系资料用于询价和报价</label><div class="head-actions"><button type="submit" class="button primary">保存并完善需求</button><button type="button" class="button" data-action="fcl-case-cancel">取消</button></div></div></form>` : '';
-    if (!cases && !casesError) return heading + '<p role="status">正在读取受理列表…</p>';
-    if (casesError) return heading + note(fclError({code: casesError}), 'error');
+    if (!cases && !casesError) return heading + createForm + '<p role="status">正在读取受理列表…</p>';
+    if (casesError) return heading + createForm + note(casesError === 'network' ? '询价列表暂未加载，请重试。已填写的内容会保留。' : fclError({code: casesError}), 'error') + '<button class="button" type="button" data-action="fcl-cases-retry">重新加载</button>';
     return heading + createForm + (cases.items.length ? `<div class="case-list">${cases.items.map(caseCard).join('')}</div>${casesNextCursor ? '<div class="head-actions"><button type="button" class="button" data-action="fcl-cases-more">加载更多询价</button></div>' : ''}` : empty('还没有询价', '点击新增询价，录入客户需求。这里只显示本人受理的记录。'));
   };
 
@@ -1012,6 +1012,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const e = epoch;
     if (name === 'fcl-case-new') { newCaseDraft ||= {}; rerender(); document.querySelector('#new-case-name')?.focus(); return true; }
     if (name === 'fcl-case-cancel') { newCaseDraft = null; newCaseDirty = false; rerender(); return true; }
+    if (name === 'fcl-cases-retry') { casesError = ''; await loadCases(); return true; }
     if (name === 'fcl-template-step') {
       if (quoteDirty || documentDisplayDirty) { message = '请先保存本票费用或报价单信息，再重新套用模板。'; rerender(); return true; }
       if (detail.review_context.review_required) { workspaceStep = 'requirements'; message = '请先核对客户需求，再选择模板。'; rerender(); return true; }
