@@ -403,3 +403,75 @@
   #app #content .fcl-workbench :is(.ops-charge-editor,.ops-charges) .button { min-height: 44px; }
   #app #content .fcl-workbench .ops-charge-toolbar form { order: 1; width: 100%; }
 }
+
+/* Fee templates start from the imported reference plans, then open a compact editable ledger. */
+#app #content .fcl-workbench .ops-template-workbench { display: grid; gap: 14px; margin-bottom: 18px; }
+#app #content .fcl-workbench .ops-template-source-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-template-source-tabs .console-tab { padding: 10px 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--fc-muted); }
+#app #content .fcl-workbench .ops-template-source-tabs .console-tab[aria-current] { color: var(--fc-blue); border-bottom-color: var(--fc-blue); font-weight: 600; }
+#app #content .fcl-workbench .ops-template-head { display: grid; grid-template-columns: minmax(260px,380px) minmax(0,1fr) auto; align-items: end; gap: 14px; }
+#app #content .fcl-workbench .ops-template-head > p { margin: 0 0 8px; }
+#app #content .fcl-workbench .ops-template-head .head-actions { margin: 0 0 5px; }
+#app #content .fcl-workbench .ops-template-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--fc-line); border-radius: 6px; background: #f8fafc; }
+#app #content .fcl-workbench .ops-template-summary > div { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-template-summary > div:last-child { border-right: 0; }
+#app #content .fcl-workbench .ops-template-summary span,
+#app #content .fcl-workbench .ops-template-summary strong { display: block; }
+#app #content .fcl-workbench .ops-template-summary span { color: var(--fc-muted); font-size: 11px; }
+#app #content .fcl-workbench .ops-template-summary strong { margin-top: 3px; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+#app #content .fcl-workbench .ops-template-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; }
+#app #content .fcl-workbench .ops-template-table { min-width: 820px; table-layout: fixed; font-size: 14px; }
+#app #content .fcl-workbench .ops-template-table.is-reference { min-width: 720px; }
+#app #content .fcl-workbench .ops-template-table :is(th,td) { height: 44px; padding: 5px 8px; vertical-align: middle; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-template-table th { background: #f6f8fb; color: #56647a; font-size: 12px; font-weight: 500; }
+#app #content .fcl-workbench .ops-template-table th:first-child { width: 260px; }
+#app #content .fcl-workbench .ops-template-table :is(input,select) { height: 36px; min-height: 36px; padding: 5px 8px; font-size: 13px; }
+#app #content .fcl-workbench .ops-template-table td strong { display: block; font-size: 13px; font-weight: 500; }
+#app #content .fcl-workbench .ops-template-version { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--fc-muted); font-size: 11px; }
+#app #content .fcl-workbench .ops-template-version select { width: auto; min-width: 170px; }
+#app #content .fcl-workbench .ops-template-details { border-top: 1px solid var(--fc-line); border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-template-details > summary { padding: 10px 0; color: #46556c; font-size: 13px; }
+#app #content .fcl-workbench .ops-template-settings { display: grid; gap: 16px; padding: 4px 0 14px; }
+#app #content .fcl-workbench .ops-template-settings > section { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-template-settings > section > h3 { margin: 0; }
+#app #content .fcl-workbench .ops-template-settings > section > .field-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px 12px; }
+#app #content .fcl-workbench .ops-template-charge-settings { border: 1px solid var(--fc-line); border-radius: 6px; padding: 0 12px; }
+#app #content .fcl-workbench .ops-template-charge-settings > summary { padding: 10px 0; font-size: 13px; }
+#app #content .fcl-workbench .ops-template-charge-settings .field-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px 12px; padding-bottom: 6px; }
+#app #content .fcl-workbench .ops-template-add { display: flex; align-items: flex-end; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--fc-line); }
+#app #content .fcl-workbench .ops-template-add .field { flex: 1; max-width: 520px; }
+#app #content .fcl-workbench .ops-template-actions { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end; padding: 12px 0; background: #fff; box-shadow: 0 -1px 0 var(--fc-line); }
+#app #content .fcl-workbench .ops-template-actions .button { min-width: 136px; }
+#app #content .fcl-workbench .ops-template-publication { margin: 0; }
+#app #content .fcl-workbench .ops-template-publication .panel-body { display: grid; gap: 10px; }
+#app #content .fcl-workbench .ops-template-publication .button { justify-self: start; }
+#app #content .fcl-workbench .ops-template-blockers { margin: 0; padding-left: 20px; color: #8a5c12; font-size: 13px; }
+#app #content .fcl-workbench .ops-template-publication .check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+
+@media(max-width:760px) {
+  #app #content .fcl-workbench .ops-template-workbench,
+  #app #content .fcl-workbench .ops-template-workbench > form,
+  #app #content .fcl-workbench .ops-template-table-wrap { min-width: 0; max-width: 100%; }
+  #app #content .fcl-workbench .ops-template-source-tabs { gap: 16px; overflow-x: auto; }
+  #app #content .fcl-workbench .ops-template-head { grid-template-columns: minmax(0,1fr); }
+  #app #content .fcl-workbench .ops-template-head > p { margin: 0; }
+  #app #content .fcl-workbench .ops-template-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #app #content .fcl-workbench .ops-template-summary > div:nth-child(2) { border-right: 0; }
+  #app #content .fcl-workbench .ops-template-summary > div:nth-child(n+3) { border-top: 1px solid var(--fc-line); }
+  #app #content .fcl-workbench .ops-template-table,
+  #app #content .fcl-workbench .ops-template-table.is-reference { display: block; min-width: 0; width: 100%; }
+  #app #content .fcl-workbench .ops-template-table thead { display: none; }
+  #app #content .fcl-workbench .ops-template-table tbody { display: block; }
+  #app #content .fcl-workbench .ops-template-table tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 10px; padding: 10px 0; border-bottom: 1px solid var(--fc-line); }
+  #app #content .fcl-workbench .ops-template-table tr > td { display: block; height: auto; min-width: 0; padding: 0; border: 0; }
+  #app #content .fcl-workbench .ops-template-table tr > td::before { display: block; margin-bottom: 3px; color: var(--fc-muted); font-size: 10px; content: attr(data-label); }
+  #app #content .fcl-workbench .ops-template-table tr > td:first-child,
+  #app #content .fcl-workbench .ops-template-table:not(.is-reference) tr > td:last-child { grid-column: 1 / -1; }
+  #app #content .fcl-workbench .ops-template-table :is(input,select) { height: 44px; min-height: 44px; }
+  #app #content .fcl-workbench .ops-template-settings > section > .field-grid,
+  #app #content .fcl-workbench .ops-template-charge-settings .field-grid { grid-template-columns: minmax(0,1fr); }
+  #app #content .fcl-workbench .ops-template-add { align-items: stretch; flex-direction: column; }
+  #app #content .fcl-workbench .ops-template-add .field { max-width: none; }
+  #app #content .fcl-workbench .ops-template-actions { padding-bottom: max(12px,env(safe-area-inset-bottom)); }
+  #app #content .fcl-workbench .ops-template-actions .button { width: 100%; min-height: 44px; }
+}

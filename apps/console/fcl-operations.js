@@ -9,8 +9,8 @@ const clone=value=>structuredClone(value);
 const types=['20GP','40GP','40HQ','45HQ'];
 const emptyCapacity={weight_min_kg:null,weight_max_kg:null,volume_min_cbm:null,volume_max_cbm:null};
 const emptyWindow={valid_from:'',valid_until:''};
-const sectionNames={compare:'报价',rates:'海运费表',charges:'基础费用',history:'历史报价',delivery_rates:'内陆运价',templates:'目的地模板',rate_details:'手工维护船期'};
-const businessTabs=['compare','rates','charges','history'];
+const sectionNames={compare:'报价',rates:'海运费表',charges:'基础费用库',history:'历史报价',delivery_rates:'内陆运价',templates:'费用模板',rate_details:'手工维护船期'};
+const businessTabs=['compare','rates','templates','history'];
 
 export function sortFclEstimates(items,key,direction='asc'){
   const value=item=>{const c=item.calculation;if(key==='carrier')return c.carrier;if(key==='etd')return c.schedule?.etd??null;if(key==='transit_days')return c.schedule?.transit_days??null;if(key==='ocean')return c.lines.find(l=>l.category==='ocean')?.cost_amount??null;return c.totals[key];};
@@ -22,18 +22,54 @@ export function sortFclEstimates(items,key,direction='asc'){
   });
 }
 
+export function referenceChargeGroup(charge){
+  const remark=String(charge?.remark||''),name=String(charge?.name_zh||''),source=String(charge?.source_ref||'');
+  const match=/^参考方案：([^；]+)；/u.exec(remark);
+  const group=match?.[1]?.trim();
+  if(!group||!source.startsWith('xlsx:')||!name.endsWith(` · ${group}`))return null;
+  return group;
+}
+
+export function groupReferenceCharges(charges){
+  const groups=new Map();
+  charges.forEach((charge,index)=>{
+    const name=referenceChargeGroup(charge);
+    if(!name)return;
+    const group=groups.get(name)??[];
+    group.push({charge,index});
+    groups.set(name,group);
+  });
+  return [...groups].map(([name,entries])=>({name,entries}));
+}
+
+export function fclTemplateChargeImpacts({templates=[],delivery_rates=[]},chargeId,currentTemplateId=null,currentTemplateVersion=null){
+  const excludesCurrent=template=>template.id!==currentTemplateId||(currentTemplateVersion!==null&&template.version!==currentTemplateVersion);
+  const direct=templates.filter(template=>excludesCurrent(template)&&template.charge_ids.includes(chargeId)).map(template=>template.label);
+  const deliveryIds=new Set(delivery_rates.filter(rate=>rate.surcharge_ids.includes(chargeId)).map(rate=>rate.id));
+  const indirect=templates.filter(template=>excludesCurrent(template)&&template.delivery_rate_id!==null&&deliveryIds.has(template.delivery_rate_id)).map(template=>template.label);
+  return [...new Set([...direct,...indirect])];
+}
+
 export function createFclOperations({call:readRequest,write:writeRequest,esc,rerender,notify,model,api}){
   let generation=0,loading=false,loaded=false,contextId='',view=null,draft=null,items=[],caseView=null,caseList=[],section='compare',editor=null,dirty=false,publication=null,batch=null,batchPreview=null,message='',sort='cost_total',direction='asc',destination='',history=null,historyRows=[];
+  let templatePrimary='',templateId='',templateIndex=-1,referencePlan='',referenceOceanChoice=false,templateEditor=null,templateIssues=[],templateSharedConfirmation=false,templateMoreOpen=false,templateOpenCharge=null,templatePreviewFailed=false;
   let routePod='',routeDestination='',entrySection='',advanced=false,feeSearch='';
   let query={shipping_date:'',pol:'',rate_ids:[],template_ids:[],containers:[{type:'40HQ',quantity:1,unit:'CNTR'}],weight_kg:null,volume_cbm:null,postal_code:null,zone:null,case_ref:null};
   const guarded=fn=>async(...args)=>{const token=generation;const result=await fn(...args);if(token!==generation)throw Object.assign(new Error('fcl_request_superseded'),{code:'fcl_request_superseded'});return result;};
   const call=guarded(readRequest),write=guarded(writeRequest);
-  const reset=()=>{schedules.reset();oceanCurrencies.clear();section='compare';entrySection='';advanced=false;feeSearch='';routePod='';routeDestination='';generation++;loading=false;loaded=false;contextId='';view=null;draft=null;items=[];caseView=null;caseList=[];editor=null;dirty=false;publication=null;batch=null;batchPreview=null;history=null;historyRows=[];message='';};
+  const reset=()=>{schedules.reset();oceanCurrencies.clear();section='compare';entrySection='';advanced=false;feeSearch='';routePod='';routeDestination='';generation++;loading=false;loaded=false;contextId='';view=null;draft=null;items=[];caseView=null;caseList=[];editor=null;dirty=false;publication=null;batch=null;batchPreview=null;history=null;historyRows=[];message='';templatePrimary='';templateId='';templateIndex=-1;referencePlan='';referenceOceanChoice=false;templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;templatePreviewFailed=false;};
   const requireData=response=>{if(!response.data||!['success','needs_input','manual_review'].includes(response.status))throw Object.assign(new Error(response.reason_codes?.[0]||'fcl_unavailable'),{code:response.reason_codes?.[0]||'fcl_unavailable'});return response.data;};
   const emptyOperations={rate_details:[],charges:[],delivery_rates:[],templates:[]};
   const publishedDataset=()=>view?.active_release?.input.contract_version===FCL_RATE_DATASET_V2?view.active_release.input:null;
   const publishedOptions=()=>publishedDataset()?.operations??emptyOperations;
   const draftOptions=()=>draft?.operations??emptyOperations;
+  const normalizeTemplateSelection=()=>{
+    const templates=draftOptions().templates;
+    if(templateIndex>=0&&templates[templateIndex]?.id===templateId)return templateIndex;
+    templateIndex=templateId?templates.findIndex(template=>template.id===templateId):-1;
+    if(templateIndex<0){templateIndex=templates.length?0:-1;templateId=templates[0]?.id||'';}
+    return templateIndex;
+  };
   const validOn=row=>Boolean(query.shipping_date)&&row.valid_from<=query.shipping_date&&query.shipping_date<=row.valid_until;
   const currentDate=()=>model().session?.fcl_capability?.business_date||'';
   const load=async(id='',force=false)=>{
@@ -45,6 +81,11 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
       if(token!==generation)return;
       view=requireData(results[0]);draft=clone(view.draft||view.active_release?.input||{contract_version:FCL_RATE_DATASET_V2,label:'整柜海运费表',rates:[],operations:{rate_details:[],charges:[],delivery_rates:[],templates:[]}});
       if(draft.contract_version!==FCL_RATE_DATASET_V2)draft={...draft,contract_version:FCL_RATE_DATASET_V2,operations:{rate_details:[],charges:[],delivery_rates:[],templates:[]}};
+      normalizeTemplateSelection();
+      const referenceGroups=groupReferenceCharges(draftOptions().charges);
+      if(!['reference','templates'].includes(templatePrimary))templatePrimary=referenceGroups.length?'reference':draftOptions().templates.length?'templates':'reference';
+      if(!referenceGroups.some(group=>group.name===referencePlan))referencePlan=referenceGroups[0]?.name||'';
+      templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;templatePreviewFailed=false;referenceOceanChoice=false;
       items=requireData(results[1]).items;caseList=requireData(results[2]).items.filter(c=>!['closed','cancelled'].includes(c.case_status));caseView=id?requireData(results[3]):null;
       if(caseView){const c=caseView.current_input;routePod=c.pod||'';routeDestination=c.final_destination||'';query={...query,case_ref:id,pol:c.pol||'',shipping_date:c.cargo_ready_date||'',containers:c.containers.filter(b=>b.quantity!==null).map(b=>({...b,unit:'CNTR'})),weight_kg:c.estimated_weight?.value||null,template_ids:[]};}
       else query={...query,case_ref:null,shipping_date:query.shipping_date||currentDate()};
@@ -59,6 +100,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const errorBox='<div class="form-error" hidden></div>';
   const btn=(action,text,attrs='')=>`<button type="button" class="button" data-action="ops-${action}" ${attrs}>${text}</button>`;
   const notifyState=()=>message?`<p class="ops-message" role="status">${esc(message)}</p>`:'';
+  const fclError=error=>fclIssue(error?.code||error?.message||'fcl_unavailable');
   const refresh=async()=>{items=requireData(await call('estimate-list',{case_ref:null,destination:null,shipping_date:null})).items;};
   const categoryName=key=>fclField(({ocean:'ocean_freight',origin:'origin_charges',destination:'destination_charges',inland:'inland_delivery',customs:'customs',risk:'risk',other:'other'})[key]);
   const amount=(value,currency='CNY')=>value===null||value===undefined?'—':`${esc(value)} <small>${currency}</small>`;
@@ -72,7 +114,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const queryForm=()=>{
     const templates=matchingTemplates();
     const noPublished=!publishedDataset()||!matchingTemplates().length;
-    return `<form data-fcl-form="ops-run" class="ops-query panel ops-daily-sheet">${errorBox}<div class="ops-flow-steps" aria-label="报价流程"><span aria-current="step">1 套模板</span><span>2 改本票</span><span>3 出报价</span></div><h2>选择海运费和费用模板</h2>${caseView?`<p class="muted">已带入 ${esc(caseView.inquiry_no)} 的客户需求</p>`:''}<div class="ops-query-grid"><div>${input('pol',query.pol,'required')}</div><div>${input('pod',routePod,'required list="ops-pods"')}</div><div>${input('destination',routeDestination,'required list="ops-destinations"')}</div><div>${input('shipping_date',query.shipping_date,'type="date" required')}</div><div>${select('selected_rate',query.rate_ids[0]||'',[['','请选择一条已发布海运费'],...matchingRates().map(r=>[r.rate_id,`${r.supplier_label} · ${r.pol} → ${r.pod}`])])}</div><div>${select('template',query.template_ids.length===1?query.template_ids[0]:'',[['','请选择一套费用模板'],...templates.map(t=>[t.id,t.label])])}</div></div><datalist id="ops-pods">${[...new Set((publishedDataset()?.rates||[]).map(r=>r.pod))].map(v=>`<option value="${esc(v)}">`).join('')}</datalist><datalist id="ops-destinations">${[...new Set(publishedOptions().templates.map(t=>t.destination))].map(v=>`<option value="${esc(v)}">`).join('')}</datalist><div class="ops-query-bottom"><div class="ops-quantities">${types.map(type=>`<label>${type}<input aria-label="${type}柜数" name="box-${type}" type="number" min="0" max="1000" value="${query.containers.find(c=>c.type===type)?.quantity||''}"></label>`).join('')}</div><div class="head-actions">${btn('tab','模板维护','data-tab="rates"')}<button class="button primary" type="submit"${noPublished?' disabled':''}>套用模板</button></div></div><details class="ops-query-advanced"><summary>其他条件</summary><div class="field-grid">${input('weight_kg',query.weight_kg,'inputmode="decimal"')}${input('volume_cbm',query.volume_cbm,'inputmode="decimal"')}${input('postal_code',query.postal_code)}${input('zone',query.zone)}</div></details>${noPublished?'<p class="inline-note warning">当前没有可用的已发布费用模板，请先完成模板维护。</p>':''}</form>`;
+    return `<form data-fcl-form="ops-run" class="ops-query panel ops-daily-sheet">${errorBox}<div class="ops-flow-steps" aria-label="报价流程"><span aria-current="step">1 套模板</span><span>2 改本票</span><span>3 出报价</span></div><h2>选择海运费和费用模板</h2>${caseView?`<p class="muted">已带入 ${esc(caseView.inquiry_no)} 的客户需求</p>`:''}<div class="ops-query-grid"><div>${input('pol',query.pol,'required')}</div><div>${input('pod',routePod,'required list="ops-pods"')}</div><div>${input('destination',routeDestination,'required list="ops-destinations"')}</div><div>${input('shipping_date',query.shipping_date,'type="date" required')}</div><div>${select('selected_rate',query.rate_ids[0]||'',[['','请选择一条已发布海运费'],...matchingRates().map(r=>[r.rate_id,`${r.supplier_label} · ${r.pol} → ${r.pod}`])])}</div><div>${select('template',query.template_ids.length===1?query.template_ids[0]:'',[['','请选择一套费用模板'],...templates.map(t=>[t.id,t.label])])}</div></div><datalist id="ops-pods">${[...new Set((publishedDataset()?.rates||[]).map(r=>r.pod))].map(v=>`<option value="${esc(v)}">`).join('')}</datalist><datalist id="ops-destinations">${[...new Set(publishedOptions().templates.map(t=>t.destination))].map(v=>`<option value="${esc(v)}">`).join('')}</datalist><div class="ops-query-bottom"><div class="ops-quantities">${types.map(type=>`<label>${type}<input aria-label="${type}柜数" name="box-${type}" type="number" min="0" max="1000" value="${query.containers.find(c=>c.type===type)?.quantity||''}"></label>`).join('')}</div><div class="head-actions">${btn('tab','模板维护','data-tab="templates"')}<button class="button primary" type="submit"${noPublished?' disabled':''}>套用模板</button></div></div><details class="ops-query-advanced"><summary>其他条件</summary><div class="field-grid">${input('weight_kg',query.weight_kg,'inputmode="decimal"')}${input('volume_cbm',query.volume_cbm,'inputmode="decimal"')}${input('postal_code',query.postal_code)}${input('zone',query.zone)}</div></details>${noPublished?'<p class="inline-note warning">当前没有可用的已发布费用模板，请先完成模板维护。</p>':''}</form>`;
   };
   const matchesQuery=item=>{
     if(!query.pol)return true;
@@ -96,6 +138,221 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(section==='charges')return chargeList();
     const records=draftOptions()[section];
     return `<div class="ops-toolbar"><h2>${sectionNames[section]}</h2>${btn('new','新增',`data-kind="${section}"`)}<span class="muted">${records.length} 项</span></div><div class="table-wrap panel"><table><thead><tr><th>项目</th><th>${fclFieldHtml('validity')}</th><th>价格 / 路线</th><th>${fclFieldHtml('version')}</th><th>操作</th></tr></thead><tbody>${records.map((r,index)=>`<tr><td><strong>${esc(r.name_zh||r.label||r.carrier||`${r.origin} → ${r.destination}`)}</strong><small>${esc(r.name_en||r.code||'')}</small></td><td>${esc(r.valid_from||r.etd||'—')} → ${esc(r.valid_until||r.eta||'—')}</td><td>${esc(r.amount!==undefined?`${r.amount} ${r.currency}`:r.base_rate!==undefined?`${r.base_rate} ${r.currency}`:r.routing||'—')}</td><td>${r.version||'—'}</td><td>${btn('edit','编辑',`data-index="${index}" data-kind="${section}"`)}${section!=='rate_details'?btn('copy-record','复制',`data-index="${index}" data-kind="${section}"`)+btn('next-version','新有效期',`data-index="${index}" data-kind="${section}"`):''}</td></tr>`).join('')}</tbody></table></div>`;
+  };
+  const chargeCandidates=chargeId=>draftOptions().charges.map((charge,index)=>({charge,index})).filter(item=>item.charge.id===chargeId);
+  const templateChargeRows=chargeIds=>chargeIds.map(chargeId=>{
+    const candidates=chargeCandidates(chargeId),selected=candidates.length===1?candidates[0]:null;
+    return {chargeId,selectedIndex:selected?.index??null,original:selected?clone(selected.charge):null,value:selected?clone(selected.charge):null,candidates};
+  });
+  const createTemplateEditor=(index)=>{
+    const template=draftOptions().templates[index];
+    if(!template)return null;
+    return {kind:'template',index,id:template.id,isNew:false,base:clone(template),value:clone(template),marginPercent:new Decimal(template.margin_rule.value).mul(100).toString(),marginPercentInvalid:false,charges:templateChargeRows(template.charge_ids)};
+  };
+  const createReferenceEditor=(name)=>{
+    const group=groupReferenceCharges(draftOptions().charges).find(row=>row.name===name);
+    if(!group)return null;
+    return {kind:'reference',id:name,isNew:false,base:null,value:{label:name},charges:group.entries.map(entry=>({chargeId:entry.charge.id,selectedIndex:entry.index,original:clone(entry.charge),value:clone(entry.charge),candidates:[entry]}))};
+  };
+  const createTemplateFromReference=(includeOcean=false)=>{
+    const editor=templateEditor?.kind==='reference'?templateEditor:createReferenceEditor(referencePlan);
+    if(!editor)return null;
+    const rows=editor.charges.filter(row=>includeOcean||row.value?.category!=='ocean');
+    const charges=rows.flatMap(row=>row.value?[row.value]:[]);
+    const countries=[...new Set(charges.map(charge=>charge.country).filter(Boolean))];
+    const destinations=[...new Set(charges.map(charge=>charge.destination).filter(Boolean))];
+    const containers=[...new Set(charges.flatMap(charge=>charge.container_types))];
+    const id=`template-${crypto.randomUUID()}`;
+    return {kind:'template',index:null,id,isNew:true,base:null,marginPercent:'',marginPercentInvalid:false,value:{id,version:1,label:editor.id,country:countries.length===1?countries[0]:'',pod:'',destination:destinations.length===1?destinations[0]:'',routing:'',service_mode:'',customs_mode:'',container_types:containers,weight_min_kg:null,weight_max_kg:null,volume_min_cbm:null,volume_max_cbm:null,charge_ids:[...new Set(charges.map(charge=>charge.id))],delivery_rate_id:null,margin_rule:{mode:'',value:''},exchange_rates:{USD:null,CAD:null},fx_source:'',valid_from:'',valid_until:'',enabled:false},charges:rows.map(row=>({...row,original:row.original?clone(row.original):null,value:row.value?clone(row.value):null,candidates:row.candidates.map(candidate=>({...candidate,charge:clone(candidate.charge)}))}))};
+  };
+  const ensureTemplateEditor=()=>{
+    if(templateEditor)return templateEditor;
+    templateEditor=templatePrimary==='reference'?createReferenceEditor(referencePlan):createTemplateEditor(normalizeTemplateSelection());
+    return templateEditor;
+  };
+  const templateEditorDirty=()=>{
+    if(!templateEditor)return false;
+    if(templateEditor.kind==='template')return templateEditor.isNew||JSON.stringify(templateEditor.base)!==JSON.stringify(templateEditor.value)||templateEditor.charges.some(row=>JSON.stringify(row.original)!==JSON.stringify(row.value));
+    return templateEditor.charges.some(row=>JSON.stringify(row.original)!==JSON.stringify(row.value));
+  };
+  const chargeDisplayName=(row,groupName=null)=>{
+    const name=row.value?.name_zh||row.original?.name_zh||'';
+    return groupName&&name.endsWith(` · ${groupName}`)?name.slice(0,-` · ${groupName}`.length):name;
+  };
+  const templateImpactRows=()=>{
+    if(!templateEditor)return [];
+    const currentId=templateEditor.kind==='template'&&!templateEditor.isNew?templateEditor.id:null;
+    const currentVersion=templateEditor.kind==='template'&&!templateEditor.isNew?templateEditor.value.version:null;
+    return templateEditor.charges.flatMap(row=>{
+      const names=fclTemplateChargeImpacts(draftOptions(),row.chargeId,currentId,currentVersion);
+      return names.length?[{row,names}]:[];
+    });
+  };
+  const templateChangedImpactRows=()=>templateImpactRows().filter(({row})=>JSON.stringify(row.original)!==JSON.stringify(row.value));
+  const setFormValue=(form,name,apply)=>{const input=form?.querySelector(`[name="${name}"]`);if(input)apply(input);};
+  const templateEditorSnapshot=()=>templateEditor?JSON.stringify({value:templateEditor.value,marginPercent:templateEditor.marginPercent,marginPercentInvalid:templateEditor.marginPercentInvalid,charges:templateEditor.charges.map(row=>({selectedIndex:row.selectedIndex,value:row.value}))}):'';
+  const invalidateTemplatePublication=()=>{
+    if(!publication&&!templatePreviewFailed)return;
+    publication=null;templatePreviewFailed=false;
+    if(typeof document!=='undefined')document.querySelector('.ops-template-publication')?.remove();
+  };
+  const captureTemplateEditor=form=>{
+    if(!templateEditor||!form)return false;
+    const before=templateEditorSnapshot();
+    const data=new FormData(form);
+    if(templateEditor.kind==='template'){
+      const set=(name,apply)=>setFormValue(form,`template.${name}`,input=>apply(input.value));
+      for(const name of ['label','country','pod','destination','routing','service_mode','customs_mode','valid_from','valid_until','fx_source'])set(name,value=>{templateEditor.value[name]=value;});
+      set('margin_mode',value=>{templateEditor.value.margin_rule.mode=value;});
+      setFormValue(form,'template.margin_percent',input=>{
+        templateEditor.marginPercent=input.value.trim();
+        try{templateEditor.value.margin_rule.value=templateEditor.marginPercent?new Decimal(templateEditor.marginPercent).div(100).toString():'';templateEditor.marginPercentInvalid=false;}
+        catch{templateEditor.marginPercentInvalid=true;}
+      });
+      set('USD',value=>{templateEditor.value.exchange_rates.USD=value||null;});
+      set('CAD',value=>{templateEditor.value.exchange_rates.CAD=value||null;});
+      set('delivery_rate_id',value=>{templateEditor.value.delivery_rate_id=value||null;});
+      setFormValue(form,'template.enabled',input=>{templateEditor.value.enabled=input.checked;});
+      templateEditor.value.container_types=data.getAll('template.container_types').map(String);
+    }
+    templateEditor.charges.forEach((row,index)=>{
+      const root=form.querySelector(`[data-template-charge="${index}"]`),settings=form.querySelector(`[data-template-charge-settings="${index}"]`);
+      setFormValue(root,`charges.${index}.selected`,input=>{const next=Number(input.value),candidate=row.candidates.find(item=>item.index===next);if(candidate&&next!==row.selectedIndex){row.selectedIndex=candidate.index;row.original=clone(candidate.charge);row.value=clone(candidate.charge);}});
+      if(!row.value)return;
+      const apply=(name,applyValue)=>setFormValue(root,`charges.${index}.${name}`,input=>applyValue(input.value));
+      apply('amount',value=>{row.value.amount=value;});
+      apply('sell_amount',value=>{row.value.sell_amount=value===''?null:value;});
+      apply('currency',value=>{row.value.currency=value;});
+      apply('unit',value=>{row.value.unit=value;});
+      for(const name of ['name_zh','name_en','code','country','category','pod','destination','valid_from','valid_until','source_ref','source_version','remark'])setFormValue(settings,`charges.${index}.${name}`,input=>{
+        const value=input.value.trim();
+        if(name==='name_zh'&&templateEditor.kind==='reference'&&value&&!value.endsWith(` · ${templateEditor.id}`)){row.value.name_zh=`${value} · ${templateEditor.id}`;return;}
+        row.value[name]=['pod','destination','remark'].includes(name)?(value||null):value;
+      });
+      if(settings){row.value.container_types=[...settings.querySelectorAll(`[name="charges.${index}.container_types"]:checked`)].map(input=>input.value);row.value.editable=settings.querySelector(`[name="charges.${index}.editable"]`)?.checked??false;}
+    });
+    return before!==templateEditorSnapshot();
+  };
+  const templateSchemaIssue=issue=>{
+    const path=Array.isArray(issue.path)?issue.path:[];
+    const lastString=[...path].reverse().find(part=>typeof part==='string'&&!['operations','templates','charges'].includes(part));
+    const fieldLabel=key=>key==='margin_value'||(path.includes('margin_rule')&&key==='value')?'利润百分比':key==='USD'||key==='CAD'?`${key} 汇率`:FCL_FIELDS[key]?.zh||'金额或适用条件';
+    if(path[0]==='operations'&&path[1]==='charges'&&typeof path[2]==='number'){
+      const rowIndex=templateEditor.charges.findIndex(row=>row.selectedIndex===path[2]||row.chargeId===draftOptions().charges[path[2]]?.id);
+      if(rowIndex<0)return {field:'',label:`费用配置：请核对第 ${path[2]+1} 项费用。`};
+      const row=templateEditor.charges[rowIndex],name=chargeDisplayName(row)||`第 ${rowIndex+1} 项费用`;
+      const key=lastString||'',uiKey=path.includes('margin_rule')&&key==='value'?'margin_percent':key;
+      return {field:`charges.${rowIndex}.${uiKey}`,label:`费用“${name}”的${fieldLabel(key)}需要核对。`};
+    }
+    if(path[0]==='operations'&&path[1]==='templates'&&typeof path[2]==='number'){
+      const key=lastString||'',uiKey=path.includes('margin_rule')&&key==='value'?'margin_percent':path.includes('exchange_rates')?key:key;
+      return {field:`template.${uiKey}`,label:`模板“${templateEditor.value.label||'未命名'}”的${fieldLabel(key)}需要核对。`};
+    }
+    const detail=fclIssue(issue.message||'input_invalid');
+    return {field:'',label:`费用配置：${detail===issue.message?'请核对费用、日期和引用关系。':detail}`};
+  };
+  const validatedTemplateDraft=()=>{
+    if(!templateEditor)throw Object.assign(new Error('请先选择费用模板。'),{code:'fcl_template_required'});
+    const next=clone(draft),issues=[];
+    templateEditor.charges.forEach((row,index)=>{if(row.candidates.length>1&&row.selectedIndex===null)issues.push({field:`charges.${index}.selected`,label:`第 ${index+1} 项费用有多个有效期版本，请先选择要编辑的版本。`});});
+    if(templateEditor.kind==='reference')templateEditor.charges.forEach((row,index)=>{
+      if(row.value&&referenceChargeGroup(row.value)!==templateEditor.id){
+        const sourceOk=String(row.value.source_ref||'').startsWith('xlsx:'),remarkOk=String(row.value.remark||'').startsWith(`参考方案：${templateEditor.id}；`);
+        issues.push({field:`charges.${index}.${!sourceOk?'source_ref':!remarkOk?'remark':'name_zh'}`,label:`${chargeDisplayName(row)||`第 ${index+1} 项费用`}必须保留参考方案“${templateEditor.id}”的来源、说明和名称后缀；如需修改为正式模板，请先选择“设置报价条件”。`});
+      }
+    });
+    if(templateEditor.kind==='template'&&templateEditor.marginPercentInvalid)issues.push({field:'template.margin_percent',label:'利润百分比必须是有效数字。'});
+    templateChangedImpactRows().forEach(({row,names})=>{if(!templateSharedConfirmation)issues.push({field:'template.shared_confirm',label:`${chargeDisplayName(row)}还会影响模板：${names.join('、')}。请确认共享费用影响。`});});
+    if(issues.length)return {issues,next:null};
+    for(const row of templateEditor.charges){if(row.selectedIndex!==null&&row.value&&JSON.stringify(row.original)!==JSON.stringify(row.value))next.operations.charges[row.selectedIndex]=clone(row.value);}
+    if(templateEditor.kind==='template'){
+      let index=templateEditor.index;
+      if(index===null||next.operations.templates[index]?.id!==templateEditor.id||next.operations.templates[index]?.version!==templateEditor.value.version)index=next.operations.templates.findIndex(row=>row.id===templateEditor.id&&row.version===templateEditor.value.version);
+      if(index<0)next.operations.templates.push(clone(templateEditor.value));else next.operations.templates[index]=clone(templateEditor.value);
+    }
+    const checked=fclRateDatasetSchema.safeParse(next);
+    if(!checked.success)issues.push(...checked.error.issues.slice(0,12).map(templateSchemaIssue));
+    return {issues,next:issues.length?null:next};
+  };
+  const templateSummary=(editor)=>`<div class="ops-template-summary"><div><span>目的港</span><strong>${esc(editor.value.pod||'待设置')}</strong></div><div><span>目的地</span><strong>${esc(editor.value.destination||'待设置')}</strong></div><div><span>柜型</span><strong>${esc(editor.value.container_types.join(' / ')||'待设置')}</strong></div><div><span>有效期</span><strong>${esc(editor.value.valid_from&&editor.value.valid_until?`${editor.value.valid_from} → ${editor.value.valid_until}`:'待设置')}</strong></div></div>`;
+  const templateStatus=template=>{
+    const published=publishedOptions().templates.find(row=>row.id===template.id&&row.version===template.version);
+    if(!published||JSON.stringify(published)!==JSON.stringify(template))return '未生效';
+    const publishedDelivery=template.delivery_rate_id===null?[]:publishedOptions().delivery_rates.filter(rate=>rate.id===template.delivery_rate_id);
+    const draftDelivery=template.delivery_rate_id===null?[]:draftOptions().delivery_rates.filter(rate=>rate.id===template.delivery_rate_id);
+    if(JSON.stringify(publishedDelivery)!==JSON.stringify(draftDelivery))return '未生效';
+    const chargeIds=new Set([...template.charge_ids,...publishedDelivery.flatMap(rate=>rate.surcharge_ids),...draftDelivery.flatMap(rate=>rate.surcharge_ids)]);
+    const publishedCharges=publishedOptions().charges.filter(charge=>chargeIds.has(charge.id));
+    const draftCharges=draftOptions().charges.filter(charge=>chargeIds.has(charge.id));
+    if(JSON.stringify(publishedCharges)!==JSON.stringify(draftCharges))return '未生效';
+    return template.enabled?'已生效':'已停用';
+  };
+  const referenceSummary=(editor)=>{
+    const charges=editor.charges.flatMap(row=>row.value?[row.value]:[]);
+    const destinations=[...new Set(charges.map(charge=>charge.destination).filter(Boolean))];
+    const containers=[...new Set(charges.flatMap(charge=>charge.container_types))];
+    const windows=[...new Set(charges.map(charge=>`${charge.valid_from} → ${charge.valid_until}`))];
+    return `<div class="ops-template-summary"><div><span>目的港</span><strong>未设置</strong></div><div><span>目的地</span><strong>${esc(destinations.length===1?destinations[0]:'多个目的地')}</strong></div><div><span>柜型</span><strong>${esc(containers.join(' / ')||'待确认')}</strong></div><div><span>有效期</span><strong>${esc(windows.length===1?windows[0]:'以各费用有效期为准')}</strong></div></div>`;
+  };
+  const referenceConversionPrompt=editor=>{
+    if(!referenceOceanChoice)return '';
+    const oceans=editor.charges.flatMap(row=>row.value?.category==='ocean'?[chargeDisplayName(row,editor.id)]:[]);
+    return `<div class="inline-note warning" role="region" aria-label="转换为报价模板"><strong>转换为报价模板</strong><p>新报价模板是否包含海运费参考行？${oceans.length?`当前包含：${esc(oceans.join('、'))}。`:''}报价时还会单独选择海运费，包含可能造成重复计费。此选择不会删除或修改当前参考费用。</p><div class="head-actions"><button type="button" class="button primary" data-action="ops-template-convert-without-ocean">不包含并继续</button><button type="button" class="button" data-action="ops-template-convert-with-ocean">包含并继续</button><button type="button" class="button" data-action="ops-template-convert-cancel">取消转换</button></div></div>`;
+  };
+  const templateChargeTable=(editor)=>{
+    const reference=editor.kind==='reference',group=reference?editor.id:null;
+    const hasFixed=editor.charges.some(row=>row.value?.unit==='FIXED');
+    const rows=editor.charges.map((row,index)=>{
+      const value=row.value,disabled=!value;
+      const version=row.candidates.length>1?`<label class="ops-template-version">费用有效期<select name="charges.${index}.selected"><option value="">请选择</option>${row.candidates.map(candidate=>`<option value="${candidate.index}"${row.selectedIndex===candidate.index?' selected':''}>${esc(candidate.charge.valid_from)} → ${esc(candidate.charge.valid_until)}</option>`).join('')}</select></label>`:'';
+      const removed=reference?'':btn('template-remove-charge','移除',`data-charge="${esc(row.chargeId)}"`);
+      const name=chargeDisplayName(row,group)||`第 ${index+1} 项费用`;
+      return `<tr data-template-charge="${index}" data-charge-id="${esc(row.chargeId)}"><td data-label="费用名称"><strong>${esc(name)}</strong>${version}</td><td data-label="成本"><input name="charges.${index}.amount" aria-label="${esc(name)}成本金额" value="${esc(value?.amount||'')}" inputmode="decimal"${disabled?' disabled':''}></td><td data-label="售价"><input name="charges.${index}.sell_amount" aria-label="${esc(name)}销售价" value="${esc(value?.sell_amount??'')}" placeholder="${reference?'未填':'按模板规则'}" inputmode="decimal"${disabled?' disabled':''}></td><td data-label="币种"><select name="charges.${index}.currency"${disabled?' disabled':''}>${['USD','CAD','CNY'].map(code=>`<option${value?.currency===code?' selected':''}>${code}</option>`).join('')}</select></td><td data-label="计费方式"><select name="charges.${index}.unit"${disabled?' disabled':''}><option value="FIXED"${value?.unit==='FIXED'?' selected':''}>${value?.unit==='FIXED'?'待确认':'固定金额'}</option><option value="CNTR"${value?.unit==='CNTR'?' selected':''}>按柜</option><option value="SHIPMENT"${value?.unit==='SHIPMENT'?' selected':''}>按票</option></select></td>${reference?'':`<td data-label="操作">${removed}</td>`}</tr>`;
+    }).join('');
+    return `${hasFixed?'<p class="inline-note warning">原表未写明按柜还是按票，请确认计费方式。</p>':''}<div class="table-wrap ops-template-table-wrap"><table class="ops-template-table${reference?' is-reference':''}"><thead><tr><th>费用名称</th><th>成本</th><th>售价</th><th>币种</th><th>计费方式</th>${reference?'':'<th></th>'}</tr></thead><tbody>${rows||`<tr><td colspan="${reference?'5':'6'}" class="muted">${reference?'当前参考方案没有可显示的费用。':'暂无费用，先添加已有费用。'}</td></tr>`}</tbody></table></div>`;
+  };
+  const templateMoreSettings=(editor)=>{
+    const template=editor.kind==='template';
+    const chargeSettings=editor.charges.map((row,index)=>row.value?`<details class="ops-template-charge-settings" data-template-charge-settings="${index}"${templateOpenCharge===index?' open':''}><summary>${esc(chargeDisplayName(row,editor.kind==='reference'?editor.id:null))} · 来源与适用条件</summary><div class="field-grid"><label class="field">费用名称<input name="charges.${index}.name_zh" value="${esc(chargeDisplayName(row,editor.kind==='reference'?editor.id:null))}"></label><label class="field">英文名称<input name="charges.${index}.name_en" value="${esc(row.value.name_en)}"></label><label class="field">代码<input name="charges.${index}.code" value="${esc(row.value.code)}"></label><label class="field">国家<input name="charges.${index}.country" value="${esc(row.value.country)}"></label><label class="field">类别<select name="charges.${index}.category">${['ocean','origin','destination','customs','inland','other','risk'].map(value=>`<option value="${value}"${row.value.category===value?' selected':''}>${esc(categoryName(value))}</option>`).join('')}</select></label><label class="field">目的港<input name="charges.${index}.pod" value="${esc(row.value.pod||'')}"></label><label class="field">目的地<input name="charges.${index}.destination" value="${esc(row.value.destination||'')}"></label><label class="field">有效期开始<input name="charges.${index}.valid_from" type="date" value="${esc(row.value.valid_from)}"></label><label class="field">有效期结束<input name="charges.${index}.valid_until" type="date" value="${esc(row.value.valid_until)}"></label><label class="field">来源<input name="charges.${index}.source_ref" value="${esc(row.value.source_ref)}"></label><label class="field">来源版本<input name="charges.${index}.source_version" value="${esc(row.value.source_version)}"></label><label class="field">备注<textarea name="charges.${index}.remark" rows="2">${esc(row.value.remark||'')}</textarea></label></div><fieldset class="ops-inline-checks"><legend>适用柜型</legend>${types.map(type=>`<label><input type="checkbox" name="charges.${index}.container_types" value="${type}"${row.value.container_types.includes(type)?' checked':''}>${type}</label>`).join('')}</fieldset><label class="check-row"><input type="checkbox" name="charges.${index}.editable"${row.value.editable?' checked':''}>允许在报价中调整售价</label></details>`:'').join('');
+    const templateSettings=template?`<section><h3>模板路线与计价</h3><div class="field-grid"><label class="field">模板名称<input name="template.label" value="${esc(editor.value.label)}"></label><label class="field">国家<input name="template.country" value="${esc(editor.value.country)}"></label><label class="field">目的港<input name="template.pod" value="${esc(editor.value.pod)}"></label><label class="field">目的地<input name="template.destination" value="${esc(editor.value.destination)}"></label><label class="field">路线<input name="template.routing" value="${esc(editor.value.routing)}"></label><label class="field">运输方式<select name="template.service_mode"><option value="">请选择</option>${Object.entries(FCL_SERVICE_MODE_LABELS).map(([value,label])=>`<option value="${value}"${editor.value.service_mode===value?' selected':''}>${esc(label)}</option>`).join('')}</select></label><label class="field">清关方式<input name="template.customs_mode" value="${esc(editor.value.customs_mode)}"></label><label class="field">有效期开始<input name="template.valid_from" type="date" value="${esc(editor.value.valid_from)}"></label><label class="field">有效期结束<input name="template.valid_until" type="date" value="${esc(editor.value.valid_until)}"></label><label class="field">利润方式<select name="template.margin_mode"><option value="">请选择</option><option value="cost_markup"${editor.value.margin_rule.mode==='cost_markup'?' selected':''}>成本加成</option><option value="gross_margin"${editor.value.margin_rule.mode==='gross_margin'?' selected':''}>目标毛利率</option></select></label><label class="field">利润百分比<input name="template.margin_percent" value="${esc(editor.marginPercent??'')}" inputmode="decimal" placeholder="例如 10 表示 10%"></label><label class="field">USD → CNY<input name="template.USD" value="${esc(editor.value.exchange_rates.USD||'')}" inputmode="decimal"></label><label class="field">CAD → CNY<input name="template.CAD" value="${esc(editor.value.exchange_rates.CAD||'')}" inputmode="decimal"></label><label class="field">汇率来源<input name="template.fx_source" value="${esc(editor.value.fx_source)}"></label><label class="field">内陆运输<select name="template.delivery_rate_id"><option value="">不包含</option>${draftOptions().delivery_rates.map(rate=>`<option value="${esc(rate.id)}"${editor.value.delivery_rate_id===rate.id?' selected':''}>${esc(rate.origin)} → ${esc(rate.destination)} · ${esc(rate.base_rate)} ${rate.currency}</option>`).join('')}</select></label></div><fieldset class="ops-inline-checks"><legend>模板适用柜型</legend>${types.map(type=>`<label><input type="checkbox" name="template.container_types" value="${type}"${editor.value.container_types.includes(type)?' checked':''}>${type}</label>`).join('')}</fieldset><label class="check-row"><input type="checkbox" name="template.enabled"${editor.value.enabled?' checked':''}>允许用于报价</label></section>`:'';
+    return `<details class="ops-template-details"${templateMoreOpen?' open':''}><summary>计价与来源设置</summary><div class="ops-template-settings">${templateSettings}<section><h3>费用来源与适用条件</h3>${chargeSettings||'<p class="muted">暂无可设置费用。</p>'}</section></div></details>`;
+  };
+  const templateSharedNote=(editor)=>{
+    const impacts=templateImpactRows();
+    if(!impacts.length)return '';
+    return `<div class="inline-note warning"><strong>共享费用影响</strong>${impacts.map(({row,names})=>`<p>${esc(chargeDisplayName(row,editor.kind==='reference'?editor.id:null))}（${esc(row.value?.valid_from||'')} → ${esc(row.value?.valid_until||'')}）还被其他模板使用：${esc(names.join('、'))}</p>`).join('')}<label class="check-row"><input type="checkbox" name="template.shared_confirm"${templateSharedConfirmation?' checked':''}>我已确认修改这些共享费用会影响上述模板</label></div>`;
+  };
+  const templateIssuePanel=()=>templateIssues.length?`<div class="form-error" role="alert">${templateIssues.map(issue=>`<p>${esc(issue.label)} ${issue.field?`<button type="button" class="text-button" data-action="ops-template-focus" data-field="${esc(issue.field)}">定位</button>`:''}</p>`).join('')}</div>`:'<div class="form-error" hidden></div>';
+  const templateSavePanel=()=>{
+    const changeScope=configurationChangeScope();
+    if(publication)return `<section class="panel ops-template-publication"><div class="panel-body"><h3>${publication.can_publish?'待生效内容':'检查未通过'}</h3><p>本次“确认生效”会发布整套配置，不只是当前${templatePrimary==='reference'?'参考费用':'费用模板'}。</p><p class="muted">${esc(changeScope)}</p>${publication.can_publish?`<label class="check-row"><input type="checkbox" id="ops-config-confirm">我已核对整套配置的来源、有效期与计价条件</label><button class="button primary" data-action="ops-publish-config">确认生效</button>`:`<ul class="ops-template-blockers">${(publication.blockers||[]).map(code=>`<li>${esc(fclIssue(code))}</li>`).join('')}</ul><button class="button" data-action="ops-template-check-again">重新检查</button>`}</div></section>`;
+    if(templatePreviewFailed)return `<section class="panel ops-template-publication"><div class="panel-body"><h3>草稿已保存，检查未完成</h3><p>费用修改没有丢失。可重新检查，不会重复保存数据。</p><button class="button primary" data-action="ops-template-check-again">重新检查</button></div></section>`;
+    return '';
+  };
+  const templateWorkbench=()=>{
+    const groups=groupReferenceCharges(draftOptions().charges);
+    const templates=draftOptions().templates;
+    if(!['reference','templates'].includes(templatePrimary))templatePrimary=groups.length?'reference':templates.length?'templates':'reference';
+    if(!groups.some(group=>group.name===referencePlan))referencePlan=groups[0]?.name||'';
+    normalizeTemplateSelection();
+    const editor=ensureTemplateEditor();
+    const reference=templatePrimary==='reference';
+    const selector=reference?`<label class="field">参考方案<select name="reference_plan"><option value="">请选择</option>${groups.map(group=>`<option value="${esc(group.name)}"${group.name===referencePlan?' selected':''}>${esc(group.name)} · ${group.entries.length} 项</option>`).join('')}</select></label>`:`<label class="field">报价模板<select name="template_choice"><option value="">请选择</option>${templates.map((template,index)=>`<option value="${index}"${index===templateIndex?' selected':''}>${esc(template.label)} · ${esc(template.destination)} · ${esc(templateStatus(template))}</option>`).join('')}</select></label>`;
+    const empty=reference?!groups.length:!templates.length;
+    const addable=[...new Map(draftOptions().charges.map((charge,index)=>[charge.id,{charge,index}]).filter(([id])=>!(editor?.value?.charge_ids||[]).includes(id))).values()];
+    return `<section class="ops-template-workbench"><nav class="ops-template-source-tabs" aria-label="费用模板来源"><button type="button" class="console-tab" data-action="ops-template-primary" data-primary="reference"${reference?' aria-current="page"':''}>参考费用 · ${groups.length} 组</button><button type="button" class="console-tab" data-action="ops-template-primary" data-primary="templates"${!reference?' aria-current="page"':''}>报价模板 · ${templates.length} 个</button></nav>${empty?`<div class="panel empty-state"><h2>${reference?'没有识别到导入的参考方案':'还没有报价模板'}</h2><p>${reference?'仅明确标记为参考方案的费用会显示在参考费用中；其他费用仍可在高级维护查看。':'从参考费用中选择“设置报价条件”后填写港口、利润、汇率和来源。'}</p>${reference?btn('tab','查看其他费用','data-tab="charges"'):''}</div>`:''}${editor?`<form data-fcl-form="ops-template">${templateIssuePanel()}<div class="ops-template-head">${selector}${reference?'<p class="muted">这些费用来自导入参考方案，未自动关联报价模板，也不会自动发布为可报价方案。</p>':'<p class="muted">常用费用可直接修改；共享费用会影响其他模板时会要求确认。</p>'}<div class="head-actions">${reference?'':`<span class="badge${templateStatus(editor.value)==='已生效'?'':' warning'}">${esc(templateStatus(editor.value))}</span>`}${reference?btn('template-new-from-reference','设置报价条件'):''}${btn('template-cancel','取消修改')}</div></div>${reference?referenceSummary(editor):templateSummary(editor)}${reference?referenceConversionPrompt(editor):''}${templateChargeTable(editor)}${reference?'':`<div class="ops-template-add"><label class="field">从已有费用添加<select name="template_add_charge"><option value="">请选择</option>${addable.map(({charge,index})=>`<option value="${index}">${esc(charge.name_zh)} · ${esc(charge.amount)} ${charge.currency}</option>`).join('')}</select></label>${btn('template-add-charge','添加费用')}</div>`}${templateSharedNote(editor)}${templateMoreSettings(editor)}<div class="ops-template-actions"><button class="button primary" type="submit">保存并检查</button></div></form>${templateSavePanel()}`:''}</section>`;
+  };
+  const configurationChangeScope=()=>{
+    const active=publishedDataset();
+    if(!active)return '当前尚无已发布配置；本次会建立首套草稿发布。';
+    const labels={rates:'海运费',charges:'基础费用库',delivery_rates:'内陆运价',rate_details:'手工船期',templates:'费用模板'};
+    const changed=Object.entries(labels).flatMap(([key,label])=>{
+      const before=active.operations?.[key]||[],after=draft.operations?.[key]||[];
+      const count=Math.max(before.length,after.length)-([...Array(Math.min(before.length,after.length))].filter((_,index)=>JSON.stringify(before[index])===JSON.stringify(after[index])).length);
+      return count?[`${label} ${count} 项`]:[];
+    });
+    changed.unshift(...(JSON.stringify(active.rates)===JSON.stringify(draft.rates)?[]:[`海运费 ${Math.abs(active.rates.length-draft.rates.length)||1} 项`]));
+    return changed.length?`本次草稿改动范围：${changed.join('、')}。`:'本次草稿没有检测到其他结构变化。';
   };
   const editorForm=()=>{
     if(!editor)return '';const r=editor.value,kind=editor.kind;
@@ -158,12 +415,12 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   };
   const unpublished=()=>!view?.active_release||JSON.stringify(draft)!==JSON.stringify(view.active_release.input);
   const publicationPanel=()=>`<details class="panel ops-publication"${dirty||publication||unpublished()?' open':''}><summary>保存与发布${dirty?' · 有未保存修改':unpublished()?' · 草稿待发布':''}</summary><div class="ops-savebar"><span>草稿第 ${view.version} 版 · ${view.active_release?'已有发布版本':'尚未发布'}</span>${btn('save-config','保存草稿')}${btn('preview-config','预览发布')}${publication?`<label><input type="checkbox" id="ops-config-confirm">已核对来源与条件</label>${btn('publish-config','确认发布',publication.can_publish?'':'disabled')}`:''}</div><p class="muted">发布后用于报价；每次变更保留原有版本和核对记录。</p></details>`;
-  const advancedPanel=()=>`<details class="panel ops-advanced"${advanced?' open':''}><summary>高级设置</summary><nav class="ops-toolbar">${['templates','delivery_rates','rate_details'].map(key=>btn('tab',sectionNames[key],`data-tab="${key}"`)).join('')}<a class="button" href="#fcl/config">报价与通知设置</a>${btn('bulk','批量调价')}${view.active_release?btn('disable-release','停用当前运价发布'):''}</nav>${['templates','delivery_rates','rate_details'].includes(section)?recordList():''}<details><summary>发布历史与回退</summary>${(view.history||[]).map(r=>`<p>第 ${r.version} 版 · ${esc(r.published_at)} ${btn('rollback','回退为新发布',`data-id="${esc(r.release_id)}"`)}</p>`).join('')||'<p>暂无发布记录</p>'}</details></details>`;
+  const advancedPanel=()=>`<details class="panel ops-advanced"${advanced?' open':''}><summary>高级维护</summary><nav class="ops-toolbar">${['charges','delivery_rates','rate_details'].map(key=>btn('tab',sectionNames[key],`data-tab="${key}"`)).join('')}<a class="button" href="#fcl/config">报价与通知设置</a>${btn('bulk','批量调价')}${view.active_release?btn('disable-release','停用当前运价发布'):''}</nav>${['charges','delivery_rates','rate_details'].includes(section)?recordList():''}<details><summary>发布历史与回退</summary>${(view.history||[]).map(r=>`<p>第 ${r.version} 版 · ${esc(r.published_at)} ${btn('rollback','回退为新发布',`data-id="${esc(r.release_id)}"`)}</p>`).join('')||'<p>暂无发布记录</p>'}</details></details>`;
   const render=(id='',initial='')=>{
     if(initial!==entrySection){entrySection=initial;if(initial)section=initial;}
     void load(id);if(!loaded||!view)return `<h1>整柜报价工作台</h1>${notifyState()}<p role="status">${loading?'正在读取费用和报价…':'读取失败，请刷新重试。'}</p>${btn('reload','重试')}`;
     const maintenance=section!=='compare'&&section!=='history';
-    return `<div class="ops-workspace"><header class="ops-heading"><div><h1>整柜报价工作台</h1><p>从已发布海运费与费用模板开始，修改本票后生成客户报价。</p></div><div class="head-actions">${btn('reload','刷新')}${btn('tab','模板维护','data-tab="rates"')}</div></header><nav class="ops-tabs" aria-label="报价工作台导航">${businessTabs.map(key=>`<button class="console-tab" data-action="ops-tab" data-tab="${key}"${section===key?' aria-current="page"':''}>${sectionNames[key]}</button>`).join('')}</nav>${notifyState()}${batchForm()}${editor?.kind==='ocean'?oceanAdvanced():editorForm()}${section==='compare'||section==='history'?compare():section==='rates'?oceanTable()+schedules.render():section==='charges'?recordList():''}${maintenance?advancedPanel()+publicationPanel():''}</div>`;
+    return `<div class="ops-workspace"><header class="ops-heading"><div><h1>整柜报价工作台</h1><p>从已发布海运费与费用模板开始，修改本票后生成客户报价。</p></div><div class="head-actions">${btn('reload','刷新')}${section==='templates'?'':btn('tab','模板维护','data-tab="templates"')}</div></header><nav class="ops-tabs" aria-label="报价工作台导航">${businessTabs.map(key=>`<button class="console-tab" data-action="ops-tab" data-tab="${key}"${section===key?' aria-current="page"':''}>${sectionNames[key]}</button>`).join('')}</nav>${notifyState()}${batchForm()}${editor?.kind==='ocean'?oceanAdvanced():editorForm()}${section==='compare'||section==='history'?compare():section==='rates'?oceanTable()+schedules.render():section==='templates'?templateWorkbench():section==='charges'?recordList():''}${maintenance?advancedPanel():''}${maintenance&&section!=='templates'?publicationPanel():''}</div>`;
   };
   const captureQuery=form=>{
     if(batchPreview){batchPreview=null;const button=document.querySelector('[data-action="ops-publish-batch"]');if(button)button.disabled=true;}
@@ -177,6 +434,27 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const submit=async form=>{
     const kind=form.dataset.fclForm;if(!kind?.startsWith('ops-'))return false;
     if(kind==='ops-fee-search'){if(editor)return true;feeSearch=String(new FormData(form).get('fee_search')||'').trim();rerender();return true;}
+    if(kind==='ops-template'){
+      if(captureTemplateEditor(form))invalidateTemplatePublication();
+      const {issues,next}=validatedTemplateDraft();
+      if(issues.length){templateIssues=issues;message=issues[0]?.label||'请核对模板。';rerender();return true;}
+      const saved={kind:templateEditor.kind,id:templateEditor.id,version:templateEditor.value.version};
+      try{
+        const data=requireData(await write('rate-save',{expected_version:view.version,input:next}));
+        view=data;draft=clone(data.draft);dirty=false;publication=null;templateIssues=[];templateSharedConfirmation=false;templatePreviewFailed=false;
+        if(saved.kind==='template'){
+          const index=draftOptions().templates.findIndex(template=>template.id===saved.id&&template.version===saved.version);
+          templateIndex=index;templateId=index>=0?draftOptions().templates[index].id:saved.id;templateEditor=createTemplateEditor(index);
+        }else{
+          templateEditor=createReferenceEditor(referencePlan);
+        }
+        try{
+          publication=requireData(await call('rate-preview',{},'GET'));
+          message=publication.can_publish?'草稿已保存并检查通过。核对整套配置后确认生效。':`草稿已保存，但仍有阻断：${(publication.blockers||[]).map(fclIssue).join('、')}`;
+        }catch(error){templatePreviewFailed=true;message=`草稿已保存，检查未完成：${fclError(error)}。修改没有丢失，可重试检查。`;}
+      }catch(error){templateIssues=[{field:'',label:fclError(error)}];message='保存失败，当前编辑仍保留，可直接重试。';}
+      rerender();return true;
+    }
     if(kind==='ops-ocean-advanced'){captureOceanAdvanced(form);const {source_ref,source_version,note,additional_fees}=editor.value;Object.assign(draft.rates[editor.index],{source_ref,source_version,note,additional_fees});editor=null;markDirty();rerender();return true;}
     if(kind==='ops-record'){captureEditor(form);const group=draftOptions()[editor.kind];if(editor.index===null)group.push(clone(editor.value));else group[editor.index]=clone(editor.value);editor=null;dirty=true;publication=null;message='已加入草稿；保存并发布后用于计算。';rerender();return true;}
     if(kind==='ops-run'){
@@ -205,16 +483,63 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     const name=button.dataset.action;if(!name?.startsWith('ops-'))return false;
     if(await oceanAction(button))return true;
     const id=button.dataset.id,estimate=items.find(i=>i.estimate_id===id);
-    if(name==='ops-tab'){if(editor){message='请先将编辑内容加入草稿或取消。';rerender();return true;}section=button.dataset.tab;advanced=!businessTabs.includes(section);schedules.invalidate();rerender();return true;}
+    if(name==='ops-template-primary'){
+      if(templatePrimary===button.dataset.primary)return true;
+      if(templateEditorDirty()&&!window.confirm('切换分区会取消尚未保存的费用修改，是否继续？'))return true;
+      invalidateTemplatePublication();templatePrimary=button.dataset.primary;templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;referenceOceanChoice=false;rerender();return true;
+    }
+    const convertReference=includeOcean=>{
+      const next=createTemplateFromReference(includeOcean);
+      if(!next){message='请先选择一个参考方案。';rerender();return true;}
+      templatePrimary='templates';templateId=next.id;templateIndex=-1;templateEditor=next;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=true;templateOpenCharge=null;referenceOceanChoice=false;message=`请补齐港口、路线、利润、汇率与来源后保存检查；未填写前不会用于报价。${includeOcean?'新报价模板已包含海运费参考行，请确认不会与报价时选择的海运费重复。':'新报价模板未包含参考方案中的海运费行，报价时请单独选择已发布海运费。'}`;rerender();return true;
+    };
+    if(name==='ops-template-new-from-reference'){
+      const form=document.querySelector('[data-fcl-form="ops-template"]');if(form&&captureTemplateEditor(form))invalidateTemplatePublication();
+      if(templateEditor?.charges.some(row=>row.value?.category==='ocean')){referenceOceanChoice=true;message='请选择新报价模板是否包含海运费参考行。';rerender();return true;}
+      return convertReference(false);
+    }
+    if(name==='ops-template-convert-without-ocean')return convertReference(false);
+    if(name==='ops-template-convert-with-ocean')return convertReference(true);
+    if(name==='ops-template-convert-cancel'){referenceOceanChoice=false;message='已取消转换为报价模板；当前参考费用没有变化。';rerender();return true;}
+    if(name==='ops-template-cancel'){
+      templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;message='已取消未保存的修改。';rerender();return true;
+    }
+    if(name==='ops-template-add-charge'){
+      const form=document.querySelector('[data-fcl-form="ops-template"]');if(form&&captureTemplateEditor(form))invalidateTemplatePublication();
+      const selected=form?.querySelector('[name="template_add_charge"]'),raw=String(selected?.value??'').trim(),index=/^\d+$/u.test(raw)?Number(raw):-1;
+      const charge=Number.isSafeInteger(index)&&index>=0?draftOptions().charges[index]:null;
+      if(!charge){message='请选择要加入的费用。';rerender();return true;}
+      if(templateEditor.charges.some(row=>row.chargeId===charge.id)){message='这项费用已经在当前方案中。';rerender();return true;}
+      const candidates=chargeCandidates(charge.id);
+      templateEditor.charges.push({chargeId:charge.id,selectedIndex:index,original:clone(charge),value:clone(charge),candidates});templateEditor.value.charge_ids=[...new Set([...templateEditor.value.charge_ids,charge.id])];invalidateTemplatePublication();rerender();return true;
+    }
+    if(name==='ops-template-remove-charge'){
+      const form=document.querySelector('[data-fcl-form="ops-template"]');if(form&&captureTemplateEditor(form))invalidateTemplatePublication();
+      const chargeId=button.dataset.charge;templateEditor.charges=templateEditor.charges.filter(row=>row.chargeId!==chargeId);templateEditor.value.charge_ids=templateEditor.value.charge_ids.filter(id=>id!==chargeId);invalidateTemplatePublication();rerender();return true;
+    }
+    if(name==='ops-template-check-again'){
+      if(dirty||templateEditorDirty()){invalidateTemplatePublication();message='有未保存的费用修改，请先保存并检查。';rerender();return true;}
+      try{publication=requireData(await call('rate-preview',{},'GET'));templatePreviewFailed=false;templateIssues=[];message=publication.can_publish?'检查通过。核对整套配置后确认生效。':`仍有阻断：${(publication.blockers||[]).map(fclIssue).join('、')}`;}
+      catch(error){templatePreviewFailed=true;message=`检查未完成：${fclError(error)}。草稿仍保留，可再次重试。`;}
+      rerender();return true;
+    }
+    if(name==='ops-template-focus'){
+      const field=button.dataset.field||'',charge= /^charges\.(\d+)\./u.exec(field);templateMoreOpen=true;templateOpenCharge=charge?Number(charge[1]):null;rerender();setTimeout(()=>document.querySelector(`[name="${field}"]`)?.focus(),0);return true;
+    }
+    if(name==='ops-tab'){if(editor||templateEditorDirty()){if(!window.confirm('当前有未保存的费用编辑，切换会取消这些编辑。是否继续？'))return true;templateEditor=null;templateIssues=[];templateOpenCharge=null;}section=button.dataset.tab;advanced=!businessTabs.includes(section);schedules.invalidate();rerender();return true;}
     if(name==='ops-advanced'){advanced=true;section='templates';rerender();return true;}
     if(name==='ops-sailing'){const rate=(publishedDataset()?.rates||[]).find(r=>r.rate_id===query.rate_ids[0]);if(!rate){message='请先选择一条已发布 COSCO 海运费，再查询该线路船期。';rerender();return true;}schedules.show(rate,query.shipping_date,publishedOptions().rate_details.find(d=>d.rate_id===rate.rate_id));return true;}
-    if(name==='ops-reload'){if(dirty||editor||batch){message='请先保存或取消当前编辑。';rerender();return true;}loaded=false;void load(contextId,true);return true;}
+    if(name==='ops-reload'){if(dirty||editor||batch||templateEditorDirty()){message='请先保存或取消当前编辑。';rerender();return true;}loaded=false;void load(contextId,true);return true;}
     if(name==='ops-new'||name==='ops-copy-record'||name==='ops-next-version'||name==='ops-edit'){if(editor){message='请先保存或取消当前编辑。';rerender();return true;}const kind=button.dataset.kind,index=button.dataset.index===undefined?null:Number(button.dataset.index),value=index===null?newRecord(kind):clone(draftOptions()[kind][index]);if(name==='ops-copy-record'&&kind!=='rate_details'){value.id=crypto.randomUUID();value.version=1;}else if(index!==null&&kind!=='rate_details')value.version=Math.max(...draftOptions()[kind].filter(r=>r.id===value.id).map(r=>r.version))+1;if(name==='ops-next-version'){value.valid_from='';value.valid_until='';}editor={kind,index:['ops-copy-record','ops-next-version'].includes(name)?null:index,value};rerender();return true;}
     if(name==='ops-close-editor'){editor=null;rerender();return true;}
     if(name==='ops-add-tier'){captureEditor(document.querySelector('[data-fcl-form="ops-record"]'));editor.value.tiers.push({min_kg:'',max_kg:'',amount:''});rerender();return true;}
     if(name==='ops-save-config'){if(editor){message='请先将编辑内容加入草稿。';rerender();return true;}const checked=fclRateDatasetSchema.safeParse(draft);if(!checked.success){message='请补充或核对：'+checked.error.issues.slice(0,4).map(issue=>{const keys=issue.path,field=FCL_FIELDS[keys.at(-1)]?.zh||'金额或适用条件',group=keys[0]==='rates'?'海运费':sectionNames[keys[1]]||'费用',index=keys.find(k=>typeof k==='number');return `${group}${index===undefined?'':`第 ${index+1} 项`}的${field}`;}).join('；')+'。价格来源等字段可在“更多信息”或“高级设置”中补充。';rerender();return true;}const data=requireData(await write('rate-save',{expected_version:view.version,input:draft}));view=data;draft=clone(data.draft);dirty=false;publication=null;message='配置草稿已保存。';rerender();return true;}
     if(name==='ops-preview-config'){if(dirty||editor||batch){message='请先保存或取消当前编辑。';rerender();return true;}publication=requireData(await call('rate-preview',{},'GET'));message=publication.can_publish?'校验通过，请确认后发布。':`尚不能发布：${(publication.blockers||[]).map(fclIssue).join('、')}`;rerender();return true;}
-    if(name==='ops-publish-config'){if(!document.querySelector('#ops-config-confirm')?.checked){message='请先核对来源与条件。';rerender();return true;}view=requireData(await write('rate-publish',{expected_version:view.version,preview_hash:publication.preview_hash,confirmation:'reviewed_sources_and_conditions'}));draft=clone(view.draft);publication=null;await refresh();message='已发布，并重新计算受影响的预估报价。';rerender();return true;}
+    if(name==='ops-publish-config'){
+      if(dirty||templateEditorDirty()||!publication){invalidateTemplatePublication();message='有未保存的费用修改，请先保存并重新检查。';rerender();return true;}
+      if(!document.querySelector('#ops-config-confirm')?.checked){message='请先核对来源与条件。';rerender();return true;}
+      view=requireData(await write('rate-publish',{expected_version:view.version,preview_hash:publication.preview_hash,confirmation:'reviewed_sources_and_conditions'}));draft=clone(view.draft);publication=null;templatePreviewFailed=false;await refresh();message='已发布，并重新计算受影响的预估报价。';rerender();return true;
+    }
     if(name==='ops-bulk'){if(dirty){message='请先完成配置草稿的保存与发布。';rerender();return true;}batch={reason:'',rows:(view.active_release?.input.rates||[]).flatMap(r=>r.items.map(i=>({rate_id:r.rate_id,carrier:r.supplier_label,pol:r.pol,pod:r.pod,...i,original:i.ocean_freight,valid_from:r.valid_from,valid_until:r.valid_until,originalFrom:r.valid_from,originalUntil:r.valid_until,source_ref:r.source_ref,source_version:r.source_version,originalSource:r.source_version})))};batchPreview=null;rerender();return true;}
     if(name==='ops-close-batch'){batch=null;batchPreview=null;rerender();return true;}
     if(name==='ops-publish-batch'){const form=document.querySelector('[data-fcl-form="ops-batch"]');if(!new FormData(form).has('confirmed')){message='请先确认已核对价格与来源。';rerender();return true;}captureBatch(form);view=requireData(await write('rate-bulk-publish',{...batchRequest(),preview_hash:batchPreview.preview_hash,confirmation:'reviewed_sources_and_conditions'}));draft=clone(view.draft);batch=null;batchPreview=null;await refresh();message='新海运费与关联报价版本已保存。';rerender();return true;}
@@ -233,11 +558,24 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     const target=event.target;if(!target.closest('.ops-workspace'))return false;if(schedules.change(target))return true;if(captureOceanCell(target))return true;if(target.closest('[data-fcl-form="ops-run"]'))captureQuery(target.form);
     if(target.name==='sort'){sort=target.value;rerender();return true;}if(target.name==='direction'){direction=target.value;rerender();return true;}
     if(target.name==='destination'&&!target.closest('form')){destination=target.value;rerender();return true;}
-    if(target.name==='case_ref'){if(dirty||editor){message='请先保存草稿再切换询价。';rerender();return true;}location.hash=target.value?`fcl/compare/${target.value}`:'fcl/compare';return true;}
+    if(target.name==='case_ref'){if(dirty||editor||templateEditorDirty()){message='请先保存草稿再切换询价。';rerender();return true;}location.hash=target.value?`fcl/compare/${target.value}`:'fcl/compare';return true;}
+    if(target.closest('[data-fcl-form="ops-template"]')){
+      if(captureTemplateEditor(target.form))invalidateTemplatePublication();
+      if(target.name==='reference_plan'){if(templateEditorDirty()&&!window.confirm('切换参考方案会取消尚未保存的修改，是否继续？')){rerender();return true;}referencePlan=target.value;templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateOpenCharge=null;referenceOceanChoice=false;rerender();return true;}
+      if(target.name==='template_choice'){
+        if(templateEditorDirty()&&!window.confirm('切换报价模板会取消尚未保存的修改，是否继续？')){rerender();return true;}
+        const index=Number(target.value),template=draftOptions().templates[index];
+        if(template){templateIndex=index;templateId=template.id;}
+        templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateOpenCharge=null;rerender();return true;
+      }
+      if(target.name==='template.shared_confirm'){templateSharedConfirmation=target.checked;return true;}
+      if(/^charges\.\d+\.selected$/u.test(target.name)){rerender();return true;}
+      return true;
+    }
     if(target.closest('[data-fcl-form="ops-run"]')&&['pol','pod','destination','shipping_date','selected_rate','template'].includes(target.name)){rerender();return true;}
     if(target.name==='catalog'&&target.value){captureEditor(target.form);const entry=FCL_CHARGE_CATALOG.find(c=>c[0]===target.value);Object.assign(editor.value,{code:entry[0],name_zh:entry[1],name_en:entry[2],category:entry[3]});rerender();return true;}
     if(target.closest('[data-fcl-form="ops-batch"]')&&target.name!=='confirmed'){batchPreview=null;const publish=document.querySelector('[data-action="ops-publish-batch"]');if(publish)publish.disabled=true;}
     return true;
   };
-  return {render,reset,submit:async form=>{const token=generation;try{return await submit(form);}catch(error){if(token!==generation)return true;throw error;}},action:async button=>{const token=generation;try{return await action(button);}catch(error){if(token!==generation)return true;throw error;}},change,input:event=>{if(!event.target.closest('.ops-workspace'))return false;if(captureOceanCell(event.target))return true;if(event.target.closest('[data-fcl-form="ops-run"]'))captureQuery(event.target.form);if(event.target.closest('[data-fcl-form="ops-batch"]')&&event.target.name!=='confirmed'){batchPreview=null;const button=document.querySelector('[data-action="ops-publish-batch"]');if(button)button.disabled=true;}return true;},isDirty:()=>dirty||Boolean(editor)||Boolean(batch)};
+    return {render,reset,submit:async form=>{const token=generation;try{return await submit(form);}catch(error){if(token!==generation)return true;throw error;}},action:async button=>{const token=generation;try{return await action(button);}catch(error){if(token!==generation)return true;throw error;}},change,input:event=>{if(!event.target.closest('.ops-workspace'))return false;if(captureOceanCell(event.target))return true;if(event.target.closest('[data-fcl-form="ops-run"]'))captureQuery(event.target.form);if(event.target.closest('[data-fcl-form="ops-template"]')){if(captureTemplateEditor(event.target.form)&&event.target.name!=='template.shared_confirm')invalidateTemplatePublication();return true;}if(event.target.closest('[data-fcl-form="ops-batch"]')&&event.target.name!=='confirmed'){batchPreview=null;const button=document.querySelector('[data-action="ops-publish-batch"]');if(button)button.disabled=true;}return true;},isDirty:()=>dirty||Boolean(editor)||Boolean(batch)||templateEditorDirty()};
 }
