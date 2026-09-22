@@ -26,7 +26,7 @@ import {FCL_DOCUMENT_WORKFLOW_VERSION} from '../../quote-native/fcl-contracts';
 const publicCookieName='fc_fcl_public';
 const publicCookiePath='/inquiry';
 const publicCookieTtlMs=30*24*60*60_000;
-type FclCasePort=Pick<CaseService,'listFclCases'|'getFclCase'|'updateFclCaseStatus'|'supplementFclCaseAsStaff'|'confirmFclCase'|'submitFclInquiry'|'getFclCustomerView'|'supplementFclCase'>;
+type FclCasePort=Pick<CaseService,'createPersonalFclInquiry'|'listFclCases'|'getFclCase'|'updateFclCaseStatus'|'supplementFclCaseAsStaff'|'confirmFclCase'|'submitFclInquiry'|'getFclCustomerView'|'supplementFclCase'>;
 type FclRatePort=Pick<NativeAdminService,'get'|'save'|'preview'|'publish'|'disable'|'rollback'|'getFclNotification'|'saveFclNotification'>&Partial<Pick<NativeAdminService,'fclOperations'>>;
 type FclDocumentPort=Pick<DocumentWorkflowService,
   'matchFclQuote'|'saveFclQuote'|'getFclQuote'|'listFclQuotes'|
@@ -46,6 +46,7 @@ export interface FclHttpDependencies{
   readonly publicAttemptKeyLimit?:number;
   readonly now?:()=>number;
   readonly receiverAuthority?:FclReceiverAuthority;
+  readonly receiverUserId?:string;
 }
 
 export interface FclPublicSession{
@@ -148,24 +149,16 @@ export class FclHttpService{
   async capability(identity:PortalIdentity):Promise<{fcl_personal:boolean;receiver_user_id:string|null;business_date:string}>{
     const ctx:PortalContext={identity,organizationId:null};
     try{
-      if(!identity.emailVerified)return {fcl_personal:false,receiver_user_id:null,business_date:this.businessDate()};
-      if(this.dependencies.receiverAuthority)return await this.dependencies.receiverAuthority.runVerified(proof=>{
-        if(identity.userId!==proof.sub)return {fcl_personal:false,receiver_user_id:null,business_date:this.businessDate()};
+      return await this.authorized(ctx,()=>{
         this.dependencies.caseService.listFclCases(ctx,{limit:1,status:null,cursor:null});
         return {fcl_personal:true,receiver_user_id:identity.userId,business_date:this.businessDate()};
       });
-      this.dependencies.caseService.listFclCases(ctx,{limit:1,status:null,cursor:null});
-      return {fcl_personal:true,receiver_user_id:identity.userId,business_date:this.businessDate()};
     }catch{
       return {fcl_personal:false,receiver_user_id:null,business_date:this.businessDate()};
     }
   }
   async runWithPersonalAuthority<T>(identity:PortalIdentity,operation:()=>T|Promise<T>):Promise<T>{
-    if(!this.dependencies.receiverAuthority)return operation();
-    return this.dependencies.receiverAuthority.runVerified(proof=>{
-      if(!identity.emailVerified||identity.userId!==proof.sub)throw new PortalError('fcl_not_found');
-      return operation();
-    });
+    return this.authorized({identity,organizationId:null},operation);
   }
   private businessDate():string{
     const value=this.dependencies.businessDate();
@@ -188,18 +181,18 @@ export class FclHttpService{
     return {...result,data:parsed};
   }
   private async authorized<T>(ctx:PortalContext,operation:(proof?:FclReceiverProof)=>T|Promise<T>):Promise<T>{
-    if(!this.dependencies.receiverAuthority)return operation();
-    return this.dependencies.receiverAuthority.runVerified(proof=>{
-      const identity=ctx.identity;
-      if(identity&&(!identity.emailVerified||ctx.organizationId!==null||identity.userId!==proof.sub))throw new PortalError('fcl_not_found');
-      return operation(proof);
-    });
+    const identity=ctx.identity;
+    if(!identity?.emailVerified||!identity.userId.trim())throw new PortalError('fcl_not_found');
+    // Normal authenticated accounts do not depend on the public intake receiver's authority.
+    if(!this.dependencies.receiverAuthority||(this.dependencies.receiverUserId&&identity.userId!==this.dependencies.receiverUserId))return operation();
+    return this.dependencies.receiverAuthority.runVerified(proof=>operation(proof));
   }
   async executeStaff(ctx:PortalContext,action:FclHttpAction,input:unknown,key:()=>string):Promise<FclHttpResult>{
     const request=parse(fclHttpRequestSchemas[action],input,'fcl_input_invalid');
     return this.authorized(ctx,async()=>{
     let data:unknown;
     switch(action){
+      case 'case-create':data=await this.dependencies.caseService.createPersonalFclInquiry(ctx,request,key());break;
       case 'estimate-run':{
         const value=fclEstimateRequestSchema.parse(request);
         if(value.case_ref){const detail=this.dependencies.caseService.getFclCase(ctx,value.case_ref);if(detail.case_status==='closed'||detail.case_status==='cancelled')throw new PortalError('fcl_quote_case_closed');}
@@ -255,7 +248,7 @@ export class FclHttpService{
     if(caseRef){const detail=this.dependencies.caseService.getFclCase(ctx,caseRef);if(['closed','cancelled'].includes(detail.case_status))throw new PortalError('fcl_quote_case_closed');}
   }
   private operations(){const service=this.dependencies.nativeAdmin.fclOperations;if(!service)throw new PortalError('fcl_operations_not_configured');return service;}
-  async executePublicAction(ctx:PortalContext,action:'submit'|'exchange'|'get'|'supplement'|'logout',input:unknown,key:()=>string,cookieHeader:string|undefined|null):Promise<{status:FclHttpResult['status'];data:unknown;reason_codes:readonly string[];setCookie?:string}>{
+  async executePublicAction(_ctx:PortalContext,action:'submit'|'exchange'|'get'|'supplement'|'logout',input:unknown,key:()=>string,cookieHeader:string|undefined|null):Promise<{status:FclHttpResult['status'];data:unknown;reason_codes:readonly string[];setCookie?:string}>{
     const execute=async():Promise<{status:FclHttpResult['status'];data:unknown;reason_codes:readonly string[];setCookie?:string}>=>{
     const current=this.publicSessions.read(cookieHeader);
     if(action==='exchange'||action==='logout')key();
@@ -284,7 +277,7 @@ export class FclHttpService{
     const result=this.dependencies.caseService.supplementFclCase(current.inquiryId,current.credential,body,key());
     return {status:'success',data:fclCasePublicSummarySchema.parse(result),reason_codes:[]};
     };
-    return action==='logout'?execute():this.authorized(ctx,execute);
+    return action==='logout'||!this.dependencies.receiverAuthority?execute():this.dependencies.receiverAuthority.runVerified(()=>execute());
   }
   async executePublic(ctx:PortalContext,action:'submit'|'exchange'|'get'|'supplement'|'logout',input:unknown,key:()=>string,cookieHeader:string|undefined|null){
     return this.executePublicAction(ctx,action,input,key,cookieHeader);

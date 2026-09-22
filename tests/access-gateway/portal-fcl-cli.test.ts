@@ -44,10 +44,11 @@ describe('FCL CLI parity',()=>{
     try{
       const staff=join(root,'staff.json');await f.staffSessionFile(staff);let index=0;
       const run=async<T=unknown>(action:string,input?:unknown):Promise<T>=>{const args=['workspace','fcl',action,'--session-file',staff,'--endpoint',f.origin,'--json'];if(input!==undefined){const path=join(root,`input-${++index}.json`);await privateJson(path,input);args.push('--input',path);if(FCL_STAFF_WRITE_ACTIONS.includes(action as never))args.push('--idempotency-key',`fcl-cli-operations-key-${index}`);}const result=await invoke(args);expect([0,4],result.stderr||result.stdout).toContain(result.code);return (JSON.parse(result.stdout) as {data:T}).data;};
-      await run('rate-save',{expected_version:0,input:operationsFixture()});const preview=await run<{preview_hash:string}>('rate-preview');await run('rate-publish',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'});
+      const noDates=operationsFixture();for(const row of [...noDates.rates,...noDates.operations.charges,...noDates.operations.templates]){Reflect.deleteProperty(row,'valid_from');Reflect.deleteProperty(row,'valid_until');}
+      await run('rate-save',{expected_version:0,input:noDates});const preview=await run<{preview_hash:string}>('rate-preview');await run('rate-publish',{expected_version:1,preview_hash:preview.preview_hash,confirmation:'reviewed_sources_and_conditions'});
       const initial=await run<{items:FclEstimateView[]}>('estimate-run',estimateRequest());expect(initial.items).toHaveLength(3);
       const quote=initial.items.find((item:{calculation:{rate_id:string}})=>item.calculation.rate_id===cosco)!;
-      const changes={expected_version:2,reason:'Synthetic CLI carrier update',changes:[{rate_id:cosco,container_type:'40HQ',ocean_freight:'3500',valid_from:'2026-10-01',valid_until:'2026-12-31',source_ref:'synthetic:cli',source_version:'2'}]};
+      const changes={expected_version:2,reason:'Synthetic CLI carrier update',changes:[{rate_id:cosco,container_type:'40HQ',ocean_freight:'3500',source_ref:'synthetic:cli',source_version:'2'}]};
       const bulk=await run<{preview_hash:string}>('rate-bulk-preview',changes);await run('rate-bulk-publish',{...changes,preview_hash:bulk.preview_hash,confirmation:'reviewed_sources_and_conditions'});
       expect((await run<FclEstimateView>('estimate-get',{estimate_id:quote.estimate_id,version:null})).calculation.totals.cost_total).toBe('32900.00');
       expect((await run<FclEstimateView>('estimate-get',{estimate_id:quote.estimate_id,version:1})).calculation.totals.cost_total).toBe('30800.00');
@@ -85,7 +86,10 @@ describe('FCL CLI parity',()=>{
       const ratePublish=await run(['fcl','rate-publish','--input',publish,'--idempotency-key','fcl-cli-rate-publish-01']);expect(ratePublish.code,ratePublish.stderr).toBe(0);
       const config=await writeInput('config.json',{contract_version:'fcl-document-workflow@2026-09-20.v1',expected_version:0,input:{issuer_name:'Issuer',issuer_address:'Address',issuer_phone:'',issuer_email:'',terms:'Terms',standard_fee_template_v1:null},confirmed:true});
       const configSave=await run(['fcl','issuer-config-save','--input',config,'--idempotency-key','fcl-cli-config-save-001']);expect(configSave.code,configSave.stderr).toBe(0);
-      const submission=await f.caseService.submitFclInquiry('fcl-cli-staff-submit-session','fcl-cli-staff-submit-key-01',fclCliInquiry());
+      const caseInput=await writeInput('personal-case.json',fclCliInquiry());
+      const created=await run(['fcl','case-create','--input',caseInput,'--idempotency-key','fcl-cli-staff-create-key-01']);
+      expect(created.code,created.stderr||created.stdout).toBe(0);
+      const submission=(JSON.parse(created.stdout) as {data:{case_id:string;case_version:number}}).data;
       const confirm=await writeInput('confirm.json',{case_id:submission.case_id,expected_version:submission.case_version,expected_customer_supplement_ref:null,confirmed_fields:{changes:[]},reason:'Confirmed'});
       const confirmed=await run(['fcl','case-confirm','--input',confirm,'--idempotency-key','fcl-cli-case-confirm-01']);expect(confirmed.code,confirmed.stderr).toBe(0);const confirmedVersion=(JSON.parse(confirmed.stdout) as {data:{case_version:number}}).data.case_version;
       const matchInput=await writeInput('match.json',{contract_version:'fcl-quote-workflow@2026-09-20.v1',case_ref:submission.case_id,expected_case_version:confirmedVersion,expected_customer_supplement_ref:null,selected_rate_id:fclCliRates().rates[0]!.rate_id});

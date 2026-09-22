@@ -36,7 +36,7 @@ async function startPersonalFclFixture(input:{databaseDirectory:string;port:numb
   const caseOptions=options(casePath),rateOptions=options(ratePath),documentOptions=options(documentPath);
   const caseStore=new CaseStore(casePath,caseOptions),rateStore=new NativeAdminStore(ratePath,rateOptions),documentStore=new DocumentStore(documentPath,documentOptions),workflowStore=new DocumentWorkflowStore(documentStore,documentOptions);
   try{
-    const active=(userId:string)=>userId===receiverIdentity.userId&&receiverIdentity.emailVerified;
+    const active=(userId:string)=>FIXTURE_PORTAL_IDENTITIES.some(identity=>identity.userId===userId&&identity.emailVerified);
     const rateService=new NativeAdminService(rateStore,input.runtime.service,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,now:()=>"2026-10-08T12:00:00.000Z"});
     const credentialSecret=readOrCreatePrivateSecret(resolve(input.databaseDirectory,"fcl-case-credential.secret"));
     const caseService=new CaseService(caseStore,input.runtime.service,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,credentialSecret,credentialTtlDays:30,now:()=>"2026-10-08T12:00:00.000Z",mail:{enabled:false},notificationSettings:()=>{

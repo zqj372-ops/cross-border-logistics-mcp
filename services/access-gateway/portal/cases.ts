@@ -337,8 +337,7 @@ export class CaseService {
   private assertFclStartup(options: NormalizedFclOptions) {
     if (!this.store.fclEnabled) throw new Error('fcl_upgrade_not_authorized');
     try{if(!options.receiverIsActive(options.receiverUserId))throw new Error('inactive');}catch{throw new Error('fcl_receiver_unavailable');}
-    const owners = this.store.db.prepare('SELECT DISTINCT receiver_user_id FROM fcl_inquiries').all() as { receiver_user_id: string }[];
-    if (owners.some((owner) => owner.receiver_user_id !== options.receiverUserId)) throw new Error('fcl_receiver_configuration_mismatch');
+    // Personal owners remain immutable; multiple accounts may use this store.
   }
   private fclOptions() {
     if (this.#fcl === null) throw new PortalError('fcl_unavailable');
@@ -346,9 +345,9 @@ export class CaseService {
   }
   private requireFclReceiver(ctx: PortalContext) {
     const options = this.fclOptions();
-    if (!ctx.identity.emailVerified || ctx.organizationId !== null || ctx.identity.userId !== options.receiverUserId) throw new PortalError('fcl_not_found');
-    try{if(!options.receiverIsActive(options.receiverUserId))throw new PortalError('fcl_unavailable');}catch(error){if(error instanceof PortalError&&error.code==='fcl_unavailable')throw error;throw new PortalError('fcl_unavailable');}
-    return options;
+    if (!ctx.identity.emailVerified || !ctx.identity.userId.trim()) throw new PortalError('fcl_not_found');
+    try{if(!options.receiverIsActive(ctx.identity.userId))throw new PortalError('fcl_unavailable');}catch(error){if(error instanceof PortalError&&error.code==='fcl_unavailable')throw error;throw new PortalError('fcl_unavailable');}
+    return {...options,receiverUserId:ctx.identity.userId};
   }
   private scope(ctx: PortalContext): Scope {
     if (!ctx.identity.emailVerified) throw new PortalError('authentication_required');
@@ -1170,8 +1169,16 @@ export class CaseService {
       );
     });
   }
+  async createPersonalFclInquiry(ctx: PortalContext, input: unknown, key: string) {
+    this.requireFclReceiver(ctx);
+    const submission = await this.persistFclInquiry(`personal:${sha256(ctx.identity.userId)}`, key, input, ctx);
+    return this.getFclCase(ctx, submission.case_id);
+  }
   async submitFclInquiry(submissionSessionId: string, key: string, input: unknown): Promise<FclCaseSubmission> {
-    const options = this.fclOptions();
+    return this.persistFclInquiry(submissionSessionId, key, input);
+  }
+  private async persistFclInquiry(submissionSessionId: string, key: string, input: unknown, personalContext?: PortalContext): Promise<FclCaseSubmission> {
+    const options = personalContext ? this.requireFclReceiver(personalContext) : this.fclOptions();
     if (!options.receiverIsActive(options.receiverUserId)) throw new PortalError('fcl_unavailable');
     if (!validSessionId(submissionSessionId)) throw new PortalError('fcl_input_invalid');
     if (!validIdempotencyKey(key)) throw new PortalError('idempotency_key_invalid');
@@ -1205,8 +1212,8 @@ export class CaseService {
           inquiryId, inquiryNo, caseId, inquiryDate, sequence, bodyJson, bodyDigest, sessionHash, options.receiverUserId,
           credentialHash, credentialExpiresAt, 'not_attempted', null, null, createdAt,
         );
-        this.event(caseRow, 'FCL inquiry submitted by anonymous customer.', 'customer', 'Anonymous customer', `anonymous:${sessionHash.slice(0, 24)}`, 'fcl_inquiry_submitted', { fcl_inquiry_id: inquiryId, inquiry_no: inquiryNo });
-        this.event(caseRow, 'FCL inquiry assigned to configured receiver.', 'internal', 'System', 'system:fcl_receiver_assignment', 'fcl_receiver_assigned', { receiver_user_id: options.receiverUserId });
+        this.event(caseRow, personalContext ? 'FCL inquiry recorded by account owner.' : 'FCL inquiry submitted by anonymous customer.', personalContext ? 'internal' : 'customer', personalContext?.identity.displayName ?? 'Anonymous customer', personalContext?.identity.userId ?? `anonymous:${sessionHash.slice(0, 24)}`, 'fcl_inquiry_submitted', { fcl_inquiry_id: inquiryId, inquiry_no: inquiryNo });
+        this.event(caseRow, personalContext ? 'FCL inquiry assigned to authenticated account owner.' : 'FCL inquiry assigned to configured receiver.', 'internal', 'System', 'system:fcl_receiver_assignment', 'fcl_receiver_assigned', { receiver_user_id: options.receiverUserId });
         db.prepare('INSERT INTO business_case_idempotency VALUES(?,?,?,?)').run(scope, key, bodyDigest, caseId);
         row = this.fclRowById(inquiryId) as FclRow;
       }
@@ -1233,7 +1240,7 @@ export class CaseService {
       notification: this.notification(row),
       replay: !first,
     });
-    if (!first) return base;
+    if (!first || personalContext) return base;
     const notification = await this.attemptFclNotification(row, base, inquiry);
     return fclCaseSubmissionSchema.parse({ ...base, notification });
   }

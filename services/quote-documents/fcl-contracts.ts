@@ -69,8 +69,8 @@ export const fclDocumentSourceBindingSchema=z.object({
   dataset_digest:z.string().regex(/^[a-f0-9]{64}$/u),
   source_ref:z.string().min(1).max(200),
   source_version:z.string().min(1).max(200),
-  valid_from:z.iso.date(),
-  valid_until:z.iso.date(),
+  valid_from:z.iso.date().nullable(),
+  valid_until:z.iso.date().nullable(),
   rate_digest:z.string().regex(/^[a-f0-9]{64}$/u),
 }).strict();
 

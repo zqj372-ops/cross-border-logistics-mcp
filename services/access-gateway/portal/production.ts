@@ -92,8 +92,9 @@ export async function startProductionPortal(environment:NodeJS.ProcessEnv=proces
  const fclMailTransport:FclMailTransport|undefined=fclEnabled?createFclSmtpTransport(readFclSmtpConfigFile(req(environment,"PORTAL_FCL_SMTP_CONFIG_FILE")),{timeoutMs:FCL_SMTP_CHILD_TIMEOUT_MS}):undefined;
  const personalScheduleEnabled=flag(environment,"PORTAL_FCL_SCHEDULE_LIVE_ENABLED");
  if(personalScheduleEnabled&&(!fclEnabled||!fclAuthority||!fclReceiverSub))throw new Error("fcl_personal_schedule_configuration_invalid");
- const personalScheduleAccess=personalScheduleEnabled?{scopeId:`fcl-personal-${fclScheduleHash('sha256').update(fclReceiverSub!).digest('hex').slice(0,32)}`,authorize:async(ctx:FclScheduleContext)=>{
-  if(ctx.identity.userId!==fclReceiverSub||!ctx.identity.emailVerified)return false;
+ const personalScheduleAccess=personalScheduleEnabled?{perAccount:true,scopeId:`fcl-personal-${fclScheduleHash('sha256').update(fclReceiverSub!).digest('hex').slice(0,32)}`,authorize:async(ctx:FclScheduleContext)=>{
+  if(!ctx.identity.emailVerified||!ctx.identity.userId.trim())return false;
+  if(ctx.identity.userId!==fclReceiverSub)return true;
   return fclAuthority!.runVerified(proof=>proof.sub===ctx.identity.userId);
  }}:undefined;
  const scheduleLiveTenants=parseScheduleLiveTenantAllowlist(environment.PORTAL_SCHEDULE_LIVE_TENANT_ALLOWLIST);

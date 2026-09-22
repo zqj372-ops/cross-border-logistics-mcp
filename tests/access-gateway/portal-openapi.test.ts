@@ -15,7 +15,8 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  const fclStaff=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/fcl/')),publicFcl=Object.keys(paths).filter(path=>path.startsWith('/inquiry/api/v1'));
  expect(Object.keys(paths).filter(path=>!personnel.includes(path)&&!fclStaff.includes(path)&&!publicFcl.includes(path))).toHaveLength(17);
  expect(personnel).toHaveLength(31);
- expect(fclStaff).toHaveLength(36);expect(publicFcl).toHaveLength(6);
+ expect(fclStaff).toHaveLength(37);expect(publicFcl).toHaveLength(6);
+ expect(fclStaff).toContain('/console/api/v1/fcl/case-create');
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;
   for(const [method,operation] of Object.entries(methods)){
@@ -35,6 +36,8 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
   const operation=Object.values(paths[path] as Record<string,{security:unknown}>)[0]!;
   expect(operation.security,path).toEqual(path==='/inquiry/api/v1/session'?[]:[{InquirySession:[]}]);
  }
+ const personalCreate=paths['/console/api/v1/fcl/case-create']!.post as unknown as {parameters:{name:string;required?:boolean}[]};
+ expect(personalCreate.parameters).toEqual(expect.arrayContaining([expect.objectContaining({name:'Idempotency-Key',required:true})]));
  const caseRead=(paths['/console/api/v1/cases/{case_id}'] as unknown as {get:{parameters:{name:string;required?:boolean;schema:Record<string,unknown>}[];responses:Record<string,{content:{'application/json':{schema:unknown}}}>}}).get;
  expect(caseRead.parameters.find(parameter=>parameter.name==='contract_version')?.schema).toEqual({const:'inquiry-quote-link@2026-09-13.v1'});
  expect(JSON.stringify(caseRead.responses['200'])).toContain('#/components/schemas/AccessPortalCasesResponseV2');

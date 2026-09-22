@@ -175,7 +175,7 @@ it('enforces CAS, preview integrity and idempotent replay with current-state rea
   }
 });
 
-it('isolates FCL rates to the active personal receiver and never falls back to organization or platform roles', () => {
+it('isolates FCL rates per account regardless of enterprise selection or platform roles', () => {
   const root = mkdtempSync(join(tmpdir(), 'fcl-rates-auth-'));
   const path = join(root, 'native.sqlite');
   let store = new NativeAdminStore(path, upgradeOptions);
@@ -187,11 +187,11 @@ it('isolates FCL rates to the active personal receiver and never falls back to o
       return active;
     });
     service.save(receiver, 'fcl', { expected_version: 0, input: dataset() }, 'fcl-auth-save-key-0001');
-    expect(() => service.get(other, 'fcl')).toThrow('fcl_not_found');
-    expect(() => service.get(operator, 'fcl')).toThrow('fcl_not_found');
-    expect(() => service.get(organization, 'fcl')).toThrow('fcl_not_found');
+    expect(service.get(other, 'fcl').draft).toBeNull();
+    expect(service.get(operator, 'fcl').draft).toBeNull();
+    expect(service.get(organization, 'fcl').version).toBe(1);
     expect(() => service.save(other, 'fcl', { expected_version: 1, input: dataset('Other') }, 'fcl-auth-save-key-0002'))
-      .toThrow('fcl_not_found');
+      .toThrow('version_conflict');
     active = false;
     expect(() => service.get(receiver, 'fcl')).toThrow('fcl_unavailable');
     active = true;
@@ -204,7 +204,7 @@ it('isolates FCL rates to the active personal receiver and never falls back to o
     expect(() => new NativeAdminService(store, portal as never, {
       receiverUserId: 'different-receiver',
       receiverIsActive: () => true,
-    })).toThrow('fcl_receiver_configuration_mismatch');
+    }).get(other,'fcl')).not.toThrow();
   } finally {
     store.close();
     rmSync(root, { recursive: true, force: true });

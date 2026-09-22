@@ -78,7 +78,7 @@ import {
   type FclQuoteView,
 } from '../quote-native/fcl';
 import type {FclRateDataset} from '../quote-native/fcl-contracts';
-import {estimateToQuoteDraft} from '../quote-native/fcl-operations';
+import {estimateToQuoteDraft,fclDeliveryValidity} from '../quote-native/fcl-operations';
 
 const parse=<T>(schema:z.ZodType<T>,input:unknown,code='document_input_invalid'):T=>{
   const parsed=schema.safeParse(input);
@@ -798,11 +798,7 @@ export class DocumentWorkflowService{
     let active:boolean;
     try{active=options.receiverIsActive(options.receiverUserId);}catch{active=false;}
     if(!active)throw new Error('fcl_receiver_unavailable');
-    const owners=this.store.db.prepare(`SELECT personal_owner_id AS owner_id FROM document_configs WHERE personal_owner_id IS NOT NULL
-      UNION SELECT personal_owner_id FROM document_revisions WHERE personal_owner_id IS NOT NULL
-      UNION SELECT personal_owner_id FROM document_current_revisions WHERE personal_owner_id IS NOT NULL
-      UNION SELECT personal_owner_id FROM document_audit WHERE personal_owner_id IS NOT NULL${this.store.isV5()?' UNION SELECT personal_owner_id FROM fcl_quote_revisions WHERE personal_owner_id IS NOT NULL':''}`).all() as Array<{owner_id:string}>;
-    if(owners.some(row=>row.owner_id!==options.receiverUserId))throw new Error('fcl_receiver_configuration_mismatch');
+    // Personal owners remain immutable; multiple accounts may use this store.
   }
   private fclOptions():NormalizedFclDocumentWorkflowOptions{
     if(!this.fcl)throw new PortalError('fcl_unavailable');
@@ -810,11 +806,11 @@ export class DocumentWorkflowService{
   }
   private requireFclReceiver(ctx:PortalContext):NormalizedFclDocumentWorkflowOptions{
     const options=this.fclOptions();
-    if(!ctx.identity.emailVerified||ctx.organizationId!==null||ctx.identity.userId!==options.receiverUserId)throw new PortalError('fcl_not_found');
+    if(!ctx.identity.emailVerified||!ctx.identity.userId.trim())throw new PortalError('fcl_not_found');
     let active:boolean;
-    try{active=options.receiverIsActive(options.receiverUserId);}catch{active=false;}
+    try{active=options.receiverIsActive(ctx.identity.userId);}catch{active=false;}
     if(!active)throw new PortalError('fcl_unavailable');
-    return options;
+    return {...options,receiverUserId:ctx.identity.userId};
   }
   private fclConfigRaw(personalOwnerId:string):FclConfigView{
     const row=this.store.db.prepare('SELECT version,input FROM document_configs WHERE org IS NULL AND personal_owner_id=?').get(personalOwnerId) as {version:number;input:string}|undefined;
@@ -899,7 +895,7 @@ export class DocumentWorkflowService{
     if(snapshot.quote_ref!==row.quote_id||snapshot.version!==row.version||row.quote_id!==quoteRef||row.version!==version||row.personal_owner_id!==personalOwnerId||row.case_ref!==snapshot.case_binding.case_ref||row.content_digest!==snapshot.content_digest||row.actor!==snapshot.actor||row.created_at!==snapshot.created_at)throw new PortalError('fcl_quote_readback_failed');
     return {snapshot,currentVersion:current.version};
   }
-  private fclQuoteCurrentness(ctx:PortalContext,snapshot:ReturnType<typeof validateFclQuoteSnapshot>,currentVersion:number,options:NormalizedFclDocumentWorkflowOptions):FclQuoteCurrentness{
+  private fclQuoteCurrentness(ctx:PortalContext,snapshot:ReturnType<typeof validateFclQuoteSnapshot>,currentVersion:number):FclQuoteCurrentness{
     const reasons=new Set<string>();
     const dependencies=this.fclQuoteDependencies();
     if(snapshot.version<currentVersion)reasons.add('fcl_quote_not_current_version');
@@ -919,11 +915,8 @@ export class DocumentWorkflowService{
         if(!rate||canonicalHash(rate)!==canonicalHash(snapshot.source_snapshot.rate))reasons.add('fcl_quote_source_rate_changed');
       }
     }catch{reasons.add('fcl_quote_source_unavailable');}
-    const today=this.fclTimestamp(options).slice(0,10);
-    if(today<snapshot.source_snapshot.valid_from||today>snapshot.source_snapshot.valid_until)reasons.add('fcl_quote_source_expired');
     const estimateBinding=snapshot.extensions?.fcl_estimate_v1;
     if(estimateBinding){
-      if(today<estimateBinding.valid_from||today>estimateBinding.valid_until)reasons.add('fcl_quote_source_expired');
       try{const estimate=dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:estimateBinding.estimate_id,version:estimateBinding.version});if(!estimate||!estimate.currentness.valid_now||estimate.content_digest!==estimateBinding.content_digest)reasons.add('fcl_quote_source_rate_changed');}catch{reasons.add('fcl_quote_source_unavailable');}
     }
     return {valid_now:reasons.size===0,reason_codes:[...reasons]};
@@ -984,7 +977,7 @@ export class DocumentWorkflowService{
         committed=true;
         const read=this.readFclQuote(options.receiverUserId,submitted.quote_ref,submitted.version);
         dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
-        return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:true,submittedVersion:submitted.version},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
+        return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:true,submittedVersion:submitted.version},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion));
       }
       const requestBinding=request.input.extensions?.fcl_estimate_v1;
       const readEstimate=(binding:{estimate_id:string;version:number})=>dependencies.rateReader.fclOperations?.get(ctx,{estimate_id:binding.estimate_id,version:binding.version});
@@ -1031,7 +1024,7 @@ export class DocumentWorkflowService{
           if(caseView.case_status==='submitted'||caseView.case_status==='needs_input'||caseView.review_context.review_required)throw new PortalError('fcl_quote_case_review_required');
           if(caseView.case_version!==existing.snapshot.case_binding.case_version)throw new PortalError('fcl_quote_case_version_changed');
           if(caseView.review_context.latest_customer_supplement_ref!==existing.snapshot.case_binding.latest_customer_supplement_ref)throw new PortalError('fcl_quote_case_supplement_changed');
-          if(!this.fclQuoteCurrentness(ctx,existing.snapshot,existing.currentVersion,options).valid_now)throw new PortalError('fcl_quote_source_changed');
+          if(!this.fclQuoteCurrentness(ctx,existing.snapshot,existing.currentVersion).valid_now)throw new PortalError('fcl_quote_source_changed');
         }
         quoteRef=request.quote_ref;version=request.expected_version+1;
         if(request.source_binding.mode==='retain'){
@@ -1063,7 +1056,7 @@ export class DocumentWorkflowService{
       committed=true;
       this.assertFclQuoteCommitted({personalOwnerId:options.receiverUserId,quoteRef,version,contentDigest:snapshot.content_digest,actor:ctx.identity.userId,createdAt,auditId,partition,key,requestDigest});
       const read=this.readFclQuote(options.receiverUserId,quoteRef,version);
-      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
+      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion));
     }catch(error){
       if(!committed)db.exec('ROLLBACK');
       if(committed&&!(error instanceof PortalError))throw new PortalError('fcl_quote_readback_failed');
@@ -1085,7 +1078,7 @@ export class DocumentWorkflowService{
     return dependencies.caseLock.withFclReadLock(ctx,()=>{
       const read=this.readFclQuote(options.receiverUserId,request.quote_ref,request.version);
       dependencies.caseReader.getFclCase(ctx,read.snapshot.case_binding.case_ref);
-      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options));
+      return this.fclQuoteView(read.snapshot,read.currentVersion,{replayed:false,submittedVersion:null},this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion));
     });
   }
   listFclQuotes(ctx:PortalContext,input:unknown){
@@ -1114,7 +1107,7 @@ export class DocumentWorkflowService{
             release_id:read.snapshot.source_snapshot.release_id,
             complete:read.snapshot.completeness.complete,
             by_currency:read.snapshot.calculation.by_currency,
-            currentness:this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion,options),
+            currentness:this.fclQuoteCurrentness(ctx,read.snapshot,read.currentVersion),
             created_at:row.created_at,
           };
         }),
@@ -1172,7 +1165,7 @@ export class DocumentWorkflowService{
     if(payload.version<currentVersion)reasons.add('fcl_document_not_current_version');
     try{
       const quote=this.readFclQuote(options.receiverUserId,payload.quote_binding.quote_ref,payload.quote_binding.quote_version);
-      const quoteCurrentness=this.fclQuoteCurrentness(ctx,quote.snapshot,quote.currentVersion,options);
+      const quoteCurrentness=this.fclQuoteCurrentness(ctx,quote.snapshot,quote.currentVersion);
       quoteCurrentness.reason_codes.forEach(reason=>reasons.add(reason));
       if(quote.currentVersion!==payload.quote_binding.quote_version)reasons.add('fcl_document_quote_changed');
     }catch{reasons.add('fcl_document_quote_unavailable');}
@@ -1345,7 +1338,7 @@ export class DocumentWorkflowService{
         const quoteChanged=existingPayload.quote_binding.quote_ref!==quote.snapshot.quote_ref||existingPayload.quote_binding.quote_version!==quote.snapshot.version;
         if(!quoteChanged&&this.fclConfigRaw(options.receiverUserId).version===existingPayload.template_version)throw new PortalError('fcl_document_re_quote_required');
       }
-      const quoteCurrentness=this.fclQuoteCurrentness(ctx,quote.snapshot,quote.currentVersion,options);
+      const quoteCurrentness=this.fclQuoteCurrentness(ctx,quote.snapshot,quote.currentVersion);
       if(!quoteCurrentness.valid_now)throw new PortalError('fcl_document_quote_not_current');
       if(!quote.snapshot.completeness.complete||!quote.snapshot.calculation.complete)throw new PortalError('fcl_document_quote_incomplete');
       const caseRef=quote.snapshot.case_binding.case_ref;
@@ -1355,9 +1348,14 @@ export class DocumentWorkflowService{
       const config=this.fclConfigRaw(options.receiverUserId);
       if(config.version!==request.expected_config_version||!config.input)throw new PortalError('fcl_document_config_stale');
       const today=this.fclTimestamp(options).slice(0,10);
-      if(request.quote_date>request.valid_until||request.quote_date>today||today>request.valid_until||request.quote_date<quote.snapshot.source_snapshot.valid_from||request.valid_until>quote.snapshot.source_snapshot.valid_until)throw new PortalError('fcl_document_date_invalid');
-      const estimateValidity=quote.snapshot.extensions?.fcl_estimate_v1;
-      if(estimateValidity&&(request.quote_date<estimateValidity.valid_from||request.valid_until>estimateValidity.valid_until))throw new PortalError('fcl_document_date_invalid');
+      if(request.quote_date>request.valid_until||request.quote_date>today||today>request.valid_until)throw new PortalError('fcl_document_date_invalid');
+      const estimateBinding=quote.snapshot.extensions?.fcl_estimate_v1;
+      if(estimateBinding){
+        const estimate=this.fclQuoteDependencies().rateReader.fclOperations?.get(ctx,{estimate_id:estimateBinding.estimate_id,version:estimateBinding.version});
+        if(!estimate)throw new PortalError('fcl_quote_source_unavailable');
+        const window=fclDeliveryValidity(estimate.calculation);
+        if((window.valid_from!==null&&request.quote_date<window.valid_from)||(window.valid_until!==null&&request.valid_until>window.valid_until))throw new PortalError('fcl_document_date_invalid');
+      }
       const createdAt=this.fclTimestamp(options),revisionId=randomUUID();
       const payload=this.buildFclDocumentPayload({documentId,revisionId,version,state:'draft',actor:ctx.identity.userId,createdAt,updatedAt:createdAt,quote:quote.snapshot,caseView,config,display:{quote_no:request.quote_no,quote_date:request.quote_date,valid_until:request.valid_until,remark:request.remark}});
       db.prepare('INSERT INTO document_revisions(revision_id,document_id,org,personal_owner_id,owner,version,state,schema_version,payload,input_digest,template_digest,source_revision_id,review_hash,rejection_reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(revisionId,documentId,null,options.receiverUserId,options.receiverUserId,version,'draft',5,JSON.stringify(payload),canonicalHash(payload.customer_input),canonicalHash(payload.template),sourceRevisionId,null,null,ctx.identity.userId,createdAt);

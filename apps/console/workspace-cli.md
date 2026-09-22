@@ -1,6 +1,6 @@
 # FreightClaw workspace CLI
 
-本页对应当前产品版本 `0.007`。public FCL inquiry 无需登录；staff 人员操作使用独立 device flow，API Key 不能替代本人身份。已有查询 Key 与权限继续保留。
+本页对应当前产品版本 `0.008`。public FCL inquiry 无需登录；staff 人员操作使用独立 device flow，API Key 不能替代本人身份。已有查询 Key 与权限继续保留。
 
 ## 构建与登录
 
@@ -93,6 +93,8 @@ freightclaw workspace fcl inquiry logout --inquiry-session-file inquiry.json --i
 公开文件只允许当前用户读取，绑定单一 origin 和本票，拒绝 symlink；提交前保存 pending key/body，未知结果不换身份、不自动重试。exchange 可从 Web 的受限恢复文件读取 `{inquiry_id,credential}`，credential 不进入命令参数、URL、环境变量或输出。FCL PDF 不覆盖已有文件，stdout 不输出 `content_base64`。生产启用、真实接收人 authority 与业务验收仍独立判断。
 
 关务、私人地址运价、Freightcom 配置与人员身份查询：参见 [业务操作说明](native-business.md)。新增操作与网站共用当前企业配置和权限。
+
+FCL 的海运费与费用模板按登录个人账号隔离，不要求企业身份。`workspace fcl case-create --input inquiry.json --session-file session.json --idempotency-key <唯一键>` 可新建本人受理的询价；输入使用现有整柜询价 Schema。维护运价、费用模板时可省略 `valid_from` / `valid_until`，正式对客报价仍保留有效期。基础海运费只从所选运价读取，旧模板重复费用需核对后显式排除。
 
 ## 报价单制作
 

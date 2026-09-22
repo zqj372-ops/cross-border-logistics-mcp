@@ -69,7 +69,12 @@ export interface ScheduleLiveEvidenceReader {
 
 export interface ScheduleLivePersonalAccess {
   readonly scopeId: string;
+  readonly perAccount?:boolean;
   authorize(ctx: PortalContext): Promise<boolean>;
+}
+
+export function isPersonalScheduleScope(access:ScheduleLivePersonalAccess|undefined,scope:string):boolean{
+  return Boolean(access&&(scope===access.scopeId||access.perAccount===true&&scope.startsWith(`${access.scopeId}-`)&&/^[a-f0-9]{16}$/u.test(scope.slice(access.scopeId.length+1))));
 }
 
 export interface ScheduleLiveServiceOptions {
@@ -151,7 +156,7 @@ export function createScheduleLiveService(
     readonly role: string;
   }> {
     if (ctx.identity.emailVerified && options.personalAccess && await options.personalAccess.authorize(ctx)) {
-      const tenantId = options.personalAccess.scopeId;
+      const tenantId = options.personalAccess.perAccount?`${options.personalAccess.scopeId}-${digest(ctx.identity.userId).slice(0,16)}`:options.personalAccess.scopeId;
       tenantDirectory(evidenceRoot, tenantId);
       if (action !== "carriers" && !options.policy.liveEnabled(tenantId)) throw new PortalError("schedule_live_disabled");
       return {tenantId, role: "fcl_receiver"};
@@ -447,7 +452,7 @@ export function createScheduleLiveService(
       });
       try {
         // Personal access is session-bound; it does not grant machine/API Key access.
-        if (request.tenantId === options.personalAccess?.scopeId || action !== "carriers" && !options.policy.liveEnabled(request.tenantId)) {
+        if (isPersonalScheduleScope(options.personalAccess,request.tenantId) || action !== "carriers" && !options.policy.liveEnabled(request.tenantId)) {
           await options.audit.record({
             tenant_id: request.tenantId,
             actor_id: request.actorId,

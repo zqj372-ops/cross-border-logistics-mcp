@@ -111,7 +111,7 @@ describe('FCL document review decisions',()=>{
   });
 
   it('rejects enterprise/operator reviewers',async()=>{
-    const f=await setup();expect(()=>f.workflow.reviewFclDocument(enterprise,reviewRequest(f))).toThrow('fcl_not_found');expect(()=>f.workflow.reviewFclDocument(operator,reviewRequest(f))).toThrow('fcl_not_found');f.documentStore.close();f.rateStore.close();f.caseStore.close();
+    const f=await setup();expect(()=>f.workflow.reviewFclDocument(enterprise,reviewRequest(f))).toThrow('fcl_document_not_found');expect(()=>f.workflow.reviewFclDocument(operator,reviewRequest(f))).toThrow('fcl_document_not_found');f.documentStore.close();f.rateStore.close();f.caseStore.close();
   });
 
   it('rolls back approval revision/current/event/audit/idempotency when decision payload is tampered',async()=>{

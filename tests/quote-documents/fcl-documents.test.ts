@@ -67,9 +67,9 @@ describe('FCL linked customer documents',()=>{
     const f=await setup();const quote=f.documentWorkflow.saveFclQuote(receiver,quoteRequest(f),'fcl-doc-quote-create-0002');
     expect(()=>f.documentWorkflow.saveFclDocument(receiver,{...documentRequest(f,quote.quote_ref,quote.version,quote.content_digest),cost_price:'3200'},'fcl-doc-forged-0001')).toThrow('fcl_document_input_invalid');
     expect(()=>f.documentWorkflow.saveFclDocument(receiver,{...documentRequest(f,quote.quote_ref,quote.version,quote.content_digest),quote_no:'   '},'fcl-doc-blank-quote-0001')).toThrow('fcl_document_input_invalid');
-    expect(()=>f.documentWorkflow.getFclDocument(other,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:'00000000-0000-4000-8000-000000000999',version:null})).toThrow('fcl_not_found');
-    expect(()=>f.documentWorkflow.getFclDocument(enterprise,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:'00000000-0000-4000-8000-000000000999',version:null})).toThrow('fcl_not_found');
-    expect(()=>f.documentWorkflow.getFclDocument(operator,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:'00000000-0000-4000-8000-000000000999',version:null})).toThrow('fcl_not_found');
+    expect(()=>f.documentWorkflow.getFclDocument(other,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:'00000000-0000-4000-8000-000000000999',version:null})).toThrow('fcl_document_not_found');
+    expect(()=>f.documentWorkflow.getFclDocument(enterprise,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:'00000000-0000-4000-8000-000000000999',version:null})).toThrow('fcl_document_not_found');
+    expect(()=>f.documentWorkflow.getFclDocument(operator,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:'00000000-0000-4000-8000-000000000999',version:null})).toThrow('fcl_document_not_found');
     expect(()=>f.documentWorkflow.saveFclDocument(receiver,{...documentRequest(f,quote.quote_ref,quote.version,quote.content_digest),quote_date:'2026-10-20'},'fcl-doc-date-0001')).toThrow('fcl_document_date_invalid');
     expect(f.documentStore.db.prepare('SELECT COUNT(*) AS n FROM document_revisions').get()).toEqual({n:0});
     f.documentStore.close();f.rateStore.close();f.caseStore.close();
@@ -120,4 +120,16 @@ describe('FCL linked customer documents',()=>{
   it('keeps an unpublished Rate draft from invalidating the selected active source',async()=>{
     const f=await setup();const quote=f.documentWorkflow.saveFclQuote(receiver,quoteRequest(f),'fcl-doc-quote-draft-rate-0001');const doc=f.documentWorkflow.saveFclDocument(receiver,documentRequest(f,quote.quote_ref,quote.version,quote.content_digest),'fcl-doc-draft-rate-0001');const draft=rates();draft.rates[0]!.items[0]!.ocean_freight='3400';f.rateService.save(receiver,'fcl',{expected_version:2,input:draft},'fcl-doc-rate-draft-save-0002');expect(f.documentWorkflow.getFclDocument(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,document_id:doc.document_id,version:null}).currentness).toEqual({valid_now:true,reason_codes:[]});f.documentStore.close();f.rateStore.close();f.caseStore.close();
   });
+});
+
+it('keeps the customer quotation validity independent of ocean maintenance dates',async()=>{
+  const f=await setup();
+  try{
+    const quote=f.documentWorkflow.saveFclQuote(receiver,quoteRequest(f),'fcl-doc-independent-quote-01');
+    const before=quote.content_digest;
+    const document=f.documentWorkflow.saveFclDocument(receiver,{...documentRequest(f,quote.quote_ref,quote.version,quote.content_digest),valid_until:'2027-01-31'},'fcl-doc-independent-window-01');
+    expect(document.customer_input.valid_until).toBe('2027-01-31');
+    expect(f.documentWorkflow.getFclQuote(receiver,{contract_version:FCL_DOCUMENT_WORKFLOW_VERSION,quote_ref:quote.quote_ref,version:1}).content_digest).toBe(before);
+    expect(()=>f.documentWorkflow.saveFclDocument(receiver,{...documentRequest(f,quote.quote_ref,quote.version,quote.content_digest),valid_until:'2026-10-07'},'fcl-doc-independent-expired-01')).toThrow('fcl_document_date_invalid');
+  }finally{f.documentStore.close();f.rateStore.close();f.caseStore.close();}
 });

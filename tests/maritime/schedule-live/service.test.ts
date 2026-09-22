@@ -365,3 +365,17 @@ describe('fixed FCL personal receiver schedule access',()=>{
   });
 
 });
+
+it('isolates personal sailing evidence across accounts even with an old enterprise selected',async()=>{
+  const audit=new InMemoryScheduleLiveAuditSink();
+  const service=createScheduleLiveService({portal:portalStub({}),policy:{liveEnabled:scope=>scope.startsWith('fcl-personal-test-')},clock:{now:()=>new Date('2026-09-18T00:00:00Z')},audit,evidenceRoot:await evidenceRoot(),adapters:[quickAdapter()],http:unusableHttp,personalAccess:{scopeId:'fcl-personal-test',perAccount:true,authorize:ctx=>Promise.resolve(ctx.identity.emailVerified)}});
+  const alice=context('old-company','alice'),bob={...context('unused','bob'),organizationId:null};
+  const result=await service.search(alice,searchInput);
+  const ref=(result.body as {data:{provenance:{source_refs:string[]}}}).data.provenance.source_refs[0]!;
+  expect((await service.readEvidence(alice,ref)).byte_length).toBeGreaterThan(0);
+  await expect(service.readEvidence(bob,ref)).rejects.toThrow();
+  await service.search(bob,searchInput);
+  const scopes=new Set(audit.entries.filter(entry=>entry.action==='search'&&entry.status==='success').map(entry=>entry.tenant_id));
+  expect(scopes.size).toBe(2);
+  for(const tenantId of scopes)expect((await service.machineExecute({tool:'maritime.schedule.search',tenantId,actorId:'alice',input:searchInput})).status).toBe('blocked');
+});

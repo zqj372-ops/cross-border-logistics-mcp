@@ -112,7 +112,7 @@ it('reports personal FCL capability from the exact receiver even after an organi
   }finally{await f.close();}
 });
 
-it('switches from an organization back to personal only with a fresh receiver proof',async()=>{
+it('uses personal FCL with an enterprise selected and retains normal session switching',async()=>{
   let calls=0;
   const proof={sub:receiverId,active:true as const,emailVerified:true as const};
   const authority:FclReceiverAuthority={runVerified:async operation=>{calls++;return runWithVerifiedFclReceiver(proof,()=>operation(proof));}};
@@ -126,8 +126,8 @@ it('switches from an organization back to personal only with a fresh receiver pr
     const organizationBody=await organization.json() as {csrf_token:string};
     expect(organizationBody).toMatchObject({organization_id:'org_fixture',fcl_capability:{fcl_personal:true,receiver_user_id:receiverId}});
     const blocked=await fetch(`${f.origin}/console/api/v1/fcl/case-list?limit=1`,{headers:{cookie:session.cookie}});
-    expect(blocked.status).toBe(403);
-    expect((await blocked.json() as {reason_codes:string[]}).reason_codes).toEqual(['fcl_not_found']);
+    expect(blocked.status).toBe(200);
+    expect((await blocked.json() as {reason_codes:string[]}).reason_codes).toEqual([]);
     const personal=await select(null,'fcl-http-switch-personal-01',organizationBody.csrf_token);
     const personalBody=await personal.json() as {organization_id:string|null;fcl_capability:{fcl_personal:boolean;receiver_user_id:string|null}};
     expect(personal.status,JSON.stringify(personalBody)).toBe(200);
@@ -265,7 +265,7 @@ it('previews a selected historical release before creating a rollback publicatio
     const otherPersonal={organizationId:null,identity:{userId:'fixture-other-personal',displayName:'Other personal',email:'other@example.test',emailVerified:true,platformRole:null}};
     const organizationContext={organizationId:'org_fixture',identity:receiver.identity};
     await expect(isolatedHttp.executeStaff(otherPersonal,'rate-preview',{release_id:first.release_id},()=> 'isolated-other-preview')).rejects.toThrow();
-    await expect(isolatedHttp.executeStaff(organizationContext,'rate-preview',{release_id:first.release_id},()=> 'isolated-org-preview')).rejects.toThrow();
+    await expect(isolatedHttp.executeStaff(organizationContext,'rate-preview',{release_id:first.release_id},()=> 'isolated-org-preview')).resolves.toMatchObject({status:'success'});
     const rollback=await call('rate-rollback',{expected_version:secondGetBody.data.version,preview_hash:historicalBody.data.preview_hash,confirmation:'reviewed_sources_and_conditions',release_id:first.release_id},'fcl-http-rollback-rate-create');
     expect(rollback.status).toBe(200);
     const rollbackBody=await rollback.json() as {status:string;data:{active_release:{input:{label:string;rates:Array<{items:Array<{ocean_freight:string}>}>}}}};

@@ -51,8 +51,14 @@ const issues: Record<string, string> = {
   fcl_estimate_shipping_date_invalid:'出运日期不能早于客户备货日期',fcl_estimate_binding_invalid:'所选方案已变化，请刷新并重新选择',
   fcl_estimate_adjust_in_workbench:'请在报价工作台调整方案，再生成新客户报价',fcl_estimate_no_candidates:'没有匹配方案，请核对起运港与已发布模板',
   fcl_estimate_locked:'请先解除锁定，再调整售价',fcl_estimate_limit:'方案数量已达到本阶段上限，请联系维护人员',
-  fcl_rate_unsaved_publication:'存在未发布的配置，请先发布或还原草稿',fcl_bulk_rate_window_conflict:'同一海运来源的柜型需使用一致的有效期和来源版本',
-  template_ambiguous:'模板有效期重叠，请修正配置',template_expired:'出运日期没有对应的有效模板',ocean_rate_expired:'海运费有效期不覆盖出运日期',route_mismatch:'起运港或目的港与模板不一致',
+  fcl_rate_unsaved_publication:'存在未发布的配置，请先发布或还原草稿',fcl_bulk_rate_window_conflict:'同一海运来源的柜型需使用一致的来源编号和版本',
+  legacy_ocean_fee_review:'模板含历史基础海运费，请核对金额后确认改从海运费表取价',
+  legacy_rate_ocean_fee_review:'历史附费含基础海运费，请核对后确认排除重复项',
+  legacy_rate_fee_collision:'历史运价附费与模板费用重复，请先核对费用来源',
+  charge_ambiguous:'该费用存在多个启用版本，请核对后只保留一个启用版本',
+  fcl_legacy_ocean_fee_review:'历史基础海运费尚未核对，不能删除或改写原金额；请先确认排除重复项',
+  fcl_base_ocean_fee_duplicate:'基础海运费已从所选运价读取，不能再作为人工费用添加',
+  template_ambiguous:'该模板存在多个启用版本，请核对后只保留一个启用版本',template_expired:'出运日期没有对应的有效模板',ocean_rate_expired:'海运费有效期不覆盖出运日期',route_mismatch:'起运港或目的港与模板不一致',
   delivery_route_mismatch:'内陆运价的起终点或运输模式与模板不一致',delivery_container_mismatch:'内陆运价不支持所选柜型',delivery_postal_code_mismatch:'内陆运价不适用当前邮编',delivery_zone_mismatch:'内陆运价不适用当前区域',delivery_tier_unavailable:'重量未落在已维护的阶梯内',delivery_tier_ambiguous:'重量阶梯重叠，请修正内陆运价',
 
   fcl_state_conflict: '当前处理状态不允许此操作，请刷新后核对',
@@ -104,6 +110,7 @@ export function fclIssue(code: string): string {
   if (issues[code]) return issues[code];
   const [prefix,value]=code.split(':');
   const scoped:Record<string,string>={fx_missing:'缺少对人民币汇率',charge_unavailable:'没有有效费用',charge_ambiguous:'费用有效期重叠',charge_duplicate:'费用被重复计入',charge_route_mismatch:'费用不适用当前路线',charge_container_mismatch:'费用不适用当前柜型',delivery_unavailable:'没有有效内陆运价',delivery_ambiguous:'内陆运价有效期重叠',container_unavailable:'柜型无可用价格',adjustment_source_changed:'人工调整对应费用已变化'};
+  if(prefix&&issues[prefix])return `${issues[prefix]}：${value||''}`;
   if(prefix&&scoped[prefix])return `${scoped[prefix]}：${value||''}`;
   const limits=/^(template|delivery)_(kg|cbm)_(required|out_of_range)$/u.exec(code);
   if(limits)return `${limits[1]==='template'?'模板':'内陆运输'}：${limits[3]==='required'?'请填写':'超出适用范围，核对'}${limits[2]==='kg'?'重量':'体积'}`;
