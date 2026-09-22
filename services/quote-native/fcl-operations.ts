@@ -127,7 +127,7 @@ export function estimateToQuoteDraft(estimate:FclEstimateSnapshot):FclQuoteDraft
     manual_fees:manual.map(l=>{
       const h=createHash('sha256').update(`${estimate.estimate_id}:${l.id}`).digest('hex');
       const service=({origin:'pickup',destination:'delivery',customs:'canada_customs',inland:'delivery',ocean:'ocean_freight',other:'ocean_freight',risk:'ocean_freight'} as const)[l.category];
-      return {id:`${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`,template_ref:null,name:`${l.name_zh} ${l.name_en}`,group:l.category==='origin'?'A':l.category==='ocean'?'B':'C',service,quantity:l.quantity,unit:l.unit==='CNTR'?'CNTR':'SHIPMENT',container_type:l.container_type,cost_price:l.cost_price,sell_price:l.sell_price,currency:l.currency,internal_note:null,customer_note:null,evidence_ref:`fcl-estimate:${estimate.estimate_id}`,evidence_version:String(estimate.version),quantity_conditions:l.code};
+      return {id:`${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`,template_ref:null,name:l.name_zh===l.name_en?l.name_zh:`${l.name_zh} ${l.name_en}`,group:l.category==='origin'?'A':l.category==='ocean'?'B':'C',service,quantity:l.quantity,unit:l.unit==='CNTR'?'CNTR':'SHIPMENT',container_type:l.container_type,cost_price:l.cost_price,sell_price:l.sell_price,currency:l.currency,internal_note:null,customer_note:null,evidence_ref:`fcl-estimate:${estimate.estimate_id}`,evidence_version:String(estimate.version),quantity_conditions:l.code};
     }),service_scopes:[],exchange_rates:calculation.exchange_rates,remark:null,
   };
 }

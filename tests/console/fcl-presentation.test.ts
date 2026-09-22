@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { fclLabel, fclValue, fclEventMessage, displayMargin, fclIssue } from '../../apps/inquiry/fcl-presentation';
+import { fclLabel, fclValue, fclEventMessage, displayMargin, displayAmount, readAmountInput, fclIssue } from '../../apps/inquiry/fcl-presentation';
 
 describe('FCL business-facing presentation', () => {
+  it('shows at most two decimal places without rounding untouched input back into stored prices', () => {
+    expect(displayAmount('495.000000')).toBe('495');
+    expect(displayAmount('123.456789')).toBe('123.46');
+    expect(displayAmount('1.005')).toBe('1.01');
+    expect(displayAmount('99999999999999.995')).toBe('100000000000000');
+    expect(displayAmount(null)).toBe('—');expect(displayAmount('0')).toBe('0');
+    expect(readAmountInput('123.46','123.456789')).toBe('123.456789');
+    expect(readAmountInput('130.25','123.456789')).toBe('130.25');
+    expect(readAmountInput('','123.456789')).toBeNull();
+  });
   it('labels known states without inventing success for an unknown state', () => {
     expect(fclLabel('handed_off')).toBe('已交接');
     expect(fclLabel('needs_input')).toBe('待补充');
