@@ -135,7 +135,7 @@ async function request(path, { method = 'GET', body, key, acceptBusiness = false
   return result;
 }
 async function mutate(path, method, body, options = {}) {
-  const fingerprint = JSON.stringify([model.session?.identity?.user_id, model.session?.organization_id, path, method, body]);
+  const fingerprint = JSON.stringify([model.session?.identity?.user_id, model.session?.organization_id, path, method, body, ...(options.intentScope ? [options.intentScope] : [])]);
   if (!model.requestKeys.has(fingerprint)) model.requestKeys.set(fingerprint, crypto.randomUUID());
   const value = await request(path, { method, body, key: model.requestKeys.get(fingerprint), ...options });
   // A saved write without verified readback must be retried as the same operation.
