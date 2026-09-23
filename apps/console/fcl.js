@@ -1,5 +1,7 @@
+import {nodeLabels as executionNodeLabels,displayExecutionDate,createFclExecutionUI} from './fcl-execution.js';
+import {createFclNodeNotifications} from './fcl-node-notifications.js';
 import {isBaseOceanFreight} from '../../services/quote-native/fcl-fee-identity.ts';
-import {createFclInquiryDraft} from '../inquiry/fcl-model.ts';
+import {createFclInquiryDraft,FCL_CONTAINER_TYPES as containerTypes,FCL_SERVICE_IDS} from '../inquiry/fcl-model.ts';
 import {createFclOperations} from './fcl-operations.js';
 import {fclField,fclFieldLabel,FCL_FIELDS} from '../inquiry/fcl-fields.ts';
 import { fclLabel, fclValue, fclEventMessage, displayMargin, displayAmount, readAmountInput, fclIssue } from '../inquiry/fcl-presentation.ts';
@@ -9,15 +11,7 @@ const DOCUMENT_VERSION = 'fcl-document-workflow@2026-09-20.v1';
 const QUOTE_VERSION = 'fcl-quote-workflow@2026-09-20.v1';
 const HANDOFF_VERSION = 'fcl-handoff@2026-09-21.v1';
 const NOTIFICATION_VERSION = 'fcl-notification@2026-09-21.v1';
-const containerTypes = ['20GP', '40GP', '40HQ', '45HQ'];
-const serviceLabels = {
-  pickup: '中国提货',
-  export_customs: '中国出口报关',
-  ocean_freight: '海运干线',
-  canada_customs: '加拿大清关',
-  devanning_storage: '拆柜与仓储',
-  delivery: '加拿大派送',
-};
+const serviceLabels = Object.fromEntries(FCL_SERVICE_IDS.map(id => [id, fclLabel(id)]));
 
 
 export function selectWorkspaceQuoteRef(items, requestedRef) {
@@ -205,14 +199,17 @@ export async function verifyPdfOutput(value, cryptoApi = globalThis.crypto) {
 }
 
 export function createFclWorkspace({api, mutate, model, esc, head, panel, empty, note, field:renderField, actions, formError, icon, rerender, notify}) {
+  let listPhase='all',listMine=false,workspaceListEnabled=null,casesLoading=false,detailLoading=false;
+  const phaseLabels={all:'全部',inquiry_quote:'询报价',awaiting_confirmation:'待成交',executing:'执行中',completed:'已完成'};
   let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteRows = null, quoteSourceBaselines = new Map(), quoteManualBases = new Map(), quoteRemovedManualKeys = new Set(), quoteTouchedRows = new Set(), quoteRemovalKeys = new Set(), quoteAdjustmentReason = '', quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
   let workspaceStep = 'requirements', newCaseDraft = null, newCaseDirty = false;
   const field=(label,id,body)=>renderField(fclFieldLabel(label),id,body);
-  let operations;
-  const isDirty = () => newCaseDirty || operations?.isDirty() || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty || handoffDirty;
+  let operations, execution, nodeNotifications;
+  const isDirty = () => newCaseDirty || operations?.isDirty() || execution?.isDirty() || nodeNotifications?.isDirty() || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty || handoffDirty;
   const discardDrafts = () => {
     newCaseDraft = null; newCaseDirty = false;
     operations?.reset();
+    execution?.reset(); nodeNotifications?.reset();
     issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false;
     matchResult = null; editingQuoteRef = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; reviewView = null; exportView = null;
     documentDisplayDraft = null; documentDisplayDirty = false;
@@ -226,14 +223,16 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const reset = () => {
     newCaseDraft = null; newCaseDirty = false;
     operations?.reset();
-    epoch += 1; activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = '';
+    execution?.reset(); nodeNotifications?.reset();
+    epoch += 1; listPhase='all';listMine=false;workspaceListEnabled=null;casesLoading=false;activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = '';detailLoading=false;
     configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const clearCaseDependents = () => {
+    execution?.reset();
     matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const resetCaseWorkspace = () => {
-    detail = null; detailError = ''; clearCaseDependents(); message = '';
+    detail = null; detailError = ''; detailLoading=false;clearCaseDependents(); message = '';
   };
   const selectCase = (id) => {
     if (activeCaseId === id) return;
@@ -249,7 +248,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const current = route(), key = `${current.page}/${current.action}/${current.id}/${current.quoteRef}`;
     if (key === activeRouteKey) return current;
     const leftCase = activeRouteKey.startsWith('fcl/case/');
-    if ((activeRouteKey.startsWith('fcl/compare/') || activeRouteKey.startsWith('fcl/rates/')) && key !== activeRouteKey) operations?.reset();
+    if ((activeRouteKey.startsWith('fcl/compare/') || activeRouteKey.startsWith('fcl/rates/') || activeRouteKey.startsWith('fcl/templates/')) && key !== activeRouteKey) operations?.reset();
     activeRouteKey = key;
     if (current.action === 'case' && current.quoteRef) {
       workspaceStep = 'quote';
@@ -278,6 +277,15 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     return validateResponse(action, result);
   };
   operations = createFclOperations({call,write,esc,rerender,notify,model,api});
+  const executionContext = () => {
+    const previous=handoffView?.current;
+    const pdf=exportView || (previous?{document_id:previous.document_id,version:previous.document_version,sha256:previous.pdf_sha256}:null);
+    const ready=Boolean(detail&&quoteView&&documentView?.state==='approved'&&documentView.currentness?.valid_now&&pdf?.document_id===documentView.document_id&&pdf.version===documentView.version&&!quoteDirty&&!documentDisplayDirty&&!['closed','cancelled'].includes(detail.case_status));
+    return {detail,quote:quoteView,documentRevision:documentView?.revision_id,userId:model().session?.identity?.user_id,email:model().session?.identity?.email,ready,
+      handoff:ready?{contract_version:HANDOFF_VERSION,case_ref:detail.case_id,expected_case_version:detail.case_version,expected_customer_supplement_ref:detail.review_context.latest_customer_supplement_ref,quote_ref:quoteView.quote_ref,expected_quote_version:quoteView.version,expected_quote_digest:quoteView.content_digest,document_id:documentView.document_id,expected_document_version:documentView.version,expected_pdf_sha256:pdf.sha256,confirmed:true,note:'员工登记客户确认并转执行'}:null};
+  };
+  execution=createFclExecutionUI({call,write,esc,rerender,notify,context:executionContext});
+  nodeNotifications=createFclNodeNotifications({call,write,esc,rerender,notify,context:executionContext});
   const valueField = (title, id, value = '', attributes = '') => {
     const match = /\bname="([^"]+)"/u.exec(attributes);
     const name = match?.[1] || id;
@@ -347,12 +355,14 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const tryPrimeQuoteEdit = () => { if (!quoteDraft && quoteView && canEditCurrentQuote()) primeQuoteEdit(quoteView); };
 
   const loadCases = async (cursor = null, append = false) => {
-    if (!append && (cases || casesError)) return;
-    const e = epoch;
+    if (casesLoading||(!append && (cases || casesError))) return;
+    const e = epoch,phase=listPhase,mine=listMine;casesLoading=true;
     try {
       const query = `?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
-      const response = await call('case-list', null, 'GET', query);
-      if (e !== epoch) return;
+      let response;
+      if(workspaceListEnabled!==false){response=await call('workspace-list',{limit:25,cursor,phase,mine});if(response.reason_codes?.includes('fcl_execution_not_configured'))workspaceListEnabled=false;else if(response.data)workspaceListEnabled=true;}
+      if(workspaceListEnabled===false)response=await call('case-list', null, 'GET', query);
+      if (e !== epoch||phase!==listPhase||mine!==listMine) return;
       if (response.data) {
         cases = append && cases ? { items: [...cases.items, ...response.data.items], next_cursor: response.data.next_cursor } : response.data;
         casesNextCursor = response.data.next_cursor;
@@ -360,18 +370,18 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       } else if (!append || !cases) casesError = response.reason_codes?.[0] || 'fcl_unavailable';
       else message = responseMessage(response, '', '');
     } catch (error) { if (e === epoch) { if (append && cases) message = fclError(error); else casesError = error.code || 'network'; } }
-    if (e === epoch) rerender();
+    if(e===epoch){casesLoading=false;rerender();}
   };
   const loadDetail = async (id) => {
-    if (detail?.case_id === id) return;
+    if (detail?.case_id === id||detailError||detailLoading) return;
     const e = epoch;
-    detailError = '';
+    detailLoading=true; detailError = '';
     try {
       const response = await call('case-get', { case_id: id });
       if (e !== epoch || activeCaseId !== id) return;
       if (response.data) { detail = response.data; tryPrimeQuoteEdit(); } else detailError = response.reason_codes?.[0] || 'fcl_not_found';
     } catch (error) { if (e === epoch && activeCaseId === id) detailError = error.code || 'network'; }
-    if (e === epoch && activeCaseId === id) rerender();
+    if (e === epoch && activeCaseId === id){detailLoading=false;rerender();}
   };
   const loadRelated = async (id) => {
     if ((relatedCaseId === id && !loadingRelated) || loadingRelated) return;
@@ -428,15 +438,15 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
 
   const statusLabel = fclLabel;
-  const caseCard = (item) => `<a class="case-card" href="#fcl/case/${encodeURIComponent(item.case_id)}"><span class="case-card-icon">${icon('container')}</span><div class="case-card-body"><div class="case-card-top"><h2>${esc(item.inquiry_no || 'FCL 询价')}</h2><span class="badge ${item.case_status === 'needs_input' ? 'warning' : ''}">${esc(statusLabel(item.case_status))}</span></div><p>${esc([item.current_input.pol, item.current_input.pod].filter(Boolean).join(' → ') || '线路待确认')}</p><div class="case-meta"><span>需求第 ${item.case_version} 版</span><span>${item.review_context?.review_required ? '待重新核对' : '已确认需求'}</span></div></div><span class="case-arrow" aria-hidden="true">${icon('arrow')}</span></a>`;
+  const caseCard = (item) => item.phase ? `<a class="case-card" href="#fcl/case/${esc(item.case_ref)}"><span class="case-card-icon">${icon('container')}</span><div class="case-card-body"><div class="case-card-top"><h2>${esc(item.inquiry_no)} · ${esc(item.customer_name)}</h2><span class="badge ${item.exception?'warning':''}">${phaseLabels[item.phase]}</span></div><p>${esc(item.route)}</p><div class="case-meta"><span>${executionNodeLabels[item.pending_nodes[0]]||'无待办'}${item.pending_nodes.length>1?' + '+(item.pending_nodes.length-1)+' 项':''}</span><span>负责人：${esc(item.coordinator_id)}</span><span>${esc(displayExecutionDate(item.deadline))}</span>${item.exception?'<span>需处理异常</span>':''}</div></div><span class="case-arrow" aria-hidden="true">${icon('arrow')}</span></a>` : `<a class="case-card" href="#fcl/case/${encodeURIComponent(item.case_id)}"><span class="case-card-icon">${icon('container')}</span><div class="case-card-body"><div class="case-card-top"><h2>${esc(item.inquiry_no || 'FCL 询价')}</h2><span class="badge ${item.case_status === 'needs_input' ? 'warning' : ''}">${esc(statusLabel(item.case_status))}</span></div><p>${esc([item.current_input.pol, item.current_input.pod].filter(Boolean).join(' → ') || '线路待确认')}</p><div class="case-meta"><span>需求第 ${item.case_version} 版</span><span>${item.review_context?.review_required ? '待重新核对' : '已确认需求'}</span></div></div><span class="case-arrow" aria-hidden="true">${icon('arrow')}</span></a>`;
   const listPage = () => {
     void loadCases();
-    const heading = head('整柜询价', '选运价和模板，调整本票费用，生成客户报价。', '<button class="button primary" data-action="fcl-case-new">新增询价</button>');
+    const heading = head('整柜业务', '选运价和模板，调整本票费用，生成客户报价并接续执行。', '<button class="button primary" data-action="fcl-case-new">新增询价</button>')+(workspaceListEnabled===false?'':`<div class="head-actions fcl-phase-filters">${Object.entries(phaseLabels).map(([id,label])=>`<button class="button ${listPhase===id?'primary':''}" data-action="fcl-phase" data-phase="${id}">${label}</button>`).join('')}<button class="button ${listMine?'primary':''}" data-action="fcl-mine" aria-pressed="${listMine}">待我处理</button></div>`);
     const draft = newCaseDraft;
     const createForm = draft ? `<form class="panel" data-fcl-form="case-create"><div class="panel-body"><div class="form-error" role="alert" hidden></div><h2>录入客户需求</h2><div class="field-grid">${valueField('联系人', 'new-case-name', draft.name || '', 'name="name" required maxlength="80"')}${valueField('邮箱', 'new-case-email', draft.email || '', 'name="email" type="email" required')}${valueField('公司（选填）', 'new-case-company', draft.company || '', 'name="company" maxlength="200"')}${valueField('起运港', 'new-case-pol', draft.pol || '', 'name="pol" maxlength="200"')}${valueField('目的港', 'new-case-pod', draft.pod || '', 'name="pod" maxlength="200"')}</div><label class="check-row"><input type="checkbox" name="consent" required${draft.consent ? ' checked' : ''}>已取得客户授权，保存联系资料用于询价和报价</label><div class="head-actions"><button type="submit" class="button primary">保存并完善需求</button><button type="button" class="button" data-action="fcl-case-cancel">取消</button></div></div></form>` : '';
     if (!cases && !casesError) return heading + createForm + '<p role="status">正在读取受理列表…</p>';
     if (casesError) return heading + createForm + note(casesError === 'network' ? '询价列表暂未加载，请重试。已填写的内容会保留。' : fclError({code: casesError}), 'error') + '<button class="button" type="button" data-action="fcl-cases-retry">重新加载</button>';
-    return heading + createForm + (cases.items.length ? `<div class="case-list">${cases.items.map(caseCard).join('')}</div>${casesNextCursor ? '<div class="head-actions"><button type="button" class="button" data-action="fcl-cases-more">加载更多询价</button></div>' : ''}` : empty('还没有询价', '点击新增询价，录入客户需求。这里只显示本人受理的记录。'));
+    return heading + createForm + (cases.items.length||casesNextCursor ? `<div class="case-list">${cases.items.map(caseCard).join('')}</div>${casesNextCursor ? '<div class="head-actions"><button type="button" class="button" data-action="fcl-cases-more">加载更多业务</button></div>' : ''}` : empty('当前没有匹配的业务', '调整阶段筛选，或新增询价。这里只显示本人受理或获授权参与的记录。'));
   };
 
   const staffSupplementFields = (inputValue) => `<div class="field-grid">${valueField('中国起运城市', 'fcl-origin-city', inputValue.origin_city || '', 'name="origin_city"')}${valueField('起运港（POL）', 'fcl-pol', inputValue.pol || '', 'name="pol"')}</div><div class="field-grid">${valueField('目的港（POD）', 'fcl-pod', inputValue.pod || '', 'name="pod"')}${valueField('最终目的地', 'fcl-final', inputValue.final_destination || '', 'name="final_destination"')}</div><fieldset class="fcl-container-grid"><legend>${fclField("containers")}</legend>${containerTypes.map(type => { const row = inputValue.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="fcl-container-${type}">${type}</label><label class="check-row"><input type="checkbox" name="container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>柜数待确认</label><input id="fcl-container-${type}" name="container-${type}" type="number" min="1" max="9999" step="1" value="${row?.quantity ?? ''}" aria-label="${type}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${valueField('货物品名', 'fcl-cargo-name', inputValue.cargo_name || '', 'name="cargo_name"')}${field('货物属性', 'fcl-cargo-type', `<select id="fcl-cargo-type" name="cargo_type"><option value="">待确认</option>${['general','battery','liquid_powder','wood','regulated','other'].map(value => `<option value="${value}"${inputValue.cargo_type === value ? ' selected' : ''}>${fclLabel(value)}</option>`).join('')}</select>`)}</div><div class="field-grid">${valueField('预计毛重 kg', 'fcl-weight', inputValue.estimated_weight?.value || '', 'name="estimated_weight" inputmode="decimal"')}${valueField('备货日期', 'fcl-ready', inputValue.cargo_ready_date || '', 'name="cargo_ready_date" type="date"')}</div><div class="field-grid">${field('贸易条款', 'fcl-incoterm', `<select id="fcl-incoterm" name="incoterm"><option value="">待确认</option>${['EXW','FOB','CIF','DDU','DDP','Other'].map(value => `<option value="${value}"${inputValue.incoterm === value ? ' selected' : ''}>${value}</option>`).join('')}</select>`)}${valueField('其他条款说明', 'fcl-incoterm-other', inputValue.incoterm_other || '', 'name="incoterm_other"')}</div><fieldset class="fcl-service-grid"><legend>服务范围</legend>${Object.entries(serviceLabels).map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${inputValue.selected_services?.includes(id) ? ' checked' : ''}>${label}</label>`).join('')}</fieldset><div class="field-grid">${valueField('联系人', 'fcl-contact-name', inputValue.contact?.name || '', 'name="contact.name"')}${valueField('邮箱', 'fcl-contact-email', inputValue.contact?.email || '', 'name="contact.email" type="email"')}</div><div class="field-grid">${valueField('公司', 'fcl-contact-company', inputValue.contact?.company || '', 'name="contact.company"')}${valueField('电话', 'fcl-contact-phone', inputValue.contact?.phone || '', 'name="contact.phone"')}</div><div class="field"><label for="fcl-notes">补充说明</label><textarea id="fcl-notes" name="notes" rows="3" maxlength="4000">${esc(inputValue.notes || '')}</textarea></div>`;
@@ -484,10 +494,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
 
   const detailPage = (id) => {
     selectCase(id);
+    execution.setCase(id); void execution.load();
     void loadDetail(id);
     if (detail?.case_id === id && activeCaseId === id) void loadRelated(id);
     let heading = head('整柜报价', detail ? `${detail.inquiry_no} · 需求第 ${detail.case_version} 版` : '正在读取询价需求', `<a class="button primary" href="#fcl/compare/${esc(id)}">整柜报价工作台</a><a class="button" href="#fcl">返回询价列表</a>`);
-    if (detailError) return heading + note(fclError({code: detailError}), 'error');
+    if (detailError) return execution.view() ? head('整柜流转',execution.view().inquiry_no,'<a class="button" href="#fcl">返回列表</a>') + execution.render() : heading + note(fclError({code: detailError}), 'error') + execution.render();
     if (!detail) return heading + '<p role="status">正在读取询价…</p>';
     const inputValue = detail.current_input, originalValue = detail.original_input;
     const ended = ['closed', 'cancelled'].includes(detail.case_status);
@@ -505,12 +516,12 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       ['quote', '改本票', quoteDirty ? '有未保存修改' : quoteView ? (quoteView.completeness.complete ? '已保存' : '待补费用') : '待报价'],
       ['documents', '出报价', quoteDirty || documentDisplayDirty ? '有未保存修改' : documentView ? (documentView.currentness.valid_now ? fclLabel(documentView.state) : '待重新核对') : '待生成'],
     ];
-    const brief = `<section class="fcl-route-brief" aria-label="本票概况"><div><span class="fcl-eyebrow">中国 → 加拿大 · 整柜海运</span><h2>${esc(inputValue.pol || '起运港待确认')} <span aria-hidden="true">→</span> ${esc(inputValue.pod || '目的港待确认')}</h2></div><div><span>${fclField("containers")}</span><strong>${esc(inputValue.containers.map(row => `${row.type} × ${row.quantity ?? '待确认'}`).join('、') || '待确认')}</strong></div><div><span>${fclField("cargo_ready_date")}</span><strong>${esc(inputValue.cargo_ready_date || '待确认')}</strong></div><span class="badge ${detail.case_status === 'needs_input' ? 'warning' : ''}">${esc(fclLabel(detail.case_status))}</span></section>`;
+    const brief = `<section class="fcl-route-brief" aria-label="本票概况"><div><span class="fcl-eyebrow">中国 → 加拿大 · 整柜海运</span><h2>${esc(inputValue.pol || '起运港待确认')} <span aria-hidden="true">→</span> ${esc(inputValue.pod || '目的港待确认')}</h2></div><div><span>${fclField("containers")}</span><strong>${esc(inputValue.containers.map(row => `${row.type} × ${row.quantity ?? '待确认'}`).join('、') || '待确认')}</strong></div><div><span>${fclField("cargo_ready_date")}</span><strong>${esc(inputValue.cargo_ready_date || '待确认')}</strong></div><span class="badge ${detail.case_status === 'needs_input' ? 'warning' : ''}">${esc(execution.view()?.state==='completed'?'执行已完成':execution.view()?.state==='executing'?'执行中':fclLabel(detail.case_status))}</span></section>`;
     const navigation = `<nav class="fcl-workflow" aria-label="报价处理步骤">${steps.map(([key, label, state], index) => { const disabled = (key === 'documents' && documentsBlocked) || (key === 'template' && ended); return `<button type="button" data-action="${key === 'template' ? 'fcl-template-step' : 'fcl-workspace-step'}" data-step="${key}" aria-controls="fcl-step-${key}"${(key === 'template' ? workspaceStep === 'requirements' : workspaceStep === key) ? ' aria-current="step"' : ''}${disabled ? ' disabled' : ''}><span class="fcl-step-index">${index + 1}</span><span><strong>${label}</strong><small>${state}</small></span></button>`; }).join('')}</nav>`;
     const requirements = `<section id="fcl-step-requirements"${workspaceStep !== 'requirements' ? ' hidden' : ''}><div class="fcl-review-layout"><div>${panel('客户需求', '需求核对保留为报价依据；核对后从上方选择已发布模板。', `<div class="panel-body">${inquiryReadonlySummary(inputValue)}</div>`)}${ended ? '' : `<details class="panel fcl-operations"${showOperations ? ' open' : ''}><summary>补充资料与处理状态</summary><div class="panel-body">${statusForm}${supplementForm}</div></details>`}</div><aside>${ended ? '<section class="panel"><div class="panel-body"><h2>本票已结束</h2><p>历史需求、报价与文件均已保留。本票不能继续修改，如有新的运输需求，请重新提交询价。</p></div></section>' : detail.review_context.review_required ? confirmForm : `<section class="panel fcl-next-action"><div class="panel-body"><span class="fcl-eyebrow">需求已确认</span><h2>${quoteView ? '本票报价已建立' : '下一步：套模板'}</h2><p>${quoteView ? '继续修改本票费用并保存计算。' : '从已发布海运费和费用模板开始，费用会直接带入本票。'}</p><button class="button primary" data-action="${quoteView ? 'fcl-workspace-step' : 'fcl-template-step'}" data-step="${quoteView ? 'quote' : 'template'}">${quoteView ? '查看本票费用' : '去选择模板'} ${icon('arrow')}</button></div></section>`}<details class="panel"><summary>客户首次提交的资料</summary><div class="panel-body">${inquiryReadonlySummary(originalValue)}</div></details><details class="panel"><summary>处理记录 · ${events.length}</summary><ol class="case-timeline">${eventRows}</ol></details></aside></div></section>`;
     const quote = `<section id="fcl-step-quote"${workspaceStep !== 'quote' ? ' hidden' : ''}><div class="fcl-quote-layout"><div>${quoteInputPanel(id)}</div>${quoteResultPanel(ended)}</div>${quoteHistorySnapshot()}${quoteHistoryPanel()}</section>`;
     const documents = `<section id="fcl-step-documents"${workspaceStep !== 'documents' ? ' hidden' : ''}><div class="fcl-review-layout"><div>${panel('报价单与审核', '先核对客户看到的金额、条款与有效期，再确认审核。', `<div class="panel-body">${quoteView ? `<div class="fcl-document-status"><strong>${documentView ? (documentView.currentness.valid_now ? fclLabel(documentView.state) : '需要重新生成或核对') : '待生成报价单'}</strong><span>报价第 ${quoteView.version} 版${documentView ? ` · 报价单第 ${documentView.version} 版` : ''}</span></div>${ended ? '<p>本票已结束。可以在下方查看报价单快照，或从历史记录下载已经生成的文件。</p>' : `${documentDisplayForm()}${reviewPanel()}${documentActions()}`}` : '<div class="fcl-empty"><h3>请先保存一份报价</h3><p>填写成本与售价并保存后，就可以在这里生成和审核报价单。</p><button class="button primary" data-action="fcl-workspace-step" data-step="quote">前往填写报价</button></div>'}</div>`)}${documentSnapshotPanel()}${documentHistoryPanel()}</div><aside>${handoffPanel()}</aside></div></section>`;
-    return heading + messageNote() + brief + navigation + requirements + quote + documents;
+    return heading + messageNote() + brief + navigation + requirements + quote + documents + execution.render();
 
   };
 
@@ -703,7 +714,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const current = handoffView.current;
     const ready = Boolean(quoteView && documentView?.state === 'approved' && documentView.currentness.valid_now && exportView && exportView.document_id === documentView.document_id && exportView.version === documentView.version && exportView.valid_now === true && !quoteDirty && !documentDisplayDirty);
     const reason = handoffView.status === 'handed_off' && !ready && !quoteDirty && !documentDisplayDirty ? '本版已完成交接。再次交接前，请先下载当前正式 PDF。' : !quoteView ? '尚无已保存报价。' : !documentView || documentView.state !== 'approved' || !documentView.currentness.valid_now ? '请先生成并审核当前报价单。' : !exportView || exportView.document_id !== documentView.document_id || exportView.version !== documentView.version ? '请先导出并校验当前正式 PDF。' : quoteDirty || documentDisplayDirty ? '存在未保存的报价或报价单修改。' : '';
-    return `<section class="panel"><div class="panel-body"><h3>运营交接</h3><p class="fcl-handoff-status">${esc(fclLabel(handoffView.status))}</p>${handoffView.reason_codes.length ? `<p class="muted">${esc(handoffView.reason_codes.map(fclIssue).join('；'))}</p>` : ''}${current ? `<dl class="case-details"><div><dt>报价单</dt><dd>v${current.document_version}</dd></div><div><dt>报价</dt><dd>第 ${current.quote_version} 版</dd></div><div><dt>PDF</dt><dd><code>${esc(current.pdf_sha256.slice(0, 16))}…</code> · ${current.pdf_byte_length} bytes</dd></div><div><dt>交接记录</dt><dd>已保存本人操作记录</dd></div></dl>` : ''}<form data-fcl-form="handoff-note"><div class="field"><label for="fcl-handoff-note">本次交接备注</label><textarea id="fcl-handoff-note" name="fcl-handoff-note" rows="2" maxlength="2000" placeholder="仅在内部事件中保留">${esc(handoffDraft)}</textarea></div></form><button class="button primary" data-action="fcl-handoff"${ready ? '' : ' disabled'} title="${esc(reason || '交接前置条件已满足')}">${handoffView.status === 'handed_off' ? '再次交接' : '确认交接'}</button>${reason ? `<p class="muted">${esc(reason)}</p>` : ''}${handoffView.history.length ? `<details><summary>历史交接（${handoffView.history.length}）</summary><ul>${handoffView.history.map(item => `<li>${esc(item.recorded_at)} · quote v${item.quote_version} · doc v${item.document_version} · <code>${esc(item.pdf_sha256.slice(0, 12))}…</code></li>`).join('')}</ul></details>` : ''}<p class="muted">交接后请按实际业务安排后续操作；此处不会自动订舱。</p></div></section>`;
+    return `<section class="panel"><div class="panel-body"><h3>运营交接</h3><p class="fcl-handoff-status">${esc(fclLabel(handoffView.status))}</p>${handoffView.reason_codes.length ? `<p class="muted">${esc(handoffView.reason_codes.map(fclIssue).join('；'))}</p>` : ''}${current ? `<dl class="case-details"><div><dt>报价单</dt><dd>v${current.document_version}</dd></div><div><dt>报价</dt><dd>第 ${current.quote_version} 版</dd></div><div><dt>PDF</dt><dd><code>${esc(current.pdf_sha256.slice(0, 16))}…</code> · ${current.pdf_byte_length} bytes</dd></div><div><dt>交接记录</dt><dd>已保存本人操作记录</dd></div></dl>` : ''}<form data-fcl-form="handoff-note"><div class="field"><label for="fcl-handoff-note">本次交接备注</label><textarea id="fcl-handoff-note" name="fcl-handoff-note" rows="2" maxlength="2000" placeholder="仅在内部事件中保留">${esc(handoffDraft)}</textarea></div></form><button class="button primary" data-action="fcl-handoff"${ready ? '' : ' disabled'} title="${esc(reason || '交接前置条件已满足')}">${handoffView.status === 'handed_off' ? '再次交接' : '确认交接'}</button>${reason ? `<p class="muted">${esc(reason)}</p>` : ''}${handoffView.history.length ? `<details><summary>历史交接（${handoffView.history.length}）</summary><ul>${handoffView.history.map(item => `<li>${esc(item.recorded_at)} · quote v${item.quote_version} · doc v${item.document_version} · <code>${esc(item.pdf_sha256.slice(0, 12))}…</code></li>`).join('')}</ul></details>` : ''}<p class="muted">交接后请按实际业务安排后续操作；此处不会自动订舱。</p></div></section>` + execution.conversionPanel();
   };
 
   const configPage = () => {
@@ -713,13 +724,12 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (!configView || !notificationView) return heading + '<p role="status">正在读取配置…</p>';
     const savedConfig = configView.input || {};
     const config = issuerDraft ? { ...savedConfig, ...issuerDraft } : savedConfig;
-    const notification = notificationDraft ? { ...(notificationView.input || {}), ...notificationDraft } : (notificationView.input || { enabled: false, recipient: null, cc: [] });
     const savedTemplateKeys = (savedConfig.standard_fee_template_v1?.items || []).map(item => item.item_key);
     const selectedTemplateKeys = new Set(issuerDraft?.standard_fee_template_keys || savedTemplateKeys);
     const catalogItems = configView.catalog.groups.flatMap(group => group.items.map(item => ({...item, group_label: group.label})));
     const missingTemplateKeys = savedTemplateKeys.filter(key => !catalogItems.some(item => item.item_key === key));
     const templatePicker = `<details class="qdoc-template-picker"><summary>可选标准费用项目（${selectedTemplateKeys.size}）</summary>${configView.catalog.groups.map(group => `<section><h3>${esc(group.label)}</h3><div class="qdoc-template-grid">${group.items.map(item => `<label><input type="checkbox" data-fcl-template-ref value="${esc(item.item_key)}"${selectedTemplateKeys.has(item.item_key) ? ' checked' : ''}><span>${esc(item.name)}</span></label>`).join('')}</div></section>`).join('')}${missingTemplateKeys.length ? `<section><h3>当前保存但目录未列出</h3>${missingTemplateKeys.map(key => `<label><input type="checkbox" data-fcl-template-ref value="${esc(key)}" checked><span>${esc(key)}</span></label>`).join('')}</section>` : ''}</details>`;
-    return heading + messageNote() + `<div class="form-layout"><form class="panel" data-fcl-form="issuer-config-save" data-version="${configView.version}">${formError}<div class="panel-body"><h2>报价出具人</h2><div class="field-grid">${valueField('出具人名称', 'fcl-issuer-name', config.issuer_name || '', 'name="fcl-issuer-name"')}${valueField('邮箱', 'fcl-issuer-email', config.issuer_email || '', 'name="fcl-issuer-email" type="email"')}${valueField('电话', 'fcl-issuer-phone', config.issuer_phone || '', 'name="fcl-issuer-phone"')}${valueField('地址', 'fcl-issuer-address', config.issuer_address || '', 'name="fcl-issuer-address"')}</div><div class="field"><label for="fcl-issuer-terms">报价条款</label><textarea id="fcl-issuer-terms" name="fcl-issuer-terms" rows="3" maxlength="4000">${esc(config.terms || '')}</textarea></div>${templatePicker}<button class="button primary" type="submit">保存出具人资料</button></div></form><form class="panel" data-fcl-form="notification-save" data-version="${notificationView.version}">${formError}<div class="panel-body"><h2>内部通知</h2><label class="check-row"><input type="checkbox" name="enabled"${notification.enabled ? ' checked' : ''}>启用内部通知</label>${valueField('收件人', 'fcl-notification-recipient', notification.recipient || '', 'name="fcl-notification-recipient" type="email"')}${valueField('抄送（逗号分隔）', 'fcl-notification-cc', (notification.cc || []).join(','), 'name="fcl-notification-cc"')}<button class="button primary" type="submit">保存通知配置</button><p class="muted">这里设置新询价的内部通知收件人。邮件发送成功后，仍需以收件箱实际收到为准。</p></div></form></div>`;
+    return heading + messageNote() + `<div class="form-layout"><form class="panel" data-fcl-form="issuer-config-save" data-version="${configView.version}">${formError}<div class="panel-body"><h2>报价出具人</h2><div class="field-grid">${valueField('出具人名称', 'fcl-issuer-name', config.issuer_name || '', 'name="fcl-issuer-name"')}${valueField('邮箱', 'fcl-issuer-email', config.issuer_email || '', 'name="fcl-issuer-email" type="email"')}${valueField('电话', 'fcl-issuer-phone', config.issuer_phone || '', 'name="fcl-issuer-phone"')}${valueField('地址', 'fcl-issuer-address', config.issuer_address || '', 'name="fcl-issuer-address"')}</div><div class="field"><label for="fcl-issuer-terms">报价条款</label><textarea id="fcl-issuer-terms" name="fcl-issuer-terms" rows="3" maxlength="4000">${esc(config.terms || '')}</textarea></div>${templatePicker}<button class="button primary" type="submit">保存出具人资料</button></div></form>${nodeNotifications.render()}</div>`;
   };
 
   const syncQuoteDraftFromRows = () => {
@@ -886,6 +896,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
 
   const submit = async (form) => {
     if (await operations.submit(form)) return true;
+    if (await execution.submit(form) || await nodeNotifications.submit(form)) return true;
     if (!form.dataset.fclForm) return false;
     const type = form.dataset.fclForm;
     const e = epoch;
@@ -1009,11 +1020,13 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
 
   const action = async (button) => {
     if (await operations.action(button)) return true;
+    if (await execution.action(button) || await nodeNotifications.action(button)) return true;
     const name = button.dataset.action;
     if (!name?.startsWith('fcl-')) return false;
     const e = epoch;
     if (name === 'fcl-case-new') { newCaseDraft ||= {}; rerender(); document.querySelector('#new-case-name')?.focus(); return true; }
     if (name === 'fcl-case-cancel') { newCaseDraft = null; newCaseDirty = false; rerender(); return true; }
+    if(name==='fcl-phase'||name==='fcl-mine'){if(casesLoading)return true;if(name==='fcl-phase')listPhase=button.dataset.phase;else listMine=!listMine;cases=null;casesError='';casesNextCursor=null;await loadCases();return true;}
     if (name === 'fcl-cases-retry') { casesError = ''; await loadCases(); return true; }
     if (name === 'fcl-template-step') {
       if (quoteDirty || documentDisplayDirty) { message = '请先保存本票费用或报价单信息，再重新套用模板。'; rerender(); return true; }
@@ -1143,6 +1156,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     action,
     change: (event) => {
       if (operations.change(event)) return true;
+      if (execution.input(event) || nodeNotifications.input(event)) return true;
       const form = event.target.closest('[data-fcl-form]');
       if (!form) return false;
       captureFormDraft(form);
@@ -1150,11 +1164,13 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
       return false;
     },
     toggle: (event) => {
+      execution.toggle(event);
       if (event.target.matches('details.fcl-operations')) operationsOpen = event.target.open;
       return false;
     },
     input: (event) => {
       if (operations.input(event)) return true;
+      if (execution.input(event) || nodeNotifications.input(event)) return true;
       const form = event.target.closest('[data-fcl-form]');
       if (!form) return false;
       captureFormDraft(form);

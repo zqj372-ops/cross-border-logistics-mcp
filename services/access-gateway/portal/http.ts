@@ -439,7 +439,7 @@ async function handlePublicFcl(request:IncomingMessage,response:ServerResponse,u
 }
 
 function fclStaffRoute(path:string):{action:FclHttpAction;method:"GET"|"POST"}|null{
-  const direct=/^\/console\/api\/v1\/fcl\/([a-z-]+)$/u.exec(path);
+  const direct=/^\/console\/api\/v1\/fcl\/([a-z0-9-]+)$/u.exec(path);
   if(!direct||!fclHttpActions.includes(direct[1] as FclHttpAction))return null;
   const action=direct[1] as FclHttpAction;
   return {action,method:FCL_STAFF_ACTION_METHODS[action]};

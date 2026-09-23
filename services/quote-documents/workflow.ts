@@ -1,3 +1,5 @@
+import {fclExecutionStartSchema,fclExecutionAmendSchema} from '../access-gateway/portal/fcl-execution-contracts';
+import type {FclExecutionService} from '../access-gateway/portal/fcl-execution';
 import Decimal from 'decimal.js';
 import {readdirSync,statSync} from 'node:fs';
 import {createHash,createHmac,randomBytes,randomUUID} from 'node:crypto';
@@ -175,6 +177,7 @@ export interface FclDocumentWorkflowOptions{
 }
 
 export interface FclQuoteWorkflowDependencies{
+  readonly onDecision?:(ctx:PortalContext,payload:FclDocumentPayload,auditId:string,action:string)=>void;
   readonly quoteService:Pick<FclQuoteService,'match'>;
   readonly caseReader:Pick<CaseService,'getFclCase'>;
   readonly caseLock:Pick<CaseService,'withFclReadLock'>;
@@ -1402,6 +1405,13 @@ export class DocumentWorkflowService{
       return fclDocumentListSchema.parse({items:page.map(row=>{const read=this.readFclDocument(options.receiverUserId,row.document_id,row.version);return {document_id:row.document_id,version:row.version,current_version:read.currentVersion,state:read.payload.state,case_ref:read.payload.case_binding.case_ref,quote_ref:read.payload.quote_binding.quote_ref,quote_version:read.payload.quote_binding.quote_version,source_release_id:read.payload.source_binding.release_id,customer_name:read.payload.case_projection.customer_name,quote_no:read.payload.customer_input.quote_no!,quote_date:read.payload.customer_input.quote_date!,valid_until:read.payload.customer_input.valid_until!,currentness:this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options),created_at:row.updated_at};}),next_cursor:rows.length>request.limit&&page.at(-1)?Buffer.from(JSON.stringify({case_ref:request.case_ref,updated_at:page.at(-1)!.updated_at,document_id:page.at(-1)!.document_id})).toString('base64url'):null});
     });
   }
+  fclAwaitingCustomerConfirmation(ctx:PortalContext,caseRef:string):boolean{
+    const options=this.requireFclReceiver(ctx);this.fclQuoteDependencies().caseReader.getFclCase(ctx,caseRef);
+    const candidate=this.store.db.prepare(`SELECT c.document_id,c.version FROM document_current_revisions c JOIN document_revisions r ON r.revision_id=c.revision_id WHERE c.org IS NULL AND c.personal_owner_id=? AND json_extract(r.payload,'$.case_binding.case_ref')=? ORDER BY c.updated_at DESC,c.document_id DESC LIMIT 1`).get(options.receiverUserId,caseRef) as {document_id:string;version:number}|undefined;
+    if(!candidate)return false;
+    try{const prepared=this.prepareFormalFclPdf(ctx,options,{document_id:candidate.document_id,expected_version:candidate.version});return Boolean(prepared.bytes&&prepared.payload.state==='approved');}
+    catch(error){if(error instanceof PortalError)return false;throw error;}
+  }
   private fclHandoffDependency():NonNullable<FclQuoteWorkflowDependencies['handoff']>{
     const handoff=this.fclQuoteDependencies().handoff;
     if(!handoff)throw new PortalError('fcl_handoff_unavailable');
@@ -1581,6 +1591,49 @@ export class DocumentWorkflowService{
       return view;
     })));
   }
+  previewFclExecution(ctx:PortalContext,input:unknown,execution:FclExecutionService){
+    const request=parse(fclExecutionStartSchema,input,'fcl_execution_input_invalid');
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies();
+    return dependencies.caseLock.withFclReadLock(ctx,()=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentReadWindow(()=>{
+      const handoff=this.buildFclHandoffPayload(ctx,options,request.handoff);
+      const document=this.readFclDocument(options.receiverUserId,request.handoff.document_id,request.handoff.expected_document_version).payload;
+      return execution.preview(ctx,request,{handoff,document});
+    })));
+  }
+  previewFclExecutionAmend(ctx:PortalContext,input:unknown,execution:FclExecutionService){
+    const request=parse(fclExecutionAmendSchema,input,'fcl_execution_input_invalid'),current=execution.getOwner(ctx,request.handoff.case_ref);
+    if(!current)throw new PortalError('fcl_not_found');if(current.version!==request.expected_version)throw new PortalError('version_conflict');
+    const {expected_version:_version,reason:_reason,...start}=request;void _version;void _reason;
+    return this.previewFclExecution(ctx,start,execution);
+  }
+  amendFclExecution(ctx:PortalContext,input:unknown,key:string,execution:FclExecutionService){
+    const request=parse(fclExecutionAmendSchema,input,'fcl_execution_input_invalid'),options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),handoff=this.fclHandoffDependency();
+    return handoff.withFclHandoffTransaction(ctx,commitCase=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentWriteGuard(()=>{
+      const replay=execution.existingAmend(ctx,request,key);if(replay){commitCase();return execution.verifyCommitted(ctx,replay);}
+      const candidate=this.buildFclHandoffPayload(ctx,options,request.handoff),document=this.readFclDocument(options.receiverUserId,request.handoff.document_id,request.handoff.expected_document_version).payload;
+      execution.preview(ctx,request,{handoff:candidate,document});
+      const recorded=handoff.listFclHandoffs(ctx,candidate.case_id).find(item=>item.document_revision_id===candidate.document_revision_id&&item.pdf_sha256===candidate.pdf_sha256)??handoff.recordFclHandoffInTransaction(ctx,candidate,`execution-amend-${canonicalHash({actor:ctx.identity.userId,key}).slice(0,64)}`);
+      const value=execution.amendInTransaction(ctx,request,{handoff:recorded,document},key);commitCase();return execution.verifyCommitted(ctx,value);
+    })));
+  }
+  startFclExecution(ctx:PortalContext,input:unknown,key:string,execution:FclExecutionService){
+    const request=parse(fclExecutionStartSchema,input,'fcl_execution_input_invalid');
+    const options=this.requireFclReceiver(ctx),dependencies=this.fclQuoteDependencies(),handoff=this.fclHandoffDependency();
+    return handoff.withFclHandoffTransaction(ctx,commitCase=>dependencies.rateLock.withFclReadLock(ctx,()=>this.withFclDocumentWriteGuard(()=>{
+      const existing=execution.existingStart(ctx,request,key);
+      if(existing){commitCase();return execution.verifyCommitted(ctx,existing);}
+      const before=dependencies.caseReader.getFclCase(ctx,request.handoff.case_ref);
+      const candidate=this.buildFclHandoffPayload(ctx,options,request.handoff);
+      const document=this.readFclDocument(options.receiverUserId,request.handoff.document_id,request.handoff.expected_document_version).payload;
+      execution.preview(ctx,request,{handoff:candidate,document});
+      const recorded=handoff.listFclHandoffs(ctx,candidate.case_id).find(item=>item.document_revision_id===candidate.document_revision_id&&item.pdf_sha256===candidate.pdf_sha256)
+        ??handoff.recordFclHandoffInTransaction(ctx,candidate,`execution-${canonicalHash({actor:ctx.identity.userId,key}).slice(0,64)}`);
+      const created=execution.createInTransaction(ctx,request,{handoff:recorded,document},key);
+      const after=dependencies.caseReader.getFclCase(ctx,request.handoff.case_ref);
+      if(this.fclHandoffCaseSnapshot(before)!==this.fclHandoffCaseSnapshot(after))throw new PortalError('fcl_handoff_case_changed');
+      commitCase();return execution.verifyCommitted(ctx,created);
+    })));
+  }
   private fclDocumentReviewHash(input:{personalOwnerId:string;actor:string;documentId:string;revisionId:string;version:number;contentDigest:string;payload:FclDocumentPayload;expiresAt:string}):string{
     return createHmac('sha256',this.secret).update(canonicalJson({
       domain:'fcl-document-review',
@@ -1661,6 +1714,7 @@ export class DocumentWorkflowService{
         db.exec('COMMIT');committed=true;
         const read=this.readFclDocument(options.receiverUserId,submitted.document_id,submitted.version);
         if(read.payload.revision_id!==event.revision_id)throw new PortalError('fcl_document_readback_failed');
+        this.fclQuote?.onDecision?.(ctx,read.payload,submitted.audit_id,action);
         return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options),{replayed:true,submitted_version:submitted.version,current:read.payload.version===read.currentVersion});
       }
       const payload=write(),auditId=randomUUID();
@@ -1669,6 +1723,7 @@ export class DocumentWorkflowService{
       db.exec('COMMIT');committed=true;
       this.assertFclDocumentCommitted({personalOwnerId:options.receiverUserId,documentId:payload.document_id,revisionId:payload.revision_id,version:payload.version,contentDigest:payload.content_digest,signature:payload.signature,actor:payload.actor,createdAt:payload.created_at,auditId,partition,key,requestDigest,action});
       const read=this.readFclDocument(options.receiverUserId,payload.document_id,payload.version);
+      this.fclQuote?.onDecision?.(ctx,read.payload,auditId,action);
       return this.fclDocumentView(read.payload,read.currentVersion,this.fclDocumentCurrentness(ctx,read.payload,read.currentVersion,options));
     }catch(error){
       if(!committed)db.exec('ROLLBACK');

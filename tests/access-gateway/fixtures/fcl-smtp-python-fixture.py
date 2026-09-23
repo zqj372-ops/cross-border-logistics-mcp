@@ -67,4 +67,4 @@ def run(module, refused):
 
 module = load(sys.argv[1])
 assert run(module, {}) == (0, "OK\n")
-assert run(module, {"receiver@example.test": (550, b"rejected")})[0] == 65
+assert run(module, {"receiver@example.test": (550, b"rejected")})[0] == 68

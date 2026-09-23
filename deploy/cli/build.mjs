@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { execFileSync } from "node:child_process";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +7,7 @@ import { parseArgs } from "node:util";
 
 const source = fileURLToPath(new URL("./", import.meta.url));
 const root = resolve(source, "../..");
+execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "--check"], { cwd: root, stdio: "inherit" });
 const { values } = parseArgs({ options: { outdir: { type: "string" } } });
 const output = resolve(values.outdir ?? resolve(root, "dist/cli"));
 const metadata = JSON.parse(await readFile(resolve(source, "package.json"), "utf8"));

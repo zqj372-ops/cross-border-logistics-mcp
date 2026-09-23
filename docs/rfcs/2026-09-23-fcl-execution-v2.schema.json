@@ -1,0 +1,2749 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Accepted FCL execution v2 review snapshot (runtime schemas are generated separately)",
+  "$comment": "Accepted for isolated implementation on 2026-09-23. This immutable-shape review snapshot is not loaded at runtime. Authoritative generated request and response schemas are in schemas/access-gateway/fcl and apps/console/openapi.json; service checks also enforce authorization, freshness, identity and completion evidence.",
+  "$defs": {
+    "confirmation": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "email",
+            "phone",
+            "chat",
+            "signed_document",
+            "in_person"
+          ]
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "contact_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "minItems": 0,
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "method",
+        "confirmed_at",
+        "contact_name",
+        "note",
+        "evidence_refs"
+      ],
+      "additionalProperties": false
+    },
+    "assignment": {
+      "type": "object",
+      "properties": {
+        "responsible_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collaborator_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "email",
+              "maxLength": 254
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cc": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "responsible_id",
+        "collaborator_ids",
+        "to",
+        "cc",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "shared": {
+      "type": "object",
+      "properties": {
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "container_number": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20
+              },
+              "seal_number": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "container_number",
+              "seal_number"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "hbl": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mbl": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eta": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "containers",
+        "hbl",
+        "mbl",
+        "eta"
+      ],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string",
+          "enum": [
+            "ocean_freight",
+            "pickup",
+            "export_customs",
+            "canada_customs",
+            "devanning_storage",
+            "delivery"
+          ]
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "priced",
+            "included",
+            "free",
+            "out_of_scope"
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "included_row_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "minItems": 0,
+          "maxItems": 60
+        }
+      },
+      "required": [
+        "service",
+        "disposition",
+        "note",
+        "included_row_refs"
+      ],
+      "additionalProperties": false
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "start",
+            "shared_save",
+            "node_save",
+            "node_start",
+            "node_complete",
+            "node_exception",
+            "node_return",
+            "node_assign",
+            "node_reopen",
+            "node_skip",
+            "node_cancel",
+            "amend",
+            "apply_defaults",
+            "mail_resolve",
+            "mail_retry",
+            "mention"
+          ]
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "booking",
+                "pickup",
+                "export_customs",
+                "shipping_documents",
+                "canada_customs",
+                "devanning_storage",
+                "delivery"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cycle": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2000
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "event_id",
+        "version",
+        "actor_id",
+        "action",
+        "node_id",
+        "cycle",
+        "reason",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "notification_row": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "enum": [
+            "intake",
+            "quote",
+            "customer_followup",
+            "booking",
+            "pickup",
+            "export_customs",
+            "shipping_documents",
+            "canada_customs",
+            "devanning_storage",
+            "delivery"
+          ]
+        },
+        "assignment": {
+          "$ref": "#/$defs/assignment"
+        },
+        "template_version": {
+          "const": "fcl-node-mail@2026-09-23.v1",
+          "type": "string"
+        },
+        "external_to": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "email",
+              "maxLength": 254
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "external_cc": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true
+        },
+        "external_enabled": {
+          "type": "boolean"
+        },
+        "visible_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "carrier",
+              "vessel_voyage",
+              "booking_so",
+              "etd",
+              "eta",
+              "cutoff",
+              "pickup_location",
+              "appointment",
+              "declaration_ref",
+              "release_evidence",
+              "warehouse",
+              "handover_at",
+              "delivery_address",
+              "signed_at",
+              "empty_return_at"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 17,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "node_id",
+        "assignment",
+        "template_version",
+        "external_to",
+        "external_cc",
+        "external_enabled",
+        "visible_fields"
+      ],
+      "additionalProperties": false
+    },
+    "notification_config": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "fcl-notification@2026-09-23.v2",
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/notification_row"
+          },
+          "minItems": 10,
+          "maxItems": 10
+        }
+      },
+      "required": [
+        "contract_version",
+        "version",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "object",
+      "properties": {
+        "acceptance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/confirmation"
+        },
+        "registered_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "registered_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "handoff": {
+          "$ref": "../../schemas/access-gateway/fcl/handoff-save-response.schema.json#/anyOf/0/properties/data/properties/current/anyOf/0"
+        },
+        "source_binding": {
+          "type": "object",
+          "properties": {
+            "rate_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "release_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "release_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "dataset_digest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "rate_digest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "rate_id",
+            "release_id",
+            "release_version",
+            "dataset_digest",
+            "rate_digest"
+          ],
+          "additionalProperties": false
+        },
+        "customer_scope": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scope"
+          },
+          "minItems": 1,
+          "maxItems": 6
+        },
+        "configuration": {
+          "$ref": "#/$defs/notification_config"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "acceptance_id",
+        "confirmation",
+        "registered_by",
+        "registered_at",
+        "handoff",
+        "source_binding",
+        "customer_scope",
+        "configuration",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "outbox": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "case_ref": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "booking",
+                "pickup",
+                "export_customs",
+                "shipping_documents",
+                "canada_customs",
+                "devanning_storage",
+                "delivery"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cycle": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "audience": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "external"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "sending",
+            "smtp_accepted",
+            "failed",
+            "unknown",
+            "cancelled"
+          ]
+        },
+        "assignment_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "template_version": {
+          "const": "fcl-node-mail@2026-09-23.v1",
+          "type": "string"
+        },
+        "to": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "cc": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "minItems": 0,
+          "maxItems": 10
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "lease_token": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lease_until": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_code": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "message_id",
+        "event_id",
+        "case_ref",
+        "node_id",
+        "cycle",
+        "audience",
+        "status",
+        "assignment_digest",
+        "template_version",
+        "to",
+        "cc",
+        "attempts",
+        "lease_token",
+        "lease_until",
+        "result_code",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "node": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "booking",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "carrier": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "vessel_voyage": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "booking_so": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "etd": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "cutoff": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "booking_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "carrier",
+                "vessel_voyage",
+                "booking_so",
+                "etd",
+                "cutoff",
+                "booking_evidence"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "pickup",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "location": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "appointment": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "completed_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "work_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "location",
+                "contact",
+                "appointment",
+                "completed_at",
+                "work_evidence"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "export_customs",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "declaration_ref": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "release_confirmed": {
+                  "type": "boolean"
+                },
+                "release_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "inspection_notes": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "contact",
+                "declaration_ref",
+                "release_confirmed",
+                "release_evidence",
+                "inspection_notes"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "shipping_documents",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "checked": {
+                  "type": "boolean"
+                },
+                "handover_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "cutoff": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "checked",
+                "handover_evidence",
+                "cutoff"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "canada_customs",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "importer": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "declaration_ref": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "release_confirmed": {
+                  "type": "boolean"
+                },
+                "release_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "inspection_notes": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "importer",
+                "declaration_ref",
+                "release_confirmed",
+                "release_evidence",
+                "inspection_notes"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "devanning_storage",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "warehouse": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "arrival_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "handover_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "discrepancies": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                },
+                "damage": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                },
+                "handover_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "warehouse",
+                "contact",
+                "arrival_at",
+                "handover_at",
+                "discrepancies",
+                "damage",
+                "handover_evidence"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node_id": {
+              "const": "delivery",
+              "type": "string"
+            },
+            "cycle": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "exception",
+                "completed",
+                "skipped",
+                "cancelled"
+              ]
+            },
+            "assignment": {
+              "$ref": "#/$defs/assignment"
+            },
+            "assignment_source": {
+              "type": "string",
+              "enum": [
+                "snapshot",
+                "case_override",
+                "applied_default"
+              ]
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "pickup_location": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "release_source": {
+                  "type": "string",
+                  "enum": [
+                    "unconfirmed",
+                    "company",
+                    "external"
+                  ]
+                },
+                "release_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "delivery_address": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "appointment": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signed_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pod_ref": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "empty_return_required": {
+                  "type": "boolean"
+                },
+                "empty_return_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "empty_return_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "pickup_location",
+                "release_source",
+                "release_evidence",
+                "delivery_address",
+                "contact",
+                "appointment",
+                "signed_at",
+                "pod_ref",
+                "empty_return_required",
+                "empty_return_at",
+                "empty_return_evidence"
+              ],
+              "additionalProperties": false
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node_id",
+            "cycle",
+            "status",
+            "assignment",
+            "assignment_source",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields",
+            "started_at",
+            "completed_at"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "fcl-execution@2026-09-23.v1",
+          "type": "string"
+        },
+        "case_ref": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "inquiry_no": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "owner_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "coordinator_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "executing",
+            "completed"
+          ]
+        },
+        "acceptances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/acceptance"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "minItems": 0,
+          "maxItems": 7
+        },
+        "shared": {
+          "$ref": "#/$defs/shared"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/audit"
+          },
+          "minItems": 1,
+          "maxItems": 5000
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "inquiry_no",
+        "owner_id",
+        "coordinator_id",
+        "version",
+        "state",
+        "acceptances",
+        "nodes",
+        "shared",
+        "history",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "start_request": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "fcl-execution@2026-09-23.v1",
+          "type": "string"
+        },
+        "handoff": {
+          "$ref": "../../schemas/access-gateway/fcl/handoff-save.schema.json"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/confirmation"
+        },
+        "coordinator_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expected_config_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confirmed": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "contract_version",
+        "handoff",
+        "confirmation",
+        "coordinator_id",
+        "expected_config_version",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "notification_save": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "fcl-notification@2026-09-23.v2",
+          "type": "string"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/notification_row"
+          },
+          "minItems": 10,
+          "maxItems": 10
+        },
+        "confirmed": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "contract_version",
+        "expected_version",
+        "rows",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "node_save_request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "booking",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "carrier": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "vessel_voyage": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "booking_so": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "etd": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "cutoff": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "booking_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "carrier",
+                "vessel_voyage",
+                "booking_so",
+                "etd",
+                "cutoff",
+                "booking_evidence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "pickup",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "location": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "appointment": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "completed_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "work_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "location",
+                "contact",
+                "appointment",
+                "completed_at",
+                "work_evidence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "export_customs",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "declaration_ref": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "release_confirmed": {
+                  "type": "boolean"
+                },
+                "release_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "inspection_notes": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "contact",
+                "declaration_ref",
+                "release_confirmed",
+                "release_evidence",
+                "inspection_notes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "shipping_documents",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "checked": {
+                  "type": "boolean"
+                },
+                "handover_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "cutoff": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "checked",
+                "handover_evidence",
+                "cutoff"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "canada_customs",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "importer": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "declaration_ref": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "release_confirmed": {
+                  "type": "boolean"
+                },
+                "release_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "inspection_notes": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "importer",
+                "declaration_ref",
+                "release_confirmed",
+                "release_evidence",
+                "inspection_notes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "devanning_storage",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "warehouse": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "arrival_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "handover_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "discrepancies": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                },
+                "damage": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 2000
+                },
+                "handover_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "warehouse",
+                "contact",
+                "arrival_at",
+                "handover_at",
+                "discrepancies",
+                "damage",
+                "handover_evidence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "fcl-execution@2026-09-23.v1",
+              "type": "string"
+            },
+            "case_ref": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "node_id": {
+              "const": "delivery",
+              "type": "string"
+            },
+            "deadline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "fields": {
+              "type": "object",
+              "properties": {
+                "pickup_location": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "release_source": {
+                  "type": "string",
+                  "enum": [
+                    "unconfirmed",
+                    "company",
+                    "external"
+                  ]
+                },
+                "release_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "delivery_address": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "contact": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 200
+                },
+                "appointment": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signed_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pod_ref": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                },
+                "empty_return_required": {
+                  "type": "boolean"
+                },
+                "empty_return_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "empty_return_evidence": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "pickup_location",
+                "release_source",
+                "release_evidence",
+                "delivery_address",
+                "contact",
+                "appointment",
+                "signed_at",
+                "pod_ref",
+                "empty_return_required",
+                "empty_return_at",
+                "empty_return_evidence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "contract_version",
+            "case_ref",
+            "expected_version",
+            "node_id",
+            "deadline",
+            "notes",
+            "evidence_refs",
+            "fields"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "node_action_request": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "fcl-execution@2026-09-23.v1",
+          "type": "string"
+        },
+        "case_ref": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "node_id": {
+          "type": "string",
+          "enum": [
+            "booking",
+            "pickup",
+            "export_customs",
+            "shipping_documents",
+            "canada_customs",
+            "devanning_storage",
+            "delivery"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "confirmed": {
+          "const": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "reason",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/progress"
+    },
+    {
+      "$ref": "#/$defs/start_request"
+    },
+    {
+      "$ref": "#/$defs/notification_save"
+    },
+    {
+      "$ref": "#/$defs/node_save_request"
+    },
+    {
+      "$ref": "#/$defs/node_action_request"
+    }
+  ]
+}

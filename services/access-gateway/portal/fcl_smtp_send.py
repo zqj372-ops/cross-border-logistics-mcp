@@ -50,7 +50,9 @@ def main():
             smtp.login(username, password)
             refused = smtp.send_message(mail)
             if refused:
-                return 65
+                # Some RCPT recipients may already have accepted DATA. Never retry
+                # the whole group as an ordinary definitive rejection.
+                return 68
     except smtplib.SMTPAuthenticationError:
         return 65
     except (smtplib.SMTPSenderRefused, smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError):

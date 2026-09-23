@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "enum": [
+        "intake",
+        "quote",
+        "customer_followup",
+        "booking",
+        "pickup",
+        "export_customs",
+        "shipping_documents",
+        "canada_customs",
+        "devanning_storage",
+        "delivery"
+      ]
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "internal",
+        "external"
+      ]
+    }
+  },
+  "required": [
+    "node_id",
+    "audience"
+  ],
+  "additionalProperties": false
+}

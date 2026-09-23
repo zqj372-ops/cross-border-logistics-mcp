@@ -22,6 +22,8 @@ import type {FclReceiverAuthority,FclReceiverProof} from './fcl-receiver-authori
 import {fclEstimateRequestSchema,fclEstimateSelectSchema} from '../../quote-native/fcl-operations-contracts';
 import {estimateToQuoteDraft} from '../../quote-native/fcl-operations';
 import {FCL_DOCUMENT_WORKFLOW_VERSION} from '../../quote-native/fcl-contracts';
+import type {FclExecutionHttpService} from './fcl-execution-http';
+import {executionRoutes,type FclExecutionAction} from './fcl-execution-http-contracts';
 
 const publicCookieName='fc_fcl_public';
 const publicCookiePath='/inquiry';
@@ -35,6 +37,7 @@ type FclDocumentPort=Pick<DocumentWorkflowService,
   'saveFclHandoff'|'getFclHandoff'>;
 
 export interface FclHttpDependencies{
+  readonly execution?:FclExecutionHttpService;
   readonly caseService:FclCasePort;
   readonly nativeAdmin:FclRatePort;
   readonly documentWorkflow:FclDocumentPort;
@@ -190,6 +193,10 @@ export class FclHttpService{
   async executeStaff(ctx:PortalContext,action:FclHttpAction,input:unknown,key:()=>string):Promise<FclHttpResult>{
     const request=parse(fclHttpRequestSchemas[action],input,'fcl_input_invalid');
     return this.authorized(ctx,async()=>{
+    if(Object.hasOwn(executionRoutes,action)){
+      if(!this.dependencies.execution)throw new PortalError('fcl_execution_not_configured');
+      return this.output(action,await this.dependencies.execution.execute(ctx,action as FclExecutionAction,request,key));
+    }
     let data:unknown;
     switch(action){
       case 'case-create':data=await this.dependencies.caseService.createPersonalFclInquiry(ctx,request,key());break;

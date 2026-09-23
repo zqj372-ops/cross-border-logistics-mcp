@@ -1,3 +1,4 @@
+import {executionRoutes} from '../../services/access-gateway/portal/fcl-execution-http-contracts';
 import {maritimeSaveSchema,maritimeQuerySchema,maritimeResponseSchema} from '../../services/maritime/contracts';
 import {nativeResponseSchema,nativeDataSchema,nativePublishSchema,nativeDisableSchema,nativeRollbackSchema} from '../../services/access-gateway/portal/native-admin-contracts';
 import {packageSchemas,packageList} from '../../services/customs-native/package-contracts';
@@ -29,8 +30,9 @@ import {
 } from "../../services/access-gateway/portal/fcl-http-contracts";
 
 type ObjectValue = Record<string, unknown>;
-const openApiSchema=(schema:z.ZodType):ObjectValue=>{
-  const value=z.toJSONSchema(schema,{target:"draft-2020-12"}) as ObjectValue;
+const openApiSchema=(schema:z.ZodType,name?:string):ObjectValue=>{
+  const value=z.toJSONSchema(schema,{target:"draft-2020-12",...(name?{reused:'ref' as const}:{})}) as ObjectValue;
+  if(name){const rewrite=(node:unknown):void=>{if(!node||typeof node!=='object')return;for(const [key,entry] of Object.entries(node)){if(key==='$ref'&&typeof entry==='string'&&entry.startsWith('#/'))(node as ObjectValue)[key]=`#/components/schemas/${name}/${entry.slice(2)}`;else rewrite(entry);}};rewrite(value);}
   delete value.$schema;
   return value;
 };
@@ -120,8 +122,8 @@ export function generatePortalOpenApi(): ObjectValue {
   const fclRequestNames=new Map<FclHttpAction,string>(),fclResponseNames=new Map<FclHttpAction,string>();
   for(const action of fclHttpActions){
     const requestName=`Fcl${pascal(action)}Request`,responseName=`Fcl${pascal(action)}Response`;
-    schemas[requestName]=openApiSchema(fclHttpRequestSchemas[action]);
-    schemas[responseName]=openApiSchema(fclHttpResponseSchemas[action]);
+    schemas[requestName]=openApiSchema(fclHttpRequestSchemas[action],Object.hasOwn(executionRoutes,action)?requestName:undefined);
+    schemas[responseName]=openApiSchema(fclHttpResponseSchemas[action],Object.hasOwn(executionRoutes,action)?responseName:undefined);
     fclRequestNames.set(action,requestName);fclResponseNames.set(action,responseName);
   }
   const fclPublicRequestNames=new Map<FclPublicAction,string>(),fclPublicResponseNames=new Map<FclPublicAction,string>();
@@ -216,6 +218,13 @@ export function generatePortalOpenApi(): ObjectValue {
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   const result=JSON.stringify(generatePortalOpenApi(),null,2)+"\n";
-  for(const path of process.argv.slice(2))writeFileSync(resolve(path),result);
-  console.log(`Generated ${basename(process.argv[2]??"openapi.json")}`);
+  const args=process.argv.slice(2),check=args[0]==='--check';
+  if(check)args.shift();
+  const paths=args.length?args:['apps/console/openapi.json'];
+  for(const path of paths){
+    if(check){
+      if(readFileSync(resolve(path),'utf8')!==result)throw new Error(`OpenAPI drift in ${path}; run npm run generate:portal-openapi.`);
+    }else writeFileSync(resolve(path),result);
+    console.log(`${check?'Validated':'Generated'} ${basename(path)}`);
+  }
 }

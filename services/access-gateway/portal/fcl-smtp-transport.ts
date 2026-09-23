@@ -124,6 +124,7 @@ export class SmtpFclMailTransport implements FclMailTransport{
     if(result.oversized)fail('fcl_smtp_protocol_error');
     if(result.code===0&&result.stdout.trim()==='OK')return;
     if(result.code===65)fail('fcl_smtp_rejected');
+    if(result.code===68)fail('fcl_smtp_partial_unknown');
     fail('fcl_smtp_unavailable');
   }
 }

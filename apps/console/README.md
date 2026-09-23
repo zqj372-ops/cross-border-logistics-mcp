@@ -14,7 +14,7 @@
 
 在仓库根目录执行 `npm ci` 和 `npm run start:console:fixture`，按启动输出访问 loopback 地址。合成身份与来源仅用于隔离测试。
 
-`npm run build` 打包主界面、为静态资产生成内容版本，并生成 OpenAPI。`npm run generate:portal-openapi` 同步界面与 `docs/integrations` 两个接口副本。
+`npm run generate:portal-openapi` 更新唯一的生成产物 `apps/console/openapi.json`，CLI 直接导入它。`npm run validate:portal-openapi` 检查其与当前合同是否一致，过期时失败且不改写文件。`npm run build` 先执行该检查，再打包主界面、为静态资产生成内容版本，并将 OpenAPI 原样复制到 `dist/console/openapi.json`。公开下载地址仍为 `/console/openapi.json`。
 
 测试位于 `tests/access-gateway/console-*.test.ts`、`tests/access-gateway/portal-*.test.ts` 与 `tests/e2e/portal-browser/`；浏览器流程独立于默认 Vitest 套件，不能把单元测试通过写成浏览器验收完成。
 

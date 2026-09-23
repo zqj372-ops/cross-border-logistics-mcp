@@ -20,7 +20,7 @@ interface LegacyDocumentSnapshot{
 
 interface MigrationResult{
   readonly status:'migrated'|'already_migrated';
-  readonly case_version:2;
+  readonly case_version:2|3;
   readonly native_version:3;
   readonly document_version:5;
   readonly legacy_documents:{
@@ -34,6 +34,7 @@ export interface MigrateFclSqliteOfflineOptions{
   readonly stateRoot:string;
   readonly quoteDocumentsPath?:string;
   readonly writersStopped:boolean;
+  readonly execution?:boolean;
   readonly exclusiveCheck?:(path:string)=>void;
   readonly runtimeUid?:number;
   readonly runtimeGid?:number;
@@ -118,12 +119,12 @@ export function migrateFclSqliteOffline(options:MigrateFclSqliteOfflineOptions):
   const initialCase=version(casePath,'freightclaw-business-cases');
   const initialNative=version(nativePath,'freightclaw-native-business');
   const initialDocument=version(quotePath,'freightclaw-quote-documents');
-  if(initialCase!==null&&![1,2].includes(initialCase))throw new Error('fcl_migration_case_version_invalid');
+  if(initialCase!==null&&!(options.execution?[1,2,3]:[1,2]).includes(initialCase))throw new Error('fcl_migration_case_version_invalid');
   if(initialNative!==null&&![1,2,3].includes(initialNative))throw new Error('fcl_migration_native_version_invalid');
   if(initialDocument!==null&&![2,3,4,5].includes(initialDocument))throw new Error('fcl_migration_document_version_invalid');
   const before=legacySnapshot(quotePath);
 
-  const caseStore=new CaseStore(casePath,{fcl:{mode:'exclusive_verified',authorized:true,oldWritersStopped:true,assertExclusive:exclusive(casePath)}});
+  const caseStore=new CaseStore(casePath,{...(options.execution?{execution:{mode:'exclusive_verified' as const,authorized:true as const,oldWritersStopped:true as const,assertExclusive:exclusive(casePath)}}:{}),fcl:{mode:'exclusive_verified',authorized:true,oldWritersStopped:true,assertExclusive:exclusive(casePath)}});
   let nativeStore:NativeAdminStore|undefined,documentStore:DocumentStore|undefined,workflowStore:DocumentWorkflowStore|undefined;
   try{
     nativeStore=new NativeAdminStore(nativePath,{fcl:{mode:'exclusive_verified',authorized:true,oldWritersStopped:true,assertExclusive:exclusive(nativePath)}});
@@ -132,12 +133,12 @@ export function migrateFclSqliteOffline(options:MigrateFclSqliteOfflineOptions):
     const caseVersion=Number((caseStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
     const nativeVersion=Number((nativeStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
     const documentVersion=Number((documentStore.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
-    if(caseVersion!==2||nativeVersion!==3||documentVersion!==5)throw new Error('fcl_migration_readback_failed');
+    if(caseVersion!==(options.execution?3:2)||nativeVersion!==3||documentVersion!==5)throw new Error('fcl_migration_readback_failed');
     const after=legacySnapshot(quotePath);
     assertLegacyPreserved(before,after);
     return Object.freeze({
-      status:initialCase===2&&initialNative===3&&initialDocument===5?'already_migrated':'migrated',
-      case_version:2,
+      status:initialCase===(options.execution?3:2)&&initialNative===3&&initialDocument===5?'already_migrated':'migrated',
+      case_version:options.execution?3:2,
       native_version:3,
       document_version:5,
       legacy_documents:Object.freeze({
@@ -157,11 +158,11 @@ export function migrateFclSqliteOffline(options:MigrateFclSqliteOfflineOptions):
 
 if(process.argv[1]?.endsWith('migrate-fcl-sqlite-offline.ts')===true||process.argv[1]?.endsWith('migrate-fcl-sqlite-offline.mjs')===true){
   try{
-    const {values}=parseArgs({args:process.argv.slice(2),strict:true,options:{'state-root':{type:'string'},'quote-documents':{type:'string'},'writers-stopped':{type:'boolean'},'runtime-uid':{type:'string'},'runtime-gid':{type:'string'}}});
+    const {values}=parseArgs({args:process.argv.slice(2),strict:true,options:{'state-root':{type:'string'},'quote-documents':{type:'string'},'writers-stopped':{type:'boolean'},'execution':{type:'boolean'},'runtime-uid':{type:'string'},'runtime-gid':{type:'string'}}});
     if(!values['state-root']||values['writers-stopped']!==true)throw new Error('fcl_migration_arguments_invalid');
     const runtimeUid=values['runtime-uid']===undefined?undefined:Number(values['runtime-uid']),runtimeGid=values['runtime-gid']===undefined?undefined:Number(values['runtime-gid']);
     if(Boolean(values['runtime-uid'])!==Boolean(values['runtime-gid'])||(runtimeUid!==undefined&&(!Number.isSafeInteger(runtimeUid)||runtimeUid<1))||(runtimeGid!==undefined&&(!Number.isSafeInteger(runtimeGid)||runtimeGid<1)))throw new Error('fcl_migration_runtime_owner_invalid');
-    const result=migrateFclSqliteOffline({stateRoot:resolve(values['state-root']),...(values['quote-documents']?{quoteDocumentsPath:resolve(values['quote-documents'])}:{}),writersStopped:true,...(runtimeUid===undefined?{}:{runtimeUid,runtimeGid:runtimeGid!})});
+    const result=migrateFclSqliteOffline({stateRoot:resolve(values['state-root']),...(values['quote-documents']?{quoteDocumentsPath:resolve(values['quote-documents'])}:{}),writersStopped:true,execution:values.execution===true,...(runtimeUid===undefined?{}:{runtimeUid,runtimeGid:runtimeGid!})});
     process.stdout.write(JSON.stringify(result)+'\n');
   }catch(error){
     process.stderr.write(`${error instanceof Error?error.message:'fcl_migration_failed'}\n`);

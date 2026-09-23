@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema6"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "needs_input",
+            "manual_review"
+          ]
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema0"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema7"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema8"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "preview_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "configuration_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "changes": {
+          "maxItems": 7,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      },
+      "required": [
+        "preview_digest",
+        "configuration_version",
+        "changes"
+      ],
+      "additionalProperties": false
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "enum": [
+            "booking",
+            "pickup",
+            "export_customs",
+            "shipping_documents",
+            "canada_customs",
+            "devanning_storage",
+            "delivery"
+          ]
+        },
+        "before": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "after": {
+          "$ref": "#/$defs/__schema2"
+        }
+      },
+      "required": [
+        "node_id",
+        "before",
+        "after"
+      ],
+      "additionalProperties": false
+    },
+    "__schema2": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "enum": [
+            "intake",
+            "quote",
+            "customer_followup",
+            "booking",
+            "pickup",
+            "export_customs",
+            "shipping_documents",
+            "canada_customs",
+            "devanning_storage",
+            "delivery"
+          ]
+        },
+        "assignment": {
+          "type": "object",
+          "properties": {
+            "responsible_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "collaborator_ids": {
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema4"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cc": {
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema4"
+              }
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "responsible_id",
+            "collaborator_ids",
+            "to",
+            "cc",
+            "enabled"
+          ],
+          "additionalProperties": false
+        },
+        "template_version": {
+          "type": "string",
+          "const": "fcl-node-mail@2026-09-23.v1"
+        },
+        "external_to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema4"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "external_cc": {
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema4"
+          }
+        },
+        "external_enabled": {
+          "type": "boolean"
+        },
+        "visible_fields": {
+          "maxItems": 17,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema5"
+          }
+        }
+      },
+      "required": [
+        "node_id",
+        "assignment",
+        "template_version",
+        "external_to",
+        "external_cc",
+        "external_enabled",
+        "visible_fields"
+      ],
+      "additionalProperties": false
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "__schema4": {
+      "type": "string",
+      "maxLength": 254,
+      "format": "email",
+      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    },
+    "__schema5": {
+      "type": "string",
+      "enum": [
+        "carrier",
+        "vessel_voyage",
+        "booking_so",
+        "etd",
+        "eta",
+        "cutoff",
+        "pickup_location",
+        "appointment",
+        "declaration_ref",
+        "release_evidence",
+        "warehouse",
+        "handover_at",
+        "delivery_address",
+        "signed_at",
+        "empty_return_at"
+      ]
+    },
+    "__schema6": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema7": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema8": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    }
+  }
+}

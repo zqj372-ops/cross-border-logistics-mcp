@@ -1,0 +1,686 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "booking"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "carrier": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "vessel_voyage": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "booking_so": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "etd": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cutoff": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "booking_evidence": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "carrier",
+            "vessel_voyage",
+            "booking_so",
+            "etd",
+            "cutoff",
+            "booking_evidence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "pickup"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "contact": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "appointment": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "work_evidence": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "location",
+            "contact",
+            "appointment",
+            "completed_at",
+            "work_evidence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "export_customs"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "contact": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "declaration_ref": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "release_confirmed": {
+              "type": "boolean"
+            },
+            "release_evidence": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "inspection_notes": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "contact",
+            "declaration_ref",
+            "release_confirmed",
+            "release_evidence",
+            "inspection_notes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "shipping_documents"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "checked": {
+              "type": "boolean"
+            },
+            "handover_evidence": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "cutoff": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "checked",
+            "handover_evidence",
+            "cutoff"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "canada_customs"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "importer": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "declaration_ref": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "release_confirmed": {
+              "type": "boolean"
+            },
+            "release_evidence": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "inspection_notes": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "importer",
+            "declaration_ref",
+            "release_confirmed",
+            "release_evidence",
+            "inspection_notes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "devanning_storage"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "warehouse": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "contact": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "arrival_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "handover_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "discrepancies": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "damage": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "handover_evidence": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "warehouse",
+            "contact",
+            "arrival_at",
+            "handover_at",
+            "discrepancies",
+            "damage",
+            "handover_evidence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "case_ref": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "node_id": {
+          "type": "string",
+          "const": "delivery"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "pickup_location": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "release_source": {
+              "type": "string",
+              "enum": [
+                "unconfirmed",
+                "company",
+                "external"
+              ]
+            },
+            "release_evidence": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "delivery_address": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "contact": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "appointment": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "signed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pod_ref": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "empty_return_required": {
+              "type": "boolean"
+            },
+            "empty_return_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "empty_return_evidence": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "required": [
+            "pickup_location",
+            "release_source",
+            "release_evidence",
+            "delivery_address",
+            "contact",
+            "appointment",
+            "signed_at",
+            "pod_ref",
+            "empty_return_required",
+            "empty_return_at",
+            "empty_return_evidence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract_version",
+        "case_ref",
+        "expected_version",
+        "node_id",
+        "deadline",
+        "notes",
+        "evidence_refs",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "const": "fcl-execution@2026-09-23.v1"
+    },
+    "__schema1": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "__schema2": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema3": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "__schema4": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema5"
+      }
+    },
+    "__schema5": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  }
+}

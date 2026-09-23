@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "limit": {
+      "default": 20,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "cursor": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 500
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "state": {
+      "default": "all",
+      "type": "string",
+      "enum": [
+        "all",
+        "executing",
+        "completed",
+        "mine"
+      ]
+    }
+  },
+  "required": [
+    "limit",
+    "cursor",
+    "state"
+  ],
+  "additionalProperties": false
+}

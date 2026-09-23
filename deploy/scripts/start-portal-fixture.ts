@@ -19,6 +19,9 @@ import { createProductionT0HttpHandler } from "../../services/access-gateway/por
 import { FIXTURE_PORTAL_IDENTITIES } from "../../services/access-gateway/portal/identity";
 import { FclQuoteService } from "../../services/quote-native/fcl";
 import type {PortalContext} from "../../services/access-gateway/portal/contracts";
+import {FclExecutionService} from '../../services/access-gateway/portal/fcl-execution';
+import {FclExecutionMailService} from '../../services/access-gateway/portal/fcl-execution-mail';
+import {FclExecutionHttpService} from '../../services/access-gateway/portal/fcl-execution-http';
 
 function readOrCreatePrivateSecret(path:string):Buffer{
   if(!existsSync(path))writeFileSync(path,randomBytes(32),{mode:0o600,flag:"wx"});
@@ -34,24 +37,36 @@ async function startPersonalFclFixture(input:{databaseDirectory:string;port:numb
   const options=(path:string)=>({fcl:existsSync(path)?{mode:"reopen" as const}:{mode:"fresh_fixture" as const,authorized:true as const,oldWritersStopped:true as const}});
   const casePath=resolve(input.databaseDirectory,"business-cases.sqlite"),ratePath=resolve(input.databaseDirectory,"native-business.sqlite"),documentPath=resolve(input.databaseDirectory,"quote-documents.sqlite");
   const caseOptions=options(casePath),rateOptions=options(ratePath),documentOptions=options(documentPath);
-  const caseStore=new CaseStore(casePath,caseOptions),rateStore=new NativeAdminStore(ratePath,rateOptions),documentStore=new DocumentStore(documentPath,documentOptions),workflowStore=new DocumentWorkflowStore(documentStore,documentOptions);
+  const executionEnabled=process.env.PORTAL_FIXTURE_FCL_EXECUTION==='true';
+  const caseStore=new CaseStore(casePath,{...caseOptions,...(executionEnabled?{execution:caseOptions.fcl}:{})}),rateStore=new NativeAdminStore(ratePath,rateOptions),documentStore=new DocumentStore(documentPath,documentOptions),workflowStore=new DocumentWorkflowStore(documentStore,documentOptions);
   try{
     const active=(userId:string)=>FIXTURE_PORTAL_IDENTITIES.some(identity=>identity.userId===userId&&identity.emailVerified);
-    const rateService=new NativeAdminService(rateStore,input.runtime.service,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,now:()=>"2026-10-08T12:00:00.000Z"});
+    const mailTransport={send:()=>undefined};
+    const rateService=new NativeAdminService(rateStore,input.runtime.service,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,now:()=>"2026-10-08T12:00:00.000Z",executionIsActive:active,mailTransport,mailConfigured:()=>true});
     const credentialSecret=readOrCreatePrivateSecret(resolve(input.databaseDirectory,"fcl-case-credential.secret"));
     const caseService=new CaseService(caseStore,input.runtime.service,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,credentialSecret,credentialTtlDays:30,now:()=>"2026-10-08T12:00:00.000Z",mail:{enabled:false},notificationSettings:()=>{
       const view=rateService.getFclNotification(receiver);
       return view.input?{...view.input,transport:{send:()=>undefined},timeoutMs:5000}:null;
     }});
+    let lifecycleMail:FclExecutionMailService|undefined;
     const quoteService=new FclQuoteService({caseReader:caseService,rateReader:rateService,now:()=>"2026-10-08T12:00:00.000Z"});
     const documentService=new DocumentService(documentStore,input.runtime.service);
-    const documentWorkflow=new DocumentWorkflowService(workflowStore,documentService,input.runtime.service,undefined,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,now:()=>"2026-10-08T12:00:00.000Z"},{quoteService,caseReader:caseService,caseLock:caseService,rateLock:rateService,rateReader:rateService,handoff:caseService});
+    const documentWorkflow=new DocumentWorkflowService(workflowStore,documentService,input.runtime.service,undefined,{receiverUserId:receiverIdentity.userId,receiverIsActive:active,now:()=>"2026-10-08T12:00:00.000Z"},{quoteService,caseReader:caseService,caseLock:caseService,rateLock:rateService,rateReader:rateService,handoff:caseService,onDecision:(ctx,payload,eventId,kind)=>{lifecycleMail?.enqueueCaseEvent({event_id:eventId,case_ref:payload.case_binding.case_ref,owner_id:ctx.identity.userId,case_version:payload.case_binding.case_version,kind,status:payload.state});}});
     const publicSessionSecret=readOrCreatePrivateSecret(resolve(input.databaseDirectory,"fcl-public-session.secret"));
-    const server=await startPortalServer({caseService,documentService,documentWorkflowService:documentWorkflow,nativeAdmin:rateService,fcl:{caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret,businessDate:()=>"2026-10-08",secureCookie:false},mode:"fixtures",service:input.runtime.service,port:input.port,staticDirectory:"dist/console"});
+    let executionHttp:FclExecutionHttpService|undefined,stopWorker:(()=>Promise<void>)|undefined;
+    if(executionEnabled){
+      const startedAt=Date.now(),now=()=>new Date(Date.parse('2026-10-08T12:00:00Z')+Date.now()-startedAt).toISOString();
+
+      const execution=new FclExecutionService(caseService,{isActive:active,now,configuration:ctx=>rateService.getFclNotificationV2(ctx),onEvent:(progress,event)=>mail.enqueue(progress,event)});
+      const mail:FclExecutionMailService=new FclExecutionMailService(execution,{publicOrigin:input.origin,configuration:owner=>rateService.readFclNotificationForDispatch(owner),transport:mailTransport,verifyUsers:ids=>Promise.resolve(ids.every(active)?'active':'inactive'),now});
+      lifecycleMail=mail;caseService.setFclEventObserver(event=>mail.enqueueCaseEvent(event));
+      executionHttp=new FclExecutionHttpService(execution,documentWorkflow,rateService,mail);stopWorker=mail.startWorker();
+    }
+    const server=await startPortalServer({caseService,documentService,documentWorkflowService:documentWorkflow,nativeAdmin:rateService,fcl:{caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret,businessDate:()=>"2026-10-08",secureCookie:false,...(executionHttp?{execution:executionHttp}:{})},mode:"fixtures",service:input.runtime.service,port:input.port,staticDirectory:"dist/console"});
     console.log(`FreightClaw personal FCL fixture: ${server.origin}/inquiry/`);
     console.log("Synthetic business date: 2026-10-08; isolated local storage; no production credentials.");
     let closing=false;
-    const close=async()=>{if(closing)return;closing=true;await server.close();workflowStore.close();documentStore.close();rateStore.close();caseStore.close();await input.runtime.close();process.exitCode=0;};
+    const close=async()=>{if(closing)return;closing=true;await server.close();await stopWorker?.();workflowStore.close();documentStore.close();rateStore.close();caseStore.close();await input.runtime.close();process.exitCode=0;};
     process.once("SIGINT",()=>{void close();});process.once("SIGTERM",()=>{void close();});
   }catch(error){workflowStore.close();documentStore.close();rateStore.close();caseStore.close();await input.runtime.close();throw error;}
 }

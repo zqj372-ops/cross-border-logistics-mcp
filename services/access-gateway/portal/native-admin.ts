@@ -17,6 +17,9 @@ import { openPortalProductionDatabase, securePortalDatabaseFiles } from './produ
 import { PortalError, type PortalContext } from './contracts';
 import {SyncTransactionGuard} from './sync-transaction';
 import {FclOperationsService} from './fcl-operations';
+import {FCL_NOTIFICATION_V2,emptyFclNotificationConfig,fclNotificationV2ConfigSchema,fclNotificationV2SaveSchema,fclNotificationV2ViewSchema,fclNotificationPreviewRequestSchema,fclNotificationPreviewOutputSchema,fclNotificationTestSchema} from './fcl-execution-contracts';
+import type {FclMailTransport} from './cases';
+import {FCL_NODE_LABELS,renderNotificationTestBody} from './fcl-execution-mail-format';
 import type { PortalService } from './service';
 import {
   nativePublishSchema,
@@ -57,6 +60,9 @@ export type FclNativeAdminOptions = {
   receiverUserId: string;
   receiverIsActive: (userId: string) => boolean;
   now?: () => string;
+  executionIsActive?:(id:string)=>boolean;
+  mailConfigured?:()=>boolean;
+  mailTransport?:FclMailTransport;
 };
 
 type NormalizedFclOptions = {
@@ -141,11 +147,17 @@ export class NativeAdminService {
   readonly fclOperations:FclOperationsService;
   readonly #fcl: NormalizedFclOptions | null;
   readonly #fclNotificationTransaction=new SyncTransactionGuard();
+  private readonly executionPeople:((id:string)=>boolean)|undefined;
+  private readonly mailConfigured:()=>boolean;
+  private readonly notificationTransport:FclMailTransport|undefined;
   constructor(
     private store: NativeAdminStore,
     private portal: Pick<PortalService, 'getState'>,
     fcl?: FclNativeAdminOptions,
   ) {
+    this.executionPeople=fcl?.executionIsActive;
+    this.mailConfigured=fcl?.mailConfigured??(()=>false);
+    this.notificationTransport=fcl?.mailTransport;
     this.#fcl = fcl ? this.normalizeFclOptions(fcl) : null;
     if (this.#fcl !== null) this.assertFclStartup(this.#fcl);
     this.fclOperations=new FclOperationsService({store:this.store,authorize:ctx=>this.fclReceiverScope(ctx),getRates:ctx=>this.get(ctx,'fcl') as FclRateAdminView});
@@ -290,7 +302,14 @@ export class NativeAdminService {
     const row = this.store.db.prepare("SELECT version,draft FROM native_configs WHERE scope=? AND kind='fcl-notification'").get(scope) as { version: number; draft: string } | undefined;
     let input: unknown = null;
     if (row) {
-      try { input = JSON.parse(row.draft) as unknown; }
+      try {
+        input = JSON.parse(row.draft) as unknown;
+        if((input as {contract_version?:string})?.contract_version===FCL_NOTIFICATION_V2){
+          const config=fclNotificationV2ConfigSchema.parse(input),intake=config.rows.find(row=>row.node_id==='intake');
+          if(!intake)throw new Error('invalid');
+          input={enabled:intake.assignment.enabled,recipient:intake.assignment.to,cc:intake.assignment.cc};
+        }
+      }
       catch { throw new PortalError('native_readback_failed'); }
     }
     try { return fclNotificationViewSchema.parse({ contract_version: FCL_NOTIFICATION_VERSION, version: row?.version ?? 0, input, replay }); }
@@ -312,6 +331,13 @@ export class NativeAdminService {
     if (!/^[A-Za-z0-9._:-]{16,128}$/u.test(key)) throw new PortalError('idempotency_key_invalid');
     const change = fclNotificationSaveSchema.safeParse(input);
     if (!change.success) throw new PortalError('native_input_invalid');
+    const raw=this.store.db.prepare("SELECT draft FROM native_configs WHERE scope=? AND kind='fcl-notification'").get(scope) as {draft:string}|undefined;
+    if(raw&&(JSON.parse(raw.draft) as {contract_version?:string}).contract_version===FCL_NOTIFICATION_V2){
+      const current=this.getFclNotificationV2(ctx),rows=structuredClone(current.rows),intake=rows.find(row=>row.node_id==='intake')!;
+      intake.assignment={...intake.assignment,to:change.data.input.recipient||null,cc:change.data.input.cc,enabled:change.data.input.enabled};
+      const saved=this.saveNotificationV2(ctx,{contract_version:FCL_NOTIFICATION_V2,expected_version:change.data.expected_version,rows,confirmed:true},key,change.data);
+      return this.fclNotificationView(scope,{replayed:saved.replay,submitted_version:change.data.expected_version+1,current:saved.version===change.data.expected_version+1});
+    }
     const db = this.store.db, partition = JSON.stringify([scope, 'fcl-notification', 'save']), actionDigest = digest(change.data);
     this.#fclNotificationTransaction.begin(db,'native_readback_failed');
     let committed = false;
@@ -341,6 +367,103 @@ export class NativeAdminService {
       if (!committed) this.#fclNotificationTransaction.rollbackOnFailure(db);
       throw error;
     }
+  }
+  getFclNotificationV2(ctx:PortalContext){
+    this.fclReceiverScope(ctx);return this.readFclNotificationForDispatch(ctx.identity.userId);
+  }
+  // Service identity port: owner is resolved from a persisted case, never from an HTTP owner override.
+  readFclNotificationForDispatch(ownerId:string){
+    const scope=`fcl-person:${ownerId}`;
+    const row=this.store.db.prepare("SELECT version,draft FROM native_configs WHERE scope=? AND kind='fcl-notification'").get(scope) as {version:number;draft:string}|undefined;
+    let config=emptyFclNotificationConfig();
+    if(row){
+      let raw:unknown;try{raw=JSON.parse(row.draft);}catch{throw new PortalError('native_readback_failed');}
+      if((raw as {contract_version?:string})?.contract_version===FCL_NOTIFICATION_V2){
+        const parsed=fclNotificationV2ConfigSchema.safeParse(raw);if(!parsed.success||parsed.data.version!==row.version)throw new PortalError('native_readback_failed');config=parsed.data;
+      }else{
+        const old=this.fclNotificationView(scope);config.version=row.version;
+        config.rows[0]!.assignment={responsible_id:ownerId,collaborator_ids:[],to:old.input?.recipient||null,cc:old.input?.cc??[],enabled:old.input?.enabled??false};
+      }
+    }
+    if(new Set(config.rows.map(row=>row.node_id)).size!==10)throw new PortalError('native_readback_failed');
+    return fclNotificationV2ViewSchema.parse({...config,transport:this.mailConfigured()?'configured_unverified':'unconfigured',replay:false});
+  }
+  saveFclNotificationV2(ctx:PortalContext,input:unknown,key:string){return this.saveNotificationV2(ctx,input,key);}
+  private saveNotificationV2(ctx:PortalContext,input:unknown,key:string,legacy?:unknown){
+    const options=this.fclReceiverScope(ctx),scope=options.scope,change=fclNotificationV2SaveSchema.safeParse(input);
+    if(!change.success||new Set(change.data.rows.map(row=>row.node_id)).size!==10)throw new PortalError('native_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    for(const row of change.data.rows){
+      if(['intake','quote','customer_followup'].includes(row.node_id)&&row.external_enabled)throw new PortalError('native_input_invalid');
+      const people=[row.assignment.responsible_id,...row.assignment.collaborator_ids].filter((id):id is string=>id!==null);
+      if(new Set(people).size!==people.length)throw new PortalError('native_input_invalid');
+      if(['intake','quote','customer_followup'].includes(row.node_id)&&people.some(person=>person!==ctx.identity.userId))throw new PortalError('fcl_quote_owner_required');
+      if(people.some(person=>person!==ctx.identity.userId&&!this.fclExecutionPersonActive(person)))throw new PortalError('fcl_execution_responsible_unavailable');
+      for(const addresses of [[row.assignment.to,...row.assignment.cc],[row.external_to,...row.external_cc]]){const actual=addresses.filter(Boolean);if(new Set(actual).size!==actual.length)throw new PortalError('native_input_invalid');}
+    }
+    const db=this.store.db,partition=JSON.stringify([scope,'fcl-notification',legacy?'save':'save-v2']),actionDigest=digest(legacy??change.data);
+    this.#fclNotificationTransaction.begin(db,'native_readback_failed');let committed=false;
+    try{
+      const old=db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+      if(old){if(old.digest!==actionDigest)throw new PortalError('idempotency_conflict');this.#fclNotificationTransaction.commit(db);committed=true;return {...this.getFclNotificationV2(ctx),replay:true};}
+      const current=this.getFclNotificationV2(ctx);if(current.version!==change.data.expected_version)throw new PortalError('version_conflict');
+      const next=fclNotificationV2ConfigSchema.parse({contract_version:FCL_NOTIFICATION_V2,version:current.version+1,rows:change.data.rows});
+      const serialized=JSON.stringify(next),auditId=randomUUID(),created=options.now();
+      db.prepare("INSERT INTO native_configs(scope,kind,version,draft,active) VALUES(?,?,?,?,NULL) ON CONFLICT(scope,kind) DO UPDATE SET version=excluded.version,draft=excluded.draft,active=NULL").run(scope,'fcl-notification',next.version,serialized);
+      db.prepare('INSERT INTO native_audit VALUES(?,?,?,?,?,?,?)').run(auditId,scope,'fcl-notification',ctx.identity.userId,'save-v2',actionDigest,created);
+      db.prepare('INSERT INTO native_idempotency VALUES(?,?,?,?)').run(partition,key,actionDigest,serialized);
+      const readback=()=>{
+        const actual=this.getFclNotificationV2(ctx),audit=db.prepare('SELECT actor,digest,created FROM native_audit WHERE id=?').get(auditId) as {actor:string;digest:string;created:string}|undefined;
+        const idem=db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(partition,key) as {digest:string;result:string}|undefined;
+        if(actual.version!==next.version||JSON.stringify(actual.rows)!==JSON.stringify(next.rows)||audit?.actor!==ctx.identity.userId||audit.digest!==actionDigest||audit.created!==created||idem?.digest!==actionDigest||idem.result!==serialized)throw new PortalError('native_readback_failed');return actual;
+      };
+      readback();this.#fclNotificationTransaction.commit(db);committed=true;return readback();
+    }catch(error){if(!committed)this.#fclNotificationTransaction.rollbackOnFailure(db);throw error;}
+  }
+  previewFclNotification(ctx:PortalContext,input:unknown){
+    const request=fclNotificationPreviewRequestSchema.safeParse(input);if(!request.success)throw new PortalError('native_input_invalid');
+    const config=this.getFclNotificationV2(ctx),row=config.rows.find(row=>row.node_id===request.data.node_id)!;
+    const internal=request.data.audience==='internal';
+    return fclNotificationPreviewOutputSchema.parse({to:internal?row.assignment.to:row.external_to,cc:internal?row.assignment.cc:row.external_cc,subject:`[测试] ${FCL_NODE_LABELS[row.node_id]}通知`,body:renderNotificationTestBody(row,request.data.audience),transport:this.notificationTransport?'configured_unverified':'unconfigured',status:'preview',reason_code:null});
+  }
+  async testFclNotification(ctx:PortalContext,input:unknown,key:string){
+    const request=fclNotificationTestSchema.safeParse(input);if(!request.success)throw new PortalError('native_input_invalid');
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    const authority=this.fclReceiverScope(ctx),scope=JSON.stringify([authority.scope,'fcl-notification-test']),actionDigest=digest(request.data),db=this.store.db;
+    let result=this.previewFclNotification(ctx,{node_id:request.data.node_id,audience:request.data.audience});
+    let replay=false,committed=false;
+    this.#fclNotificationTransaction.begin(db,'native_readback_failed');
+    try{
+      const old=db.prepare('SELECT digest,result FROM native_idempotency WHERE scope=? AND key=?').get(scope,key) as {digest:string;result:string}|undefined;
+      if(old){if(old.digest!==actionDigest)throw new PortalError('idempotency_conflict');result=fclNotificationPreviewOutputSchema.parse(JSON.parse(old.result));replay=true;}
+      else{
+        if(this.getFclNotificationV2(ctx).version!==request.data.expected_version)throw new PortalError('version_conflict');
+        if(!result.to)throw new PortalError('fcl_mail_recipient_needs_input');
+        if(!this.notificationTransport)throw new PortalError('fcl_mail_transport_not_configured');
+        const since=new Date(Date.parse(authority.now())-60_000).toISOString();
+        if((db.prepare("SELECT count(*) AS n FROM native_audit WHERE scope=? AND kind='fcl-notification' AND action='test' AND created>=?").get(authority.scope,since) as {n:number}).n>=3)throw new PortalError('fcl_rate_limited');
+        result={...result,status:'unknown',reason_code:'test_result_unknown'};
+        db.prepare('INSERT INTO native_audit VALUES(?,?,?,?,?,?,?)').run(randomUUID(),authority.scope,'fcl-notification',ctx.identity.userId,'test',actionDigest,authority.now());
+        db.prepare('INSERT INTO native_idempotency VALUES(?,?,?,?)').run(scope,key,actionDigest,JSON.stringify(result));
+        const read=db.prepare('SELECT result FROM native_idempotency WHERE scope=? AND key=?').get(scope,key) as {result:string};if(read.result!==JSON.stringify(result))throw new PortalError('native_readback_failed');
+      }
+      this.#fclNotificationTransaction.commit(db);committed=true;
+    }catch(error){if(!committed)this.#fclNotificationTransaction.rollbackOnFailure(db);throw error;}
+    if(replay)return result;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{
+      await Promise.race([Promise.resolve(this.notificationTransport!.send({to:result.to!,cc:result.cc,subject:result.subject,body:result.body})),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('fcl_smtp_timeout')),10_000);})]);
+      result={...result,status:'smtp_accepted',reason_code:null};
+    }catch(error){const rejected=error instanceof Error&&error.message==='fcl_smtp_rejected';result={...result,status:rejected?'failed':'unknown',reason_code:rejected?'smtp_rejected':'smtp_result_unknown'};}
+    finally{if(timer)clearTimeout(timer);}
+    // A post-send persistence failure leaves the reserved unknown record; it never causes an implicit resend.
+    db.prepare('UPDATE native_idempotency SET result=? WHERE scope=? AND key=? AND digest=?').run(JSON.stringify(result),scope,key,actionDigest);
+    const read=db.prepare('SELECT result FROM native_idempotency WHERE scope=? AND key=?').get(scope,key) as {result:string};
+    if(read.result!==JSON.stringify(result))throw new PortalError('native_readback_failed');return result;
+  }
+  private fclExecutionPersonActive(id:string):boolean{
+    // The legacy receiver predicate is not an account directory.
+    try{return this.executionPeople?.(id)===true;}catch{return false;}
   }
   withFclReadLock<T>(ctx: PortalContext, operation: () => T extends Promise<unknown> ? never : T): T {
     this.scope(ctx, false, 'fcl');

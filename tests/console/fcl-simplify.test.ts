@@ -4,7 +4,8 @@ import {describe,it,expect,vi,afterEach} from 'vitest';
 import {scheduleToRateDetail,selectableSailings,createScheduleClient} from '../../apps/console/maritime-query.js';
 // @ts-expect-error Browser ESM.
 import {createFclOperations,fclMaintenancePayload,fclTemplateChargeImpacts,groupReferenceCharges,isBaseOceanFreight,referenceChargeGroup} from '../../apps/console/fcl-operations.js';
-import {operationsFixture} from '../quote-native/fixtures/fcl-operations';
+import {operationsFixture,estimateRequest} from '../quote-native/fixtures/fcl-operations';
+import {calculateFclEstimate} from '../../services/quote-native/fcl-operations';
 afterEach(()=>vi.unstubAllGlobals());
 const record={operating_carrier:'COSCO',routing:'direct',transit:{source_total_days:'18'},legs:[{mode:'ocean',vessel_name:'TEST VESSEL',voyage:'068E',events:[{event_type:'departure',event_kind:'planned',local_date:'2026-10-15'},{event_type:'arrival',event_kind:'estimated',local_date:'2026-11-02'}]}]};
 type ControlStub={value:string;checked:boolean};
@@ -96,7 +97,7 @@ describe('FCL simplified workbench',()=>{
  it('renders four business tabs and only two header actions; legacy rate entry shares same table',async()=>{
   const draft=operationsFixture();const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{authenticated:true,identity:{user_id:'personal'},fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const html=ops.render();expect(html).toContain('从已发布海运费与费用模板开始');expect(html).toContain('选择海运费和费用模板');expect(html).toContain('其他条件');expect(html).toContain('模板维护');expect(html).not.toContain('更多报价条件');
   const header=html.match(/<header class="ops-heading">[\s\S]*?<\/header>/)?.[0]??'';expect(header.match(/data-action=/g)).toHaveLength(2);expect(header).not.toContain('保存与发布');
   const tabs=html.match(/<nav class="ops-tabs"[\s\S]*?<\/nav>/)?.[0]??'';expect(tabs.match(/data-tab=/g)).toHaveLength(4);expect(tabs).not.toContain('目的地模板');
@@ -106,7 +107,7 @@ describe('FCL simplified workbench',()=>{
   const draft=operationsFixture();
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'rates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render('', 'rates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   stubFormData();
   await ops.submit(formStub({filter_pol:'Shanghai',filter_pod:'Vancouver',filter_carrier:'ONE'},{},'ops-rate-filter'));
   const filtered=ops.render('', 'rates');
@@ -117,7 +118,7 @@ describe('FCL simplified workbench',()=>{
   const draft=operationsFixture();
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const html=ops.render('', 'templates');
   const tabs=html.match(/<nav class="ops-tabs"[\s\S]*?<\/nav>/)?.[0]??'';
   expect(tabs).toContain('data-tab="templates"');expect(tabs).toContain('费用模板');expect(tabs).not.toContain('data-tab="charges"');
@@ -133,7 +134,7 @@ describe('FCL simplified workbench',()=>{
   draft.operations.templates.push({...draft.operations.templates[0]!,id:'calgary-shared',label:'Calgary shared',charge_ids:[...draft.operations.templates[0]!.charge_ids]});
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const html=ops.render('', 'templates');
   expect(html).toContain('还被其他模板使用');expect(html).toContain('Calgary shared');
  });
@@ -174,7 +175,7 @@ describe('FCL simplified workbench',()=>{
   vi.stubGlobal('window',{prompt:()=> '已迁入海运费表',confirm:()=>true});
   vi.stubGlobal('document',{querySelector:()=>null});
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'rates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render('', 'rates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const pending=ops.render('', 'rates');
   expect(pending).toContain('海运费 · 历史附费');expect(pending).toContain('>88<');expect(pending).toContain('>USD<');expect(pending).toContain(`data-id="fee:${rate.rate_id}:0"`);
   await ops.action({dataset:{action:'ops-ocean-exclude',id:`fee:${rate.rate_id}:0`}});
@@ -201,7 +202,7 @@ describe('FCL simplified workbench',()=>{
   const draft={...base,operations:{...base.operations,charges:[imported(0,'海运费'),imported(1,'港口安保费'),other,unclassified],templates:[],delivery_rates:[],rate_details:[]}};
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const html=ops.render('', 'templates');
   expect(html).toContain('data-primary="reference" aria-current="page"');
   expect(html).toContain('参考费用 · 2 组');expect(html).toContain('合成卡尔加里 OA 40HQ · 2 项');
@@ -219,7 +220,7 @@ describe('FCL simplified workbench',()=>{
    return Promise.resolve({status:'success',data:{version:2,draft:structuredClone(body.input),active_release:{input:published},history:[]}});
   });
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   const form=templateFormStub(templateRows(published,published.operations.templates[0]!,{0:{amount:'150'}}),{containerTypes:published.operations.templates[0]!.container_types});
   inputTemplate(ops,form,'charges.0.amount','150');
@@ -236,7 +237,7 @@ describe('FCL simplified workbench',()=>{
   const published=operationsFixture(),call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft:published,active_release:{input:published},history:[]}:action==='rate-preview'?{can_publish:true,blockers:[],preview_hash:'a'.repeat(64)}:{items:[]}}));
   const write=vi.fn();
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   await ops.action({dataset:{action:'ops-template-check-again'}});
   expect(ops.render('', 'templates')).toContain('id="ops-config-confirm"');
   let removed=false;
@@ -255,7 +256,7 @@ describe('FCL simplified workbench',()=>{
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:published},history:[]}:action==='rate-preview'?{can_publish:false,blockers:[]}:{items:[]}}));
   const write=vi.fn((_action:string,body:{input:ReturnType<typeof operationsFixture>})=>Promise.resolve({status:'success',data:{version:2,draft:structuredClone(body.input),active_release:{input:published},history:[]}}));
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   const form=templateFormStub(templateRows(draft,draft.operations.templates[0]!,{0:{amount:'152'}}),{containerTypes:draft.operations.templates[0]!.container_types});
   inputTemplate(ops,form,'charges.0.amount','152');
@@ -275,7 +276,7 @@ describe('FCL simplified workbench',()=>{
   let form=formStub({'template.container_types':['40HQ']},{'[name="template_add_charge"]':control('')});
   vi.stubGlobal('document',{querySelector:(selector:string)=>selector==='[data-fcl-form="ops-template"]'?form:null});
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   await ops.action({dataset:{action:'ops-template-add-charge'}});
   expect(ops.render('', 'templates')).toContain('请选择要加入的费用');
@@ -294,7 +295,7 @@ describe('FCL simplified workbench',()=>{
   draft.operations.charges.find(charge=>charge.id==='customs')!.amount='250';
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft,active_release:{input:published},history:[]}:{items:[]}}));
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const html=ops.render('', 'templates');
  expect(html).toContain('Calgary · Calgary · 未生效');
  expect(html).not.toContain('Calgary · Calgary · 已生效');
@@ -310,7 +311,7 @@ describe('FCL simplified workbench',()=>{
   vi.stubGlobal('document',{querySelector:(selector:string)=>selector==='[data-fcl-form="ops-template"]'?form:null});
   vi.stubGlobal('window',{prompt:()=> '已迁移到海运费表',confirm:()=>true});
   const ops=createFclOperations({call,write:vi.fn(),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   const rates=ops.render('', 'rates');
   expect(rates).toContain('历史基础海运费');expect(rates).toContain('海运费 · 合成卡尔加里 OA 40HQ');expect(rates).toContain('>100<');expect(rates).toContain('>CAD<');expect(rates).toContain('按票');
@@ -329,7 +330,7 @@ describe('FCL simplified workbench',()=>{
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:draft},history:[]}:{items:[]}}));
   const write=vi.fn();
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   expect(ops.render('', 'templates')).toContain('待核对版本');
   stubFormData();await ops.submit(templateFormStub(templateRows(draft,draft.operations.templates[0]!)));
   expect(write).not.toHaveBeenCalled();expect(ops.render('', 'templates')).toContain('不能自动择价');
@@ -340,7 +341,7 @@ describe('FCL simplified workbench',()=>{
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft,active_release:{input:published},history:[]}:{items:[]}}));
   const write=vi.fn((_action:string,body:{input:ReturnType<typeof operationsFixture>})=>Promise.resolve({status:'success',data:{version:2,draft:structuredClone(body.input),active_release:{input:published},history:[]}}));
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2027-02-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   const selector=templateFormStub(templateRows(draft,draft.operations.templates[0]!),{containerTypes:draft.operations.templates[0]!.container_types});
   changeTemplate(ops,selector,'template_choice','1');
@@ -355,7 +356,7 @@ describe('FCL simplified workbench',()=>{
   const published=operationsFixture(),call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:1,draft:published,active_release:{input:published},history:[]}:{items:[]}}));
   const write=vi.fn();
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
+  ops.render('', 'templates');await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));ops.render('', 'templates');
   stubFormData();
   const form=templateFormStub(templateRows(published,published.operations.templates[0]!,{0:{amount:'not-a-number'}}),{containerTypes:published.operations.templates[0]!.container_types});
   await ops.submit(form);
@@ -373,7 +374,7 @@ describe('FCL simplified workbench',()=>{
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft,active_release:{release_id:releaseId,input:published},history:[]}:{items:[]}}));
   const write=vi.fn((action:string,body?:unknown,intentScope?:string)=>{void action;void body;void intentScope;return Promise.resolve({status:'success',data:{items:[]}});});
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{fcl_capability:{business_date:'2026-10-15'}},state:{}})});
-  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  ops.render();await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   const html=ops.render();
   expect(html).toContain('Calgary');expect(html).not.toContain('Draft template only');expect(html).not.toContain('保存与发布');
   vi.stubGlobal('FormData',class {get(key:string){return ({pol:'Shanghai',pod:'Vancouver',destination:'Calgary',shipping_date:'2026-10-15','box-40HQ':'1',selected_rate:published.rates[0]!.rate_id,template:published.operations.templates[0]!.id} as Record<string,string>)[key]??null;}});
@@ -385,29 +386,30 @@ describe('FCL simplified workbench',()=>{
   expect(write.mock.calls[1]?.[2]).toBe('publication-before-fx');
   releaseId='publication-after-fx';
   call.mockClear();await ops.action({dataset:{action:'ops-reload'}});
-  await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(3));await new Promise(r=>setTimeout(r,0));
+  await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(1));await new Promise(r=>setTimeout(r,0));
   await ops.submit({dataset:{fclForm:'ops-run'}});
   expect(write.mock.calls[2]?.[2]).toBe('publication-after-fx');
  });
  it('auto-selects one explicit case candidate and leaves multiple candidates for human choice',async()=>{
   const published=operationsFixture(),caseView={case_id:'00000000-0000-4000-8000-000000000901',case_status:'in_review',case_version:2,current_input:{pol:'Shanghai',pod:'Vancouver',final_destination:'Calgary',containers:[{type:'40HQ',quantity:1}],cargo_ready_date:'2026-10-15',estimated_weight:null,selected_services:['ocean_freight','canada_customs','delivery']},review_context:{latest_customer_supplement_ref:null,review_required:false}};
-  const estimate={estimate_id:'00000000-0000-4000-8000-000000000902',version:1,calculation:{rate_id:published.rates[0]!.rate_id,blockers:[] as string[]},currentness:{valid_now:true,reason_codes:[] as string[]},request:{case_ref:caseView.case_id}};
+  const request={...estimateRequest(),case_ref:caseView.case_id};
+  const estimate={estimate_id:'00000000-0000-4000-8000-000000000902',version:1,source_release_id:'fixture-release',adjustments:[],calculation:calculateFclEstimate(published,request,published.rates[0]!.rate_id,published.operations.templates[0]!.id),currentness:{valid_now:true,reason_codes:[] as string[]},request};
   const call=vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='rate-get'?{version:2,draft:published,active_release:{input:published},history:[]}:action==='case-get'?caseView:{items:[]}}));
   const writes:string[]=[];const write=vi.fn((action:string)=>{writes.push(action);return Promise.resolve({status:'success',data:action==='estimate-run'?{items:[estimate]}:{quote_ref:'00000000-0000-4000-8000-000000000903',version:1}});});
   const location={hash:''};vi.stubGlobal('location',location);
   const ops=createFclOperations({call,write,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
-  ops.render(caseView.case_id);await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(4));await new Promise(r=>setTimeout(r,0));
+  ops.render(caseView.case_id);await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(2));await new Promise(r=>setTimeout(r,0));
   vi.stubGlobal('FormData',class {get(key:string){return ({pol:'Shanghai',pod:'Vancouver',destination:'Calgary',shipping_date:'2026-10-15','box-40HQ':'1',selected_rate:published.rates[0]!.rate_id,template:published.operations.templates[0]!.id} as Record<string,string>)[key]??null;}});
   await ops.submit({dataset:{fclForm:'ops-run'}});
   expect(writes).toEqual(['estimate-run','estimate-select']);expect(location.hash).toContain(`fcl/case/${caseView.case_id}/`);
   const multiple=createFclOperations({call,write:vi.fn((action:string)=>Promise.resolve({status:'success',data:action==='estimate-run'?{items:[estimate,{...estimate,estimate_id:'00000000-0000-4000-8000-000000000904'}]}:{items:[]}})),api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
-  multiple.render(caseView.case_id);await vi.waitFor(()=>expect(call.mock.calls.length).toBeGreaterThanOrEqual(8));await new Promise(r=>setTimeout(r,0));
+  multiple.render(caseView.case_id);await vi.waitFor(()=>expect(call.mock.calls.length).toBeGreaterThanOrEqual(4));await new Promise(r=>setTimeout(r,0));
   await multiple.submit({dataset:{fclForm:'ops-run'}});
   expect(multiple.render(caseView.case_id)).toContain('已生成 2 个候选');
   const blockedWrite=vi.fn(()=>Promise.resolve({status:'success',data:{items:[{...estimate,calculation:{...estimate.calculation,blockers:['fx_missing:USD','fx_missing:CAD']},currentness:{valid_now:false,reason_codes:['fcl_estimate_incomplete']}}]}}));
   call.mockClear();
   const blocked=createFclOperations({call,write:blockedWrite,api:vi.fn(),esc:(v:string|number|null)=>String(v??''),rerender:vi.fn(),notify:vi.fn(),model:()=>({session:{},state:{}})});
-  blocked.render(caseView.case_id);await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(4));await new Promise(r=>setTimeout(r,0));
+  blocked.render(caseView.case_id);await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(2));await new Promise(r=>setTimeout(r,0));
   await blocked.submit({dataset:{fclForm:'ops-run'}});
   expect(blockedWrite).toHaveBeenCalledTimes(1);
   expect(blocked.render(caseView.case_id)).toContain('缺少对人民币汇率：USD');

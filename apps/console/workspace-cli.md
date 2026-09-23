@@ -68,6 +68,17 @@ node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.confi
 
 当前 `workspace commands` 包含现有人员功能以及 FCL 人员 action、公开 inquiry action。运行 `workspace commands` 查看实际支持范围。OCR、邮件订舱、SO 识别仍未交付；命令存在不等于生产业务已启用。
 
+FCL 执行 v2 增加同票成交、节点协作及邮件待办，人员命令仍使用本人会话。`workspace-list` 支持阶段与“待我处理”；`execution-preview/start/get` 处理明确成交；`execution-node-*`、`execution-shared-save` 更新执行；`notification-v2-*` 管理个人默认配置。全部动作与 Web 使用相同版本、权限、幂等和返回结构。
+
+```sh
+freightclaw workspace schema fcl execution-start
+freightclaw workspace schema fcl execution-node-complete
+freightclaw workspace fcl execution-get --session-file session.json --input case-ref.json
+freightclaw workspace fcl execution-node-save --session-file session.json --input node.json --idempotency-key node-save-000000001
+```
+
+写入前读回当前 `expected_version`；成交引用必须来自已批准的正式文件，不能自动选择最新报价。`execution-history` 与 `execution-mail-list` 使用游标分页。邮件 `unknown` 先经 `execution-mail-resolve` 记录核实结果，确认未发送后才可明确重试；`smtp_accepted` 不等于最终投递。执行参与权不会赋予原 Case/Quote/运价库读取权限。
+
 ## FCL 人员与公开询价
 
 人员 FCL 命令复用同一 person session，路径固定为 `/console/api/v1/fcl/<action>`：

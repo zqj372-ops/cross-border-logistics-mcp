@@ -1,6 +1,10 @@
 import {fclField,fclFieldLabel,FCL_FIELDS} from './fcl-fields.ts';
 import { fclLabel, fclValue, fclEventMessage } from '../inquiry/fcl-presentation.ts';
 import {
+  FCL_CONTAINER_TYPES as containerTypes,
+  FCL_CARGO_TYPES,
+  FCL_INCOTERMS as incoterms,
+  FCL_SERVICE_IDS,
   buildFclInquirySummary,
   createFclInquiryDraft,
   isFclInquiryComplete,
@@ -10,26 +14,9 @@ import {
 import { fclPublicOutputSchemas } from '../../services/access-gateway/portal/fcl-http-contracts.ts';
 
 const API = '/inquiry/api/v1';
-const containerTypes = ['20GP', '40GP', '40HQ', '45HQ'];
-const containerLabels = { '20GP': '20GP', '40GP': '40GP', '40HQ': '40HQ', '45HQ': '45HQ' };
 const containerDescriptions = { '20GP': '20 尺普柜', '40GP': '40 尺普柜', '40HQ': '40 尺高柜', '45HQ': '45 尺高柜' };
-const cargoTypes = [
-  ['general', '普通货物'],
-  ['battery', '含电池'],
-  ['liquid_powder', '液体或粉末'],
-  ['wood', '木制品'],
-  ['regulated', '受监管货物'],
-  ['other', '其他'],
-];
-const incoterms = ['EXW', 'FOB', 'CIF', 'DDU', 'DDP', 'Other'];
-const serviceIds = [
-  ['pickup', '中国提货'],
-  ['export_customs', '中国出口报关'],
-  ['ocean_freight', '海运干线'],
-  ['canada_customs', '加拿大清关'],
-  ['devanning_storage', '拆柜与仓储'],
-  ['delivery', '加拿大派送'],
-];
+const cargoTypes = FCL_CARGO_TYPES.map(id => [id, fclLabel(id)]);
+const serviceIds = FCL_SERVICE_IDS.map(id => [id, fclLabel(id)]);
 const serviceLabel = (id) => serviceIds.find(([value]) => value === id)?.[1] || id;
 const steps = ['运输需求', '货物与服务', '联系确认'];
 
@@ -87,7 +74,7 @@ function routeFields(draft, errors) {
   return `<h2 id="fcl-step-title" tabindex="-1">${steps[0]}</h2><p class="section-intro">从哪里出发，运到哪里？填写已确认的信息，不确定的内容可以稍后补充。</p>
     <div class="field-grid">${field('中国起运城市', 'origin_city', draft.origin_city, { optional: true, error: errors.origin_city })}${field('起运港（POL）', 'pol', draft.pol, { error: errors.pol, placeholder: '例如 Yantian（盐田）' })}</div>
     <div class="field-grid">${field('目的港（POD）', 'pod', draft.pod, { error: errors.pod, placeholder: '例如 Vancouver（温哥华）' })}${field('最终目的地', 'final_destination', draft.final_destination, { optional: true, error: errors.final_destination })}</div>
-    <fieldset class="fcl-container-grid"${containerError ? ' aria-invalid="true"' : ''}><legend>${fclField("containers")}</legend>${containerTypes.map(type => { const row = draft.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="container-${type}">${containerLabels[type]}<small>${containerDescriptions[type]}</small></label><label class="check-small"><input type="checkbox" name="container-pending-${type}"${row && row.quantity === null ? ' checked' : ''}>数量待确认</label><input id="container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}${containerError ? `<p class="field-error" role="alert">${esc(containerError)}</p>` : ''}</fieldset>
+    <fieldset class="fcl-container-grid"${containerError ? ' aria-invalid="true"' : ''}><legend>${fclField("containers")}</legend>${containerTypes.map(type => { const row = draft.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="container-${type}">${type}<small>${containerDescriptions[type]}</small></label><label class="check-small"><input type="checkbox" name="container-pending-${type}"${row && row.quantity === null ? ' checked' : ''}>数量待确认</label><input id="container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${type}柜数"></div>`; }).join('')}${containerError ? `<p class="field-error" role="alert">${esc(containerError)}</p>` : ''}</fieldset>
     <div class="field-grid">${field('预计备货日期', 'cargo_ready_date', draft.cargo_ready_date || '', { optional: true, type: 'date' })}${field('贸易条款', 'incoterm', draft.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value === 'Other' ? '其他条款' : value])] })}</div>
     ${field('其他条款说明', 'incoterm_other', draft.incoterm_other || '', { optional: true })}`;
 }
@@ -260,7 +247,7 @@ export function mountFclInquiry(root) {
   };
   const supplementForm = (value) => {
     const input = ticketDraft ? { ...value.input, ...ticketDraft, contact: { ...value.input.contact, ...ticketDraft.contact } } : value.input;
-    return `<section class="panel"><div class="panel-body"><h2>补充本票资料</h2><p>修改需要补充的资料，提交后工作人员会重新核对。原始内容和修改记录都会保留。</p><form data-fcl-supplement><div class="field-grid">${field('中国起运城市', 'supply-origin_city', input.origin_city || '', { optional: true })}${field('起运港（POL）', 'supply-pol', input.pol || '', { optional: true })}</div><div class="field-grid">${field('目的港（POD）', 'supply-pod', input.pod || '', { optional: true })}${field('最终目的地', 'supply-final_destination', input.final_destination || '', { optional: true })}</div><fieldset class="fcl-container-grid"><legend>${fclField("containers")}</legend>${containerTypes.map(type => { const row = input.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="supply-container-${type}">${containerLabels[type]}<small>${containerDescriptions[type]}</small></label><label class="check-small"><input type="checkbox" name="supply-container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>数量待确认</label><input id="supply-container-${type}" name="supply-container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${containerLabels[type]}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${field('货物品名', 'supply-cargo_name', input.cargo_name || '', { optional: true })}${field('货物属性', 'supply-cargo_type', input.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div><div class="field-grid">${field('预计毛重 kg', 'supply-estimated_weight', input.estimated_weight?.value || '', { optional: true })}${field('备货日期', 'supply-cargo_ready_date', input.cargo_ready_date || '', { optional: true, type: 'date' })}</div><div class="field-grid">${field('贸易条款', 'supply-incoterm', input.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value === 'Other' ? '其他条款' : value])] })}${field('其他条款说明', 'supply-incoterm_other', input.incoterm_other || '', { optional: true })}</div><div class="field-grid">${field('联系人', 'supply-contact-name', input.contact?.name || '', { optional: true })}${field('邮箱', 'supply-contact-email', input.contact?.email || '', { optional: true, type: 'email' })}</div><div class="field-grid">${field('公司', 'supply-contact-company', input.contact?.company || '', { optional: true })}${field('电话', 'supply-contact-phone', input.contact?.phone || '', { optional: true, type: 'tel' })}</div><div class="field"><label for="supply-notes">补充说明</label><textarea id="supply-notes" name="supply-notes" rows="3" maxlength="4000">${esc(input.notes || '')}</textarea></div><fieldset class="fcl-service-grid"><legend>${fclField("selected_services")}</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${input.selected_services?.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset><div data-fcl-supplement-diff>${supplementDiff(value.input, ticketDraft || value.input)}</div><div class="field"><label for="supply-message">给工作人员留言</label><textarea id="supply-message" name="supply-message" rows="2" maxlength="2000">${esc(ticketMessageDraft)}</textarea></div><button class="button primary" type="submit"${ticketBusy ? ' disabled' : ''}>提交补充资料</button></form></div></section>`;
+    return `<section class="panel"><div class="panel-body"><h2>补充本票资料</h2><p>修改需要补充的资料，提交后工作人员会重新核对。原始内容和修改记录都会保留。</p><form data-fcl-supplement><div class="field-grid">${field('中国起运城市', 'supply-origin_city', input.origin_city || '', { optional: true })}${field('起运港（POL）', 'supply-pol', input.pol || '', { optional: true })}</div><div class="field-grid">${field('目的港（POD）', 'supply-pod', input.pod || '', { optional: true })}${field('最终目的地', 'supply-final_destination', input.final_destination || '', { optional: true })}</div><fieldset class="fcl-container-grid"><legend>${fclField("containers")}</legend>${containerTypes.map(type => { const row = input.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="supply-container-${type}">${type}<small>${containerDescriptions[type]}</small></label><label class="check-small"><input type="checkbox" name="supply-container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>数量待确认</label><input id="supply-container-${type}" name="supply-container-${type}" type="number" min="1" max="9999" step="1" inputmode="numeric" value="${row?.quantity ?? ''}" aria-label="${type}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${field('货物品名', 'supply-cargo_name', input.cargo_name || '', { optional: true })}${field('货物属性', 'supply-cargo_type', input.cargo_type || '', { optional: true, options: [['', '待确认'], ...cargoTypes] })}</div><div class="field-grid">${field('预计毛重 kg', 'supply-estimated_weight', input.estimated_weight?.value || '', { optional: true })}${field('备货日期', 'supply-cargo_ready_date', input.cargo_ready_date || '', { optional: true, type: 'date' })}</div><div class="field-grid">${field('贸易条款', 'supply-incoterm', input.incoterm || '', { optional: true, options: [['', '待确认'], ...incoterms.map(value => [value, value === 'Other' ? '其他条款' : value])] })}${field('其他条款说明', 'supply-incoterm_other', input.incoterm_other || '', { optional: true })}</div><div class="field-grid">${field('联系人', 'supply-contact-name', input.contact?.name || '', { optional: true })}${field('邮箱', 'supply-contact-email', input.contact?.email || '', { optional: true, type: 'email' })}</div><div class="field-grid">${field('公司', 'supply-contact-company', input.contact?.company || '', { optional: true })}${field('电话', 'supply-contact-phone', input.contact?.phone || '', { optional: true, type: 'tel' })}</div><div class="field"><label for="supply-notes">补充说明</label><textarea id="supply-notes" name="supply-notes" rows="3" maxlength="4000">${esc(input.notes || '')}</textarea></div><fieldset class="fcl-service-grid"><legend>${fclField("selected_services")}</legend>${serviceIds.map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${input.selected_services?.includes(id) ? ' checked' : ''}><span>${label}</span></label>`).join('')}</fieldset><div data-fcl-supplement-diff>${supplementDiff(value.input, ticketDraft || value.input)}</div><div class="field"><label for="supply-message">给工作人员留言</label><textarea id="supply-message" name="supply-message" rows="2" maxlength="2000">${esc(ticketMessageDraft)}</textarea></div><button class="button primary" type="submit"${ticketBusy ? ' disabled' : ''}>提交补充资料</button></form></div></section>`;
   };
 
   const supplementDiff = (current, next) => {

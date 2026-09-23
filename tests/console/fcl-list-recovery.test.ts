@@ -17,6 +17,6 @@ it('recovers a failed list without losing the open inquiry form or writing busin
  expect(api).toHaveBeenCalledTimes(1);
  await ui.action({dataset:{action:'fcl-cases-retry'}});
  const html=ui.page();
- expect(html).toContain('还没有询价');expect(html).toContain('data-fcl-form="case-create"');
+ expect(html).toContain('当前没有匹配的业务');expect(html).toContain('data-fcl-form="case-create"');
  expect(html).not.toContain('重新加载');expect(api).toHaveBeenCalledTimes(2);expect(mutate).not.toHaveBeenCalled();
 });
