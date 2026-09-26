@@ -1,11 +1,11 @@
-import { renderCustomsReference } from './customs-reference.js';
+import { renderCustomsReference, renderCustomsImportBrief } from './customs-reference.js';
 import {createFreightcomForm} from './freightcom-form.js';
 import {createCargoLines} from './cargo-lines.js';
 export function createBusinessWorkspace(ui) {
   const { esc, head, panel, field, input, actions, formError, note, icon } = ui;
   const cargoLines=createCargoLines(esc);
   const carrierForm=createFreightcomForm({esc,field,input});
-  const state = { customsInput: null, customsResult: null, quoteInput: null, quoteResult: null, privateAddress:false, freightcomInput: null, freightcomResult: null, extraction: null, customerMessage: null, prepared: null, saved: null, history: null, historyLoading: false, historyError: null, historyRecord: null, review: null, reviewQueue: null, reviewQueueLoading: false, reviewPrepared: null, reviewResolved: null, documentResult: null };
+  const state = { customsInput: null, customsResult: null, customsView: null, customsDirty: false, quoteInput: null, quoteResult: null, privateAddress:false, freightcomInput: null, freightcomResult: null, extraction: null, customerMessage: null, prepared: null, saved: null, history: null, historyLoading: false, historyError: null, historyRecord: null, review: null, reviewQueue: null, reviewQueueLoading: false, reviewPrepared: null, reviewResolved: null, documentResult: null };
   const privateSelect=(name,options,value='')=>`<select id="${name}" name="${name}" required><option value="">请选择并确认</option>${options.map(([id,label])=>`<option value="${id}" ${value===id?'selected':''}>${label}</option>`).join('')}</select>`;
   const today = () => new Date().toLocaleDateString('en-CA');
   const money = (value, currency) => value === null || value === undefined ? '待确认' : `${esc(value)} ${esc(currency)}`;
@@ -54,20 +54,27 @@ export function createBusinessWorkspace(ui) {
   }
   function customsResults() {
     const result = state.customsResult;
-    if (!result) return panel('查询结果', '候选、税率与单证将在这里展示', '<div class="empty-state"><div class="empty-symbol">' + icon('file') + '</div><h2>从商品名称或编码开始</h2><p>查询将核对来源服务的当前发布。缺少信息时，会在工作台内继续补充。</p></div>');
+    if (!result) return panel('商品进口建议与要求', '品名与归类建议 · 税率 · 进口要求', '<div class="empty-state"><div class="empty-symbol">' + icon('file') + '</div><h2>输入商品名称或税号</h2><p>集中查看建议申报品名、候选归类、税率、反倾销、反补贴、进口限制和清关资料。尚未核验的项目会单独标明。</p></div>');
     const data = result.data;
-    if (result.schema_version === 'portal-customs-reference@2026-09-27.v1' && data?.formal_ready === false) return renderCustomsReference(ui, data);
+    if (result.schema_version === 'portal-customs-reference@2026-09-27.v1' && data?.formal_ready === false) return renderCustomsReference(ui, data, { input: state.customsInput || {}, ...state.customsView, dirty: Boolean(state.customsDirty) });
     let body = resultNote(result);
     if (!data) return panel('查询结果', result.reason_codes?.includes('public_daily_limit_reached') ? '今日额度已用完，已保留填写的资料' : '资料已保留，可以稍后重试', `<div class="panel-body">${body}</div>`);
     if (data.nextQuestion) body += `<form data-form="business-customs-answer" class="question-form"><h3>${esc(data.nextQuestion.label)}</h3>${formError}<div class="choice-list">${data.nextQuestion.options.map((option) => `<label class="choice-row"><input type="radio" name="answer" value="${esc(option)}" required><span>${esc(option)}</span></label>`).join('')}</div>${actions('补充并继续查询')}</form>`;
-    if (data.candidates?.length) body += `<section class="result-section"><h3>候选归类</h3><p class="muted">根据商品实际属性确认候选，编码相似不代表归类相同。</p><div class="candidate-list">${data.candidates.map((candidate) => `<div class="candidate-row"><div><span class="badge">${esc(labels[candidate.country])}</span><h3>${esc(candidate.displayCode)}</h3><p>${esc(candidate.chineseExplanation?.text || candidate.legalNames?.[0]?.text || '')}</p><small>${esc(candidate.classificationReason)}</small></div>${candidate.hs6 ? `<button type="button" class="button small" data-action="business-customs-candidate" data-id="${esc(candidate.hs6)}">按此候选复查</button>` : '<span class="badge">需更细分类</span>'}</div>`).join('')}</div></section>`;
-    body += (data.results || []).map((country) => `<section class="country-result"><div class="panel-head"><div><h2>${esc(labels[country.country])}</h2><p>${esc(country.displayCode)} · ${esc(country.legalNames?.[0]?.text || '')}</p></div><span class="badge ${country.status === 'confirmed' ? 'success' : 'warning'}">${esc(labels[country.status] || country.status)}</span></div><div class="panel-body"><p>${esc(country.chineseExplanation?.text || '')}</p><div class="result-summary"><small>已确认的关税合计</small><div class="result-metric">${country.confirmedTotalPercent === null ? '待确认' : `${esc(country.confirmedTotalPercent)}%`}</div><p>合计范围以来源服务为准，税费和其他措施逐项查看。</p></div><div class="table-wrap"><table><thead><tr><th>税费项目</th><th>税率 / 表达式</th><th>适用条件</th></tr></thead><tbody>${country.rates.map((rate) => `<tr><td><span class="cell-title">${esc(rate.label)}</span><span class="cell-detail">${rate.confirmed ? '已确认' : '待复核'} · ${esc(rate.treatment)}</span></td><td>${esc(rate.displayValue)}<span class="cell-detail">${esc(rate.rateExpressionRaw)}</span></td><td>${esc(rate.conditionText || '以对应税则条件为准')}<span class="cell-detail">${esc(rate.interactionNote)}</span></td></tr>`).join('')}</tbody></table></div>${country.documents.length ? `<details class="business-details"><summary>单证与准备事项 · ${country.documents.length} 项</summary>${country.documents.map((document) => `<div class="source-row"><strong>${esc(document.label)}</strong><span>${esc(labels[document.status] || document.status)}</span><p>${esc(document.reason)}</p>${document.conditions.length ? `<small>${document.conditions.map(esc).join('；')}</small>` : ''}</div>`).join('')}</details>` : ''}${country.measures.length ? `<details class="business-details"><summary>贸易措施 · ${country.measures.length} 项</summary>${country.measures.map((measure) => `<div class="source-row"><strong>${esc(measure.label)}</strong><p>${esc(measure.legalScope)}</p><small>${esc(measure.rateExpressionRaw || '具体税率需核对适用范围')}</small>${measure.exceptions.length ? `<small>${measure.exceptions.map(esc).join('；')}</small>` : ''}</div>`).join('')}</details>` : ''}${country.warnings.length ? note(country.warnings.join('；'), 'warning') : ''}</div></section>`).join('');
+    if (data.candidates?.length) body += `<section class="result-section"><h3>候选归类</h3><p class="muted">根据商品实际属性确认候选，编码相似不代表归类相同。</p><div class="candidate-list">${data.candidates.map((candidate) => `<div class="candidate-row"><div><span class="badge">${esc(labels[candidate.country])}</span><h3>${esc(candidate.displayCode)}</h3><p>${esc(candidate.chineseExplanation?.text || candidate.legalNames?.[0]?.text || '')}</p><small>${esc(candidate.classificationReason)}</small></div>${candidate.hs6 ? `<button type="button" class="button small" data-action="business-customs-candidate" data-id="${esc(candidate.hs6)}" data-country="${esc(candidate.country)}">按此候选复查</button>` : '<span class="badge">需更细分类</span>'}</div>`).join('')}</div></section>`;
+    body += (data.results || []).slice().sort((a,b)=>Number(b.country===state.customsInput?.codeCountry)-Number(a.country===state.customsInput?.codeCountry)).map((country) => `<details class="country-result" ${country.country===(state.customsInput?.codeCountry||data.results[0]?.country)?'open':''}><summary class="panel-head"><div><h2>${esc(labels[country.country])}</h2><p>${esc(country.displayCode)} · ${esc(country.legalNames?.[0]?.text || '')}</p></div><span class="badge ${country.status === 'confirmed' ? 'success' : 'warning'}">${esc(labels[country.status] || country.status)}</span></summary><div class="panel-body">${renderCustomsImportBrief(ui, country, state.customsInput || {})}<details class="business-details"><summary>完整税率、措施与单证依据</summary><p>${esc(country.chineseExplanation?.text || '')}</p><div class="result-summary"><small>已确认的关税合计</small><div class="result-metric">${country.confirmedTotalPercent === null ? '待确认' : `${esc(country.confirmedTotalPercent)}%`}</div><p>合计范围以来源服务为准，税费和其他措施逐项查看。</p></div><div class="table-wrap"><table><thead><tr><th>税费项目</th><th>税率 / 表达式</th><th>适用条件</th></tr></thead><tbody>${country.rates.map((rate) => `<tr><td><span class="cell-title">${esc(rate.label)}</span><span class="cell-detail">${rate.confirmed ? '已确认' : '待复核'} · ${esc(rate.treatment)}</span></td><td>${esc(rate.displayValue)}<span class="cell-detail">${esc(rate.rateExpressionRaw)}</span></td><td>${esc(rate.conditionText || '以对应税则条件为准')}<span class="cell-detail">${esc(rate.interactionNote)}</span></td></tr>`).join('')}</tbody></table></div>${country.documents.length ? `<details class="business-details"><summary>单证与准备事项 · ${country.documents.length} 项</summary>${country.documents.map((document) => `<div class="source-row"><strong>${esc(document.label)}</strong><span>${esc(labels[document.status] || document.status)}</span><p>${esc(document.reason)}</p>${document.conditions.length ? `<small>${document.conditions.map(esc).join('；')}</small>` : ''}</div>`).join('')}</details>` : ''}${country.measures.length ? `<details class="business-details"><summary>贸易措施 · ${country.measures.length} 项</summary>${country.measures.map((measure) => `<div class="source-row"><strong>${esc(measure.label)}</strong><p>${esc(measure.legalScope)}</p><small>${esc(measure.rateExpressionRaw || '具体税率需核对适用范围')}</small>${measure.exceptions.length ? `<small>${measure.exceptions.map(esc).join('；')}</small>` : ''}</div>`).join('')}</details>` : ''}${country.warnings.length ? note(country.warnings.join('；'), 'warning') : ''}</details></div></details>`).join('');
     body += `<details class="business-details"><summary>来源与发布依据 · ${data.sources?.length || 0} 条</summary><p class="muted">税则日期 ${esc(data.ruleDate)} · 服务版本 ${esc(data.serviceVersion)}</p>${sourceList(data.sources)}<small>发布快照 ${esc(data.snapshotHash)}</small></details>`;
     return panel('关务查询结果', `查询编号 ${data.queryId}`, `<div class="panel-body">${body}</div>`);
   }
   function customsPage() {
-    const saved = state.customsInput || { query: '', ruleDate: today(), codeCountry: 'CN', attributes: { originCountry: 'CN' } };
-    return head('关税与归类查询', '中国原产商品 · 在同一页面核对中国出口、美国进口与加拿大进口。') + `<div class="business-layout"><form class="panel business-input-panel" data-form="business-customs"><div class="panel-head"><h2>商品资料</h2></div><div class="panel-body">${formError}<div class="field-grid">${field('商品名称或 HS 编码', 'query', input('query', `required maxlength="200" value="${esc(saved.query)}" placeholder="例如：不锈钢水杯 / 732393"`), '名称查询请尽量说明材质和用途。', true)}${field('税则日期', 'ruleDate', input('ruleDate', `type="date" required value="${esc(saved.ruleDate)}"`))}${field('编码所属地区', 'codeCountry', `<select id="codeCountry" name="codeCountry">${Object.entries(labels).filter(([key]) => ['CN', 'US', 'CA'].includes(key)).map(([key, value]) => `<option value="${key}" ${saved.codeCountry === key ? 'selected' : ''}>${value}</option>`).join('')}</select>`)}${field('原产国', 'originCountry', '<input id="originCountry" value="中国" readonly>', '当前支持中国原产商品。', true)}${field('主要材质', 'material', input('material', `maxlength="200" value="${esc(saved.attributes.material || '')}" placeholder="例如：不锈钢"`), '', true)}${field('用途', 'use', input('use', `maxlength="200" value="${esc(saved.attributes.use || '')}" placeholder="例如：日常饮水"`), '', true)}</div><div class="field-grid">${[['vacuumInsulated', '真空或双层保温结构'], ['contains_steel_aluminum', '含钢铁或铝成分']].map(([key, label]) => field(label, key, `<select id="${key}" name="${key}"><option value="">尚未补充</option>${[['yes', '是'], ['no', '否'], ['unknown', '不确定']].map(([value, text]) => `<option value="${value}" ${saved.attributes[key] === value ? 'selected' : ''}>${text}</option>`).join('')}</select>`)).join('')}</div>${actions('查询关税与归类')}<p class="form-fineprint">结果来自关务服务。归类未确认或数据未就绪时，会保留复核提示。</p></div></form><div id="business-results" aria-live="polite">${customsResults()}</div></div>`;
+    const saved = state.customsInput || { query: '', ruleDate: today(), codeCountry: 'CA', attributes: { originCountry: 'CN' } };
+    const attributes = saved.attributes || {};
+    const extra = [['material','主要材质','例如：不锈钢'],['use','用途','例如：日常饮水']].map(([name,label,placeholder]) => field(label,name,input(name,`maxlength="200" value="${esc(attributes[name] || '')}" placeholder="${placeholder}"`))).join('');
+    const choices = [['vacuumInsulated','真空或双层保温结构'],['contains_steel_aluminum','含钢铁或铝成分']].map(([key,label])=>field(label,key,`<select id="${key}" name="${key}"><option value="">尚未补充</option>${[['yes','是'],['no','否'],['unknown','不确定']].map(([value,text])=>`<option value="${value}" ${attributes[key]===value?'selected':''}>${text}</option>`).join('')}</select>`)).join('');
+    return head('商品进口查询', '中国原产商品 · 先看品名与归类建议，再看税率、限制和清关要求。') + `<div class="customs-workspace"><form class="panel customs-query-panel" data-form="business-customs"><div class="panel-body">${formError}<div class="customs-query-fields">${field('商品名称或 HS 编码','query',input('query',`required maxlength="200" value="${esc(saved.query)}" placeholder="输入税号或法律品名"`),'参考查询按税号或该地区原文品名匹配。')}${field('查询地区','codeCountry',`<select id="codeCountry" name="codeCountry">${[['CA','加拿大进口'],['US','美国进口'],['CN','中国税号资料']].map(([value,label])=>`<option value="${value}" ${saved.codeCountry===value?'selected':''}>${label}</option>`).join('')}</select>`)}${field('税则日期','ruleDate',input('ruleDate',`type="date" required value="${esc(saved.ruleDate)}"`))}${actions('查询进口要求')}</div><details class="customs-extra"><summary>补充商品资料（选填）</summary><p class="muted">用于整理申报品名及正式归类追问；当前参考检索不根据这些属性判断税号适用性。</p><div class="field-grid">${extra}${choices}</div></details></div></form><div id="business-results" aria-live="polite">${customsResults()}</div></div>`;
+  }
+  function refreshCustomsView(focusSelector) {
+    const target = document.querySelector('#business-results');
+    if (target) { target.innerHTML = customsResults(); target.querySelector(focusSelector)?.focus(); }
   }
   function freightcomAmount(value) {
     if (!value) return '待确认';
@@ -118,7 +125,7 @@ export function createBusinessWorkspace(ui) {
     const data = new FormData(form); const get = (key) => String(data.get(key) || '').trim();
     if (type === 'business-customs') {
       state.customsInput = { query: get('query'), ruleDate: get('ruleDate'), codeCountry: get('codeCountry'), attributes: { originCountry: 'CN', ...(get('material') ? { material: get('material') } : {}), ...(get('use') ? { use: get('use') } : {}), ...(get('vacuumInsulated') ? { vacuumInsulated: get('vacuumInsulated') } : {}), ...(get('contains_steel_aluminum') ? { contains_steel_aluminum: get('contains_steel_aluminum') } : {}) } };
-      state.customsResult = await call('customs/query', state.customsInput);
+      state.customsResult = await call('customs/query', state.customsInput); state.customsView = null; state.customsDirty = false;
     } else if (type === 'business-customs-answer') {
       const attribute = state.customsResult?.data?.nextQuestion?.attribute;
       const answer = get('answer');
@@ -126,7 +133,7 @@ export function createBusinessWorkspace(ui) {
       else if (['vacuumInsulated', 'contains_steel_aluminum'].includes(attribute) && ['是', '否', '不确定'].includes(answer)) state.customsInput = { ...state.customsInput, attributes: { ...state.customsInput.attributes, [attribute]: { 是: 'yes', 否: 'no', 不确定: 'unknown' }[answer] } };
       else if (['material', 'use'].includes(attribute)) state.customsInput = { ...state.customsInput, attributes: { ...state.customsInput.attributes, [attribute]: answer } };
       else throw Object.assign(new Error('customs_additional_evidence_required'), { code: 'customs_additional_evidence_required' });
-      state.customsResult = await call('customs/query', state.customsInput);
+      state.customsResult = await call('customs/query', state.customsInput); state.customsView = null; state.customsDirty = false;
     } else if (type === 'business-extract') {
       state.customerMessage = get('customer_message');
       state.extraction = await call('quote/extract', { customer_message: state.customerMessage });
@@ -165,6 +172,16 @@ export function createBusinessWorkspace(ui) {
     ui.rerender(); if (matchMedia('(max-width: 900px)').matches) document.querySelector('#business-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return true;
   }
   async function action(button) {
+    if (button.dataset.action === 'business-customs-country' && ['CN','US','CA'].includes(button.dataset.country)) {
+      state.customsView = { country: button.dataset.country };
+      refreshCustomsView(`[data-country="${button.dataset.country}"]`); return true;
+    }
+    if (button.dataset.action === 'business-customs-copy') {
+      if (state.customsDirty) return true;
+      const text = document.querySelector('[data-customs-brief]')?.innerText;
+      if (text) { const feedback = document.querySelector('[data-customs-copy-status]'); try { await navigator.clipboard.writeText(text); if (feedback) feedback.textContent = '已复制参考摘要'; } catch { if (feedback) feedback.textContent = '复制失败，请选中文字复制'; } }
+      return true;
+    }
     const quoteForm=document.querySelector('[data-form="business-quote"]');
     if(button.dataset.action?.startsWith('business-cargo-')){captureQuote(quoteForm);cargoLines.action(button,quoteForm);state.quoteResult=null;ui.rerender();return true;}
     if (['business-fc-add','business-fc-remove'].includes(button.dataset.action)) {
@@ -210,8 +227,8 @@ export function createBusinessWorkspace(ui) {
     }
     if (button.dataset.action === 'business-record-refresh') { state.history = null; state.historyError = null; state.historyRecord = null; state.review = null; state.reviewQueue = null; state.reviewPrepared = null; state.reviewResolved = null; state.documentResult = null; ui.rerender(); return true; }
     if (button.dataset.action !== 'business-customs-candidate') return false;
-    state.customsInput = { ...state.customsInput, selectedHs6: button.dataset.id };
-    state.customsResult = await call('customs/query', state.customsInput); ui.rerender(); return true;
+    state.customsInput = { ...state.customsInput, selectedHs6: button.dataset.id, ...(['CN','US','CA'].includes(button.dataset.country) ? {codeCountry:button.dataset.country} : {}) };
+    state.customsResult = await call('customs/query', state.customsInput); state.customsView = null; state.customsDirty = false; ui.rerender(); return true;
   }
   function reset() { cargoLines.reset(); Object.keys(state).forEach((key) => { state[key] = null; }); }
   function openLinkedCase(link){for(const key of ['quoteInput','quoteResult','prepared','saved','extraction','freightcomInput','freightcomResult','customsInput','customsResult','historyRecord','history','reviewPrepared','reviewResolved']){if(key in state)state[key]=null;}cargoLines.reset();state.linkedCase={case_ref:link.case_ref,reviewed_customer_event_ref:link.reviewed_customer_event_ref??null};location.hash='quote';}
@@ -241,7 +258,8 @@ export function createBusinessWorkspace(ui) {
   return { input(event){
     cargoLines.input(event);
     const form=event.target.closest('form');
+    if(form?.dataset.form==='business-customs') state.customsDirty=Boolean(state.customsResult);
     if(form?.dataset.form==='business-quote') {captureQuote(form);state.quoteResult=null;state.prepared=null;state.saved=null;}
     if(form?.dataset.form==='business-freightcom') {state.freightcomInput=carrierForm.read(new FormData(form));state.freightcomResult=null;}
-  }, openLinkedCase, isDirty:()=>Boolean(state.quoteInput||state.freightcomInput||state.extraction), change(event){if(cargoLines.change(event)){captureQuote(event.target.closest('form'));state.quoteResult=null;ui.rerender();return true;}return false;}, customsPage, quotePage, historyPage, submit, action, reset, restoreHistory(input) { state.customsInput = structuredClone(input); state.customsResult = null; } };
+  }, openLinkedCase, isDirty:()=>Boolean(state.quoteInput||state.freightcomInput||state.extraction), change(event){if(event.target.matches('[data-customs-reference-code]')){state.customsView={country:state.customsView?.country||state.customsInput?.codeCountry||'CA',code:event.target.value};refreshCustomsView('[data-customs-reference-code]');return true;}if(cargoLines.change(event)){captureQuote(event.target.closest('form'));state.quoteResult=null;ui.rerender();return true;}return false;}, customsPage, quotePage, historyPage, submit, action, reset, restoreHistory(input) { state.customsInput = structuredClone(input); state.customsResult = null; state.customsView = null; state.customsDirty = false; } };
 }
