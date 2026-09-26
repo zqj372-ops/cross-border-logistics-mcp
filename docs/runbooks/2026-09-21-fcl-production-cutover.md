@@ -53,7 +53,7 @@ SMTP JSON 是闭合文件：
 迁移必须在能看到真实 host writer 的 PID namespace 中运行。使用 candidate 镜像并显式 `--pid=host`，不要依赖迁移容器自身 PID namespace 的空 `/proc`：
 
 ```sh
-docker run --rm --pid=host --user 0:0 \
+docker run --rm --network none --pid=host --cap-add=SYS_PTRACE --user 0:0 \
   -v /data/logistics-mcp/portal/state:/var/lib/freightclaw-portal \
   <candidate-image> \
   node dist/deploy/scripts/migrate-fcl-sqlite-offline.mjs \
@@ -65,6 +65,8 @@ docker run --rm --pid=host --user 0:0 \
 ```
 
 该命令不使用 `fresh_fixture`。空 Case/Native 使用 `exclusive_verified` 创建生产 schema；旧 Doc v2 走 v2→v3→v4→v5。脚本会在任何 open/create 前检查三库外部句柄，并在结束后把 DB/WAL/SHM 权限恢复给 runtime UID/GID。
+
+`SYS_PTRACE` 仅供一次性离线迁移容器检查宿主机其他进程的 `/proc/<pid>/fd`。默认 Docker 权限不能完成该检查，会返回 `document_v3_upgrade_ownership_unverified`；不能跳过检查或使用容器自己的 PID namespace。保持迁移容器网络关闭，不给长期 Portal 容器增加该 capability。2026-09-26 已在 Oracle 隔离空库验证：writer 存在时拒绝迁移，停止 writer 后迁移成功。
 
 成功输出至少验证：
 

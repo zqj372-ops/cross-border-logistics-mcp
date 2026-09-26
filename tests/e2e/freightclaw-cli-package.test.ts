@@ -61,13 +61,17 @@ describe("standalone CLI installation", () => {
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
     const workspaceCommands=(await installed(["workspace","commands","--json"])).stdout;
-    expect(JSON.parse(workspaceCommands)).toHaveLength(121);
+    expect(JSON.parse(workspaceCommands)).toHaveLength(150);
     expect(workspaceCommands).toContain("fcl case-create");
     expect(workspaceCommands).toContain("schedules live-search");
     expect(workspaceCommands).toContain("fcl document-export");
+    expect(workspaceCommands).toContain("fcl execution-start");
+    expect(workspaceCommands).toContain("fcl notification-v2-save");
     expect(workspaceCommands).toContain("fcl inquiry submit");
     expect((await installed(["workspace","schema","schedules","live-search"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","document-export"])).code).toBe(0);
+    expect((await installed(["workspace","schema","fcl","execution-start"])).code).toBe(0);
+    expect((await installed(["workspace","schema","fcl","notification-v2-save"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","inquiry","submit"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","estimate-run"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","rate-bulk-publish"])).code).toBe(0);

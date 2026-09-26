@@ -107,7 +107,7 @@ node --import tsx/esm tests/e2e/portal-browser/fcl-execution-flow.mjs
 **以下是操作说明，本次没有执行生产迁移。**
 
 1. 停止旧 Portal 和其他 SQLite writer。对 Case、Native、Document 三库及配套 WAL/SHM 做一致备份，记录路径、摘要和旧版本；脚本不会代替运营者创建备份。
-2. 在已确认无外部 writer 的 Linux 环境执行既有离线脚本，增加 `--execution`。状态目录必须为私有目录，数据库文件不得是 symlink；保留运行用户 ownership。
+2. 在已确认无外部 writer 的 Linux 环境执行既有离线脚本，增加 `--execution`。若使用容器，必须使用 `--pid=host --cap-add=SYS_PTRACE --network none` 检查真实 host writer；该 capability 只用于离线迁移容器。状态目录必须为私有目录，数据库文件不得是 symlink；保留运行用户 ownership。Linux 隔离实测的权限说明见 [生产切流 runbook](2026-09-21-fcl-production-cutover.md#4-离线迁移)。
 3. 参数形状：`npm run migrate:fcl-sqlite -- --state-root <绝对私有目录> --writers-stopped --execution`。若文档库使用另一位置，使用位于同一受控状态目录的 `--quote-documents`；需要时同时提供 `--runtime-uid` / `--runtime-gid`。
 4. 读回 Case v3、Native v3、Document v5，完整性检查，核对旧业务与文档摘要、旧记录数；两张执行表初始为空。脚本拒绝运行时自动升级；旧 v2 reader 拒绝 v3。
 5. 配置 `PORTAL_FCL_EXECUTION_ENABLED=true` 和受保护的 `PORTAL_FCL_EXECUTION_DIRECTORY_FILE`，同时保留既有 FCL/SMTP/PDF 启用条件。目录文件的 `people` 数组只引用真实 IdP 的 `user_id` 与 `authority_url`，不创建用户、不分配 Case 权限。URL 必须是同一 OIDC issuer 的 HTTPS Authentik 用户权威接口；沿用受保护 authority token 文件。未知、停用、未验证邮箱或不可用的权威查询不得被当成活动人员。
