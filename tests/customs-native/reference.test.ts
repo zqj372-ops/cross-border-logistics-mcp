@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, appendFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,7 @@ import { createCustomsReferenceClient, customsReferenceData } from '../../servic
 import { exportPKCS8, generateKeyPair } from 'jose';
 import { loadPortalBusinessService } from '../../services/access-gateway/portal/business/config';
 import { dataset } from './publication-fixture';
+import { createCustomsNameTranslator } from '../../services/customs-native/name-translation';
 const dirs:string[]=[];
 afterEach(()=>{for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
 function fixture(){
@@ -32,6 +33,28 @@ it('fails closed for snapshot mutation, hash mismatch and SQL-looking search inp
  expect(()=>createCustomsReferenceClient({...config,sha256:'0'.repeat(64)})).toThrow('hash_mismatch');
  expect(await client.query({...request,input:{...request.input,query:"' OR 1=1 --"}})).toMatchObject({data:{candidates:[]}});
  appendFileSync(config.snapshotFile,'changed');expect(await client.query(request)).toMatchObject({status:'unavailable',data:null,reason_codes:['customs_reference_changed']});
+});
+
+it('adds bilingual display names from source text only, preserving official rows and manual-review authority',async()=>{
+ const {config,client}=fixture();
+ const fetchImpl=vi.fn<typeof fetch>().mockImplementation((_url,options)=>{
+  const body=JSON.parse(options?.body as string) as {messages:{content:string}[]};
+  const {items}=JSON.parse(body.messages[1]!.content) as {items:{id:number;text:string;target_language:string}[]};
+  expect(body.messages[1]!.content).not.toContain('private customer description');
+  expect(body.messages[1]!.content).not.toContain('private material');
+  return Promise.resolve(new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({translations:items.map(item=>({id:item.id,text:item.target_language==='zh'?'合成品名译文':'Synthetic translated name'}))})}}]})));
+ });
+ const input={...request.input,query:'private customer description',selectedHs6:'732393',attributes:{originCountry:'CN',material:'private material'}};
+ const raw=customsReferenceData.parse((await client.query({...request,input})).data);
+ const result=await createCustomsReferenceClient(config,createCustomsNameTranslator({apiKey:'fixture-secret',model:'fixture-model'},fetchImpl)).query({...request,input});
+ expect(result).toMatchObject({schema_version:'portal-customs-reference@2026-09-27.v2',status:'manual_review',data:{formal_ready:false}});
+ const data=customsReferenceData.parse(result.data);
+ expect(data.candidates.length).toBeGreaterThan(0);
+ data.candidates.forEach((candidate,index)=>{
+  expect(candidate.item).toEqual(raw.candidates[index]!.item);expect(candidate.rates).toEqual(raw.candidates[index]!.rates);
+  expect(candidate.display_name.translation?.status).toBe('machine');
+ });
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 
 it('uses the configured reference only for an authenticated explicit unpublished response',async()=>{

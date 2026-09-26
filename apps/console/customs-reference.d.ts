@@ -6,6 +6,7 @@ type Input = { query?:string; codeCountry?:string; attributes?:{material?:string
 type Result = CustomsSourceQueryResponse['results'][number];
 type Brief = Pick<Result,'displayCode'|'status'|'classificationReason'|'legalNames'> & Partial<Pick<Result,'measures'|'documents'|'confirmedTotalPercent'|'hierarchy'|'code'|'chineseExplanation'>> & {
  isDeclarable?:boolean;
+ nameTranslationLanguage?:'zh'|'en';
  rates?:Array<Pick<Result['rates'][number],'label'|'treatment'|'displayValue'|'confirmed'> & {conditionText?:string|null;scope?:string}>;
 };
 export function renderCustomsImportBrief(ui:Pick<Ui,'esc'>,result:Brief,input?:Input,reference?:boolean):string;

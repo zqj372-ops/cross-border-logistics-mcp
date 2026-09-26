@@ -56,7 +56,7 @@ export function createBusinessWorkspace(ui) {
     const result = state.customsResult;
     if (!result) return panel('商品进口建议与要求', '品名与归类建议 · 税率 · 进口要求', '<div class="empty-state"><div class="empty-symbol">' + icon('file') + '</div><h2>输入商品名称或税号</h2><p>集中查看建议申报品名、候选归类、税率、反倾销、反补贴、进口限制和清关资料。尚未核验的项目会单独标明。</p></div>');
     const data = result.data;
-    if (result.schema_version === 'portal-customs-reference@2026-09-27.v1' && data?.formal_ready === false) return renderCustomsReference(ui, data, { input: state.customsInput || {}, ...state.customsView, dirty: Boolean(state.customsDirty) });
+    if (['portal-customs-reference@2026-09-27.v1','portal-customs-reference@2026-09-27.v2'].includes(result.schema_version) && data?.formal_ready === false) return renderCustomsReference(ui, data, { input: state.customsInput || {}, ...state.customsView, dirty: Boolean(state.customsDirty) });
     let body = resultNote(result);
     if (!data) return panel('查询结果', result.reason_codes?.includes('public_daily_limit_reached') ? '今日额度已用完，已保留填写的资料' : '资料已保留，可以稍后重试', `<div class="panel-body">${body}</div>`);
     if (data.nextQuestion) body += `<form data-form="business-customs-answer" class="question-form"><h3>${esc(data.nextQuestion.label)}</h3>${formError}<div class="choice-list">${data.nextQuestion.options.map((option) => `<label class="choice-row"><input type="radio" name="answer" value="${esc(option)}" required><span>${esc(option)}</span></label>`).join('')}</div>${actions('补充并继续查询')}</form>`;

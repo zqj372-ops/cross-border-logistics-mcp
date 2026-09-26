@@ -25,7 +25,8 @@ export function renderCustomsImportBrief(ui, result, input = {}, reference = fal
   };
   const descriptiveQuery = input.query && !/^\d{4,10}$/u.test(input.query.replace(/[.\s]/gu, ''));
   const chineseQuery = descriptiveQuery && /\p{Script=Han}/u.test(input.query);
-  const chinese = chineseQuery ? [...new Set([input.query, input.attributes?.material, input.attributes?.use].filter(Boolean))].join('，') : nameFor('zh') || result.chineseExplanation?.text;
+  const draft = chineseQuery ? [...new Set([input.query, input.attributes?.material, input.attributes?.use].filter(Boolean))].join('，') : null;
+  const chinese = nameFor('zh') || (['machine','human_reviewed'].includes(result.chineseExplanation?.status) ? result.chineseExplanation.text : undefined);
   const english = nameFor('en');
   const row = (label, content) => `<div class="customs-brief-row"><dt>${label}</dt><dd>${content}</dd></div>`;
   const pending = message => `<span class="customs-pending">待核验</span> ${esc(message)}`;
@@ -37,7 +38,13 @@ export function renderCustomsImportBrief(ui, result, input = {}, reference = fal
   const documents = result.documents || [];
   const rateLine = rate => `<div class="customs-rate-line"><strong>${esc(rate.displayValue)}</strong> <span>${esc(rate.label)} · ${esc(treatments[rate.treatment] || rate.treatment)}</span><small>${esc(rate.conditionText || '适用条件以原文为准')}${rate.scope ? ` · ${esc(rate.scope)}` : ''} · ${rate.confirmed ? '来源已核验此税项' : '适用性待核验'}</small></div>`;
   const measureText = measure => [measure.label, matchLabels[measure.matchStatus] || '待复核', measure.rateExpressionRaw, measure.exporterOrProducer ? `生产商／出口商：${measure.exporterOrProducer}` : '', measure.legalScope].filter(Boolean).map(esc).join(' · ');
-  let body = row('建议申报品名', `<div>中文：${esc(chinese || '待补充商品中文名称')}</div><div>英文：${esc(english || '待核对英文申报名称')}</div><small>${chineseQuery ? '中文草案按所填资料整理；' : result.chineseExplanation?.status === 'machine' ? '中文包含机器释义，待核对；' : ''}税则品名仅供拟名参考，不能直接作为申报品名；须与实际材质、用途和结构一致。</small>`);
+  const translated = result.nameTranslationLanguage;
+  const languageLabel = (lang, label) => {
+    if (!(lang === 'zh' ? chinese : english)) return label;
+    const source = translated === lang || lang === 'zh' && result.chineseExplanation?.status === 'machine' ? '参考译文' : lang === 'zh' && result.chineseExplanation?.status === 'human_reviewed' ? '已审核译文' : '官方原文';
+    return `${label}（${source}）`;
+  };
+  let body = row('建议申报品名', `${draft ? `<div>品名草案：${esc(draft)}</div><small>按所填资料整理；下方为对应税则品名。</small>` : ''}<div>${languageLabel('zh','中文')}：${esc(chinese || '译文暂不可用，请核对原文')}</div><div>${languageLabel('en','英文')}：${esc(english || '译文暂不可用，请核对原文')}</div><small>${translated || result.chineseExplanation?.status === 'machine' ? '机器翻译，仅供理解原文；' : ''}税则品名仅供拟名参考，不能直接作为申报品名；须与实际材质、用途和结构一致。</small>`);
   body += row('建议归类', `<strong class="customs-code">${esc(result.displayCode)}</strong> <span class="badge ${result.status === 'confirmed' && !reference ? 'success' : 'warning'}">${result.status === 'confirmed' && !reference ? '来源已确认归类' : '候选 · 待复核'}</span><small>${esc(result.classificationReason)}${result.isDeclarable === false ? ' · 这是父级税目，需进一步确定完整税号。' : ''}</small>`);
   body += row('税率', `${rates.length ? shownRates.map(rateLine).join('') : pending('未匹配税率记录；不代表免税或零税率。')}${rates.length > shownRates.length ? `<small>另有 ${rates.length - shownRates.length} 条原文税率及待遇，展开下方依据查看。</small>` : ''}<small>${reference ? '原文参考，完整税费待核验；不自动相加或判断优惠资格。' : result.confirmedTotalPercent != null ? `来源已确认关税小计 ${esc(result.confirmedTotalPercent)}%；其他税费与贸易措施仍逐项核对。` : '完整税费待核验，未确认税项不按零计入。'}</small>`);
   for (const [label, kinds] of Object.entries(measureGroups)) {
@@ -74,7 +81,8 @@ export function renderCustomsReference(ui, data, options = {}) {
     const rawRates = [...new Map(group.flatMap(entry => entry.rates).map(rate => [JSON.stringify([rate.code, rate.treatment, rate.measure_type, rate.rate_expression_raw, rate.condition_text_raw, rate.effective_from, rate.effective_to]), rate])).values()];
     const result = {
       displayCode: item.display_code, status: 'candidate', isDeclarable: group.every(entry => Boolean(entry.item.is_declarable)),
-      legalNames: group.map(entry => ({language:entry.item.language,text:namePath(entry)})),
+      legalNames: [...group.map(entry => ({language:entry.item.language,text:entry.display_name?.text || namePath(entry)})),...(current.display_name?.translation ? [current.display_name.translation] : [])],
+      nameTranslationLanguage: current.display_name?.translation?.language,
       classificationReason: item.code === input.query?.replace(/[.\s]/gu, '') && input.codeCountry === country ? '与所填税号精确匹配；商品归类适用性仍待复核。' : `当前查看的候选，按编码顺序展示，不代表最佳归类。${country !== input.codeCountry ? '跨地区同 HS 前缀仅供对照，不代表归类等同。' : ''}`,
       rates: rawRates.map(rate => ({label:measureLabels[rate.measure_type] || rate.measure_type,treatment:rate.treatment,displayValue:rate.rate_expression_raw,conditionText:rate.condition_text_raw,confirmed:false,scope:`所属税目 ${rate.code}`})),
     };
