@@ -1,6 +1,6 @@
 # 版本号规则
 
-当前对外版本：`0.007`，对应内部 npm semver `0.0.7`。本次发布修正整柜入口从企业工作区自动切回个人工作区与会话刷新顺序。
+当前对外版本：`0.009`，对应内部 npm semver `0.0.9`。本次发布增加官方关税参考查询，保留待复核标记与正式税费发布门禁。
 
 ## 递增规则
 
@@ -18,8 +18,8 @@ npm 不允许 `0.002` 这种带前导零的 semver，因此版本同时保留两
 
 | 用途 | 当前值 | 下一版 | 权威位置 |
 | --- | --- | --- | --- |
-| 对外产品版本 | `0.007` | `0.008` | `src/logistics_mcp/version.ts` |
-| npm 包版本 | `0.0.7` | `0.0.8` | `package.json`、`deploy/cli/package.json` |
+| 对外产品版本 | `0.009` | `0.010` | `src/logistics_mcp/version.ts` |
+| npm 包版本 | `0.0.9` | `0.0.10` | `package.json`、`deploy/cli/package.json` |
 
 官网、CLI `--version`、MCP `serverInfo.version` 和面向用户的文档使用对外产品版本。npm tarball 的包元数据使用合法 semver；发布下载文件可以使用对外版本命名。
 

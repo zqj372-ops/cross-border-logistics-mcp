@@ -22,6 +22,13 @@ const statusSchema = z.object({
   evaluatedAt: dateTime.nullable(), lastSourceCheckAt: dateTime.nullable(),
   ready: z.literal(true), testData: z.literal(false), reasons: z.tuple([]),
 }).strict();
+const unpublishedStatusSchema = statusSchema.extend({
+  publishedAt: dateTime.nullable(), evaluatedAt: dateTime.nullable(),
+  releaseIds: z.array(z.string().min(1)), snapshotHash: z.string().regex(HASH).nullable(), releaseHash: z.string().regex(HASH).nullable(),
+  ready: z.literal(false), testData: z.boolean(), reasons: z.array(z.string()),
+  error: z.object({ code: z.literal("data_not_ready"), message: z.string() }).strict(),
+});
+export function customsDataNotReady(value: unknown): boolean { return unpublishedStatusSchema.safeParse(value).success; }
 const legalName = z.object({ language: z.string().min(2), text: z.string().min(1), sourceId: z.string().min(1) }).strict();
 const explanation = z.object({
   translationId: z.string().min(1), text: z.string().min(1),
@@ -196,6 +203,7 @@ export function createCustomsPortalClient(options: CustomsPortalClientOptions) {
     try {
       const response = await fetchImpl(new URL(path, base!), { ...init, redirect: "manual", signal: controller.signal });
       if (response.status >= 300 && response.status < 400) throw new Error("redirect_rejected");
+      if (response.status === 503 && customsDataNotReady(await readJson(response, maxBodyBytes, controller.signal))) throw new Error("data_not_ready");
       if (!response.ok) throw new Error(`http_${response.status}`);
       return await readJson(response, maxBodyBytes, controller.signal);
     } finally { clearTimeout(timer); }
@@ -232,6 +240,7 @@ export function createCustomsPortalClient(options: CustomsPortalClientOptions) {
         return { schema_version: CUSTOMS_PORTAL_SCHEMA_VERSION, status: "success", data: query, reason_codes: [] };
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
+        if (message === "data_not_ready") return unavailable("customs_data_not_ready");
         if (message === "redirect_rejected") return unavailable("customs_upstream_redirect_rejected");
         if (message === "response_too_large") return unavailable("customs_upstream_response_too_large");
         return unavailable("customs_upstream_unavailable");
