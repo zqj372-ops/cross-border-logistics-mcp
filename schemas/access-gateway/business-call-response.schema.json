@@ -736,72 +736,52 @@
                       "additionalProperties": false
                     }
                   },
-                  "display_name": {
-                    "type": "object",
-                    "properties": {
-                      "language": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "text": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 8000
-                      },
-                      "translation": {
-                        "anyOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "language": {
-                                "type": "string",
-                                "enum": [
-                                  "zh",
-                                  "en"
-                                ]
-                              },
-                              "text": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 8000
-                              },
-                              "status": {
-                                "type": "string",
-                                "const": "machine"
-                              },
-                              "model": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 100
-                              }
-                            },
-                            "required": [
-                              "language",
-                              "text",
-                              "status",
-                              "model"
-                            ],
-                            "additionalProperties": false
+                  "name_translation": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "language": {
+                            "type": "string",
+                            "enum": [
+                              "zh",
+                              "en"
+                            ]
                           },
-                          {
-                            "type": "null"
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8000
+                          },
+                          "status": {
+                            "type": "string",
+                            "const": "machine"
+                          },
+                          "model": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
                           }
-                        ]
+                        },
+                        "required": [
+                          "language",
+                          "text",
+                          "status",
+                          "model"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
                       }
-                    },
-                    "required": [
-                      "language",
-                      "text",
-                      "translation"
-                    ],
-                    "additionalProperties": false
+                    ]
                   }
                 },
                 "required": [
                   "item",
                   "hierarchy",
                   "rates",
-                  "display_name"
+                  "name_translation"
                 ],
                 "additionalProperties": false
               }

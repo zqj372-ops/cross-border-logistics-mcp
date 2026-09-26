@@ -8,7 +8,7 @@ const ui = {
 };
 type ReferenceData = Parameters<typeof renderCustomsReference>[1];
 function item(country:'CN'|'US'|'CA',code:string,language:string,description:string):ReferenceData['candidates'][number] {
- return {item:{...dataset.nomenclature[0]!,country,code,display_code:code,language,description_original:description,is_declarable:1},hierarchy:[],rates:[],display_name:{language,text:description,translation:null}};
+ return {item:{...dataset.nomenclature[0]!,country,code,display_code:code,language,description_original:description,is_declarable:1},hierarchy:[],rates:[],name_translation:null};
 }
 function reference(candidates:ReferenceData['candidates']):ReferenceData {
  return {request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates};
@@ -30,13 +30,14 @@ it('does not substitute another country when the requested country has no match'
 });
 it('displays corresponding Chinese and English names with translation provenance, separate from a customer draft',()=>{
  const candidate=item('US','1234567890','en','Other');
- candidate.display_name={language:'en',text:'Synthetic articles — Other',translation:{language:'zh',text:'合成器具 — 其他',status:'machine',model:'fixture-model'}};
+ candidate.hierarchy=[{...candidate.item,code:'123456',description_original:'Synthetic articles'}];
+ candidate.name_translation={language:'zh',text:'合成器具 — 其他',status:'machine',model:'fixture-model'};
  const html=renderCustomsReference(ui,reference([candidate]),{input:{query:'客户填写的器具',codeCountry:'US'}});
  expect(html).toContain('中文（参考译文）：合成器具 — 其他');expect(html).toContain('英文（官方原文）：Synthetic articles — Other');
  expect(html).toContain('建议申报品名');expect(html).toContain('客户填写的器具');expect(html).not.toContain('待补充商品中文名称');
  expect(html).toContain('机器翻译，仅供理解原文');
  const cn=item('CN','1234567890','zh-CN','合成器具');
- cn.display_name={language:'zh-CN',text:'合成器具',translation:{language:'en',text:'Synthetic articles',status:'machine',model:'fixture-model'}};
+ cn.name_translation={language:'en',text:'Synthetic articles',status:'machine',model:'fixture-model'};
  const cnHtml=renderCustomsReference(ui,reference([cn]),{country:'CN'});
  expect(cnHtml).toContain('中文（官方原文）：合成器具');expect(cnHtml).toContain('英文（参考译文）：Synthetic articles');
 });
@@ -71,6 +72,6 @@ it('preserves published measure conclusions, producer conditions and unknown mea
 });
 it('shows the manual review boundary and original text without introducing a duty total or interpreting HTML',()=>{
  const esc=(value:unknown)=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
- const html=renderCustomsReference({esc,panel:(title:string,subtitle:string,body:string)=>title+subtitle+body,note:esc},{request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates:[{item:{...dataset.nomenclature[0]!,country:'CN',code:'123456',display_code:'123456',description_original:'<script>unsafe</script>',is_declarable:0,language:'zh',source_locator:'official:row1'},hierarchy:[],rates:[],display_name:{language:"zh",text:"<script>unsafe</script>",translation:null}}]});
+ const html=renderCustomsReference({esc,panel:(title:string,subtitle:string,body:string)=>title+subtitle+body,note:esc},{request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates:[{item:{...dataset.nomenclature[0]!,country:'CN',code:'123456',display_code:'123456',description_original:'<script>unsafe</script>',is_declarable:0,language:'zh',source_locator:'official:row1'},hierarchy:[],rates:[],name_translation:null}]});
  expect(html).not.toContain('&lt;br>');expect(html).toContain('待复核 其他待复核');expect(html).toContain('中国税号');expect(html).toContain('进口税率不能作为出口税率');expect(html).not.toContain('中国出口');expect(html).toContain('候选 · 待复核');expect(html).toContain('不代表免税或零税率');expect(html).toContain('&lt;script>');expect(html).not.toContain('<script>');expect(html).not.toContain('已确认的关税合计');
 });

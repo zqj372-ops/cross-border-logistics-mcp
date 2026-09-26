@@ -8,7 +8,7 @@
 
 参考查询每个国家最多 9 条候选、每条最多 100 条原始税率；完整国家税号在所选国家精确匹配，其他国家只展示相同 HS 前缀供对照。检索仍按原文关键词匹配，不判断商品属性。父级规则、优惠待遇与原产地条件须人工核对；缺税率不代表免税。
 
-中英对照见 [v2 RFC](../rfcs/2026-09-27-customs-bilingual-names-v2.md)。可选 `customsReference.nameTranslation` 形状为 `{"model":"当前已验证模型","apiKeyFile":"/run/secrets/customs-translation-key"}`。凭据文件须为绝对路径、非符号链接，权限 `0400` 或 `0600`，由运行用户可读；不进入仓库或日志。仅翻译公开品名，失败保留原文并显示译文暂不可用；每次最多一个有界批次，重复品名使用缓存。移除该配置可关闭翻译，税号和税率原文查询仍可用。v2 新增候选 `display_name`，原始来源字段及正式输出版本不变，v1 仍可读。
+中英对照见 [v2 RFC](../rfcs/2026-09-27-customs-bilingual-names-v2.md)。可选 `customsReference.nameTranslation` 形状为 `{"model":"当前已验证模型","apiKeyFile":"/run/secrets/customs-translation-key"}`。凭据文件须为绝对路径、非符号链接，权限 `0400` 或 `0600`，由运行用户可读；不进入仓库或日志。仅翻译公开品名，失败保留原文并显示译文暂不可用；每次最多一个有界批次，重复品名使用缓存。移除该配置可关闭翻译，税号和税率原文查询仍可用。v2 新增候选 `name_translation`，原始来源字段及正式输出版本不变，v1 仍可读。
 
 验证命令：
 

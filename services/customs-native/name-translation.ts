@@ -5,7 +5,6 @@ export const nameTranslationSchema = z.object({
   language:z.enum(['zh','en']), text:z.string().min(1).max(8000),
   status:z.literal('machine'), model:z.string().min(1).max(100),
 }).strict();
-export const displayNameSchema = z.object({language:z.string().min(1),text:z.string().min(1).max(8000),translation:nameTranslationSchema.nullable()}).strict();
 export const nameTranslationConfig = z.object({model:z.string().regex(/^[a-zA-Z0-9._-]{1,100}$/u),apiKeyFile:z.string().min(1)}).strict();
 type Name = {language:string;text:string};
 type Translation = z.infer<typeof nameTranslationSchema>;

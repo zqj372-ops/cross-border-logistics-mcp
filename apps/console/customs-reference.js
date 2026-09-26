@@ -81,8 +81,8 @@ export function renderCustomsReference(ui, data, options = {}) {
     const rawRates = [...new Map(group.flatMap(entry => entry.rates).map(rate => [JSON.stringify([rate.code, rate.treatment, rate.measure_type, rate.rate_expression_raw, rate.condition_text_raw, rate.effective_from, rate.effective_to]), rate])).values()];
     const result = {
       displayCode: item.display_code, status: 'candidate', isDeclarable: group.every(entry => Boolean(entry.item.is_declarable)),
-      legalNames: [...group.map(entry => ({language:entry.item.language,text:entry.display_name?.text || namePath(entry)})),...(current.display_name?.translation ? [current.display_name.translation] : [])],
-      nameTranslationLanguage: current.display_name?.translation?.language,
+      legalNames: [...group.map(entry => ({language:entry.item.language,text:namePath(entry)})),...(current.name_translation ? [current.name_translation] : [])],
+      nameTranslationLanguage: current.name_translation?.language,
       classificationReason: item.code === input.query?.replace(/[.\s]/gu, '') && input.codeCountry === country ? '与所填税号精确匹配；商品归类适用性仍待复核。' : `当前查看的候选，按编码顺序展示，不代表最佳归类。${country !== input.codeCountry ? '跨地区同 HS 前缀仅供对照，不代表归类等同。' : ''}`,
       rates: rawRates.map(rate => ({label:measureLabels[rate.measure_type] || rate.measure_type,treatment:rate.treatment,displayValue:rate.rate_expression_raw,conditionText:rate.condition_text_raw,confirmed:false,scope:`所属税目 ${rate.code}`})),
     };

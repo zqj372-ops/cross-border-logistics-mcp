@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { NomenclatureRowSchema, TariffRuleRowSchema, SourceRowSchema } from './contracts';
 import { inputSchema } from '../access-gateway/portal/business/customs-client';
 import type { CustomsBusinessClientPort, PortalBusinessClientResult } from '../access-gateway/portal/business/service';
-import { displayNameSchema, nameTranslationConfig, type createCustomsNameTranslator } from './name-translation';
+import { nameTranslationSchema, nameTranslationConfig, type createCustomsNameTranslator } from './name-translation';
 
 export const customsReferenceDataV1 = z.object({
   request_id: z.string().min(1).max(128),
@@ -16,7 +16,7 @@ export const customsReferenceDataV1 = z.object({
     rates: z.array(TariffRuleRowSchema).max(100),
   }).strict()).max(27), sources: z.array(SourceRowSchema).max(20), warnings: z.array(z.string()).max(10),
 }).strict();
-export const customsReferenceData = customsReferenceDataV1.extend({candidates:z.array(customsReferenceDataV1.shape.candidates.element.extend({display_name:displayNameSchema})).max(27)});
+export const customsReferenceData = customsReferenceDataV1.extend({candidates:z.array(customsReferenceDataV1.shape.candidates.element.extend({name_translation:nameTranslationSchema.nullable()})).max(27)});
 export const customsReferenceVersion = 'portal-customs-reference@2026-09-27.v2';
 export const customsReferenceConfig = z.object({ snapshotFile: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/u), nameTranslation:nameTranslationConfig.optional() }).strict();
 const officialHosts = new Set(['gss.mof.gov.cn','online.customs.gov.cn','www.cbsa-asfc.gc.ca','www.usitc.gov','hts.usitc.gov']);
@@ -65,14 +65,14 @@ export function createCustomsReferenceClient(config: z.infer<typeof customsRefer
           }
           const ancestorCodes=[item.code,...hierarchy.map(p=>p.code)],params:SQLInputValue[]=[country,...ids,ruleDate,ruleDate,...ancestorCodes,item.code];
           const rawRates=db.prepare(`SELECT * FROM tariff_rule WHERE country=? AND ${eligible} AND (code IN (${ancestorCodes.map(()=>'?').join(',')}) OR (code_match_type='prefix' AND substr(?,1,length(code))=code)) ORDER BY code,treatment,id LIMIT 100`).all(...params);
-          candidates.push({item,hierarchy,rates:rawRates.map(row=>TariffRuleRowSchema.parse(normalize(row))),display_name:{language:item.language,text:[...new Set([hierarchy.at(-1)?.description_original,item.description_original].filter(Boolean))].join(' — '),translation:null}});
+          candidates.push({item,hierarchy,rates:rawRates.map(row=>TariffRuleRowSchema.parse(normalize(row))),name_translation:null});
         }
       }
       if(identity(config.snapshotFile)!==expectedIdentity)return fail('customs_reference_changed');
       db.close();db=undefined;
       // Translate the selected source language once; the Canadian French original remains available in evidence.
       const toTranslate=candidates.filter(candidate=>!candidate.item.language.startsWith('fr')||!candidates.some(other=>other.item.country===candidate.item.country&&other.item.code===candidate.item.code&&other.item.language.startsWith('en')));
-      if(translate){const translations=await translate(toTranslate.map(candidate=>candidate.display_name));toTranslate.forEach((candidate,index)=>{candidate.display_name.translation=translations[index]??null;});}
+      if(translate){const translations=await translate(toTranslate.map(({item,hierarchy})=>({language:item.language,text:[...new Set([hierarchy.at(-1)?.description_original,item.description_original].filter(Boolean))].join(' — ')})));toTranslate.forEach((candidate,index)=>{candidate.name_translation=translations[index]??null;});}
       if(identity(config.snapshotFile)!==expectedIdentity)return fail('customs_reference_changed');
       const data=customsReferenceData.parse({request_id:request.requestId,formal_ready:false,rule_date:ruleDate,snapshot_sha256:config.sha256,candidates,sources,warnings:[
         '官方原文参考与候选归类；来源资料尚未完成正式发布审核，不是正式归类或应缴税费。',

@@ -11,15 +11,22 @@ import { dataset } from './publication-fixture';
 import { createCustomsNameTranslator } from '../../services/customs-native/name-translation';
 const dirs:string[]=[];
 afterEach(()=>{for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
-function fixture(){
+function fixture(longName=false){
  const dir=mkdtempSync(join(tmpdir(),'customs-reference-'));dirs.push(dir);const path=join(dir,'data.sqlite'),db=new DatabaseSync(path);
  const insert=(name:string,rows:Record<string,unknown>[])=>{const keys=Object.keys(rows[0]!);db.exec(`CREATE TABLE ${name} (${keys.map(k=>`"${k}" ${typeof rows[0]![k]==='number'?'INTEGER':'TEXT'}`).join(',')})`);for(const row of rows)db.prepare(`INSERT INTO ${name} VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k] as SQLInputValue));};
  insert('source_release',dataset.sources.map(s=>({...s,status:'staged'})));
  const strip=(row:Record<string,unknown>)=>Object.fromEntries(Object.entries(row).filter(([k])=>k==='release_id'||!k.startsWith('release_')));
- insert('nomenclature',dataset.nomenclature.map(strip));insert('tariff_rule',dataset.tariffs.map(strip));db.close();
+ insert('nomenclature',dataset.nomenclature.map(row=>strip(longName?{...row,description_original:'Synthetic long source description '.repeat(1000)}:row)));insert('tariff_rule',dataset.tariffs.map(strip));db.close();
  const config={snapshotFile:path,sha256:createHash('sha256').update(readFileSync(path)).digest('hex')};return{config,client:createCustomsReferenceClient(config)};
 }
 const request={input:{query:'732393',ruleDate:'2026-09-27',codeCountry:'CN',attributes:{originCountry:'CN'}},actor:{type:'service' as const,id:'fixture'},requestId:'req_reference_0001'};
+it('keeps unusually long official source text readable when it exceeds the translation limit',async()=>{
+ const {config}=fixture(true),fetchImpl=vi.fn<typeof fetch>();
+ const result=await createCustomsReferenceClient(config,createCustomsNameTranslator({apiKey:'fixture-secret',model:'fixture-model'},fetchImpl)).query(request);
+ expect(result).toMatchObject({status:'manual_review',data:{formal_ready:false}});
+ expect(customsReferenceData.parse(result.data).candidates[0]!.item.description_original.length).toBeGreaterThan(9_000);
+ expect(fetchImpl).not.toHaveBeenCalled();
+});
 it('returns staged official text as reference only with original rates and evidence; unknown codes never mean free',async()=>{
  const {client}=fixture();const r=await client.query(request);
  expect(r).toMatchObject({status:'manual_review',reason_codes:['customs_reference_only'],data:{formal_ready:false}});
@@ -52,7 +59,7 @@ it('adds bilingual display names from source text only, preserving official rows
  expect(data.candidates.length).toBeGreaterThan(0);
  data.candidates.forEach((candidate,index)=>{
   expect(candidate.item).toEqual(raw.candidates[index]!.item);expect(candidate.rates).toEqual(raw.candidates[index]!.rates);
-  expect(candidate.display_name.translation?.status).toBe('machine');
+  expect(candidate.name_translation?.status).toBe('machine');
  });
  expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
