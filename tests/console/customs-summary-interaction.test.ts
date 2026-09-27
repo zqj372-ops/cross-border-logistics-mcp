@@ -6,7 +6,7 @@ import {dataset} from '../customs-native/publication-fixture';
 afterEach(()=>vi.unstubAllGlobals());
 it('switches existing candidates without network calls, preserves the query form and blocks stale copies',async()=>{
  vi.stubGlobal('matchMedia',()=>({matches:false}));
- const values:Record<string,string>={query:'123456',ruleDate:'2026-09-27',codeCountry:'CA'};
+ const values:Record<string,string>={query:'123456',ruleDate:'2026-09-27',codeCountry:'CA',material:'不锈钢',use:'日常饮水',vacuumInsulated:'yes',contains_steel_aluminum:'yes'};
  vi.stubGlobal('FormData',class{get(name:string){return values[name]||'';}});
  const focus=vi.fn(),feedback={textContent:''},target={innerHTML:'',querySelector:()=>({focus}),scrollIntoView:vi.fn()};
  vi.stubGlobal('document',{querySelector:(selector:string)=>selector==='[data-customs-brief]'?{innerText:'Synthetic reference · 待核验 · 2026-09-27'}:selector==='[data-customs-copy-status]'?feedback:target});
@@ -14,8 +14,12 @@ it('switches existing candidates without network calls, preserves the query form
  const candidates=['CA','US'].flatMap(country=>['1234561000','1234562000'].map(code=>({item:{...dataset.nomenclature[0],country,code,display_code:code,description_original:'Synthetic article',language:'en'},hierarchy:[],rates:[]})));
  const api=vi.fn().mockResolvedValue({schema_version:'portal-customs-reference@2026-09-27.v1',status:'manual_review',data:{formal_ready:false,rule_date:'2026-09-27',candidates,sources:[],warnings:[],snapshot_sha256:'a'.repeat(64)},reason_codes:['customs_reference_only']});
  const rerender=vi.fn();
- const workspace=createBusinessWorkspace({api,rerender,esc:(v:string)=>String(v??''),head:()=>'',panel:(title:string,_subtitle:string,body:string)=>title+body,note:(v:string)=>v,icon:()=>'',field:()=>'',input:()=>'',actions:()=>'',formError:''});
+ const workspace=createBusinessWorkspace({api,rerender,esc:(v:string)=>String(v??''),head:()=>'',panel:(title:string,_subtitle:string,body:string)=>title+body,note:(v:string)=>v,icon:()=>'',field:(_label:string,_name:string,control:string)=>control,input:(name:string)=>`<input name="${name}">`,actions:()=>'',formError:''});
+ workspace.restoreHistory({query:values.query,ruleDate:values.ruleDate,codeCountry:values.codeCountry,attributes:{originCountry:'CN',vacuumInsulated:'yes',contains_steel_aluminum:'yes'}});
+ const form=workspace.customsPage();expect(form).toContain('name="material"');expect(form).toContain('name="use"');
+ expect(form).not.toContain('name="vacuumInsulated"');expect(form).not.toContain('name="contains_steel_aluminum"');
  await workspace.submit({dataset:{form:'business-customs'}});
+ expect(api).toHaveBeenLastCalledWith('/business/customs/query',expect.objectContaining({body:{input:expect.objectContaining({attributes:{originCountry:'CN',material:'不锈钢',use:'日常饮水'}})}}));
  const renderCount=rerender.mock.calls.length;
  await workspace.action({dataset:{action:'business-customs-country',country:'US'}});
  workspace.change({target:{matches:()=>true,value:'1234562000'}});
