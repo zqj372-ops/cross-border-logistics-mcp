@@ -3,7 +3,7 @@ import type {FclMailMessage} from './cases';
 
 // Pure rendering is shared by the worker and the authorized node preview.
 export const FCL_NODE_LABELS={booking:'订舱 / 放 SO',pickup:'中国提货 / 装柜',export_customs:'出口报关',shipping_documents:'补料 / 提单',canada_customs:'加拿大清关',devanning_storage:'拆柜 / 仓储交接',delivery:'派送 / 签收 / 还柜',intake:'询价接收',quote:'报价处理',customer_followup:'客户确认跟进'} as const;
-export const FCL_MAIL_FIELD_LABELS={carrier:'船公司',vessel_voyage:'船名航次',booking_so:'Booking / SO',etd:'ETD',eta:'ETA',cutoff:'截单时间',pickup_location:'提柜地点',appointment:'预约时间',declaration_ref:'申报参考',release_evidence:'放行依据',warehouse:'仓库',handover_at:'交接时间',delivery_address:'派送地址',signed_at:'签收时间',empty_return_at:'还柜时间'} as const;
+export const FCL_MAIL_FIELD_LABELS={carrier:'船公司',vessel_voyage:'船名航次',booking_so:'订舱号（SO）',etd:'预计离港',eta:'预计到港',cutoff:'截单时间',pickup_location:'提柜地点',appointment:'预约时间',declaration_ref:'申报参考',release_evidence:'放行依据',warehouse:'仓库',handover_at:'交接时间',delivery_address:'派送地址',signed_at:'签收时间',empty_return_at:'还柜时间'} as const;
 export function fclMailFields(nodeId:FclNotificationRow['node_id']){
   const shape=nodeId in fclNodeFields?fclNodeFields[nodeId as FclNode['node_id']].shape:null;
   return (Object.keys(FCL_MAIL_FIELD_LABELS) as (keyof typeof FCL_MAIL_FIELD_LABELS)[]).filter(key=>shape&&(key==='eta'||key in shape));
@@ -23,7 +23,7 @@ function extras(config:FclNotificationRow,fields:Record<string,unknown>,eta:stri
 export function renderExecutionMail(progress:Pick<FclExecution,'inquiry_no'|'customer_name'|'case_ref'|'shared'> & {nodes?:FclNode[]},node:FclNode,audience:'internal'|'external',origin=''):FclMailMessage{
   const internal=audience==='internal',config=node.notification;
   const lines=[`业务单号：${shipmentLabel(progress)}`,`客户：${progress.customer_name}`,`环节：${FCL_NODE_LABELS[node.node_id]}`,`待办：${node.status==='completed'?'已登记完成，请核对交接结果':node.status==='exception'?'资料或异常需要处理':'请处理本环节资料及交接'}`,`截止时间（登记时区）：${formatFclMailDate(node.deadline)}`,...extras(config,node.fields,progress.shared.eta)];
-  if(internal)lines.push(`负责人：${node.assignment.responsible_id??'待配置'}`,`详情（需登录）：${origin}/console/#fcl/case/${progress.case_ref}`);
+  if(internal)lines.push(`内部收件人：${node.assignment.to??'待配置'}`,`详情（需登录）：${origin}/ops/#fcl/case/${progress.case_ref}`);
   return {to:(internal?node.assignment.to:config.external_to)??'',cc:[...(internal?node.assignment.cc:config.external_cc)],subject:`${shipmentLabel(progress)} · ${FCL_NODE_LABELS[node.node_id]}`,body:lines.join('\n')};
 }
 export function renderNotificationTestBody(row:FclNotificationRow,audience:'internal'|'external'){

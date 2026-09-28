@@ -35,7 +35,7 @@ it('persists audience-separated messages atomically, sends real To/Cc and never 
     await f.mail.dispatchOnce();await f.mail.dispatchOnce();await f.mail.dispatchOnce();
     expect(sent).toHaveLength(2);
     expect(sent.find(m=>m.to==='internal@example.test')?.cc).toEqual(['copy@example.test']);
-    expect(sent.find(m=>m.to==='internal@example.test')?.body).toContain(`https://portal.example.test/console/#fcl/case/${view.case_ref}`);
+    expect(sent.find(m=>m.to==='internal@example.test')?.body).toContain(`https://portal.example.test/ops/#fcl/case/${view.case_ref}`);
     const external=sent.find(m=>m.to==='carrier@example.test')!;
     expect(external.cc).toEqual([]);expect(external.body).not.toContain('/console/');
     expect(JSON.stringify(sent)).not.toMatch(/SECRET|private:internal-only/);

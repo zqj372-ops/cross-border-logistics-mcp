@@ -14,7 +14,7 @@ it('previews only synthetic data, persists test outcomes, prevents replay sends,
     service.saveFclNotificationV2(receiver,{contract_version:FCL_NOTIFICATION_V2,expected_version:0,rows,confirmed:true},'test-notification-save');
     expect(sent).toEqual([]);
     const preview=service.previewFclNotification(receiver,{node_id:'booking',audience:'internal'});expect(preview.body).toContain('合成测试客户');expect(preview.body).not.toContain(f.confirmed.inquiry_no);
-    expect(preview.body).toContain('Booking / SO：TEST-SO');expect(preview.body).toContain('2026-01-02 09:00 UTC-08:00');expect(preview.body).not.toContain('TEST-CARRIER');
+    expect(preview.body).toContain('订舱号（SO）：TEST-SO');expect(preview.body).toContain('2026-01-02 09:00 UTC-08:00');expect(preview.body).not.toContain('TEST-CARRIER');
     const input={node_id:'booking',audience:'internal',expected_version:1,confirmed:true};
     const first=await service.testFclNotification(receiver,input,'test-notification-send');expect(first.status).toBe('smtp_accepted');
     expect(await service.testFclNotification(receiver,input,'test-notification-send')).toEqual(first);expect(sent).toHaveLength(1);
