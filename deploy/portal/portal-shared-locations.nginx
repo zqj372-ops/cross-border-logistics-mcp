@@ -2,6 +2,24 @@
 # Docker DNS is re-resolved so replacement replicas are discovered without reload.
 resolver 127.0.0.11 valid=10s ipv6=off;
 set $portal_upstream portal:8082;
+location = /customer { return 308 /customer/; }
+location = /customer/ {
+    proxy_pass http://$portal_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $http_cf_connecting_ip;
+    proxy_set_header X-Real-IP $http_cf_connecting_ip;
+}
+location = /ops { return 308 /ops/; }
+location = /ops/ {
+    proxy_pass http://$portal_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $http_cf_connecting_ip;
+    proxy_set_header X-Real-IP $http_cf_connecting_ip;
+}
 location = /console { return 308 /console/; }
 location ^~ /console/ {
     proxy_pass http://$portal_upstream;

@@ -1,7 +1,26 @@
+import {fclHttpActions} from '../../services/access-gateway/portal/fcl-http-contracts';
 import { expect, it } from "vitest";
 import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import { generatePortalOpenApi } from "../../deploy/scripts/generate-portal-openapi";
+
+it('keeps the single published artifact current and rejects drift without rewriting it',()=>{
+ const generated=JSON.stringify(generatePortalOpenApi(),null,2)+'\n';
+ expect(readFileSync('apps/console/openapi.json','utf8')).toBe(generated);
+ const directory=mkdtempSync(join(tmpdir(),'fcl-openapi-check-')),path=join(directory,'openapi.json');
+ try{
+  writeFileSync(path,generated);
+  const check=()=>execFileSync(process.execPath,['--import','tsx/esm','deploy/scripts/generate-portal-openapi.ts','--check',path],{stdio:'pipe'});
+  expect(check().toString()).toContain('Validated openapi.json');
+  writeFileSync(path,'{"openapi":"stale"}\n');
+  expect(check).toThrow('OpenAPI drift');
+  expect(readFileSync(path,'utf8')).toBe('{"openapi":"stale"}\n');
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});
 
 it("publishes self-contained operation-specific machine schemas and rejects mixed identity input",()=>{
  const document=generatePortalOpenApi();
@@ -15,7 +34,7 @@ it("publishes self-contained operation-specific machine schemas and rejects mixe
  const fclStaff=Object.keys(paths).filter(path=>path.startsWith('/console/api/v1/fcl/')),publicFcl=Object.keys(paths).filter(path=>path.startsWith('/inquiry/api/v1'));
  expect(Object.keys(paths).filter(path=>!personnel.includes(path)&&!fclStaff.includes(path)&&!publicFcl.includes(path))).toHaveLength(17);
  expect(personnel).toHaveLength(31);
- expect(fclStaff).toHaveLength(37);expect(publicFcl).toHaveLength(6);
+ expect(fclStaff).toHaveLength(fclHttpActions.length);expect(publicFcl).toHaveLength(6);
  expect(fclStaff).toContain('/console/api/v1/fcl/case-create');
  for(const path of personnel){
   const methods=paths[path] as Record<string,{security:unknown;parameters:{name:string;required?:boolean}[]}>;

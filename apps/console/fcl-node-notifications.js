@@ -1,0 +1,33 @@
+import {FCL_MAIL_FIELD_LABELS,fclMailFields} from '../../services/access-gateway/portal/fcl-execution-mail-format.ts';
+import {FCL_NOTIFICATION_V2} from '../../services/access-gateway/portal/fcl-execution-contracts.ts';
+import {nodeLabels,mailLabels} from './fcl-execution.js';
+
+const split=value=>String(value||'').split(/[,，\n]/u).map(item=>item.trim()).filter(Boolean);
+const fieldLabels=FCL_MAIL_FIELD_LABELS;
+export function createFclNodeNotifications({call,write,esc,rerender,notify,context}){
+  let generation=0,view=null,draft=null,loading=false,loaded=false,error='',preview=null;
+  const reset=()=>{generation++;view=null;draft=null;loading=false;loaded=false;error='';preview=null;};
+  const data=response=>{if(response.status!=='success')throw new Error(response.reason_codes?.[0]||'通知配置暂不可用');return response.data;};
+  const load=async()=>{if(loaded||loading)return;loading=true;const current=generation;try{const response=await call('notification-v2-get',{});if(current===generation){view=data(response);loaded=true;error='';}}catch(e){if(current===generation){error=e.message;loaded=true;}}finally{if(current===generation){loading=false;rerender();}}};
+  const render=()=>{
+    void load();
+    if(!view)return `<section class="panel"><div class="panel-body"><h2>节点与邮件</h2><p>${esc(error==='fcl_execution_not_configured'?'节点与邮件尚未配置。':error||'正在读取节点配置…')}</p></div></section>`;
+    const rows=draft||view.rows;
+    const control=(row,name,value,type='text')=>`<input aria-label="${esc(nodeLabels[row.node_id]+' '+name)}" name="${row.node_id}:${name}" type="${type}" value="${type==='checkbox'?'on':esc(value??'')}"${type==='checkbox'&&value?' checked':''}>`;
+    return `<section class="panel fcl-node-mail"><div class="panel-body"><h2>节点与邮件</h2><p>默认配置只影响新业务；在途单须另行预览并应用。负责人使用已核验个人账号，邮箱不会授予权限。询价、报价和成交跟进当前由本人处理。</p><p>发信通道：${view.transport==='unconfigured'?'未配置':'已配置，实际投递待验证'}。邮件为纯文本，SMTP 接收不代表对方已收到或已读。</p>${error?`<p role="alert">${esc(error)}</p>`:''}<form method="post" data-fcl-form="node-notifications" data-fcl-notifications="settings"><div class="form-error" role="alert" hidden></div><p class="fcl-mail-scroll-hint">可左右滑动查看收件人、抄送和测试操作。</p><div class="fcl-table-scroll"><table class="fcl-node-mail-table"><thead><tr><th>节点</th><th>默认负责人</th><th>收件邮箱</th><th>抄送邮箱</th><th>自动提醒</th><th>预览 / 测试</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${nodeLabels[row.node_id]}</td><td>${control(row,'responsible_id',row.assignment.responsible_id)}<button class="button" type="button" data-action="fcl-mail-self" data-node="${row.node_id}">设为本人</button></td><td>${control(row,'to',row.assignment.to,'email')}</td><td>${control(row,'cc',row.assignment.cc.join(','))}</td><td>${control(row,'enabled',row.assignment.enabled,'checkbox')}</td><td><button class="button" type="button" data-action="fcl-mail-preview" data-node="${row.node_id}" data-audience="internal">预览</button><button class="button" type="button" data-action="fcl-mail-test" data-node="${row.node_id}" data-audience="internal">测试</button>${['intake','quote','customer_followup'].includes(row.node_id)?'<p>对外联系由负责人核实后人工处理。</p>':`<details><summary>外部通知与允许字段</summary><p>外部正文独立生成，不含成本、利润、内部备注或附件。</p><label>外部收件邮箱${control(row,'external_to',row.external_to,'email')}</label><label>外部抄送${control(row,'external_cc',row.external_cc.join(','))}</label><label>${control(row,'external_enabled',row.external_enabled,'checkbox')}启用外部作业提醒</label><div class="fcl-mail-fields">${fclMailFields(row.node_id).map(field=>`<label><input type="checkbox" name="${row.node_id}:field:${field}"${row.visible_fields.includes(field)?' checked':''}>${fieldLabels[field]}</label>`).join('')}</div><button class="button" type="button" data-action="fcl-mail-preview" data-node="${row.node_id}" data-audience="external">预览外部模板</button><button class="button" type="button" data-action="fcl-mail-test" data-node="${row.node_id}" data-audience="external">发送外部测试邮件</button></details>`}</td></tr>`).join('')}</tbody></table></div><button class="button primary" type="submit">保存节点与邮件</button><p>没有负责人或收件邮箱时可保存草稿；启动节点和发送通知前须补齐。保存配置不会发送邮件。</p></form>${preview?`<div class="fcl-mail-preview"><h3>${esc(preview.subject)}</h3><p>To：${esc(preview.to||'待配置')} · Cc：${esc(preview.cc.join('、')||'无')}</p><pre>${esc(preview.body)}</pre><p role="status">${preview.status==='preview'?'模板预览，尚未发送':mailLabels[preview.status]}</p></div>`:''}</div></section>`;
+  };
+  const capture=form=>{if(!form?.matches('[data-fcl-notifications]')||!view)return false;const fd=new FormData(form),raw=key=>String(fd.get(key)||'').trim();draft=(draft||view.rows).map(row=>({...row,assignment:{...row.assignment,responsible_id:raw(`${row.node_id}:responsible_id`)||null,to:raw(`${row.node_id}:to`)||null,cc:split(raw(`${row.node_id}:cc`)),enabled:fd.get(`${row.node_id}:enabled`)==='on'},external_to:raw(`${row.node_id}:external_to`)||null,external_cc:split(raw(`${row.node_id}:external_cc`)),external_enabled:fd.get(`${row.node_id}:external_enabled`)==='on',visible_fields:Object.keys(fieldLabels).filter(key=>fd.get(`${row.node_id}:field:${key}`)==='on')}));return true;};
+  const submit=async form=>{if(!capture(form))return false;const current=generation;try{const response=await write('notification-v2-save',{contract_version:FCL_NOTIFICATION_V2,expected_version:view.version,rows:draft,confirmed:true});if(current===generation){view=data(response);draft=null;error='';notify('节点默认配置已保存。');rerender();}}catch(e){if(current===generation){error=e.message;notify(error,true);rerender();}}return true;};
+  const action=async button=>{
+    const name=button.dataset.action;if(!name?.startsWith('fcl-mail-'))return false;const current=generation;
+    try{
+      if(name==='fcl-mail-self'){const form=button.closest('form');capture(form);const row=draft.find(row=>row.node_id===button.dataset.node);row.assignment.responsible_id=context().userId;row.assignment.to||=context().email||null;rerender();return true;}
+      if(draft)throw new Error('请先保存配置，再预览或测试持久化版本。');
+      const input={node_id:button.dataset.node,audience:button.dataset.audience};
+      if(name==='fcl-mail-test'){if(!window.confirm('发送一封仅含合成测试业务信息的邮件到已保存的 To / Cc？'))return true;input.expected_version=view.version;input.confirmed=true;}
+      const response=await (name==='fcl-mail-test'?write('notification-test',input):call('notification-preview',input));
+      if(current===generation){preview=data(response);error='';rerender();}
+    }catch(e){if(current===generation){error=e.message;notify(error,true);rerender();}}return true;
+  };
+  return {render,reset,submit,action,isDirty:()=>Boolean(draft),input:event=>capture(event.target.closest('[data-fcl-notifications]'))};
+}

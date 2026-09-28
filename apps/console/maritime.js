@@ -50,14 +50,15 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
   function liveForm(access){
     const carriers=live.carriers?.carriers||[];
     const fallback=[{id:'ONE',display_name:'Ocean Network Express',capability_status:null},{id:'COSCO',display_name:'COSCO SHIPPING Lines',capability_status:null}];
-    const visible=(carriers.length?carriers:fallback).filter(c=>['ONE','COSCO'].includes(c.id));
-    const disabled=!access.canQuery||!visible.length;
-    return `<form class="panel maritime-query schedule-query" data-form="maritime-live-query"><h2 class="schedule-form-title">点到点船期</h2><div class="form-error" role="alert" hidden></div><div class="schedule-route-search">
+    const visible=carriers.length?carriers:fallback;
+    const available=carriers.filter(c=>c.capability_status==='live_verified');
+    const disabled=!access.canQuery||!available.length;
+    return `<form class="panel maritime-query schedule-query" data-form="maritime-live-query"><h2 class="schedule-form-title">点到点船期</h2>${access.canQuery&&live.carriers?`<p class="form-fineprint" data-schedule-coverage>当前工作区可查询 ${available.length} 家船公司 · 仅列出已开通的来源，其他来源尚未在此工作区开放。</p>`:''}<div class="form-error" role="alert" hidden></div><div class="schedule-route-search">
 ${locationPicker.field('origin',live.originText,live.originCountry)}
 <span class="schedule-search-arrow" aria-hidden="true">→</span>
 ${locationPicker.field('destination',live.destinationText,live.destinationCountry)}
 <button type="submit" class="button primary" ${disabled?'disabled':''}>${live.pending?'查询中…':'查询船期'} ${icon('search')}</button></div>${selectedService!==null?'<details class="schedule-detail-filters"><summary>调整船公司与日期</summary>':''}<div class="field-grid schedule-primary-fields">
-<div class="field"><label for="live-carrier">船公司</label><select id="live-carrier" name="carrier" required>${visible.map(c=>`<option value="${esc(c.id)}" ${live.carrier===c.id?'selected':''}>${esc(c.id)}</option>`).join('')}</select></div>
+<div class="field"><label for="live-carrier">船公司</label><select id="live-carrier" name="carrier" required>${visible.map(c=>`<option value="${esc(c.id)}" ${live.carrier===c.id?'selected':''} ${c.capability_status==='live_verified'?'':'disabled'}>${esc(({EVERGREEN:'EMC · 长荣',MAERSK:'MSK · 马士基',HAPAG_LLOYD:'HPL · 赫伯罗特',SML:'SML · SM Line'})[c.id]||c.id)}${c.capability_status==='live_verified'?'':c.capability_status==='implemented_unverified'?' · 待验证':' · 待接入'}</option>`).join('')}</select></div>
 <div class="field"><label for="live-from">离港开始</label><input id="live-from" name="from" type="date" value="${esc(live.from)}" required></div>
 <div class="field"><label for="live-until">离港截止</label><input id="live-until" name="until" type="date" value="${esc(live.until)}" required></div>
 <div class="field"><label for="live-routing">直达 / 中转</label><select id="live-routing" name="routing"><option value="any" ${live.routing==='any'?'selected':''}>不限</option><option value="direct" ${live.routing==='direct'?'selected':''}>直达</option><option value="transshipment" ${live.routing==='transshipment'?'selected':''}>中转</option></select></div>
@@ -166,7 +167,7 @@ ${locationPicker.field('destination',live.destinationText,live.destinationCountr
     if(live.carriers||live.carriersPending)return;
     const generation=carriersEpoch;
     live.carriersPending=true;
-    try{const r=await scheduleClient.carriers();if(generation!==carriersEpoch)return;live.carriers=r.data;}catch(error){if(generation!==carriersEpoch)return;live.error=error.code==='schedule_live_unavailable'?'官方查询尚未在此环境启用。':'船公司列表加载失败，请重试。';}
+    try{const r=await scheduleClient.carriers();if(generation!==carriersEpoch)return;live.carriers=r.data;if(!live.carriers?.carriers?.some(c=>c.id===live.carrier&&c.capability_status==='live_verified'))live.carrier=live.carriers?.carriers?.find(c=>c.capability_status==='live_verified')?.id||'';}catch(error){if(generation!==carriersEpoch)return;live.error=error.code==='schedule_live_unavailable'?'官方查询尚未在此环境启用。':'船公司列表加载失败，请重试。';}
     finally{if(generation===carriersEpoch){live.carriersPending=false;rerender();}}
   }
   async function runLive(form){

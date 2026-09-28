@@ -39,6 +39,16 @@ it("requires an explicit active publisher binding and only delegates customs ser
   expect(f.source).toHaveBeenCalledTimes(1);
   expect((await fixture(false).publicCustoms.execute("203.0.113.1", "customs.query", input, "req_public_0003", false)).body.status).toBe("unavailable");
 });
+it("does not charge an unpublished-data rejection while retaining the quota on other outcomes", async () => {
+  const f = fixture();
+  f.source.mockResolvedValueOnce({ schema_version: "source-fixture.v1", status: "unavailable", data: null, reason_codes: ["customs_data_not_ready"] });
+  const result = await f.publicCustoms.execute("203.0.113.1", "customs.query", input, "req_unpublished", false);
+  expect(result.body.status).toBe("unavailable");
+  expect(result.quota?.remaining).toBe(20);
+  expect(f.publicCustoms.status("203.0.113.1").remaining).toBe(20);
+  await f.publicCustoms.execute("203.0.113.1", "customs.query", input, "req_other_failure", false);
+  expect(f.publicCustoms.status("203.0.113.1").remaining).toBe(19);
+});
 it("rejects nested identity injection without consuming quota and charges batch products", async () => {
   const f = fixture();
   expect((await f.publicCustoms.execute("203.0.113.1", "customs.query", { ...input, tenant_id: "other" }, "req_public_0001", false)).httpStatus).toBe(400);

@@ -22,16 +22,27 @@ const result = (records: unknown[] = [record], complete = true) => ({
     provenance: { parser_version: 'internal-parser', source_refs: ['internal-evidence'], kind: 'internal-source' } },
 });
 const values = { carrier: 'ONE', origin: 'Shanghai', origin_country: 'CN', destination: 'Vancouver', destination_country: 'CA', from: '2026-10-01', until: '2026-10-28', routing: 'any' };
-async function render(response: unknown, detail = true) {
+async function render(response: unknown, detail = true, carriers = [{ id: 'ONE', capability_status: 'live_verified' }]) {
   vi.stubGlobal('FormData', class { constructor(readonly form: { values: Record<string, string> }) {} get(key: string) { return this.form.values[key] ?? ''; } });
-  const api = vi.fn((path: string) => Promise.resolve(path.endsWith('/carriers') ? { data: { carriers: [{ id: 'ONE', capability_status: 'live_verified' }] } } : path.endsWith('/locations') ? { status: 'success', data: { resolved: { carrier_location_id: 'internal-location' } } } : response));
+  const api = vi.fn((path: string) => Promise.resolve(path.endsWith('/carriers') ? { data: { carriers } } : path.endsWith('/locations') ? { status: 'success', data: { resolved: { carrier_location_id: 'internal-location' } } } : response));
   const ui = createMaritimeWorkspace({ api, mutate: vi.fn(), esc: (v: string | number | null | undefined) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), head: () => '', note: (v: string) => `<p>${v}</p>`, icon: () => '', canConfigure: () => false, rerender: () => {}, model: () => ({ session: { authenticated: true, organization_id: 'org', identity: { user_id: 'user' } }, directory: { organizations: [{ organization_id: 'org', status: 'active' }], memberships: [{ organization_id: 'org', user_id: 'user', role: 'owner', status: 'active' }] } }) });
+  ui.page('schedules');
+  await Promise.resolve();
+  await Promise.resolve();
   await ui.submit({ dataset: { form: 'maritime-live-query' }, values });
   if(detail) await ui.action({dataset:{action:'maritime-open-voyages',serviceIndex:'0'}});
   return { ui, html: ui.page('schedules') };
 }
 afterEach(() => vi.unstubAllGlobals());
 describe('customer schedule presentation', () => {
+  it('offers verified new carriers and marks unfinished sources unavailable', async () => {
+    const { html } = await render(result(), false, [{ id: 'SML', capability_status: 'live_verified' }, { id: 'EVERGREEN', capability_status: 'live_verified' }, { id: 'YML', capability_status: 'implemented_unverified' }]);
+    expect(html).toMatch(/<option value="SML"[^>]*>SML/);
+    expect(html).toMatch(/<option value="EVERGREEN"[^>]*>EMC/);
+    expect(html).toMatch(/<option value="YML"[^>]*disabled[^>]*>YML.*待验证/);
+    expect(html).toContain('当前工作区可查询 2 家船公司');
+    expect(html).toContain('仅列出已开通的来源');
+  });
   it('shows voyage business fields without rendering internal metadata or raw warnings', async () => {
     const { html } = await render(result());
     expect(html).toContain('TEST VESSEL');

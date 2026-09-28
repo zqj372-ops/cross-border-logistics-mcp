@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "fcl-execution@2026-09-23.v1"
+    },
+    "case_ref": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "expected_version": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "node_id": {
+      "type": "string",
+      "enum": [
+        "booking",
+        "pickup",
+        "export_customs",
+        "shipping_documents",
+        "canada_customs",
+        "devanning_storage",
+        "delivery"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "confirmed": {
+      "type": "boolean",
+      "const": true
+    },
+    "assignment": {
+      "type": "object",
+      "properties": {
+        "responsible_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema0"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collaborator_ids": {
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cc": {
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "responsible_id",
+        "collaborator_ids",
+        "to",
+        "cc",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "external": {
+      "type": "object",
+      "properties": {
+        "external_to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "external_cc": {
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "external_enabled": {
+          "type": "boolean"
+        },
+        "visible_fields": {
+          "maxItems": 17,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema2"
+          }
+        }
+      },
+      "required": [
+        "external_to",
+        "external_cc",
+        "external_enabled",
+        "visible_fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "contract_version",
+    "case_ref",
+    "expected_version",
+    "node_id",
+    "reason",
+    "confirmed",
+    "assignment"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "__schema1": {
+      "type": "string",
+      "maxLength": 254,
+      "format": "email",
+      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    },
+    "__schema2": {
+      "type": "string",
+      "enum": [
+        "carrier",
+        "vessel_voyage",
+        "booking_so",
+        "etd",
+        "eta",
+        "cutoff",
+        "pickup_location",
+        "appointment",
+        "declaration_ref",
+        "release_evidence",
+        "warehouse",
+        "handover_at",
+        "delivery_address",
+        "signed_at",
+        "empty_return_at"
+      ]
+    }
+  }
+}

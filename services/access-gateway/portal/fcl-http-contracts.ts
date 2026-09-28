@@ -1,5 +1,6 @@
 import {fclEstimateRequestSchema,fclEstimateListRequestSchema,fclEstimateGetSchema,fclEstimateAdjustSchema,fclEstimateActionSchema,fclEstimateSelectSchema,fclEstimateListSchema,fclEstimateViewSchema,fclBulkPreviewRequestSchema,fclBulkPublishRequestSchema,fclBulkPreviewSchema} from '../../quote-native/fcl-operations-contracts';
 import {z} from 'zod';
+import {FCL_EXECUTION_ACTIONS,executionRequests,executionOutputs,executionMethods,executionBodyLimits,executionWrites} from './fcl-execution-http-contracts';
 import {
   fclCaseConfirmationSchema,
   fclCaseCustomerSupplementSchema,
@@ -61,6 +62,7 @@ export const fclEmptyRequestSchema=z.object({}).strict();
 export const fclRatePreviewRequestSchema=z.object({release_id:z.string().uuid().optional()}).strict();
 
 export const fclHttpActions=[
+  ...FCL_EXECUTION_ACTIONS,
   'estimate-run',
   'estimate-list',
   'estimate-get',
@@ -103,6 +105,7 @@ export const fclHttpActions=[
 export type FclHttpAction=typeof fclHttpActions[number];
 
 export const FCL_STAFF_ACTION_METHODS:Readonly<Record<FclHttpAction,'GET'|'POST'>>=Object.freeze({
+  ...executionMethods,
   'estimate-run':'POST',
   'estimate-list':'POST',
   'estimate-get':'POST',
@@ -142,6 +145,7 @@ export const FCL_STAFF_ACTION_METHODS:Readonly<Record<FclHttpAction,'GET'|'POST'
   'notification-save':'POST',
 });
 export const FCL_STAFF_WRITE_ACTIONS=[
+  ...executionWrites,
   'estimate-run',
   'estimate-adjust',
   'estimate-duplicate',
@@ -154,6 +158,7 @@ export const FCL_STAFF_WRITE_ACTIONS=[
 ] as const satisfies readonly FclHttpAction[];
 
 export const FCL_HTTP_BODY_LIMITS:Record<FclHttpAction,number>={
+  ...executionBodyLimits,
   'estimate-run':1024*1024,
   'estimate-list':1024*1024,
   'estimate-get':1024*1024,
@@ -208,6 +213,7 @@ export const FCL_PUBLIC_BODY_LIMITS={
 } as const;
 
 export const fclHttpRequestSchemas:Record<FclHttpAction,z.ZodType>={
+  ...executionRequests,
   'estimate-run':fclEstimateRequestSchema,
   'estimate-list':fclEstimateListRequestSchema,
   'estimate-get':fclEstimateGetSchema,
@@ -249,6 +255,7 @@ export const fclHttpRequestSchemas:Record<FclHttpAction,z.ZodType>={
 };
 
 export const fclHttpOutputSchemas:Record<FclHttpAction,z.ZodType>={
+  ...executionOutputs,
   'estimate-run':fclEstimateListSchema,
   'estimate-list':fclEstimateListSchema,
   'estimate-get':fclEstimateViewSchema,

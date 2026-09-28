@@ -1,3 +1,4 @@
+import {createCustomerPortal} from './fcl-customer.js';
 import {createMaritimeWorkspace} from './maritime.js';
 import {createQuoteDocuments} from './quote-documents.js';
 import { legacyConfigurationRoute } from './service-catalog.js';
@@ -22,8 +23,12 @@ import { createApiKeysUi } from './api-keys.js';
 import { createServiceAccessUi } from './service-access.js';
 import { createOperationManual } from './manual.js';
 import { verifyCredentialAfterDelivery } from './credential-verification.js';
+import { assertCurrentPortalPage } from './page-version.js';
 const PUBLIC_PAGES = ['home', 'market', 'catalog', 'service', 'guide', 'cli', 'customs', 'tax', 'schedules', 'terminal-efficiency'];
 const API = '/console/api/v1';
+const portalMode=location.pathname.startsWith('/customer')?'customer':location.pathname.startsWith('/ops')?'ops':null;
+if(portalMode&&!location.hash)window.history.replaceState(null,'','#'+(portalMode==='customer'?'customer':'fcl'));
+
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#secret-dialog');
 const model = { session: null, state: null, credentials: new Map(), secret: null, busy: false, requestKeys: new Map(), call: null, admissions: null, admissionsLoading: false };
@@ -79,6 +84,8 @@ function canCredential(application) { return !platformIdentity() && developer() 
 function effectiveGrants(applicationId) { return model.state.grants.filter((grant) => (!applicationId || grant.application_id === applicationId) && grant.state === 'active' && (!grant.expires_at || Date.parse(grant.expires_at) > Date.now())); }
 function notify(message, error = false) { const element = document.querySelector('#notification'); element.textContent = message; element.classList.toggle('error', error); element.hidden = false; clearTimeout(notify.timer); notify.timer = setTimeout(() => { element.hidden = true; }, 5000); }
 const errors = {
+  portal_page_updated: '页面已更新，请刷新页面后重新查询。本次未提交查询，也未扣额度。',
+  portal_page_version_unavailable: '暂时无法检查页面版本，请稍后重试。本次未提交查询，也未扣额度。',
   login_invalid: "账号、密码或验证码不正确，请重新输入。", login_rate_limited: "尝试次数较多，请 10 分钟后再试。",
   native_input_invalid: "请检查导入格式、必填字段、金额和日期；数值使用小数文本。", native_preview_mismatch: "配置已变化，请重新预览后确认。", native_publication_blocked: "存在未通过的来源或配置校验，请先修正草稿。", native_management_denied: "当前账号没有修改业务配置的权限。", native_organization_required: "请切换到要配置的企业。",
   channel_unsaved_changes: "表单有未保存的修改，请先保存草稿再继续。", channels_unavailable: "当前环境尚未启用渠道管理。", channel_input_invalid: "请完整填写渠道资料，并核对日期与编号格式。", channel_code_exists: "渠道编号已存在，请使用其他编号。", channel_expired: "该配置已过期，请先调整有效期。", channel_preview_mismatch: "配置已经变化，请重新预览。", cli_request_not_found: "CLI 登录请求已过期，请在终端重新发起。", cli_auth_unavailable: "当前环境尚未启用 CLI 人员登录。", cases_unavailable: "当前环境尚未启用询价受理。", case_input_invalid: "请检查需求资料，补充内容不能为空。", case_not_found: "询价不存在或当前账号无权查看。", case_management_denied: "当前账号没有处理询价的权限。", case_transition_invalid: "需求状态已变化，请刷新后核对。", case_daily_limit: "今日提交次数已达上限，请稍后再试。",
@@ -109,6 +116,7 @@ function closeAccount(restoreFocus = false) {
 }
 async function request(path, { method = 'GET', body, key, acceptBusiness = false, guestRetry = false, signal } = {}) {
   const originalPath = path;
+  if (method === 'POST' && !guestRetry && ['/business/customs/query', '/business/customs/tax-estimate', '/business/customs/tax-estimates/batch'].includes(path)) await assertCurrentPortalPage(import.meta.url);
   const publicCustoms = ['/business/customs/query', '/business/customs/tax-estimate', '/business/customs/tax-estimates/batch'].includes(path) && !organizationSession();
   if (publicCustoms) { await ensureSession(); path = path.replace('/business/customs/', '/public/customs/'); }
   const writes = method !== 'GET'; const headers = { Accept: 'application/json' };
@@ -145,6 +153,7 @@ async function mutate(path, method, body, options = {}) {
   return value;
 }
 async function refresh() {
+  if(portalMode){model.state={};return;}
   model.state = (await request('/state')).data;
   if (!model.state) throw Object.assign(new Error('portal_unavailable'), { code: 'portal_unavailable' });
   if (reviewer() && !model.session.organization_id) {
@@ -170,13 +179,14 @@ async function refresh() {
   model.credentials.clear();
   model.admissions = null;
 }
-function brand() { return `<a class="brand" href="#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
+function brand() { return `<a class="brand" href="/console/#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
 function loginStorage() { try { return window.sessionStorage; } catch { return null; } }
 function renderLogin() {
+  if(portalMode)try{sessionStorage.setItem('freightclaw.portal-return',JSON.stringify({path:portalMode==='customer'?'/customer/':'/ops/',hash:location.hash,expires:Date.now()+900000}));}catch{/* Storage is optional. */}
   if (!peekLoginDestination(loginStorage())) rememberLoginDestination(['case','channels','cli-authorize','business-admin','quote','configure','market'].includes(route().page) && route().id ? `${route().page}/${route().id}` : route().page, loginStorage());
   document.title = '登录 · FreightClaw';
   app.className = 'login-shell';
-  app.innerHTML = `<section class="login-story">${brand()}<h1>从一票需求，<br>到每一步进展。</h1><p>询价、查询和业务协作，都在一个工作台。</p><div class="login-features"><div class="login-feature">${icon('file')}需求与进度随时可查</div><div class="login-feature">${icon('users')}账号登录，权限自动匹配</div><div class="login-feature">${icon('key')}网页与接口共享服务</div></div></section><section class="login-panel"><h2>欢迎回来</h2><p>登录账号，继续你的工作。</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? loginForm.markup() : '<a class="button primary" href="/console/auth/login">账号密码登录</a><a class="login-return" href="#home">返回首页</a>'}</section>`;
+  app.innerHTML = `<section class="login-story">${brand()}<h1>从一票需求，<br>到每一步进展。</h1><p>询价、查询和业务协作，都在一个工作台。</p><div class="login-features"><div class="login-feature">${icon('file')}需求与进度随时可查</div><div class="login-feature">${icon('users')}账号登录，权限自动匹配</div><div class="login-feature">${icon('key')}网页与接口共享服务</div></div></section><section class="login-panel"><h2>欢迎回来</h2><p>登录账号，继续你的工作。</p><div id="login-error" role="alert">${authRecoveryNotice()}</div>${model.session?.mode === 'fixtures' ? loginForm.markup() : '<a class="button primary" href="/console/auth/login">账号密码登录</a><a class="login-return" href="/console/#home">返回首页</a>'}</section>`;
 }
 function ensureShell() {
   const className = 'customer-shell';
@@ -185,6 +195,14 @@ function ensureShell() {
   app.innerHTML = '<aside id="sidebar" class="sidebar" aria-label="主要导航"></aside><div class="workspace"><header id="topbar" class="topbar"></header><div id="environment-note"></div><main id="content" tabindex="-1"></main></div>';
 }
 function customerNav() {
+  if(portalMode){
+    app.dataset.page='fcl';
+    document.querySelector('#topbar').innerHTML=brand()+`<nav class="customer-navigation"><a class="nav-item" href="${portalMode==='customer'?'/customer/':'/ops/'}">${portalMode==='customer'?'我的业务':'运营后台'}</a></nav><button class="button" data-action="logout">退出</button>`;
+    document.querySelector('#sidebar').innerHTML='';
+    document.querySelector('#environment-note').innerHTML=portalMode==='ops'?'<div class="console-context"><nav aria-label="运营导航"><button class="console-tab" data-go="fcl">业务单</button>' +(model.session?.personal_operator?'<button class="console-tab" data-go="fcl/compare">海运费与模板</button><button class="console-tab" data-go="fcl/config">报价与邮件设置</button>':'')+'</nav></div>':'';
+    return;
+  }
+
   const { page } = route();
   app.dataset.page = page;
   const center = reviewer() ? 'platform' : model.session?.authenticated && orgRole() !== 'developer' ? (model.session.organization_id ? 'workbench' : 'members') : 'api-keys';
@@ -192,7 +210,7 @@ function customerNav() {
   const targets = [['首页', 'home'], ['服务市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide']];
   const navItems = targets.map(([title, target]) => `<button type="button" class="nav-item" data-go="${target}" ${active === target ? 'aria-current="page"' : ''}>${title}</button>`).join('');
   const signedIn = model.session?.authenticated;
-  const account = `<div class="account-disclosure"><button class="account-toggle" type="button" data-action="account-menu" aria-label="账号菜单" aria-expanded="false" aria-controls="account-menu"><span class="customer-avatar">${signedIn ? esc(model.session.identity.display_name.slice(0, 1)) : icon('account')}</span><svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="account-menu" class="account-dropdown" hidden><div class="account-summary"><strong>${signedIn ? esc(model.session.identity.display_name) : '欢迎来到 FreightClaw'}</strong><span>${signedIn ? '管理你的账号与业务' : '登录后管理个人记录与服务'}</span></div><button type="button" data-go="account">${icon('account')}${signedIn ? '个人中心' : '登录个人中心'}</button>${signedIn ? `<button type="button" data-go="cases">${icon('file')}我的询价</button>${model.session.fcl_capability?.fcl_personal ? `<button type="button" data-go="fcl">${icon('container')}整柜询价</button>` : ''}${manager() || operator() ? `<button type="button" data-go="operations">${icon('file')}询价管理</button>${manager() ? '<button type="button" data-go="market/configure">' + icon('grid') + '模块配置</button>' : ''}` : ''}` : ''}${signedIn && !reviewer() ? `<button type="button" data-go="customs-history">${icon('clock')}关务历史</button>${developer() && !platformIdentity() ? `<button type="button" data-go="api-keys">${icon('key')}API Key</button>` : ''}` : ''}${signedIn ? '<button class="account-logout" type="button" data-action="logout">退出登录</button>' : ''}</div></div>`;
+  const account = `<div class="account-disclosure"><button class="account-toggle" type="button" data-action="account-menu" aria-label="账号菜单" aria-expanded="false" aria-controls="account-menu"><span class="customer-avatar">${signedIn ? esc(model.session.identity.display_name.slice(0, 1)) : icon('account')}</span><svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="account-menu" class="account-dropdown" hidden><div class="account-summary"><strong>${signedIn ? esc(model.session.identity.display_name) : '欢迎来到 FreightClaw'}</strong><span>${signedIn ? '管理你的账号与业务' : '登录后管理个人记录与服务'}</span></div>${signedIn ? `<button type="button" data-action="customer-portal">${icon('file')}客户中心</button>${model.session.personal_operator||model.session.personal_participant?`<button type="button" data-action="ops-portal">${icon('container')}运营后台</button>`:''}${manager()?`<button type="button" data-go="market/configure">${icon('grid')}模块配置</button>`:''}`:`<button type="button" data-go="account">${icon('account')}登录个人中心</button>`}${signedIn && !reviewer() ? `<button type="button" data-go="customs-history">${icon('clock')}关务历史</button>${developer() && !platformIdentity() ? `<button type="button" data-go="api-keys">${icon('key')}API Key</button>` : ''}` : ''}${signedIn ? '<button class="account-logout" type="button" data-action="logout">退出登录</button>' : ''}</div></div>`;
   document.querySelector('#sidebar').innerHTML = `<nav>${navItems}</nav>${signedIn ? `<div class="sidebar-footer"><span>${esc(model.session.identity.display_name)}</span></div>` : ''}`;
   document.querySelector('#topbar').innerHTML = `${brand()}<nav class="customer-navigation" aria-label="主导航">${navItems}</nav><div class="customer-account">${account}<button type="button" class="button quiet mobile-menu" data-action="menu" aria-expanded="false" aria-label="打开导航">${icon('menu')}</button></div>`;
   const fclPersonal = model.session?.fcl_capability?.fcl_personal === true;
@@ -338,8 +356,12 @@ function render() {
   const publicPages = page === 'market' && id === 'configure' ? PUBLIC_PAGES.filter(p=>p!=='market') : PUBLIC_PAGES;
   if (page === 'login' || (!model.session?.authenticated && (!publicPages.includes(page) || new URLSearchParams(location.search).has('auth_error')))) { renderLogin(); return; }
   ensureShell(); nav();
+  if(portalMode==='customer') { document.querySelector('#content').innerHTML='<div class="fcl-workbench">'+customer.page(route().page==='customer'?route().id:'')+'</div>'; return; }
+  if(portalMode==='ops'&&!model.session?.personal_operator&&!model.session?.personal_participant) { document.querySelector('#content').innerHTML=empty('没有运营权限','请使用已授权的个人账号。','<a class="button" href="/customer/">返回客户中心</a>'); return; }
+  if(portalMode==='ops'&&page!=='fcl'){go('fcl');return;}
+
   if (model.session?.authenticated && !model.state && !publicPages.includes(page)) { document.querySelector('#content').innerHTML = '<p role="status">正在读取个人中心…</p>'; return; }
-  if (page === 'account' && model.session.fcl_capability?.fcl_personal) page = 'fcl';
+  if (page === 'account' && model.session.authenticated) {location.replace(model.session.personal_operator||model.session.personal_participant?'/ops/':'/customer/');return;}
   if (page === 'account') page = reviewer() ? 'platform' : orgRole() === 'developer' ? 'api-keys' : model.session.organization_id ? 'workbench' : 'members';
   const main = document.querySelector('#content');
   if (reviewer() && !model.session.organization_id && ![...PUBLIC_PAGES, 'platform', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant', 'channels', 'cli-authorize', 'cases', 'operations', 'case', 'fcl'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'platform')); return; }
@@ -391,10 +413,12 @@ function showSecret(result, applicationId, kind = 't0') {
   model.secret = { key, credentialId, applicationId, kind, version: data?.credential?.version }; document.querySelector('#secret-value').textContent = key; dialog.showModal();
 }
 async function runAction(button) {
+  if(['customer-portal','ops-portal'].includes(button.dataset.action)){location.assign(button.dataset.action==='customer-portal'?'/customer/':'/ops/');return;}
   if (await loginForm.action(button)) return;
   if (workspaceHome.action(button)) return;
   if (await maritime.action(button)) return;
   if (await quoteDocuments.action(button)) return;
+  if (await customer.action(button)) return;
   if (await fcl.action(button)) return;
   if (await nativeAdmin.action(button)) return;
   if (await channels.action(button)) return;
@@ -467,6 +491,7 @@ const loginForm = createLoginForm({ api: request, esc, formError, authenticated:
 const workspaceHome = createWorkspaceHome({api:request,model:()=>model,head,esc,icon,rerender:render});
 const maritime=createMaritimeWorkspace({api:request,mutate,esc,head,note,icon,model:()=>model,rerender:render,canConfigure:manager});
 const quoteDocuments = createQuoteDocuments({api:request,mutate,model:()=>model,esc,head,icon,rerender:render,canConfigure:manager});
+const customer=createCustomerPortal({api:request,mutate,esc,head,panel,rerender:render,notify,identity:()=>model.session?.identity?.user_id});
 const fcl = createFclWorkspace({api:request,mutate,model:()=>model,esc,head,panel,empty,note,field,input,actions,formError,icon,rerender:render,notify});
 const nativeAdmin = createNativeAdminUi({ canConfigure: manager,api:request,mutate,esc,head,note,icon,formError,model:()=>model,rerender:render});
 const channels = createChannelsUi({api:request,mutate,esc,head,note,icon,formError,model:()=>model,rerender:render});
@@ -572,6 +597,7 @@ window.addEventListener('hashchange', () => {
   clearNotice(); closeMenu(); closeAccount(); render(); document.querySelector('#content')?.focus(); window.scrollTo({ top: 0 });
 });
 document.addEventListener('keydown', (event) => {
+  if (fcl.keydown(event)) return;
   if (maritime.keydown(event)) return;
   if (event.key === 'Escape' && document.querySelector('#account-menu')?.hidden === false) { event.preventDefault(); closeAccount(true); return; }
   if (!document.querySelector('#sidebar')?.classList.contains('open')) return;
@@ -586,6 +612,7 @@ document.addEventListener('focusin', (event) => { maritime.focus(event); if (!ev
 render();
 try {
   await ensureSession();
+  if(model.session.authenticated&&!portalMode)try{const saved=JSON.parse(sessionStorage.getItem('freightclaw.portal-return')||'null');sessionStorage.removeItem('freightclaw.portal-return');if(saved&&['/customer/','/ops/'].includes(saved.path)&&saved.expires>Date.now()&&/^#(?:customer|fcl)(?:\/[a-zA-Z0-9/-]*)?$/.test(saved.hash)){location.replace(saved.path+saved.hash);}}catch{/* Storage is optional. */}
   if (model.session.authenticated) { await refresh(); const destination = consumeLoginDestination(loginStorage()); if (destination && ['home', 'login'].includes(route().page)) go(destination); }
   try { model.publicQuota = (await request('/public/customs/quota')).data; } catch { model.publicQuota = null; }
   render();

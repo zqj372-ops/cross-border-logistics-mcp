@@ -9,10 +9,11 @@ import type {
 import { CollectorRuntimeError, signalField } from "../errors";
 import { decimalMinutesToHours, eventFromCompactTimes, routingFromLegs } from "../normalize";
 import type { LocationCandidate, ResolveLocationInput } from "../locations";
-import type { EvidenceStore } from "../ports";
+import type { CarrierBrowserPort, EvidenceStore } from "../ports";
+import { collectWindows } from "./public-schedule";
 import type { CarrierAdapter, CarrierParserContext, CarrierParserResult } from "./types";
 
-const PARSER_VERSION = "oocl-schedule-parser@1";
+const PARSER_VERSION = "oocl-schedule-parser@2";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -34,6 +35,26 @@ function numberValue(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && /^\d+$/u.test(value)) return Number(value);
   return null;
+}
+
+export function parseOoclLocations(input: unknown): readonly LocationCandidate[] {
+  const root = asRecord(input), data = asRecord(root?.data);
+  if (root?.success !== true || !Array.isArray(data?.results)) throw new CollectorRuntimeError("schema_changed", "unavailable", "oocl_locations_invalid");
+  return data.results.map((value: unknown) => {
+    const row = asRecord(value);
+    const name = asArray(row?.Names).map(asRecord).find(item => item?.Language === "English");
+    const id = stringValue(row?.LocationID), city = stringValue(name?.Name);
+    if (!id || !/^\d+$/u.test(id) || !city || (typeof row?.LocationID === "number" && !Number.isSafeInteger(row.LocationID))) throw new CollectorRuntimeError("schema_changed", "unavailable", "oocl_location_identity_missing");
+    const country = asArray(name?.Parents).map(asRecord).find(item => item?.Type === "Country");
+    const code = asArray(row?.Codes).map(asRecord).find(item => item?.Standard === "UNLocode");
+    const countryCode = stringValue(country?.Code), unlocode = stringValue(code?.Code);
+    const fullName = [city, stringValue(name?.UpperAdministrativeLocation)].filter(Boolean).join(", ");
+    return {
+      name: fullName, country_code: countryCode && /^[A-Z]{2}$/u.test(countryCode) ? countryCode : null,
+      type: "city" as const, carrier_location_id: id, mapping_source: "oocl_city_autocomplete", source_full_name: fullName,
+      unlocode: unlocode && /^[A-Z]{2}[A-Z0-9]{3}$/u.test(unlocode) ? unlocode : null,
+    };
+  });
 }
 
 function rawDateValue(value: unknown): string | null {
@@ -71,16 +92,6 @@ function placeFromRaw(
   };
 }
 
-function fallbackPlace(location: CarrierParserContext["origin"]): Place {
-  return {
-    name: location.name,
-    country_code: location.country_code,
-    carrier_location_id: location.carrier_location_id,
-    unlocode: location.unlocode,
-    type: location.type,
-  };
-}
-
 function eventKind(value: unknown): CalendarEvent["event_kind"] {
   const text = stringValue(value)?.toLowerCase() ?? "";
   if (text.includes("actual")) return "actual";
@@ -94,7 +105,6 @@ function eventKind(value: unknown): CalendarEvent["event_kind"] {
 function parseLeg(
   rawLeg: unknown,
   index: number,
-  context: CarrierParserContext,
 ): { readonly leg: TransportLeg | null; readonly missing: readonly MissingField[] } {
   const leg = asRecord(rawLeg);
   if (leg === null) {
@@ -105,7 +115,8 @@ function parseLeg(
   }
   const type = stringValue(leg.Type) ?? stringValue(leg.type) ?? "Unknown";
   const mode: TransportLeg["mode"] =
-    type.toLowerCase() === "voyage" ? "ocean" : "unknown";
+    type.toLowerCase() === "voyage" ? "ocean" :
+      asRecord(leg.TransportMode)?.Code === "TRU" ? "truck" : "unknown";
   const loadingPort = placeFromRaw(
     leg.LoadingPort ?? leg.loadingPort,
     "port",
@@ -114,10 +125,10 @@ function parseLeg(
     leg.DischargePort ?? leg.dischargePort,
     "port",
   );
-  const from =
-    loadingPort ??
-    (index === 0 ? fallbackPlace(context.origin) : null);
-  const to = dischargePort ?? fallbackPlace(context.destination);
+  // A query city is not evidence of a leg endpoint. Keep source facility IDs
+  // distinct from city/port IDs, including the site's optional door legs.
+  const from = loadingPort ?? (mode === "ocean" ? null : placeFromRaw(leg.OriginFacility, "unknown"));
+  const to = dischargePort ?? (mode === "ocean" ? null : placeFromRaw(leg.DestinationFacility, "unknown"));
   if (from === null || to === null) {
     return {
       leg: null,
@@ -129,10 +140,6 @@ function parseLeg(
       ],
     };
   }
-  const timezone =
-    stringValue(leg.OriginFacilityTimezoneName) ??
-    stringValue(leg.DestinationFacilityTimezoneName) ??
-    null;
   const events: CalendarEvent[] = [];
   const departure = eventFromCompactTimes({
     eventType: "departure",
@@ -141,7 +148,7 @@ function parseLeg(
       rawDateValue(leg.FromETDGmtDateTime),
     localValue: rawDateValue(leg.FromETDLocalDateTime),
     utcValue: rawDateValue(leg.FromETDGmtDateTime),
-    timezone,
+    timezone: stringValue(leg.OriginFacilityTimezoneName),
     eventKind: eventKind(leg.FromETDEventType),
     timezoneSource: "oocl_leg_timezone",
   });
@@ -155,7 +162,7 @@ function parseLeg(
       rawDateValue(leg.ToETAGmtDateTime),
     localValue: rawDateValue(leg.ToETALocalDateTime),
     utcValue: rawDateValue(leg.ToETAGmtDateTime),
-    timezone,
+    timezone: stringValue(leg.DestinationFacilityTimezoneName),
     eventKind: eventKind(leg.ToETAEventType),
     timezoneSource: "oocl_leg_timezone",
   });
@@ -174,6 +181,11 @@ function parseLeg(
   if (voyage === null && mode === "ocean") {
     missing.push({ field: `legs[${index}].voyage`, reason: "not_provided" });
   }
+  if (mode === "ocean") {
+    for (const event of ["departure", "arrival"] as const) {
+      if (!events.some(item => item.event_type === event)) missing.push({ field: `legs[${index}].${event}`, reason: "not_provided" });
+    }
+  }
   return {
     leg: {
       sequence: index + 1,
@@ -181,7 +193,8 @@ function parseLeg(
       source_leg_id:
         stringValue(leg.LegId) ??
         stringValue(leg.LegID) ??
-        stringValue(leg.Id),
+        stringValue(leg.Id) ??
+        stringValue(leg.ComponentId),
       vessel_name: vesselName,
       voyage,
       from,
@@ -233,7 +246,7 @@ function parseRoute(
     };
   }
   const parsedLegs = asArray(route.Legs ?? route.legs).map((leg, legIndex) =>
-    parseLeg(leg, legIndex, context),
+    parseLeg(leg, legIndex),
   );
   const legs = parsedLegs
     .map((entry) => entry.leg)
@@ -307,7 +320,7 @@ export function parseOoclScheduleResponse(
   const root = asRecord(input);
   const data = root === null ? null : asRecord(root.data);
   const routes = asArray(data?.standardRoutes);
-  if (root === null || data === null || routes.length === 0) {
+  if (root?.success !== true || data === null || !Array.isArray(data.standardRoutes)) {
     throw new CollectorRuntimeError(
       "parse_error",
       "unavailable",
@@ -321,9 +334,10 @@ export function parseOoclScheduleResponse(
     .map((entry) => entry.record)
     .filter((record): record is ScheduleRecord => record !== null);
   const missing = parsed.flatMap((entry) => entry.missing);
-  const numberOfRouteReturn =
-    numberValue(data.numberOfRouteReturn) ?? records.length;
-  const complete = numberOfRouteReturn === records.length;
+  const numberOfRouteReturn = numberValue(data.numberOfRouteReturn);
+  const complete = numberOfRouteReturn !== null && Number.isSafeInteger(numberOfRouteReturn) && numberOfRouteReturn === records.length &&
+    records.length === routes.length && !missing.some(field =>
+      ["oocl_leg_not_object", "oocl_leg_location_missing", "no_parseable_leg"].includes(field.reason));
   const coverage: CollectorResultData["coverage"] = {
     requested_from: context.normalizedQuery.departure_from,
     requested_until: context.normalizedQuery.departure_until,
@@ -344,7 +358,7 @@ export function parseOoclScheduleResponse(
     pages_read: [1],
     complete,
     truncated: !complete,
-    failure_reason: complete ? null : "oocl_route_count_mismatch",
+    failure_reason: complete ? null : "oocl_incomplete_routes",
   };
   return {
     records,
@@ -369,10 +383,17 @@ export const OOCL_ADAPTER_METADATA = {
   lastLiveVerifiedAt: null,
 } as const;
 
-export function createOoclParserAdapter(): CarrierAdapter {
+export function createOoclParserAdapter(browser?: CarrierBrowserPort): CarrierAdapter {
   return {
     metadata: OOCL_ADAPTER_METADATA,
-    resolveLocations(): Promise<readonly LocationCandidate[]> {
+    async resolveLocations(input): Promise<readonly LocationCandidate[]> {
+      if (browser?.available) {
+        const result = await browser.search({ carrier: "OOCL", query: { operation: "locations", text: input.text }, ...signalField(input.signal) });
+        if (result.status !== 200) throw new CollectorRuntimeError("access_restricted", "unavailable", "oocl_locations_access_restricted");
+        return parseOoclLocations(JSON.parse(new TextDecoder().decode(result.body)) as unknown)
+          .filter(candidate => (input.countryCode === null || candidate.country_code === input.countryCode) &&
+            (!input.carrierLocationId || candidate.carrier_location_id === input.carrierLocationId));
+      }
       return Promise.reject(
         new CollectorRuntimeError(
           "auth_required",
@@ -386,9 +407,14 @@ export function createOoclParserAdapter(): CarrierAdapter {
       _http,
       _evidence,
     ): Promise<CarrierParserResult> {
-      void context;
-      void _http;
-      void _evidence;
+      if (browser?.available) return collectWindows(context, _http, _evidence, {
+        carrier: "OOCL", days: 28,
+        fetch: (from, until) => browser.search({ carrier: "OOCL", query: { operation: "schedules",
+          origin: { id: context.origin.carrier_location_id, name: context.origin.name },
+          destination: { id: context.destination.carrier_location_id, name: context.destination.name }, from, until,
+        }, ...signalField(context.signal) }),
+        parse: (body, parserContext) => parseOoclScheduleResponse(JSON.parse(body) as unknown, parserContext),
+      });
       return Promise.reject(
         new CollectorRuntimeError(
           "auth_required",

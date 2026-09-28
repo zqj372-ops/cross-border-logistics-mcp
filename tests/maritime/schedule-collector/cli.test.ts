@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runCli } from "../../../services/maritime/schedule-collector/cli";
+import { CollectorRuntimeError } from "../../../services/maritime/schedule-collector/errors";
+import * as maerskBrowser from "../../../services/maritime/schedule-collector/transport/maersk-browser";
 
 interface CliEnvelope {
   readonly status: string;
@@ -26,6 +28,18 @@ function capture() {
 }
 
 describe("schedule collector CLI", () => {
+  it("preserves bounded browser failures as unavailable instead of an internal CLI error", async () => {
+    vi.stubEnv("SCHEDULE_BROWSER_EXECUTABLE", "/fixture/browser");
+    const browser = vi.spyOn(maerskBrowser, "withMaerskBrowserPort").mockRejectedValue(new CollectorRuntimeError("timeout", "unavailable", "collector_aborted"));
+    try {
+      const output = capture();
+      expect(await runCli(["query", "--carrier", "MSK", "--origin", "Fixture Origin", "--destination", "Fixture Destination", "--from", "2026-09-28", "--until", "2026-10-25", "--mode", "live"], output.io)).toBe(6);
+      expect(envelopeFrom(output.stdout)).toMatchObject({ status: "unavailable", blockers: [{ code: "timeout" }] });
+      expect(output.stderr).toEqual([]);
+      expect(browser).toHaveBeenCalledOnce();
+    } finally { browser.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
   it("shows help without live requests while keeping malformed arguments invalid", async () => {
     for (const argv of [["--help"], ["help"], ["query", "--help"], ["locations", "--help"], ["carriers", "--help"], ["help", "query"]]) {
       const output = capture();
@@ -74,6 +88,7 @@ describe("schedule collector CLI", () => {
       "MAERSK",
       "MSC",
       "MATSON",
+      "SML",
     ]);
     expect(output.stderr).toEqual([]);
   });
@@ -203,8 +218,8 @@ describe("schedule collector CLI", () => {
     expect(envelope.blockers[0]?.code).toBe("auth_required");
   });
 
-  it("resolves CLI carrier aliases and reports missing adapters as unavailable", async () => {
-    for (const alias of ["EMC", "MSK", "美森", "HAPAG"]) {
+  it("resolves CLI aliases and distinguishes unconfigured browser access from missing adapters", async () => {
+    for (const [alias, issue] of [["MSK", "live_not_approved"], ["美森", "not_implemented"], ["HAPAG", "not_implemented"], ["HPL", "not_implemented"]] as const) {
       const locations = capture();
       const locationsCode = await runCli(
         [
@@ -221,7 +236,7 @@ describe("schedule collector CLI", () => {
       const locationsEnvelope = envelopeFrom(locations.stdout);
       expect(locationsCode).toBe(6);
       expect(locationsEnvelope.status).toBe("unavailable");
-      expect(locationsEnvelope.blockers[0]?.code).toBe("not_implemented");
+      expect(locationsEnvelope.blockers[0]?.code).toBe(issue);
 
       const query = capture();
       const queryCode = await runCli(
@@ -249,7 +264,7 @@ describe("schedule collector CLI", () => {
       const queryEnvelope = envelopeFrom(query.stdout);
       expect(queryCode).toBe(6);
       expect(queryEnvelope.status).toBe("unavailable");
-      expect(queryEnvelope.blockers[0]?.code).toBe("not_implemented");
+      expect(queryEnvelope.blockers[0]?.code).toBe(issue);
     }
   });
 

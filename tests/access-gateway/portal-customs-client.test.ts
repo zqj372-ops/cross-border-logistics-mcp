@@ -70,6 +70,13 @@ function client(fetchImpl: typeof fetch, delegationSigner: CustomsDelegationSign
 const request = { input: { query: "测试商品", ruleDate: RULE_DATE, codeCountry: "CN" as const, selectedHs6: "123456", attributes: { originCountry: "CN" as const, contains_steel_aluminum: "unknown" as const, vacuumInsulated: "unknown" as const } }, actor: { type: "user" as const, id: "user-1" }, requestId: "request-1" };
 
 describe("customs portal client", () => {
+  it("distinguishes unpublished source data without querying or signing", async () => {
+    const fake = fixtureFetch([{ status: 503, body: { ...status(), ready: false, testData: true, publishedAt: null, evaluatedAt: null, releaseIds: [], snapshotHash: null, releaseHash: null, reasons: ["No reviewed publication snapshot is available."], error: { code: "data_not_ready", message: "Reviewed customs data is not ready for M2M status." } } }]);
+    const sign = vi.fn(signer());
+    await expect(client(fake.fetchImpl, sign).query(request)).resolves.toMatchObject({ status: "unavailable", data: null, reason_codes: ["customs_data_not_ready"] });
+    expect(sign).not.toHaveBeenCalled();
+    expect(fake.calls).toHaveLength(1);
+  });
   it("cancels an oversized chunked response before consuming the full body", async () => {
     let pulls = 0;
     const cancel = vi.fn();

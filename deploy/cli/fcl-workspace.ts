@@ -1,3 +1,4 @@
+import {executionDescriptions} from '../../services/access-gateway/portal/fcl-execution-http-contracts';
 import {createHash,randomUUID} from 'node:crypto';
 import {constants} from 'node:fs';
 import {link,lstat,mkdir,open,rename,unlink} from 'node:fs/promises';
@@ -27,6 +28,7 @@ const tokenPattern=/^[A-Za-z0-9_-]{32,128}$/u;
 const sha256Pattern=/^[a-f0-9]{64}$/u;
 const fclStaffWriteActions=new Set<FclHttpAction>(FCL_STAFF_WRITE_ACTIONS);
 const description:Record<FclHttpAction,string>={
+  ...executionDescriptions,
   'estimate-run':'计算并保存整柜预估报价',
   'estimate-list':'查询整柜比价方案',
   'estimate-get':'读取预估报价及历史版本',

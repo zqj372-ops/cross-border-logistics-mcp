@@ -1,3 +1,4 @@
+import {CUSTOMER_ACTIONS} from './fcl-customer-contracts';
 import {createCipheriv,createDecipheriv,createHash,randomBytes} from 'node:crypto';
 import {z} from 'zod';
 import {PortalError,type PortalContext,type PortalIdentity} from './contracts';
@@ -22,6 +23,8 @@ import type {FclReceiverAuthority,FclReceiverProof} from './fcl-receiver-authori
 import {fclEstimateRequestSchema,fclEstimateSelectSchema} from '../../quote-native/fcl-operations-contracts';
 import {estimateToQuoteDraft} from '../../quote-native/fcl-operations';
 import {FCL_DOCUMENT_WORKFLOW_VERSION} from '../../quote-native/fcl-contracts';
+import type {FclExecutionHttpService} from './fcl-execution-http';
+import {executionRoutes,type FclExecutionAction} from './fcl-execution-http-contracts';
 
 const publicCookieName='fc_fcl_public';
 const publicCookiePath='/inquiry';
@@ -35,6 +38,7 @@ type FclDocumentPort=Pick<DocumentWorkflowService,
   'saveFclHandoff'|'getFclHandoff'>;
 
 export interface FclHttpDependencies{
+  readonly execution?:FclExecutionHttpService;
   readonly caseService:FclCasePort;
   readonly nativeAdmin:FclRatePort;
   readonly documentWorkflow:FclDocumentPort;
@@ -146,6 +150,11 @@ export class FclHttpService{
     this.publicAttempts=new FclPublicAttemptLimiter(dependencies.publicAttemptLimit??60,dependencies.publicAttemptWindowMs??60_000,dependencies.publicAttemptKeyLimit??10_000,now);
   }
   consumePublicAttempt(key:string):void{if(!this.publicAttempts.allow(key))throw new PortalError('fcl_rate_limited');}
+  isOperator(identity:PortalIdentity):boolean{return identity.emailVerified&&(identity.platformRole==='operator'||identity.userId===this.dependencies.receiverUserId);}
+  async isParticipant(identity:PortalIdentity):Promise<boolean>{
+    if(!identity.emailVerified||!this.dependencies.execution)return false;
+    try{const result=await this.executeStaff({identity,organizationId:null},'execution-list',{limit:1,cursor:null,state:'all'},()=>{throw new Error('read_only');});return (result.data as {items:unknown[]}).items.length>0;}catch{return false;}
+  }
   async capability(identity:PortalIdentity):Promise<{fcl_personal:boolean;receiver_user_id:string|null;business_date:string}>{
     const ctx:PortalContext={identity,organizationId:null};
     try{
@@ -189,7 +198,13 @@ export class FclHttpService{
   }
   async executeStaff(ctx:PortalContext,action:FclHttpAction,input:unknown,key:()=>string):Promise<FclHttpResult>{
     const request=parse(fclHttpRequestSchemas[action],input,'fcl_input_invalid');
+    if(['execution-start','execution-preview','execution-amend','execution-amend-preview'].includes(action)&&!this.isOperator(ctx.identity))throw new PortalError('fcl_not_found');
+    if(!CUSTOMER_ACTIONS.includes(action)&&!action.startsWith('execution-')&&action!=='workspace-list'&&!this.isOperator(ctx.identity))throw new PortalError('fcl_not_found');
     return this.authorized(ctx,async()=>{
+    if(Object.hasOwn(executionRoutes,action)){
+      if(!this.dependencies.execution)throw new PortalError('fcl_execution_not_configured');
+      return this.output(action,await this.dependencies.execution.execute(ctx,action as FclExecutionAction,request,key));
+    }
     let data:unknown;
     switch(action){
       case 'case-create':data=await this.dependencies.caseService.createPersonalFclInquiry(ctx,request,key());break;

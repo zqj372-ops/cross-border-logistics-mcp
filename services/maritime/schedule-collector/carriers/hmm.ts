@@ -13,6 +13,7 @@ import {
 } from "../errors";
 import type { LocationCandidate } from "../locations";
 import type {
+  CarrierBrowserPort,
   CarrierHttpPort,
   CarrierHttpResponse,
   EvidenceStore,
@@ -678,17 +679,31 @@ function assertHmmJsonResponse(
   response: CarrierHttpResponse,
   stage: "point_to_point" | "schedule",
 ): void {
-  if (response.status === 401 || response.status === 403) {
+  assertHmmAccess(response, stage);
+  if (
+    response.status !== 200 ||
+    response.contentType?.includes("json") !== true
+  ) {
+    throw new CollectorRuntimeError(
+      "schema_changed",
+      "unavailable",
+      `hmm_${stage}_response_invalid_${response.status}_${response.contentType ?? "missing"}`,
+    );
+  }
+}
+
+function assertHmmAccess(response: CarrierHttpResponse, stage: string): void {
+  // The public site also serves its denial page with HTTP 200.
+  const deniedPage = response.contentType?.includes("html") === true &&
+    /<title>\s*Access Denied\s*<\/title>/iu.test(decodeText(response.body));
+  if (response.status === 401 || response.status === 403 || deniedPage) {
     throw new CollectorRuntimeError(
       "access_restricted",
       "unavailable",
       `hmm_${stage}_access_restricted`,
     );
   }
-  if (
-    response.status !== 200 ||
-    response.contentType?.includes("json") !== true
-  ) {
+  if (response.status !== 200) {
     throw new CollectorRuntimeError(
       "schema_changed",
       "unavailable",
@@ -821,59 +836,76 @@ async function queryHmmWindow(
   context: CarrierParserContext,
   http: CarrierHttpPort,
   evidence: EvidenceStore,
-  csrf: { readonly token: string; readonly header: string },
+  csrf: { readonly token: string; readonly header: string } | null,
   window: { readonly from: string; readonly until: string },
+  browser?: CarrierBrowserPort,
 ): Promise<CarrierParserResult> {
-  const headers = {
-    "content-type": "application/json;charset=UTF-8",
-    origin: "https://www.hmm21.com",
-    referer: "https://www.hmm21.com/e-service/general/schedule/ScheduleMain.do",
-    [csrf.header.toLowerCase()]: csrf.token,
-  };
-  const days =
-    (Date.parse(`${window.until}T00:00:00Z`) -
-      Date.parse(`${window.from}T00:00:00Z`)) /
-      86_400_000 +
-    1;
-  const first = await http.request({
-    carrier: "HMM",
-    method: "POST",
-    path: POINT_TO_POINT_PATH,
-    headers,
-    body: {
-      srchPointFromCd: context.origin.carrier_location_id,
-      srchCityFrom: "CY",
-      srchPointToCd: context.destination.carrier_location_id,
-      srchCityTo: "CY",
-      srchSelPriority: "A",
-      srchPorFcltyCd: "",
-      srchPvyFcltyCd: "",
-      paramToday: context.observedAt.slice(0, 10).replaceAll("-", ""),
-      srchViewType: "L",
-      srchSailDate: window.from.replaceAll("-", ""),
-      srchSelWeeks: String(Math.max(1, Math.ceil(days / 7))),
-      srchSelSortBy: "D",
-      itemPolCd: "",
-      itemPodCd: "",
-    },
-    ...signalField(context.signal),
-  });
-  assertHmmJsonResponse(first, "point_to_point");
-  const grmNo = parseHmmPointToPointResponse(decodeJson(first.body));
-  const second = await http.request({
-    carrier: "HMM",
-    method: "POST",
-    path: SELECT_PATH,
-    headers,
-    body: {
-      srchViewType: "L",
-      srchGrmNo: grmNo,
-      isNew: true,
-      srchSelPriority: "A",
-      srchSelSortBy: "D",
-    },
-    ...signalField(context.signal),
-  });
+  let second: CarrierHttpResponse;
+  if (browser?.available) {
+    second = await browser.search({
+      carrier: "HMM",
+      query: {
+        operation: "schedules",
+        origin_id: context.origin.carrier_location_id,
+        destination_id: context.destination.carrier_location_id,
+        from: window.from,
+        until: window.until,
+      },
+      ...signalField(context.signal),
+    });
+  } else {
+    if (csrf === null) throw new CollectorRuntimeError("auth_required", "unavailable", "hmm_session_missing");
+    const headers = {
+      "content-type": "application/json;charset=UTF-8",
+      origin: "https://www.hmm21.com",
+      referer: "https://www.hmm21.com/e-service/general/schedule/ScheduleMain.do",
+      [csrf.header.toLowerCase()]: csrf.token,
+    };
+    const days =
+      (Date.parse(`${window.until}T00:00:00Z`) -
+        Date.parse(`${window.from}T00:00:00Z`)) /
+        86_400_000 +
+      1;
+    const first = await http.request({
+      carrier: "HMM",
+      method: "POST",
+      path: POINT_TO_POINT_PATH,
+      headers,
+      body: {
+        srchPointFromCd: context.origin.carrier_location_id,
+        srchCityFrom: "CY",
+        srchPointToCd: context.destination.carrier_location_id,
+        srchCityTo: "CY",
+        srchSelPriority: "A",
+        srchPorFcltyCd: "",
+        srchPvyFcltyCd: "",
+        paramToday: context.observedAt.slice(0, 10).replaceAll("-", ""),
+        srchViewType: "L",
+        srchSailDate: window.from.replaceAll("-", ""),
+        srchSelWeeks: String(Math.max(1, Math.ceil(days / 7))),
+        srchSelSortBy: "D",
+        itemPolCd: "",
+        itemPodCd: "",
+      },
+      ...signalField(context.signal),
+    });
+    assertHmmJsonResponse(first, "point_to_point");
+    const grmNo = parseHmmPointToPointResponse(decodeJson(first.body));
+    second = await http.request({
+      carrier: "HMM",
+      method: "POST",
+      path: SELECT_PATH,
+      headers,
+      body: {
+        srchViewType: "L",
+        srchGrmNo: grmNo,
+        isNew: true,
+        srchSelPriority: "A",
+        srchSelSortBy: "D",
+      },
+      ...signalField(context.signal),
+    });
+  }
   assertHmmJsonResponse(second, "schedule");
   const payload = decodeJson(second.body);
   const parsed = parseHmmScheduleResponse(payload, {
@@ -921,16 +953,16 @@ export const HMM_ADAPTER_METADATA = {
   lastLiveVerifiedAt: null,
 } as const;
 
-export function createHmmAdapter(): CarrierAdapter {
+export function createHmmAdapter(browser?: CarrierBrowserPort): CarrierAdapter {
   return {
     metadata: HMM_ADAPTER_METADATA,
     async resolveLocations(input, http): Promise<readonly LocationCandidate[]> {
-      const response = await http.request({
-        carrier: "HMM",
-        method: "GET",
-        path: LOCATION_PATH,
-        ...signalField(input.signal),
-      });
+      const response = browser?.available
+        ? await browser.search({ carrier: "HMM", query: { operation: "locations" }, ...signalField(input.signal) })
+        : await http.request({
+            carrier: "HMM", method: "GET", path: LOCATION_PATH, ...signalField(input.signal),
+          });
+      assertHmmAccess(response, "locations");
       return locationBody(
         input,
         parseHmmCitiesList(decodeText(response.body)),
@@ -941,13 +973,14 @@ export function createHmmAdapter(): CarrierAdapter {
       http,
       evidence: EvidenceStore,
     ): Promise<CarrierParserResult> {
-      const page = await http.request({
-        carrier: "HMM",
-        method: "GET",
-        path: MAIN_PATH,
-        ...signalField(context.signal),
-      });
-      const csrf = extractCsrf(decodeText(page.body));
+      let csrf: { readonly token: string; readonly header: string } | null = null;
+      if (!browser?.available) {
+        const page = await http.request({
+          carrier: "HMM", method: "GET", path: MAIN_PATH, ...signalField(context.signal),
+        });
+        assertHmmAccess(page, "bootstrap");
+        csrf = extractCsrf(decodeText(page.body));
+      }
       const results: CarrierParserResult[] = [];
       const queryWindows = windows(
         context.normalizedQuery.departure_from,
@@ -957,7 +990,7 @@ export function createHmmAdapter(): CarrierAdapter {
         throwIfAborted(context.signal);
         try {
           results.push(
-            await queryHmmWindow(context, http, evidence, csrf, window),
+            await queryHmmWindow(context, http, evidence, csrf, window, browser),
           );
         } catch (error: unknown) {
           const abortError = abortErrorFromSignal(context.signal);

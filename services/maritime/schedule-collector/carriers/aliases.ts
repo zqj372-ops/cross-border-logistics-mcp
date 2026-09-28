@@ -11,6 +11,7 @@ export const CARRIER_IDS = [
   "MAERSK",
   "MSC",
   "MATSON",
+  "SML",
 ] as const;
 
 export type CanonicalCarrierId = (typeof CARRIER_IDS)[number];
@@ -31,6 +32,10 @@ const CARRIER_ALIASES: Readonly<Record<string, CanonicalCarrierId>> = {
   ZIM: "ZIM",
   HAPAG_LLOYD: "HAPAG_LLOYD",
   HAPAG: "HAPAG_LLOYD",
+  HPL: "HAPAG_LLOYD",
+  SML: "SML",
+  SM_LINE: "SML",
+  SMLINE: "SML",
   ONE: "ONE",
   OCEAN_NETWORK_EXPRESS: "ONE",
   MSK: "MAERSK",

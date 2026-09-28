@@ -55,7 +55,7 @@ async function fclHttpFixture(authority?:FclReceiverAuthority,options:{portal?:t
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const sessions=new PortalSessionManager({store:new InMemoryPortalSessionStore(),secureCookie:false,canSelectPersonal:identity=>{try{caseService.listFclCases({identity,organizationId:null},{limit:1,status:null,cursor:null});return true;}catch{return false;}}});
-  const handler=createPortalHttpHandler({mode:'fixtures',service:portalService as never,caseService,nativeAdmin:rateService,documentWorkflowService:documentWorkflow,identityProvider:new FixturePortalIdentityProvider({mode:'fixtures',loopback:true}),sessions,allowedHosts:[new URL(origin).host],allowedOrigins:[origin],allowLoopbackHttp:true,fcl:{caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08',secureCookie:false,...(authority?{receiverAuthority:authority}:{})}});
+  const handler=createPortalHttpHandler({mode:'fixtures',service:portalService as never,caseService,nativeAdmin:rateService,documentWorkflowService:documentWorkflow,identityProvider:new FixturePortalIdentityProvider({mode:'fixtures',loopback:true}),sessions,allowedHosts:[new URL(origin).host],allowedOrigins:[origin],allowLoopbackHttp:true,fcl:{receiverUserId:receiverId,caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08',secureCookie:false,...(authority?{receiverAuthority:authority}:{})}});
   return {root,server,origin,caseService,rateService,workflowStore,close:async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));workflowStore.close();documentStore.close();rateStore.close();caseStore.close();rmSync(root,{recursive:true,force:true});}};
 }
 
@@ -261,7 +261,7 @@ it('previews a selected historical release before creating a rollback publicatio
     expect(historicalPreview.status).toBe(200);
     const historicalBody=await historicalPreview.json() as {status:string;data:{release_id:string;can_publish:boolean;input:{label:string};preview_hash:string}};
     expect(historicalBody).toMatchObject({status:'success',data:{release_id:first.release_id,can_publish:true,input:{label:'HTTP rates'}}});
-    const isolatedHttp=new FclHttpService({caseService:f.caseService,nativeAdmin:f.rateService,documentWorkflow:{} as never,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08'});
+    const isolatedHttp=new FclHttpService({receiverUserId:receiverId,caseService:f.caseService,nativeAdmin:f.rateService,documentWorkflow:{} as never,publicSessionSecret:publicSecret,businessDate:()=> '2026-10-08'});
     const otherPersonal={organizationId:null,identity:{userId:'fixture-other-personal',displayName:'Other personal',email:'other@example.test',emailVerified:true,platformRole:null}};
     const organizationContext={organizationId:'org_fixture',identity:receiver.identity};
     await expect(isolatedHttp.executeStaff(otherPersonal,'rate-preview',{release_id:first.release_id},()=> 'isolated-other-preview')).rejects.toThrow();

@@ -44,6 +44,17 @@ function okResponse(): TrustedConnectorResponse {
 }
 
 describe("controlled HTTP transport", () => {
+  it("encodes public form bodies only after enforcing exact string fields", async () => {
+    const connect = vi.fn<TrustedConnector["connect"]>(() => Promise.resolve(okResponse()));
+    const transport = createControlledHttpTransport({ policy: { ...policy, approvedTargets: [{ ...target, allowedBodyKeys: ["location"] }] }, connector: { connect } });
+    const request = { carrier: "OOCL", method: "POST" as const, path: "/exact/path", query: { id: "1" }, headers: { "content-type": "application/x-www-form-urlencoded" } };
+    await transport.request({ ...request, body: { location: "A&B 中" } });
+    expect(new TextDecoder().decode(connect.mock.calls[0]![0].body!)).toBe("location=A%26B+%E4%B8%AD");
+    for (const body of ["location=raw", { location: "ok", extra: "bad" }, { location: { nested: "bad" } }]) {
+      await expect(transport.request({ ...request, body })).rejects.toMatchObject({ code: "validation_error" });
+    }
+    expect(connect).toHaveBeenCalledOnce();
+  });
   it("selects a public IPv4 A record when DNS also contains AAAA records", () => {
     expect(
       selectPublicIpv4Address([

@@ -2,7 +2,7 @@
 
 FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台、REST API 与 MCP 入口。既有报价与关务适配继续保留；当前开发分支新增原生关务和私人地址运价引擎及配置发布后台。业务服务维护各自来源与规则，平台统一身份、授权、凭证、审计和失败闭合。
 
-**当前对外版本：`0.007`。** 后续每次受控发布按 `0.008`、`0.009` 递增；npm 使用对应的合法 semver `0.0.8`、`0.0.9`。规则和发布检查见 [版本号规则](docs/runbooks/versioning.md)。
+**候选对外版本：`0.019`，线上版本以发布读回为准。** 下一次受控发布按 `0.020` 递增；npm 使用对应的合法 semver `0.0.20`。规则和发布检查见 [版本号规则](docs/runbooks/versioning.md)。
 
 **本地开发进度：2026-09-08。** 混装计价、原生报价保存／审核／退回／PDF、完整关务快照更新，以及两种询价各自独立的网页和人员 CLI 流程已实现。已只读迁入线上 Toronto / Calgary 共 754 档价格和完整法规快照供本地验收；运价截止为用户确认的 2027-01-01，报价单有效期 7 天。城市匹配已恢复，仅 2 组同城多分区保持人工复核。目标候选容器 PDF 沙箱验收通过，公司资料由各企业自行填写。关务补齐前缀税率、双语名称、通用措施、缺税率提示和快照校验，并增加 [CBSA 候选数据 CLI](docs/runbooks/cbsa-candidate-preparation.md)。迁入的关务来源仍为 15 staged、0 发布快照；正式来源核验、Freightcom 实际询价及生产迁移/切换尚未完成。见 [本次图文进度与真实数据边界](docs/product/2026-09-08-native-business-completion.md)、[最新关务复核](docs/product/2026-09-08-customs-recheck.md)、[部署与回滚手册](docs/runbooks/native-business-completion-2026-09-08.md)及[配置和 CLI 操作说明](apps/console/native-business.md)。
 
@@ -39,7 +39,7 @@ FreightClaw 为业务人员、企业应用和 Agent 提供统一物流工作台�
 | [业务工作台](https://www.freightclaw.net/console/#workbench) | 企业成员通过登录会话处理询价、关务和税费，无需粘贴 API Key |
 | [API Key](https://www.freightclaw.net/console/#api-keys) | 应用负责人管理统一 Key、服务范围、交付、轮换和撤销 |
 | [操作手册](https://www.freightclaw.net/console/#guide) | 账号、授权、REST、MCP 和结果处理 |
-| [Agent 指南](https://www.freightclaw.net/console/skill.md) / [OpenAPI](https://www.freightclaw.net/console/openapi.json) | 按实际 Schema 接入；仓库副本见 [skill.md](apps/console/skill.md) 和 [openapi.json](docs/integrations/openapi.json) |
+| [Agent 指南](https://www.freightclaw.net/console/skill.md) / [OpenAPI](https://www.freightclaw.net/console/openapi.json) | 按实际 Schema 接入；仓库副本见 [skill.md](apps/console/skill.md) 和 [openapi.json](apps/console/openapi.json) |
 | [CLI 安装与使用](https://www.freightclaw.net/console/#cli) | `freightclaw` 命令行调用货物、装柜、报价、关务和税费；沿用统一应用 Key，人员历史仍使用网页登录 |
 
 当前人员登录由 Authentik 提供邮箱、密码、邮箱验证及恢复；企业微信不在需求范围。平台审批和企业业务角色分别授权，不能因拥有查询 Key 自动获得审批、保存或文档权限。

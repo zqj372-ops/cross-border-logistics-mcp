@@ -1,0 +1,152 @@
+import { expect, it } from 'vitest';
+import { dataset } from '../customs-native/publication-fixture';
+import { renderCustomsImportBrief, renderCustomsReference } from '../../apps/console/customs-reference.js';
+const ui = {
+ esc:(value:unknown)=>(typeof value==='string'||typeof value==='number'?String(value):'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),
+ panel:(title:string,subtitle:string,body:string)=>title+subtitle+body,
+ note:(message:string)=>message,
+};
+type ReferenceData = Parameters<typeof renderCustomsReference>[1];
+function item(country:'CN'|'US'|'CA',code:string,language:string,description:string):ReferenceData['candidates'][number] {
+ return {item:{...dataset.nomenclature[0]!,country,code,display_code:code,language,description_original:description,is_declarable:1},hierarchy:[],rates:[],name_translation:null};
+}
+function reference(candidates:ReferenceData['candidates']):ReferenceData {
+ return {request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates};
+}
+it('shows bounded reference remedies and conditional guidance with source links, date and coverage gaps',()=>{
+ const data=reference([item('CA','1234567890','en','Synthetic goods')]);
+ const source={url:'https://www.cbsa-asfc.gc.ca/sima-lmsi/mif-mev/test-eng.html',retrieved_at:'2026-09-28T01:00:00Z',source_sha256:'b'.repeat(64)};
+ data.compliance={snapshot_sha256:'c'.repeat(64),collected_at:source.retrieved_at,date_mismatch:true,truncated:false,catalogues:[{...source,country:'CA',expected:2,collected:1,missing_details:1}],remedies:[{...source,id:'CA-test',case_id:'test',country:'CA',origin_country:'CN',kind:'anti_dumping',title:'<script>unsafe</script> goods',source_kind:'measure_in_force',matched_codes:['1234567890'],scope_excerpt:'Scope excluding toys.',scope_truncated:true}],guidance:[{...source,id:'ca-docs',country:'CA',authority:'CBSA',category:'documents',code_prefixes:[],summary:'合成商业发票要求',condition:'按实际货物核对'}]};
+ const html=renderCustomsReference(ui,data,{country:'CA'});
+ expect(html).toContain('可能涉及');expect(html).toContain('合成商业发票要求');
+ expect(html).toContain('Scope excluding toys.');expect(html).toContain('完整范围及排除');
+ expect(html).toContain('目录 1/2');expect(html).toContain('1 项缺少');
+ expect(html).toContain('与查询日期不同');expect(html).toContain('未命中不代表免征');
+ expect(html).toContain('href="https://www.cbsa-asfc.gc.ca/');expect(html).not.toContain('<script>unsafe');
+ const foreign=renderCustomsReference(ui,{...data,candidates:[item('US','1234567890','en','Synthetic goods')]},{country:'US'});
+ expect(foreign).not.toContain('Scope excluding toys.');expect(foreign).not.toContain('合成商业发票要求');
+});
+it('shows the selected country as an import brief, groups bilingual codes and never equates missing measures with no duties',()=>{
+ const data=reference([item('CN','1234560000','zh-CN','合成商品'),item('CA','1234561000','en','Synthetic article'),item('CA','1234561000','fr','Article fictif'),item('CA','1234562000','en','Other article')]);
+ const html=renderCustomsReference(ui,data,{input:{query:'123456',codeCountry:'CA'},country:'CA'});
+ expect(html).toContain('商品进口建议与要求');
+ for(const label of ['当前候选税号','对应税则品名','税率','反倾销','反补贴','进口限制','认证与标签','清关资料']) expect(html).toContain(label);
+ expect(html.match(/<option /gu)).toHaveLength(2);
+ expect(html).toContain('value="1234561000" selected');
+ expect(html).toContain('待核验');expect(html).not.toContain('无反倾销');expect(html).not.toContain('归类已确认');
+ expect(html).toContain('本次返回');expect(html).toContain('不能直接作为申报品名');
+ expect(html).toContain('Article fictif');
+});
+it('does not substitute another country when the requested country has no match',()=>{
+ const html=renderCustomsReference(ui,reference([item('CN','1234560000','zh-CN','合成商品')]),{input:{query:'missing',codeCountry:'US'}});
+ expect(html).toContain('美国暂无匹配候选');expect(html).not.toContain('data-customs-brief');
+ expect(html).toContain('商品名关键词');expect(html).not.toContain('用该地区的原文品名检索');
+});
+it('explains Chinese HS6 candidate lookup without treating a Chinese name as a destination-country translation',()=>{
+ const html=renderCustomsReference(ui,reference([item('CN','8470100000','zh-CN','合成计算器'),item('CA','8470100000','en','Synthetic calculator')]),{input:{query:'计算器',codeCountry:'CA'}});
+ expect(html).toContain('中文税目关联的 HS6 候选');
+ expect(html).toContain('中文：译文暂不可用');
+ expect(html).toContain('候选 · 待复核');
+});
+it('shows opt-in suggested search terms as uncertain and escapes them instead of presenting a classification',()=>{
+ const data=reference([item('CA','1234561000','en','Synthetic goods')]);
+ data.search={terms:['客户俗称','<script>not executed</script>'],assisted:true};
+ const html=renderCustomsReference(ui,data,{input:{query:'客户俗称',codeCountry:'CA'}});
+ expect(html).toContain('检索词建议（机器生成，待核对）');
+ expect(html).toContain('&lt;script>');expect(html).not.toContain('<script>');
+ expect(html).toContain('机器建议不作为归类依据');
+});
+it('keeps long official descriptions in evidence without expanding the compact summary or native select',()=>{
+ const text='Long legal description '.repeat(3000)+'END_OF_SOURCE';
+ const html=renderCustomsReference(ui,reference([item('CA','99140000','en',text)]));
+ const brief=html.split('<section data-customs-brief>')[1]!.split('</section>')[0]!;
+ const option=html.split('<option ')[1]!.split('</option>')[0]!;
+ expect(brief.length).toBeLessThan(6000);expect(option.length).toBeLessThan(250);
+ expect(brief).toContain('完整品名见来源依据');expect(option).toContain('END_OF_SOURCE');
+});
+it('displays corresponding Chinese and English names with translation provenance, separate from a customer draft',()=>{
+ const candidate=item('US','1234567890','en','Other');
+ candidate.hierarchy=[{...candidate.item,code:'123456',description_original:'Synthetic articles'}];
+ candidate.name_translation={language:'zh',text:'合成器具 — 其他',status:'machine',model:'fixture-model'};
+ const html=renderCustomsReference(ui,reference([candidate]),{input:{query:'客户填写的器具',codeCountry:'US'}});
+ expect(html).toContain('中文（参考译文）：合成器具 — 其他');expect(html).toContain('英文（官方原文）：Synthetic articles — Other');
+ expect(html).toContain('商品品名草案');expect(html).toContain('客户填写的器具');expect(html).not.toContain('待补充商品中文名称');
+ expect(html).toContain('机器翻译，仅供理解原文');
+ candidate.hierarchy.push({...candidate.item,code:'12345678',description_original:'Of cotton'});
+ expect(renderCustomsReference(ui,reference([candidate]),{country:'US'})).toContain('Synthetic articles — Of cotton — Other');
+ const cn=item('CN','1234567890','zh-CN','合成器具');
+ cn.name_translation={language:'en',text:'Synthetic articles',status:'machine',model:'fixture-model'};
+ const cnHtml=renderCustomsReference(ui,reference([cn]),{country:'CN'});
+ expect(cnHtml).toContain('中文（官方原文）：合成器具');expect(cnHtml).toContain('英文（参考译文）：Synthetic articles');
+});
+it('puts the compact import requirements table before full bilingual names and keeps candidate labels readable',()=>{
+ const candidate=item('CA','1234561000','en','Other');
+ candidate.hierarchy=[{...candidate.item,code:'123456',description_original:'Synthetic articles'}];
+ candidate.name_translation={language:'zh',text:'合成器具 — 其他',status:'machine',model:'fixture-model'};
+ const html=renderCustomsReference(ui,reference([candidate,item('CA','1234562000','en','Second article')]),{input:{query:'客户输入品名',codeCountry:'CA'}});
+ expect(html).toContain('<table class="customs-brief"');
+ expect(html).toContain('<th scope="col">条件与核验</th>');
+ expect(html.indexOf('<th scope="row">进口限制</th>')).toBeLessThan(html.indexOf('对应税则品名'));
+ expect(html).toContain('value="1234561000" selected>1234561000 · 合成器具 — 其他</option>');
+ expect(html).toContain('候选品名对照');
+ expect(html).toContain('Synthetic articles — Other');
+ expect(html).toContain('商品品名草案');
+ expect(html).not.toContain('最佳归类推荐');
+ const cnHtml=renderCustomsReference(ui,reference([item('CN','1234561000','zh','合成器具'),item('CN','1234562000','zh','其他器具')]),{country:'CN'});
+ expect(cnHtml).toContain('<td>合成器具</td><td>译文暂不可用</td>');
+});
+it('merges only equivalent reference rate displays while preserving scope, conditions and effective dates',()=>{
+ const candidate=item('CA','1234561000','en','Synthetic article');
+ const rate={...dataset.tariffs[0]!,country:'CA' as const,code:'123456',treatment:'MFN',measure_type:'customs_duty',rate_expression_raw:'7.5%',condition_text_raw:'Only condition A'};
+ candidate.rates=[rate,{...rate,code:'1234561000'}, {...rate,condition_text_raw:'Only condition B'}];
+ let html=renderCustomsReference(ui,reference([candidate]));
+ let brief=html.split('<section data-customs-brief>')[1]!.split('</table>')[0]!;
+ expect(brief.match(/<strong>7\.5%<\/strong>/gu)).toHaveLength(2);
+ expect(brief).toContain('所属税目 123456');expect(brief).toContain('所属税目 1234561000');
+ expect(brief).toContain('Only condition A');expect(brief).toContain('Only condition B');
+ candidate.rates=[rate,{...rate,code:'1234561000',effective_from:'2026-05-01'}];
+ html=renderCustomsReference(ui,reference([candidate]));
+ brief=html.split('<section data-customs-brief>')[1]!.split('</table>')[0]!;
+ expect(brief.match(/<strong>7\.5%<\/strong>/gu)).toHaveLength(2);
+ for(const difference of [{origin_country:'US'},{conditions_json:'{"requires_review":true}'},{interaction_json:'{"additional":true}'},{release_revision:'other-edition'}]){
+  candidate.rates=[rate,{...rate,code:'1234561000',...difference}];
+  html=renderCustomsReference(ui,reference([candidate]));
+  brief=html.split('<section data-customs-brief>')[1]!.split('</table>')[0]!;
+  expect(brief.match(/<strong>7\.5%<\/strong>/gu)).toHaveLength(2);
+ }
+});
+it('puts the source MFN rate before optional preferential schedules and avoids duplicated parent names',()=>{
+ const candidate=item('CA','1234561000','en','Synthetic article');
+ candidate.hierarchy=[{...candidate.item,code:'123456',description_original:'Synthetic article'}];
+ candidate.rates=['CCCT','CEUT','CIAT','MFN'].map(treatment=>({...dataset.tariffs[0]!,country:'CA',code:'12345610',treatment,measure_type:'customs_duty',rate_expression_raw:treatment==='MFN'?'7.5%':'Free'}));
+ const html=renderCustomsReference(ui,reference([candidate]),{input:{query:'1234561000',codeCountry:'CA'}});
+ const brief=html.split('<section data-customs-brief>')[1]!.split('</section>')[0]!;
+ expect(brief).toContain('7.5%');expect(brief).toContain('最惠国税率');expect(brief).toContain('另有 3 条');
+ expect(brief).not.toContain('Free');expect(brief).not.toContain('customs_duty');expect(brief).not.toContain('Synthetic article — Synthetic article');
+});
+it('keeps rate conditions and source scope with the rate rather than promoting a parent or preferential rate to a total',()=>{
+ const candidate=item('US','1234567890','en','Other');
+ candidate.hierarchy=[{...candidate.item,code:'123456',display_code:'123456',description_original:'Synthetic articles',is_declarable:0}];
+ candidate.rates=[{...dataset.tariffs[0]!,country:'US',code:'123456',rate_expression_raw:'7.2%',treatment:'general',condition_text_raw:'Only if the condition applies',measure_type:'base_duty'}];
+ const html=renderCustomsReference(ui,reference([candidate]),{input:{query:'1234567890',codeCountry:'US'}});
+ expect(html).toContain('Synthetic articles');expect(html).toContain('7.2%');expect(html).toContain('Only if the condition applies');
+ expect(html).toContain('所属税目 123456');expect(html).toContain('完整税费待核验');expect(html).not.toContain('税费合计');
+});
+it('preserves published measure conclusions, producer conditions and unknown measure types in the brief',()=>{
+ const result:Parameters<typeof renderCustomsImportBrief>[1]={
+  displayCode:'1234561000',status:'candidate',classificationReason:'Synthetic candidate only',legalNames:[{language:'en',text:'Synthetic article',sourceId:'synthetic'}],
+  measures:[{id:'synthetic-ad',label:'Synthetic antidumping case',measureType:'anti_dumping',originCountry:'CN',codeHint:null,matchStatus:'possible',legalScope:'Only the source-defined product scope',exceptions:[],caseNumber:'fixture-case',exporterOrProducer:'Synthetic producer',rateExpressionRaw:'12%',effectiveFrom:'2026-01-01',effectiveTo:null,sourceId:'synthetic'},
+   {id:'synthetic-other',label:'Unknown source measure',measureType:'unmapped_measure',originCountry:'CN',codeHint:null,matchStatus:'manual_review',legalScope:'Source review required',exceptions:[],caseNumber:null,exporterOrProducer:null,rateExpressionRaw:null,effectiveFrom:'2026-01-01',effectiveTo:null,sourceId:'synthetic'}],
+  documents:[{id:'synthetic-document',label:'Synthetic certificate',side:'ca_import',status:'conditional',conditions:['When the stated condition applies'],reason:'Source condition',effectiveFrom:'2026-01-01',effectiveTo:null,sourceId:'synthetic'}],
+ };
+ const html=renderCustomsImportBrief(ui,result,{query:'合成器具',attributes:{material:'合成材料'}});
+ expect(html).toContain('合成器具，合成材料');expect(html).toContain('可能涉及');expect(html).toContain('Synthetic producer');expect(html).toContain('12%');
+ expect(html).toContain('Unknown source measure');expect(html).toContain('条件适用');expect(html).toContain('When the stated condition applies');
+ expect(html).not.toContain('来源已确认归类');expect(html).not.toContain('无反补贴');
+});
+it('shows the manual review boundary and original text without introducing a duty total or interpreting HTML',()=>{
+ const esc=(value:unknown)=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+ const html=renderCustomsReference({esc,panel:(title:string,subtitle:string,body:string)=>title+subtitle+body,note:esc},{request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates:[{item:{...dataset.nomenclature[0]!,country:'CN',code:'123456',display_code:'123456',description_original:'<script>unsafe</script>',is_declarable:0,language:'zh',source_locator:'official:row1'},hierarchy:[],rates:[],name_translation:null}]});
+ expect(html).toContain('来源未标记为可申报税号');expect(html).not.toContain('这是父级税目');
+ expect(html).not.toContain('&lt;br>');expect(html).toContain('待复核 其他待复核');expect(html).toContain('中国税号');expect(html).toContain('进口税率不能作为出口税率');expect(html).not.toContain('中国出口');expect(html).toContain('候选 · 待复核');expect(html).toContain('不代表免税或零税率');expect(html).toContain('&lt;script>');expect(html).not.toContain('<script>');expect(html).not.toContain('已确认的关税合计');
+});

@@ -1,7 +1,7 @@
 {
   "name": "cross-border-logistics-mcp",
-  "version": "0.0.8",
-  "freightclawVersion": "0.008",
+  "version": "0.0.19",
+  "freightclawVersion": "0.019",
   "private": true,
   "type": "module",
   "engines": {
@@ -34,7 +34,8 @@
     "validate:schemas": "node --import tsx/esm src/logistics_mcp/platform/validate-contracts.ts && npm run validate:access-gateway-schemas",
     "validate:access-gateway-schemas": "node --import tsx/esm services/access-gateway/validate-schemas.ts",
     "generate:business-schemas": "node --import tsx/esm deploy/scripts/generate-business-schemas.ts",
-    "generate:portal-openapi": "node --import tsx/esm deploy/scripts/generate-portal-openapi.ts apps/console/openapi.json docs/integrations/openapi.json",
+    "generate:portal-openapi": "node --import tsx/esm deploy/scripts/generate-portal-openapi.ts",
+    "validate:portal-openapi": "node --import tsx/esm deploy/scripts/generate-portal-openapi.ts --check",
     "validate:agent-standards": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts validate",
     "build:agent-pack": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts build",
     "agent:context": "node --import tsx/esm src/logistics_mcp/agent-context/cli.ts context",
@@ -58,6 +59,7 @@
     "oci-keymanagement": "2.140.0",
     "oci-secrets": "2.140.0",
     "pg": "8.23.0",
+    "playwright-core": "1.63.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "4.4.3"
   },

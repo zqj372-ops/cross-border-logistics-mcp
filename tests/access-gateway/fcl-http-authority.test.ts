@@ -8,7 +8,7 @@ const identity:PortalIdentity={userId:sub,displayName:'FCL receiver',email:'rece
 const ctx:PortalContext={identity,organizationId:null};
 const proof:FclReceiverProof={sub,active:true,emailVerified:true};
 
-function service(authority:FclReceiverAuthority,receiverUserId?:string){
+function service(authority:FclReceiverAuthority,receiverUserId:string=sub){
   return new FclHttpService({
     caseService:{listFclCases:()=>({items:[],next_cursor:null}),getFclCustomerView:()=>({}),submitFclInquiry:()=>Promise.resolve({})} as never,
     nativeAdmin:{} as never,
@@ -69,4 +69,18 @@ it('uses normal verified account authority independently of the public receiver'
   expect(await fcl.capability({...personal,emailVerified:false})).toMatchObject({fcl_personal:false});
   expect(await fcl.capability(identity)).toMatchObject({fcl_personal:false});
   expect(calls).toBe(1);
+});
+
+it('does not grant operations access to a verified customer',async()=>{
+ const fcl=service({runVerified:operation=>Promise.resolve(operation(proof))});
+ const customer={...identity,userId:'customer'};
+ expect(fcl.isOperator(customer)).toBe(false);
+ await expect(fcl.executeStaff({identity:customer,organizationId:null},'case-list',{limit:25,status:null,cursor:null},()=> 'customer-denied-0001')).rejects.toThrow('fcl_not_found');
+});
+
+it('checks scoped execution access for the operations entry without granting operator rights',async()=>{
+ const fcl=new FclHttpService({caseService:{} as never,nativeAdmin:{} as never,documentWorkflow:{} as never,publicSessionSecret:'synthetic-public-session-secret-32-bytes',businessDate:()=> '2026-10-08',execution:{execute:()=>Promise.resolve({items:[],next_cursor:null})} as never});
+ expect(await fcl.isParticipant(identity)).toBe(false);
+ expect(await fcl.isParticipant({...identity,emailVerified:false})).toBe(false);
+ expect(fcl.isOperator(identity)).toBe(false);
 });

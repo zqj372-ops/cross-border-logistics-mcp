@@ -67,6 +67,18 @@ function client(fetchImpl: typeof fetch, delegationSigner: TaxDelegationSigner =
 }
 
 describe("portal tariff estimate client", () => {
+  it("reports an unpublished source before single or batch estimation", async () => {
+    const fetchImpl = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ ...status(), ready: false, testData: true, publishedAt: null, evaluatedAt: null, releaseIds: [], snapshotHash: null, releaseHash: null, reasons: ["No reviewed publication snapshot is available."], error: { code: "data_not_ready", message: "Not published" } }), { status: 503 })));
+    const delegationSigner = signer();
+    const source = client(fetchImpl, delegationSigner);
+    for (const batch of [false, true]) {
+      const request = { input: batch ? { ruleDate: RULE_DATE, items: [itemInput] } : input, actor: { type: "service" as const, id: "portal-bff" }, requestId: "req_unpublished" };
+      const result = batch ? await source.estimateBatch(request as Parameters<typeof source.estimateBatch>[0]) : await source.estimate(request as Parameters<typeof source.estimate>[0]);
+      expect(result).toMatchObject({ status: "unavailable", data: null, reason_codes: ["customs_data_not_ready"] });
+    }
+    expect(delegationSigner).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
   it("signs the exact estimate scope and preserves a complete source response after two matching publication reads", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const delegationSigner = signer();

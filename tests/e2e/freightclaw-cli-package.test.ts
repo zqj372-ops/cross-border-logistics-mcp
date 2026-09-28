@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import cargoResult from "../../docs/contracts/examples/success-cargo.json";
 import containerResult from "../../docs/contracts/examples/success-container.json";
+import { FREIGHTCLAW_VERSION } from '../../src/logistics_mcp/version';
 
 const exec = promisify(execFile);
 const key = `flcbk_bkey_${"2".repeat(24)}_synthetic_package_fixture_not_a_real_key`;
@@ -54,20 +55,24 @@ async function installed(args: string[], credential = false) {
 
 describe("standalone CLI installation", () => {
   it("runs outside the repository with embedded contracts and no runtime install dependencies", async () => {
-    expect((await installed(["--version"])).stdout.trim()).toBe("0.008");
+    expect((await installed(["--version"])).stdout.trim()).toBe(FREIGHTCLAW_VERSION);
     const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { dependencies?: unknown };
     expect(metadata.dependencies).toBeUndefined();
     expect(await readFile(join(packageRoot, "bin/freightclaw.mjs"), "utf8")).not.toContain("node:sqlite");
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
     const workspaceCommands=(await installed(["workspace","commands","--json"])).stdout;
-    expect(JSON.parse(workspaceCommands)).toHaveLength(121);
+    expect(JSON.parse(workspaceCommands)).toHaveLength(158);
     expect(workspaceCommands).toContain("fcl case-create");
     expect(workspaceCommands).toContain("schedules live-search");
     expect(workspaceCommands).toContain("fcl document-export");
+    expect(workspaceCommands).toContain("fcl execution-start");
+    expect(workspaceCommands).toContain("fcl notification-v2-save");
     expect(workspaceCommands).toContain("fcl inquiry submit");
     expect((await installed(["workspace","schema","schedules","live-search"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","document-export"])).code).toBe(0);
+    expect((await installed(["workspace","schema","fcl","execution-start"])).code).toBe(0);
+    expect((await installed(["workspace","schema","fcl","notification-v2-save"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","inquiry","submit"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","estimate-run"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","rate-bulk-publish"])).code).toBe(0);

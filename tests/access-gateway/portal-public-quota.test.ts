@@ -42,3 +42,12 @@ it("does not grant fresh allowance when the database is unavailable", () => {
   const { store } = open(); store.close();
   expect(() => store.reserve("203.0.113.10", 1, time)).toThrow();
 });
+it("releases only the reserved day's allowance across midnight", () => {
+  const {store}=open(); const tomorrow=time+120000;
+  store.reserve("203.0.113.10",2,time);
+  store.reserve("203.0.113.10",1,tomorrow);
+  store.release("203.0.113.10",2,time);
+  expect(store.read("203.0.113.10",time).remaining).toBe(20);
+  expect(store.read("203.0.113.10",tomorrow).remaining).toBe(19);
+  for(const count of [0,-1,1.5,21])expect(()=>store.release("203.0.113.10",count,time)).toThrow();
+});
