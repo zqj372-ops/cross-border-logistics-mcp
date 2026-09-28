@@ -14,6 +14,8 @@ describe("schedule collector carrier aliases", () => {
     expect(normalizeCarrierId("WAN_HAI")).toBe("WHL");
     expect(normalizeCarrierId("YANG_MING")).toBe("YML");
     expect(normalizeCarrierId("HAPAG")).toBe("HAPAG_LLOYD");
+    expect(normalizeCarrierId("HPL")).toBe("HAPAG_LLOYD");
+    expect(normalizeCarrierId("SM_LINE")).toBe("SML");
     expect(normalizeCarrierId("unknown")).toBeNull();
   });
 
@@ -57,6 +59,7 @@ describe("schedule collector carrier aliases", () => {
       "MAERSK",
       "MSC",
       "MATSON",
+      "SML",
     ]);
   });
 });

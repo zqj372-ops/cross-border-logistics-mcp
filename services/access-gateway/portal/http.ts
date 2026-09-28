@@ -331,7 +331,7 @@ function stateMemberships(value: unknown): readonly Membership[] {
 async function sessionBody(options: PortalHttpOptions, session: PortalSession, fclHttp?:FclHttpService|null): Promise<Record<string, unknown>> {
   const fixtures = options.mode === "fixtures" ? options.identityProvider.listFixtureIdentities?.() ?? [] : [];
   const capability=session.identity&&fclHttp?await fclHttp.capability(session.identity):null;
-  return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures, ...(capability?{fcl_capability:capability}:{}) };
+  return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures, ...(capability?{fcl_capability:capability,personal_participant:session.identity?await fclHttp?.isParticipant(session.identity):false,personal_operator:capability.fcl_personal&&session.identity?fclHttp?.isOperator(session.identity)===true:false}:{}) };
 }
 function mutation<T>(request: IncomingMessage, input: T, expectedVersion?: number): PortalMutation<T> { return expectedVersion === undefined ? { idempotencyKey: idempotency(request), input } : { idempotencyKey: idempotency(request), expectedVersion, input }; }
 function stableResourceId(prefix: string, context: PortalContext, key: string): string {
@@ -439,7 +439,7 @@ async function handlePublicFcl(request:IncomingMessage,response:ServerResponse,u
 }
 
 function fclStaffRoute(path:string):{action:FclHttpAction;method:"GET"|"POST"}|null{
-  const direct=/^\/console\/api\/v1\/fcl\/([a-z-]+)$/u.exec(path);
+  const direct=/^\/console\/api\/v1\/fcl\/([a-z0-9-]+)$/u.exec(path);
   if(!direct||!fclHttpActions.includes(direct[1] as FclHttpAction))return null;
   const action=direct[1] as FclHttpAction;
   return {action,method:FCL_STAFF_ACTION_METHODS[action]};

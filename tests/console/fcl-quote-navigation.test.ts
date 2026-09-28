@@ -11,12 +11,34 @@ it('replaces the cached editor when another quote for the same case is selected'
  const caseId='00000000-0000-4000-8000-000000000001',first='00000000-0000-4000-8000-000000000002',second='00000000-0000-4000-8000-000000000003';
  const location={hash:`#fcl/case/${caseId}/${first}`};vi.stubGlobal('location',location);vi.stubGlobal('document',{querySelector:()=>null});
  const input={...createFclInquiryDraft(),pol:'Yantian',pod:'Vancouver',containers:[{type:'40HQ',quantity:1}],selected_services:['ocean_freight']};
- const detail={case_id:caseId,inquiry_no:'FCL-FIXTURE',case_version:1,case_status:'in_review',current_input:input,original_input:input,review_context:{review_required:false},events:[]};
+ const events=[{kind:'fcl_staff_supplement',message:'internal-only-test',created_at:'2026-09-28T10:00:00Z',visibility:'internal',actor_kind:'staff'},{kind:'fcl_customer_supplement',message:'customer-visible-test',created_at:'2026-09-28T10:00:00Z',visibility:'customer',actor_kind:'customer'}];
+ const detail={case_id:caseId,inquiry_no:'FCL-FIXTURE',case_version:1,case_status:'in_review',current_input:input,original_input:input,review_context:{review_required:false},events};
  const quote=(ref:string)=>({quote_ref:ref,version:1,currentness:{valid_now:true},completeness:{complete:true},case_binding:{case_ref:caseId},cost_rows:[{row_key:'ocean_freight:40HQ',source_kind:'ocean_freight',name:'海运费',group:'B',service:'ocean_freight',unit:'CNTR',container_type:'40HQ',quantity:'1',cost_price:ref===first?'3200.123456':'3500.123456',sell_price:'3850.000000',currency:'USD',sell_amount:'3850.00'}],source_snapshot:{rate_id:'rate',release_id:'release',release_version:1,dataset_digest:'digest',rate:{items:[]}},service_coverage:[],exchange_rates:{USD:'7',CAD:'5'},remark:null,calculation:{by_currency:{USD:{cost_subtotal:'3500.12',revenue_subtotal:'3850.00',gp_subtotal:'349.88',margin:'0.09'}},unified_profit:{gp_subtotal:'2449.16'}}});
  const api=vi.fn((url:string,options:{body?:{quote_ref?:string}}={})=>Promise.resolve({status:'success',data:url.includes('case-get')?detail:url.includes('quote-list')?{items:[]}:url.includes('quote-get')?quote(options.body?.quote_ref??first):url.includes('document-list')?{items:[]}:null,reason_codes:[]}));
  const ui=createFclWorkspace({api,mutate:vi.fn(),model:()=>({session:{identity:{user_id:'fixture'},fcl_capability:{fcl_personal:true}}}),esc:(v:string|number|null)=>String(v??''),head:()=>'',panel:(_title:string,_description:string,body:string)=>body,empty:()=>'',note:()=>'',field:(_label:string,_id:string,body:string)=>body,actions:()=>'',formError:'',icon:()=>'',rerender:vi.fn(),notify:vi.fn()});
  ui.page();await new Promise(r=>setTimeout(r,0));ui.page();await new Promise(r=>setTimeout(r,0));
  expect(ui.page()).toContain('value="3200.12"');expect(ui.page()).not.toContain('value="3200.123456"');
+ expect(ui.page()).toMatch(/id="fcl-doc-valid-until"[^>]*required/);
+ expect(ui.page()).toContain('role="tablist" aria-label="本票内容"');
+ expect(ui.page()).toContain('id="fcl-tab-quote" role="tab" aria-selected="true"');
+ await ui.action({dataset:{action:'fcl-detail-tab',tab:'progress'}});
+ expect(ui.page()).toContain('id="fcl-tab-progress" role="tab" aria-selected="true"');
+ expect(ui.page()).toMatch(/id="fcl-section-quote"[^>]* hidden/);
+ expect(ui.page()).toMatch(/id="fcl-section-progress"[^>]*>[\s\S]*?data-fcl-form="case-status"/);
+ expect(String(ui.page()).indexOf('customer-visible-test')).toBeLessThan(String(ui.page()).indexOf('internal-only-test'));
+ await ui.action({dataset:{action:'fcl-event-filter',filter:'customer'}});
+ expect(ui.page()).toContain('customer-visible-test');expect(ui.page()).not.toContain('internal-only-test');
+ expect(events[0]?.message).toBe('internal-only-test'); // Sorting/filtering never mutates the source events.
+ expect(ui.page()).toContain('id="fcl-tab-progress" role="tab" aria-selected="true"'); // Background render preserves the choice.
+ await ui.action({dataset:{action:'fcl-detail-tab',tab:'files'}});
+ expect(ui.page()).toContain('id="fcl-tab-files" role="tab" aria-selected="true"');
+ expect(ui.page()).toMatch(/id="fcl-section-files"[^>]*>[\s\S]*?Yantian/);
+ await ui.action({dataset:{action:'fcl-detail-tab',tab:'quote'}});
+ expect(ui.page()).toContain('value="3200.12"'); // Switching sections does not reset the editor.
+ const preventDefault=vi.fn();
+ expect(ui.keydown({key:'End',preventDefault,target:{closest:()=>({dataset:{tab:'quote'}})}})).toBe(true);
+ expect(preventDefault).toHaveBeenCalledOnce();
+ expect(ui.page()).toContain('id="fcl-tab-files" role="tab" aria-selected="true"');
  location.hash=`#fcl/case/${caseId}/${second}`;const loading=ui.page();expect(loading).not.toContain('value="3200.12"');
  await new Promise(r=>setTimeout(r,0));
  expect(ui.page()).toContain('value="3500.12"');expect(ui.page()).not.toContain('value="3200.12"');

@@ -7,6 +7,7 @@ export interface PublicQuota { readonly limit: number; readonly remaining: numbe
 export interface PublicQuotaStore {
   read(address: string, now: number): PublicQuota;
   reserve(address: string, count: number, now: number): PublicQuota & { readonly allowed: boolean };
+  release(address: string, count: number, reservedAt: number): void;
 }
 const LIMIT = 20;
 const DAY = 86_400_000;
@@ -59,6 +60,11 @@ export class SqlitePublicQuotaStore implements PublicQuotaStore {
       this.#database.exec("COMMIT");
       return { ...quota, remaining: quota.remaining - count, allowed: true };
     } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+  }
+  release(address: string, count: number, reservedAt: number): void {
+    if (!Number.isSafeInteger(count) || count < 1 || count > LIMIT) throw new Error("public_quota_count_invalid");
+    const { day } = window(reservedAt);
+    this.#database.prepare("UPDATE public_daily_quota SET used=MAX(0,used-?) WHERE network_hash=? AND day=?").run(count, this.#key(address, day), day);
   }
   close() { if (this.#closed) return; this.#closed = true; this.#database.close(); this.#secret.fill(0); }
 }

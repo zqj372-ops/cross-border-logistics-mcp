@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {readFile, rm} from 'node:fs/promises';
+import {mkdir, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -47,6 +47,7 @@ async function responseJson(response) {
   return body;
 }
 async function openWorkspaceStep(step) {
+  await page.getByRole('tab', {name: '需求与报价', exact: true}).click();
   const button = page.locator(`.fcl-workflow [data-step="${step}"]`);
   if (await button.getAttribute('aria-current') !== 'step') await button.click();
   await page.locator(`#fcl-step-${step}`).waitFor({state: 'visible'});
@@ -149,12 +150,24 @@ try {
   dialogMode = 'accept';
   await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('');
   checks.push('dirty internal navigation cancellation keeps the current draft');
+  await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('Draft survives tab changes.');
+  await page.getByRole('tab', {name: '需求与报价', exact: true}).focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.getByRole('tab', {name: '进度与记录', exact: true}).getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('End');
+  assert.equal(await page.getByRole('tab', {name: '资料', exact: true}).getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('Home');
+  assert.equal(await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').inputValue(), 'Draft survives tab changes.');
+  await page.locator('[data-fcl-form="case-confirm"] textarea[name="reason"]').fill('');
+  checks.push('detail tabs support keyboard navigation and retain unsaved input');
   await openCaseOperations(firstCaseId);
   const staffSupplementCountBefore = fclRequests.filter(request => request.path.endsWith('/case-staff-supplement')).length;
   await page.locator('[data-fcl-form="staff-supplement"] button[type="submit"]').click();
   await page.getByText('没有检测到需要记录的变化。', {exact: true}).waitFor();
   assert.equal(fclRequests.filter(request => request.path.endsWith('/case-staff-supplement')).length, staffSupplementCountBefore);
   await openCaseOperations(firstCaseId);
+  await page.getByRole('tab', {name: '进度与记录', exact: true}).click();
+  await page.getByText('更新处理状态', {exact: true}).click();
   await page.locator('[data-fcl-form="case-status"] textarea[name="public_note"]').fill('Please confirm the final destination.');
   await page.locator('[data-fcl-form="case-status"] select[name="status"]').selectOption('needs_input');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/case-status'));
@@ -215,12 +228,11 @@ try {
   checks.push('staff confirmation');
 
   await page.goto(`${base}/console/#fcl/rates`, {waitUntil: 'networkidle'});
-  await page.getByRole('button', {name: '新增一行', exact: true}).click();
-  await page.locator('[data-ocean-index="0"][data-ocean-key="supplier_label"]').fill('Synthetic carrier');
+  await page.getByRole('button', {name: '新增海运费', exact: true}).click();
+  await page.locator('[data-ocean-index="0"][data-ocean-key="carrier"]').fill('Synthetic carrier');
   await page.locator('[data-ocean-index="0"][data-ocean-key="pol"]').fill('Yantian');
   await page.locator('[data-ocean-index="0"][data-ocean-key="pod"]').fill('Vancouver');
-  await page.locator('[data-ocean-index="0"][data-ocean-key="valid_from"]').fill('2026-10-01');
-  await page.locator('[data-ocean-index="0"][data-ocean-key="valid_until"]').fill('2026-10-31');
+  assert.equal(await page.locator('[data-ocean-key="valid_from"],[data-ocean-key="valid_until"]').count(), 0);
   await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').fill('3200');
   await page.locator('[data-action="ops-ocean-more"][data-index="0"]').click();
   await page.locator('[data-fcl-form="ops-ocean-advanced"] [name="source_ref"]').fill('synthetic:browser-rate');
@@ -231,35 +243,26 @@ try {
   await page.waitForFunction(() => location.hash === '#fcl/rates');
   assert.equal(await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').inputValue(), '3200');
   dialogMode = 'accept';
-  await page.locator('[data-action="ops-preview-config"]').click();
-  await page.getByText('请先保存或取消当前编辑。', {exact: true}).waitFor();
-  assert.equal(await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').inputValue(), '3200');
-  await page.getByRole('button', {name: '新增一行', exact: true}).click();
+  await page.getByRole('button', {name: '新增海运费', exact: true}).click();
   await page.locator('[data-action="ops-ocean-disable"][data-index="1"]').click();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-save'));
-  await page.locator('[data-action="ops-save-config"]').click();
+  let previewPromise = page.waitForResponse(response => response.url().endsWith('/rate-preview'));
+  await page.locator('[data-action="ops-save-config"]').first().click();
   const firstRateSave = await responseJson(await responsePromise);
   assert.equal(firstRateSave.status, 'success');
   assert.equal(firstRateSave.data.draft.rates.length, 1);
   assert.equal(firstRateSave.data.draft.rates[0].items[0].ocean_freight, '3200');
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-preview'));
-  await page.locator('[data-action="ops-preview-config"]').click();
-  const preview = await responseJson(await responsePromise);
-  assert.equal(preview.data.can_publish, true);
+  assert.equal((await responseJson(await previewPromise)).data.can_publish, true);
   await page.locator('#ops-config-confirm').check();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-publish'));
   await page.locator('[data-action="ops-publish-config"]').click();
-  const firstPublication = await responseJson(await responsePromise);
-  assert.equal(firstPublication.status, 'success');
-  await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').fill('3300');
-  await openDetails(page.locator('details.ops-publication'));
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-save'));
-  await page.locator('[data-action="ops-save-config"]').click();
   assert.equal((await responseJson(await responsePromise)).status, 'success');
-  await openDetails(page.locator('details.ops-publication'));
-  responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-preview'));
-  await page.locator('[data-action="ops-preview-config"]').click();
-  assert.equal((await responseJson(await responsePromise)).data.can_publish, true);
+  await page.locator('[data-ocean-index="0"][data-ocean-key="price:40HQ"]').fill('3300');
+  responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-save'));
+  previewPromise = page.waitForResponse(response => response.url().endsWith('/rate-preview'));
+  await page.locator('[data-action="ops-save-config"]').first().click();
+  assert.equal((await responseJson(await responsePromise)).status, 'success');
+  assert.equal((await responseJson(await previewPromise)).data.can_publish, true);
   await page.locator('#ops-config-confirm').check();
   responsePromise = page.waitForResponse(response => response.url().endsWith('/rate-publish'));
   await page.locator('[data-action="ops-publish-config"]').click();
@@ -465,6 +468,11 @@ try {
 
   await openWorkspaceStep('documents');
   await page.locator('#fcl-doc-quote-no').fill('FCL-BROWSER-001');
+  const savesBeforeMissingDate = fclRequests.filter(request => request.path.endsWith('/document-save')).length;
+  await page.locator('[data-action="fcl-doc-save"]').click();
+  await page.waitForFunction(() => document.activeElement?.id === 'fcl-doc-valid-until');
+  assert.equal(fclRequests.filter(request => request.path.endsWith('/document-save')).length, savesBeforeMissingDate);
+  await page.locator('#fcl-doc-valid-until').fill('2026-10-31');
   await page.locator('#fcl-doc-remark').fill('Document display edited before approval.');
   const documentSaveRequest = page.waitForRequest(request => request.url().endsWith('/document-save'));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/document-save'));
@@ -519,27 +527,31 @@ try {
   const approvedDocumentVersion = approvedDocument.data.version;
   await relatedAfterApproval;
   checks.push('document save/review, edit invalidation, refresh review and approval');
+  await page.getByRole('tab', {name: '资料', exact: true}).click();
   const documentHistoryDetails = page.locator('details.panel', {hasText: '报价单历史'});
   await documentHistoryDetails.locator('summary').waitFor();
   await openDetails(documentHistoryDetails);
   const documentVersionSelect = page.locator(`[data-fcl-doc-version="${approvedDocument.data.document_id}"]`);
   await documentVersionSelect.selectOption('1');
   responsePromise = page.waitForResponse(response => response.url().endsWith('/document-get'));
-  await page.locator('[data-action="fcl-doc-open-history"]').first().click();
+  await page.locator('#fcl-section-files [data-action="fcl-doc-open-history"]').first().click();
   const oldDocument = await responseJson(await responsePromise);
   assert.equal(oldDocument.data.version, 1);
   assert.equal(oldDocument.data.historical, true);
   assert.equal(await page.locator('[data-action="fcl-doc-export-history"]').count() > 0, true);
+  await page.getByRole('tab', {name: '资料', exact: true}).click();
   await openDetails(documentHistoryDetails);
   await documentVersionSelect.selectOption(String(approvedDocumentVersion));
   responsePromise = page.waitForResponse(response => response.url().endsWith('/document-get'));
-  await page.locator('[data-action="fcl-doc-open-history"]').first().click();
+  await page.locator('#fcl-section-files [data-action="fcl-doc-open-history"]').first().click();
   const currentDocument = await responseJson(await responsePromise);
   assert.equal(currentDocument.data.version, approvedDocumentVersion);
   assert.equal(currentDocument.data.state, 'approved');
   assert.equal(await page.locator('[data-action="fcl-handoff"]').isDisabled(), true);
+  await page.getByRole('tab', {name: '进度与记录', exact: true}).click();
   await page.getByText('请先导出并校验当前正式 PDF。', {exact: true}).waitFor();
   checks.push('quote and document version selectors read bounded old revisions');
+  await page.getByRole('tab', {name: '需求与报价', exact: true}).click();
 
   if (!stopAfterApproval) {
     const downloadPromise = page.waitForEvent('download');
@@ -557,6 +569,7 @@ try {
     assert.equal(await page.locator('[data-action="fcl-handoff"]').isDisabled(), false);
     checks.push('formal PDF schema, hash, bytes, safe filename and browser download');
 
+    await page.getByRole('tab', {name: '进度与记录', exact: true}).click();
     await page.locator('[name="fcl-handoff-note"]').fill('Synthetic browser handoff.');
     let unknownHandoffRequest;
     let unknownHandoffData;
@@ -680,6 +693,23 @@ try {
   assert.equal(await otherPage.locator('.case-card').count(), 0);
   await otherContext.close();
   checks.push('non-receiver and organization switch do not expose writable FCL state');
+
+  const screenshotDirectory = process.env.FCL_SCREENSHOT_DIRECTORY;
+  if (screenshotDirectory) {
+    await mkdir(screenshotDirectory, {recursive: true});
+    await page.goto(`${base}/console/#fcl/case/${firstCaseId}`, {waitUntil: 'networkidle'});
+    for (const [tab, label] of [['quote', '需求与报价'], ['progress', '进度与记录'], ['files', '资料']]) {
+      await page.getByRole('tab', {name: label, exact: true}).click();
+      await page.screenshot({path: join(screenshotDirectory, `${tab}-desktop.png`), fullPage: true});
+    }
+    await page.setViewportSize({width: 390, height: 844});
+    await page.getByRole('tab', {name: '进度与记录', exact: true}).click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({path: join(screenshotDirectory, 'progress-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 320, height: 740});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    checks.push('desktop screenshots and 390/320px detail layout without page overflow');
+  }
 
   assert.deepEqual(pageErrors, []);
   console.log(JSON.stringify({status: stopAfterApproval ? 'partial' : 'pass', checks, page_errors: pageErrors}, null, 2));

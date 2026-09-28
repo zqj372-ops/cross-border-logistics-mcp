@@ -534,7 +534,7 @@ function downgradeAbortedResult(
 export function createCollectorService(
   options: CollectorServiceOptions,
 ): CollectorServiceApi {
-  const registry = createCarrierRegistry(options.adapters ?? []);
+  const registry = createCarrierRegistry(options.adapters ?? [], options.ports.browser);
   const dateFilterBasis =
     options.dateFilterBasis ?? DEFAULT_DATE_FILTER_BASIS;
   const deadlineMs = options.deadlineMs ?? DEFAULT_DEADLINE_MS;

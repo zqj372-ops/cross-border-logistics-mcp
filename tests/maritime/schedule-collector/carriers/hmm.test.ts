@@ -117,6 +117,38 @@ function response(overrides: Record<string, unknown> = {}) {
 }
 
 describe("HMM schedule parser", () => {
+  it("uses the isolated browser port with the same parser, date filter and evidence", async () => {
+    const calls: unknown[] = [];
+    const evidence = new InMemoryEvidenceStore();
+    const adapter = createHmmAdapter({
+      available: true,
+      search(input) {
+        calls.push(input.query);
+        const locations = (input.query as { operation: string }).operation === "locations";
+        return Promise.resolve({
+          status: 200, url: "https://www.hmm21.com/", headers: {},
+          contentType: locations ? "text/javascript" : "application/json",
+          body: new TextEncoder().encode(locations
+            ? 'var cities = ["SHANGHAI,CHINA [CNSYN]", "VANCOUVER, BC, CANADA [CASYN]"];'
+            : JSON.stringify(response())),
+        });
+      },
+    });
+    const http = { request: () => { throw new Error("browser must own its session"); } };
+    const locations = await adapter.resolveLocations({ text: "Shanghai", countryCode: "CN" }, http);
+    expect(locations[0]?.carrier_location_id).toBe("CNSYN");
+    const result = await adapter.query(context("2026-09-18", "2026-09-18"), http, evidence);
+    expect(result.records).toHaveLength(1);
+    expect(result.coverage.complete).toBe(true);
+    expect(calls).toEqual([
+      { operation: "locations" },
+      { operation: "schedules", origin_id: "CNSYN", destination_id: "CASYN", from: "2026-09-18", until: "2026-09-18" },
+    ]);
+    expect(JSON.parse(new TextDecoder().decode(await evidence.read(result.records[0]!.evidence_ref)))).toEqual(response());
+    const outside = await adapter.query(context("2026-09-19", "2026-09-19"), http, evidence);
+    expect(outside.records).toHaveLength(0);
+  });
+
   it("maps source departure and arrival fields without inventing UN/LOCODEs", () => {
     const result = parseHmmScheduleResponse(response(), context());
     const record = result.records[0];
@@ -450,6 +482,12 @@ describe("HMM schedule parser", () => {
       status: "unavailable",
       message: "hmm_point_to_point_access_restricted",
     });
+  });
+
+  it.each([403, 200])("reports denied location and bootstrap requests as access restrictions (HTTP %s)", async (status) => {
+    const http = { request() { return Promise.resolve({ status, url: "https://www.hmm21.com/", contentType: "text/html", headers: {}, body: new TextEncoder().encode("<html><head><title> Access Denied </title></head><body>Your access to this site has been limited due to abnormal connection.</body></html>") }); } };
+    await expect(createHmmAdapter().resolveLocations({ text: "Shanghai", countryCode: "CN" }, http)).rejects.toMatchObject({ code: "access_restricted" });
+    await expect(createHmmAdapter().query(context(), http, new InMemoryEvidenceStore())).rejects.toMatchObject({ code: "access_restricted" });
   });
 
   it("classifies an HMM select 403 before JSON shape validation", async () => {

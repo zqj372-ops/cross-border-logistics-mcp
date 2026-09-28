@@ -43,7 +43,7 @@
 
 自动点到点船期、自动港口指标同步仍需要确定供应商与授权方式，核对正式输入输出、时区、更新频率、复用许可、费用和失效规则，再做适配验收。船舶到离港清单不能替代可订航线表，月度平均滞箱也不能冒充今日码头等待。
 
-新模块仅进入 Portal / 人员 CLI 合同，没有添加公共 MCP 工具、扩张查询 Key 权限或宣称通用热插拔。实现规范见 [RFC](../rfcs/2026-09-08-maritime-workspaces-v1.md)，输入与响应见 [OpenAPI](../integrations/openapi.json)。
+新模块仅进入 Portal / 人员 CLI 合同，没有添加公共 MCP 工具、扩张查询 Key 权限或宣称通用热插拔。实现规范见 [RFC](../rfcs/2026-09-08-maritime-workspaces-v1.md)，输入与响应见 [OpenAPI](../../apps/console/openapi.json)。
 
 ## 验证
 

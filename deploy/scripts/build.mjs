@@ -52,7 +52,7 @@ const accessConsoleAssetSpecs = [
   { name: "app.js", source: resolve("apps/access-console/app.js") },
 ];
 const accessConsoleSourcePaths = accessConsoleAssetSpecs.map(({ source }) => source);
-execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "apps/console/openapi.json"], { stdio: "inherit" });
+execFileSync(process.execPath, ["--import", "tsx/esm", "deploy/scripts/generate-portal-openapi.ts", "--check"], { stdio: "inherit" });
 const portalAssetSpecs = ["index.html", "styles.css", "app.js", "openapi.json", "skill.md", "workspace-cli.md", "native-business.md", "brand-wordmark.svg", "brand-icon.svg", "auth-background.svg", "asset-licenses.md"].map((name) => ({ name, source: resolve("apps/console", name) }));
 const nodeEsmBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
@@ -74,6 +74,9 @@ if ([...adminSourcePaths, ...accessConsoleSourcePaths, ...portalAssetSpecs.map((
   }
 })) {
   throw new Error("Admin UI build requires all declared application and vendor assets.");
+}
+if (!statSync(resolve("services/quote-native/mixed_pallets.py")).isFile()) {
+  throw new Error("Native quote build requires mixed_pallets.py.");
 }
 
 const { build } = await import("esbuild");
@@ -136,6 +139,7 @@ execFileSync(process.execPath, [
 
 mkdirSync(resolve("dist/admin"), { recursive: true });
 for (const asset of adminAssetSpecs) {
+  if (asset.name === "app.js") continue; // esbuild emits this entry below.
   const destination = resolve("dist/admin", asset.name);
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(asset.source, destination);
@@ -158,7 +162,10 @@ for (const asset of accessConsoleAssetSpecs) {
 }
 
 mkdirSync(resolve("dist/console"), { recursive: true });
-for (const asset of portalAssetSpecs) cpSync(asset.source, resolve("dist/console", asset.name));
+for (const asset of portalAssetSpecs) {
+  if (asset.name === "app.js" || asset.name === "styles.css") continue;
+  cpSync(asset.source, resolve("dist/console", asset.name));
+}
 await build({
   entryPoints: ["apps/console/styles.css"], outfile: "dist/console/styles.css", bundle: true,
   loader: { ".woff2": "file" }, assetNames: "fonts/[name]-[hash]", publicPath: "/console",
@@ -198,7 +205,5 @@ cpSync('deploy/scripts/prepare-cbsa-release.py','dist/deploy/scripts/prepare-cbs
 
 mkdirSync(resolve('dist/services/quote-documents'),{recursive:true});
 cpSync(resolve('apps/console/fonts'),resolve('dist/services/quote-documents/fonts'),{recursive:true});
-
-cpSync(resolve('services/quote-native/mixed_pallets.py'),resolve('dist/services/quote-native/mixed_pallets.py'));
 
 await build({entryPoints:["deploy/scripts/verify-pdf-renderer.ts"],outfile:"dist/deploy/verify-pdf-renderer.mjs",bundle:true,format:"esm",platform:"node",target:"node22",banner:nodeEsmBanner,sourcemap:false,legalComments:"none"});

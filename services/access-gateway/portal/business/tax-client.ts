@@ -1,5 +1,6 @@
 import { readBoundedResponse } from "../../../../src/logistics_mcp/platform/bounded-response";
 import { z } from "zod";
+import { customsDataNotReady } from "./customs-client";
 
 import type { PortalBusinessClientResult } from "./service";
 
@@ -194,6 +195,7 @@ export function createTaxPortalClient(options: TaxPortalClientOptions) {
     try {
       const upstream = await fetchImpl(new URL(path, base!), { ...init, redirect: "manual", signal: controller.signal });
       if (upstream.status >= 300 && upstream.status < 400) throw new Error("redirect_rejected");
+      if (upstream.status === 503 && !acceptedStatuses.includes(503) && customsDataNotReady(await readJson(upstream, maxBodyBytes, controller.signal))) throw new Error("data_not_ready");
       if (!acceptedStatuses.includes(upstream.status)) throw new Error(`http_${upstream.status}`);
       return await readJson(upstream, maxBodyBytes, controller.signal);
     } finally { clearTimeout(timer); }
@@ -221,6 +223,7 @@ export function createTaxPortalClient(options: TaxPortalClientOptions) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (error instanceof z.ZodError) return response("unavailable", requestInput.requestId, "tax_upstream_contract_invalid");
+      if (message === "data_not_ready") return response("unavailable", requestInput.requestId, "customs_data_not_ready");
       if (message === "redirect_rejected") return response("unavailable", requestInput.requestId, "tax_upstream_redirect_rejected");
       if (message === "response_too_large") return response("unavailable", requestInput.requestId, "tax_upstream_response_too_large");
       return response("unavailable", requestInput.requestId, "tax_upstream_unavailable");

@@ -1,4 +1,7 @@
 import type { NativeFreightcomService } from '../native-freightcom';
+import { createCustomsReferenceClient, customsReferenceConfig } from '../../../customs-native/reference';
+import { createCustomsNameTranslator } from '../../../customs-native/name-translation';
+import { createCustomsSearchTerms } from '../../../customs-native/search-terms';
 import { nativeCustomsWithHistory } from '../native-customs-history';
 import { createNativeQuoteClient } from '../../../quote-native/client';
 import type { ResidentialRates } from '../../../quote-native/contracts';
@@ -36,7 +39,7 @@ const publicAccessSchema = z.object({
 const configSchema = z.object({
   publicAccess: publicAccessSchema.optional(),
   connections: z.array(z.object({
-    organizationId: z.string().min(1), tenantId: z.string().min(1),
+    organizationId: z.string().min(1), tenantId: z.string().min(1), customsReference: customsReferenceConfig.optional(),
     enabledOperations: z.array(operationSchema).min(1), nativeFreightcom:z.boolean().optional(),nativeCustoms:z.boolean().optional(), nativeQuote:z.boolean().optional(), customsHistoryEnabled:z.boolean().optional(), recordOperations: z.array(z.enum(["quote.record_save", "quote.record_read", "quote.review_read", "quote.review_manage", "quote.document_generate", "quote.document_read"])).optional(), customs: connectorSchema.optional(), quote: connectorSchema.optional(), freightcom: freightcomConnectorSchema.optional(),
   }).strict()).max(1_000),
 }).strict();
@@ -98,6 +101,7 @@ function readConfiguration(path: string): z.infer<typeof configSchema> {
       item.recordOperations.includes("quote.record_save") && !item.recordOperations.includes("quote.record_read") ||
       item.recordOperations.includes("quote.document_generate") && (!item.recordOperations.includes("quote.document_read") || !item.recordOperations.includes("quote.record_read")))) throw new Error("portal_business_config_invalid");
     if(item.customsHistoryEnabled&&!item.customs)throw new Error("portal_business_config_invalid");
+    if(item.customsReference&&!item.customs)throw new Error("portal_business_config_invalid");
     const customsEnabled = item.enabledOperations.some((operation) => operation.startsWith("customs."));
     const quoteEnabled = item.enabledOperations.some((operation) => operation === "quote.zone_preview" || operation === "quote.ai_extract_preview") || (item.recordOperations?.length ?? 0) > 0;
     const freightcomEnabled = item.enabledOperations.includes("quote.freightcom_ltl.preview");
@@ -148,7 +152,13 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
       const customs = createCustomsPortalClient(clientOptions);
       if(item.customsHistoryEnabled)connection.customsHistoryClient=createCustomsHistoryClient(clientOptions);
       const tax = createTaxPortalClient(clientOptions);
-      connection.customsClient = { query: (request) => customs.query({ ...request, input: request.input as CustomsPortalQueryInput }) };
+      const translation=item.customsReference?.nameTranslation;
+      const searchTerms=item.customsReference?.searchTerms;
+      const reference = item.customsReference ? createCustomsReferenceClient(item.customsReference,translation?createCustomsNameTranslator({apiKey:readSecret(translation.apiKeyFile),model:translation.model},options.fetchImpl):undefined,searchTerms?createCustomsSearchTerms({apiKey:readSecret(searchTerms.apiKeyFile),model:searchTerms.model},options.fetchImpl):undefined) : undefined;
+      connection.customsClient = { query: async (request) => {
+        const result=await customs.query({ ...request, input: request.input as CustomsPortalQueryInput });
+        return reference && result.status==='unavailable' && result.reason_codes.includes('customs_data_not_ready') ? reference.query(request) : result;
+      } };
       connection.taxClient = {
         estimate: (request) => tax.estimate({ ...request, input: request.input as TaxPortalEstimateInput }),
         estimateBatch: (request) => tax.estimateBatch({ ...request, input: request.input as TaxPortalEstimateBatchInput }),

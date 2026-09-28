@@ -109,7 +109,7 @@ async function withAbort<T>(
   });
 }
 
-async function resolvePublicAddress(
+export async function resolvePublicAddress(
   hostname: string,
   signal: AbortSignal,
 ): Promise<{ readonly address: string; readonly family: 4 }> {

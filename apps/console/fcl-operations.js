@@ -5,9 +5,9 @@ import {fclField,fclFieldHtml,FCL_FIELDS,FCL_CHARGE_CATALOG,FCL_SERVICE_MODE_LAB
 import {displayMargin,displayAmount,readAmountInput,fclIssue} from '../inquiry/fcl-presentation.ts';
 import {fclRateDatasetSchema} from '../../services/quote-native/fcl-contracts.ts';
 import {FCL_RATE_DATASET_V2} from '../../services/quote-native/fcl-operations-contracts.ts';
+import {FCL_CONTAINER_TYPES as types} from '../inquiry/fcl-model.ts';
 
 const clone=value=>structuredClone(value);
-const types=['20GP','40GP','40HQ','45HQ'];
 const emptyCapacity={weight_min_kg:null,weight_max_kg:null,volume_min_cbm:null,volume_max_cbm:null};
 const emptyWindow={valid_from:'',valid_until:''};
 const sectionNames={compare:'报价',rates:'海运费表',charges:'基础费用库',history:'历史报价',delivery_rates:'内陆运价',templates:'费用模板',rate_details:'手工维护船期'};
@@ -69,10 +69,13 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   let generation=0,loading=false,loaded=false,contextId='',view=null,draft=null,items=[],caseView=null,caseList=[],section='compare',editor=null,dirty=false,publication=null,batch=null,batchPreview=null,message='',sort='cost_total',direction='asc',destination='',history=null,historyRows=[];
   let templatePrimary='',templateId='',templateIndex=-1,referencePlan='',templateEditor=null,templateIssues=[],templateSharedConfirmation=false,templateMoreOpen=false,templateOpenCharge=null,templatePreviewFailed=false;
   let routePod='',routeDestination='',entrySection='',advanced=false,feeSearch='',rateFilter={pol:'',pod:'',carrier:''};
-  let query={shipping_date:'',pol:'',rate_ids:[],template_ids:[],containers:[{type:'40HQ',quantity:1,unit:'CNTR'}],weight_kg:null,volume_cbm:null,postal_code:null,zone:null,case_ref:null};
+  const emptyQuery=()=>({shipping_date:'',pol:'',rate_ids:[],template_ids:[],containers:[{type:'40HQ',quantity:1,unit:'CNTR'}],weight_kg:null,volume_cbm:null,postal_code:null,zone:null,case_ref:null});
+  const emptyCasePicker=()=>({open:false,loading:false,loaded:false,cursor:null,error:''});
+  let query=emptyQuery(),casePicker=emptyCasePicker(),historyLoad={loaded:false,loading:false,error:''},historyRequest=0;
+  const invalidateHistory=()=>{historyRequest++;historyLoad={loaded:false,loading:false,error:''};};
   const guarded=fn=>async(...args)=>{const token=generation;const result=await fn(...args);if(token!==generation)throw Object.assign(new Error('fcl_request_superseded'),{code:'fcl_request_superseded'});return result;};
   const call=guarded(readRequest),write=guarded(writeRequest);
-  const reset=()=>{schedules.reset();oceanCurrencies.clear();section='compare';entrySection='';advanced=false;feeSearch='';rateFilter={pol:'',pod:'',carrier:''};routePod='';routeDestination='';generation++;loading=false;loaded=false;contextId='';view=null;draft=null;items=[];caseView=null;caseList=[];editor=null;dirty=false;publication=null;batch=null;batchPreview=null;history=null;historyRows=[];message='';templatePrimary='';templateId='';templateIndex=-1;referencePlan='';templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;templatePreviewFailed=false;};
+  const reset=()=>{schedules.reset();oceanCurrencies.clear();section='compare';entrySection='';advanced=false;feeSearch='';rateFilter={pol:'',pod:'',carrier:''};routePod='';routeDestination='';generation++;loading=false;loaded=false;contextId='';view=null;draft=null;items=[];caseView=null;caseList=[];casePicker=emptyCasePicker();query=emptyQuery();destination='';sort='cost_total';direction='asc';invalidateHistory();editor=null;dirty=false;publication=null;batch=null;batchPreview=null;history=null;historyRows=[];message='';templatePrimary='';templateId='';templateIndex=-1;referencePlan='';templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;templatePreviewFailed=false;};
   const requireData=response=>{if(!response.data||!['success','needs_input','manual_review'].includes(response.status))throw Object.assign(new Error(response.reason_codes?.[0]||'fcl_unavailable'),{code:response.reason_codes?.[0]||'fcl_unavailable'});return response.data;};
   const emptyOperations={rate_details:[],charges:[],delivery_rates:[],templates:[]};
   const publishedDataset=()=>view?.active_release?.input.contract_version===FCL_RATE_DATASET_V2?view.active_release.input:null;
@@ -89,11 +92,11 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const updatedAt=row=>row?.updated_at||null;
   const currentDate=()=>model().session?.fcl_capability?.business_date||'';
   const load=async(id='',force=false)=>{
-    if(loading||loaded&&!force&&id===contextId)return;
-    if(id!==contextId){generation++;contextId=id;loaded=false;editor=null;history=null;}
+    if(id!==contextId){generation++;contextId=id;loaded=false;loading=false;view=null;draft=null;editor=null;history=null;historyRows=[];caseView=null;items=[];caseList=[];casePicker=emptyCasePicker();query=emptyQuery();routePod='';routeDestination='';destination='';invalidateHistory();}
+    if(loading||loaded&&!force)return;
     loading=true;const token=generation;
     try{
-      const results=await Promise.all([call('rate-get',{},'GET'),call('estimate-list',{case_ref:null,destination:null,shipping_date:null}),call('case-list',{limit:100,status:null,cursor:null},'GET'),...(id?[call('case-get',{case_id:id})]:[])]);
+      const results=await Promise.all([call('rate-get',{},'GET'),...(id?[call('case-get',{case_id:id})]:[])]);
       if(token!==generation)return;
       view=requireData(results[0]);draft=clone(view.draft||view.active_release?.input||{contract_version:FCL_RATE_DATASET_V2,label:'整柜海运费表',rates:[],operations:{rate_details:[],charges:[],delivery_rates:[],templates:[]}});
       if(draft.contract_version!==FCL_RATE_DATASET_V2)draft={...draft,contract_version:FCL_RATE_DATASET_V2,operations:{rate_details:[],charges:[],delivery_rates:[],templates:[]}};
@@ -102,12 +105,35 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
       if(!['reference','templates'].includes(templatePrimary))templatePrimary=draftOptions().templates.length?'templates':'reference';
       if(!referenceGroups.some(group=>group.name===referencePlan))referencePlan=referenceGroups[0]?.name||'';
       templateEditor=null;templateIssues=[];templateSharedConfirmation=false;templateMoreOpen=false;templateOpenCharge=null;templatePreviewFailed=false;
-      items=requireData(results[1]).items;caseList=requireData(results[2]).items.filter(c=>!['closed','cancelled'].includes(c.case_status));caseView=id?requireData(results[3]):null;
+      caseView=id?requireData(results[1]):null;
       if(caseView){const c=caseView.current_input;routePod=c.pod||'';routeDestination=c.final_destination||'';query={...query,case_ref:id,pol:c.pol||'',shipping_date:c.cargo_ready_date||'',containers:c.containers.filter(b=>b.quantity!==null).map(b=>({...b,unit:'CNTR'})),weight_kg:c.estimated_weight?.value||null,template_ids:[]};}
       else query={...query,case_ref:null,shipping_date:query.shipping_date||currentDate()};
       loaded=true;dirty=false;message='';
     }catch(error){if(token===generation){loaded=true;message=fclIssue(error.code||error.message);}}
     finally{if(token===generation){loading=false;rerender();}}
+  };
+  const loadHistory=async(force=false)=>{
+    if(historyLoad.loading||historyLoad.loaded&&!force)return;
+    const token=generation,request=++historyRequest;
+    historyLoad.loading=true;historyLoad.error='';
+    try{
+      const data=requireData(await call('estimate-list',{case_ref:contextId||null,destination:null,shipping_date:null}));
+      if(request===historyRequest){items=data.items;historyLoad.loaded=true;}
+    }catch(error){if(token===generation&&request===historyRequest){historyLoad.loaded=true;historyLoad.error=fclError(error);}}
+    finally{if(token===generation&&request===historyRequest){historyLoad.loading=false;rerender();}}
+  };
+  const loadCases=async(more=false)=>{
+    if(contextId||casePicker.loading||more&&!casePicker.cursor||!more&&casePicker.loaded)return;
+    const token=generation;
+    casePicker.loading=true;casePicker.error='';rerender();
+    try{
+      const search=new URLSearchParams({limit:'50',...(more?{cursor:casePicker.cursor}:{})});
+      const data=requireData(await call('case-list',null,'GET',`?${search}`));
+      const rows=data.items.filter(c=>!['closed','cancelled'].includes(c.case_status));
+      caseList=[...new Map([...(more?caseList:[]),...rows].map(row=>[row.case_id,row])).values()];
+      casePicker.loaded=true;casePicker.cursor=data.next_cursor;
+    }catch(error){if(token===generation)casePicker.error=fclError(error);}
+    finally{if(token===generation){casePicker.loading=false;rerender();}}
   };
   const monetaryKey=key=>['amount','sell_amount','base_rate'].includes(key)||key.startsWith('tier-amount-');
   const input=(key,value,attrs='',label=key)=>`<label class="field">${fclFieldHtml(label)}<input name="${key}" value="${esc(monetaryKey(key)?displayAmount(value,''):value??'')}" ${attrs}></label>`;
@@ -118,7 +144,14 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const btn=(action,text,attrs='')=>`<button type="button" class="button" data-action="ops-${action}" ${attrs}>${text}</button>`;
   const notifyState=()=>message?`<p class="ops-message" role="status">${esc(message)}</p>`:'';
   const fclError=error=>fclIssue(error?.code||error?.message||'fcl_unavailable');
-  const refresh=async()=>{items=requireData(await call('estimate-list',{case_ref:null,destination:null,shipping_date:null})).items;};
+  const refresh=async()=>{invalidateHistory();if(section==='compare'||section==='history')await loadHistory();else items=[];};
+  const caseSelector=()=>{
+    if(contextId)return `<a class="button" href="#fcl/case/${esc(contextId)}">返回本票</a>`;
+    if(!casePicker.open)return btn('cases-open','关联询价');
+    return select('case_ref',query.case_ref||'',[['','选择关联询价后生成客户报价'],...caseList.map(c=>[c.case_id,`${c.inquiry_no} · ${c.current_input.final_destination||''}`])])+
+      (casePicker.loading?'<span role="status">正在读取询价…</span>':casePicker.cursor?btn('cases-more','加载更多询价'):!casePicker.loaded?btn('cases-open','重试读取询价'):'')+
+      (casePicker.error?`<span role="status">${esc(casePicker.error)}</span>`:'');
+  };
   const categoryName=key=>fclField(({ocean:'ocean_freight',origin:'origin_charges',destination:'destination_charges',inland:'inland_delivery',customs:'customs',risk:'risk',other:'other'})[key]);
   const amount=(value,currency='CNY')=>value===null||value===undefined?'—':`${esc(displayAmount(value))} <small>${currency}</small>`;
   const breakdown=estimate=>`<details class="ops-breakdown"><summary>查看计算明细</summary><p>报价第 ${estimate.version} 版 · 来源发布 ${esc(estimate.source_release_id)}</p><div class="table-wrap"><table><thead><tr>${['name_zh','quantity','cost_price','sell_price','currency'].map(k=>`<th>${fclFieldHtml(k)}</th>`).join('')}</tr></thead><tbody>${estimate.calculation.lines.map(l=>`<tr><td><strong>${esc(l.name_zh)}</strong><small>${esc(l.name_en)}</small></td><td>${esc(l.quantity)} ${l.unit==='CNTR'?'柜':'票'}</td><td>${esc(displayAmount(l.cost_price))}</td><td>${esc(displayAmount(l.sell_price))}</td><td>${l.currency}</td></tr>`).join('')}</tbody></table></div><details><summary>来源与计算记录</summary><dl class="ops-source-list">${estimate.calculation.source_refs.map(r=>`<div><dt>${esc(r.ref)}</dt><dd>${esc(r.version)}</dd></div>`).join('')}</dl><p>${fclField('exchange_rates')}：USD ${esc(estimate.calculation.exchange_rates.USD??'待填')} / CAD ${esc(estimate.calculation.exchange_rates.CAD??'待填')}</p><ul>${estimate.calculation.calculation_trace.map(t=>`<li>${esc(t.detail)}</li>`).join('')}</ul></details>${estimate.adjustments.length?`<details><summary>人工调整记录</summary><ul>${estimate.adjustments.map(a=>`<li>${esc(displayAmount(a.original_amount))} → ${esc(displayAmount(a.adjusted_amount))} · ${esc(a.reason)} · ${esc(a.actor===model().session?.identity?.user_id?'本人':a.actor)} · ${esc(a.modified_at)}</li>`).join('')}</ul></details>`:''}</details>`;
@@ -138,7 +171,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     const r=item.request,decimalEqual=(a,b)=>a===null||b===null?a===b:new Decimal(a).equals(b);
     return (!routePod||item.calculation.pod===routePod)&&(!routeDestination||item.calculation.destination===routeDestination)&&(!query.rate_ids.length||query.rate_ids.includes(item.calculation.rate_id))&&r.pol===query.pol&&r.shipping_date===query.shipping_date&&decimalEqual(r.weight_kg,query.weight_kg)&&decimalEqual(r.volume_cbm,query.volume_cbm)&&r.postal_code===query.postal_code&&r.zone===query.zone&&r.containers.length===query.containers.length&&r.containers.every(box=>query.containers.some(q=>q.type===box.type&&q.quantity===box.quantity))&&(!query.template_ids.length||query.template_ids.includes(item.calculation.template_id));
   };
-  const compare=()=>`${section==='history'?'':queryForm()+schedules.render()}<h2 class="ops-result-title">${section==='history'?'历史报价':'报价结果'}</h2><div class="ops-toolbar">${select('sort',sort,[['cost_total',fclField('total_cost')],['ocean',fclField('ocean_freight')+'（同币种）'],['transit_days',fclField('transit_days')],['gross_profit',fclField('gross_profit')],['etd',fclField('etd')],['carrier',fclField('carrier')]])}${select('direction',direction,[['asc','从低到高 / 从早到晚'],['desc','从高到低 / 从晚到早']])}${select('destination',destination,[['','全部目的地'],...[...new Set(items.map(i=>i.calculation.destination))].map(x=>[x,x])])}${contextId?`<a class="button" href="#fcl/case/${contextId}">返回本票</a>`:select('case_ref',query.case_ref||'',[['','选择关联询价后生成客户报价'],...caseList.map(c=>[c.case_id,`${c.inquiry_no} · ${c.current_input.final_destination||''}`])])}</div>${history?`<section class="panel ops-history"><header><h2>历史报价 v${history.version} / ${history.current_version}</h2><div>${history.version>1?btn('history','上一版',`data-id="${history.estimate_id}" data-version="${history.version-1}"`):''}${history.version<history.current_version?btn('history','下一版',`data-id="${history.estimate_id}" data-version="${history.version+1}"`):''}</div>${btn('close-history','收起')}</header><p>${esc(history.calculation.carrier)} · ${esc(history.calculation.destination)} · ${esc(history.created_at)}</p><div class="ops-card-meta">${history.calculation.lines.filter(l=>l.code==='ocean_freight').map(l=>`${l.container_type}: ${l.cost_price} ${l.currency}`).join(' · ')}</div>${breakdown(history)}<details open><summary>${fclField('price_trend')} · 本版及之前最多 12 版</summary><div class="table-wrap ops-trend"><table><thead><tr>${['version','generated_at','ocean_freight','total_cost','sell_price'].map(k=>`<th>${fclFieldHtml(k)}</th>`).join('')}</tr></thead><tbody>${historyRows.map(row=>`<tr><td>v${row.version}</td><td>${esc(row.created_at)}</td><td>${row.calculation.lines.filter(l=>l.code==='ocean_freight').map(l=>`${l.container_type}: ${esc(displayAmount(l.cost_price))} ${l.currency}`).join(' / ')}</td><td>${amount(row.calculation.totals.cost_total)}</td><td>${amount(row.calculation.totals.sell_total)}</td></tr>`).join('')}</tbody></table></div></details><p>${fclField('total_cost')} ${amount(history.calculation.totals.cost_total)} · ${fclField('sell_price')} ${amount(history.calculation.totals.sell_total)}</p></section>`:''}<div class="ops-comparison">${sortFclEstimates(items.filter(i=>(!destination||i.calculation.destination===destination)&&(section==='history'||matchesQuery(i))&&(!contextId||((i.request.case_ref===null||i.request.case_ref===contextId)&&i.calculation.destination===caseView?.current_input.final_destination))),sort,direction).map(card).join('')||'<div class="panel empty-state"><h2>选择路线与目的地，生成预估方案</h2><p>填写线路并选择已发布海运费后计算。若线路尚未维护费用方案，可在高级设置补充，或从客户询价中填写单票报价。</p></div>'}</div>`;
+  const compare=()=>`${section==='history'?'':queryForm()+schedules.render()}<h2 class="ops-result-title">${section==='history'?'历史报价':'报价结果'}</h2>${historyLoad.loading?'<p role="status">正在读取历史报价…</p>':historyLoad.error?`<p role="status">${esc(historyLoad.error)} ${btn('history-retry','重试读取历史')}</p>`:''}<div class="ops-toolbar">${select('sort',sort,[['cost_total',fclField('total_cost')],['ocean',fclField('ocean_freight')+'（同币种）'],['transit_days',fclField('transit_days')],['gross_profit',fclField('gross_profit')],['etd',fclField('etd')],['carrier',fclField('carrier')]])}${select('direction',direction,[['asc','从低到高 / 从早到晚'],['desc','从高到低 / 从晚到早']])}${select('destination',destination,[['','全部目的地'],...[...new Set(items.map(i=>i.calculation.destination))].map(x=>[x,x])])}${caseSelector()}</div>${history?`<section class="panel ops-history"><header><h2>历史报价 v${history.version} / ${history.current_version}</h2><div>${history.version>1?btn('history','上一版',`data-id="${history.estimate_id}" data-version="${history.version-1}"`):''}${history.version<history.current_version?btn('history','下一版',`data-id="${history.estimate_id}" data-version="${history.version+1}"`):''}</div>${btn('close-history','收起')}</header><p>${esc(history.calculation.carrier)} · ${esc(history.calculation.destination)} · ${esc(history.created_at)}</p><div class="ops-card-meta">${history.calculation.lines.filter(l=>l.code==='ocean_freight').map(l=>`${l.container_type}: ${l.cost_price} ${l.currency}`).join(' · ')}</div>${breakdown(history)}<details open><summary>${fclField('price_trend')} · 本版及之前最多 12 版</summary><div class="table-wrap ops-trend"><table><thead><tr>${['version','generated_at','ocean_freight','total_cost','sell_price'].map(k=>`<th>${fclFieldHtml(k)}</th>`).join('')}</tr></thead><tbody>${historyRows.map(row=>`<tr><td>v${row.version}</td><td>${esc(row.created_at)}</td><td>${row.calculation.lines.filter(l=>l.code==='ocean_freight').map(l=>`${l.container_type}: ${esc(displayAmount(l.cost_price))} ${l.currency}`).join(' / ')}</td><td>${amount(row.calculation.totals.cost_total)}</td><td>${amount(row.calculation.totals.sell_total)}</td></tr>`).join('')}</tbody></table></div></details><p>${fclField('total_cost')} ${amount(history.calculation.totals.cost_total)} · ${fclField('sell_price')} ${amount(history.calculation.totals.sell_total)}</p></section>`:''}<div class="ops-comparison">${sortFclEstimates(items.filter(i=>(!destination||i.calculation.destination===destination)&&(section==='history'||matchesQuery(i))&&(!contextId||((i.request.case_ref===null||i.request.case_ref===contextId)&&i.calculation.destination===caseView?.current_input.final_destination))),sort,direction).map(card).join('')||'<div class="panel empty-state"><h2>选择路线与目的地，生成预估方案</h2><p>填写线路并选择已发布海运费后计算。若线路尚未维护费用方案，可在高级设置补充，或从客户询价中填写单票报价。</p></div>'}</div>`;
   const newRecord=kind=>{
     const id=crypto.randomUUID();const base={id,version:1};
     if(kind==='charges')return {...base,code:`fee_${id}`,name_zh:'',name_en:'',category:'other',amount:'',currency:'CAD',unit:'SHIPMENT',container_types:query.containers.map(c=>c.type),sell_amount:null,editable:true,country:'CA',pod:null,destination:null,source_ref:'',source_version:'v1',remark:null};
@@ -470,6 +503,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
   const render=(id='',initial='')=>{
     if(initial!==entrySection){entrySection=initial;section=initial||'compare';}
     void load(id);if(!loaded||!view)return `<h1>整柜报价工作台</h1>${notifyState()}<p role="status">${loading?'正在读取费用和报价…':'读取失败，请刷新重试。'}</p>${btn('reload','重试')}`;
+    if(section==='history')void loadHistory();
     const maintenance=section!=='compare'&&section!=='history';
     return `<div class="ops-workspace"><header class="ops-heading"><div><h1>整柜报价工作台</h1><p>从已发布海运费与费用模板开始，修改本票后生成客户报价。</p></div><div class="head-actions">${btn('reload','刷新')}${section==='templates'?'':btn('tab','模板维护','data-tab="templates"')}</div></header><nav class="ops-tabs" aria-label="报价工作台导航">${businessTabs.map(key=>`<button class="console-tab" data-action="ops-tab" data-tab="${key}"${section===key?' aria-current="page"':''}>${sectionNames[key]}</button>`).join('')}</nav>${notifyState()}${batchForm()}${editor?.kind==='ocean'?oceanAdvanced():editorForm()}${section==='compare'||section==='history'?compare():section==='rates'?oceanTable()+schedules.render():section==='templates'?templateWorkbench():section==='charges'?recordList():''}${maintenance?advancedPanel():''}${maintenance&&section!=='templates'?publicationPanel():''}</div>`;
   };
@@ -517,7 +551,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
       if(query.template_ids.length!==1){message='请选择一套费用模板。';rerender();return true;}
       // A published price change starts a new calculation intent; retries against the
       // same publication keep their idempotency key, including uncertain writes.
-      const response=await write('estimate-run',query,view.active_release.release_id),result=requireData(response);await refresh();
+      const response=await write('estimate-run',query,view.active_release.release_id),result=requireData(response);invalidateHistory();items=result.items;
       if(result.items.length===1&&!result.items[0].currentness.valid_now){
         const selected=result.items[0],issues=[...new Set([...selected.calculation.blockers,...selected.currentness.reason_codes])];
         message=`请补齐后重新套用模板：${issues.map(fclIssue).join('；')}。`;
@@ -539,10 +573,16 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     }return false;
   };
   const action=async(button)=>{
+    const token=generation;
     if(await schedules.action(button))return true;
+    if(token!==generation)return true;
     const name=button.dataset.action;if(!name?.startsWith('ops-'))return false;
+    if(name==='ops-cases-open'){casePicker.open=true;await loadCases();return true;}
+    if(name==='ops-cases-more'){await loadCases(true);return true;}
+    if(name==='ops-history-retry'){await loadHistory(true);return true;}
     if(name==='ops-rate-filter-clear'){rateFilter={pol:'',pod:'',carrier:''};rerender();return true;}
     if(await oceanAction(button))return true;
+    if(token!==generation)return true;
     const id=button.dataset.id,estimate=items.find(i=>i.estimate_id===id);
     if(name==='ops-template-new'){
       if(templateEditorDirty()){message='请先保存或取消当前模板修改。';rerender();return true;}
@@ -599,7 +639,7 @@ export function createFclOperations({call:readRequest,write:writeRequest,esc,rer
     if(name==='ops-tab'){if(editor||templateEditorDirty()){if(!window.confirm('当前有未保存的费用编辑，切换会取消这些编辑。是否继续？'))return true;templateEditor=null;templateIssues=[];templateOpenCharge=null;}section=button.dataset.tab;advanced=!businessTabs.includes(section);schedules.invalidate();rerender();return true;}
     if(name==='ops-advanced'){advanced=true;section='templates';rerender();return true;}
     if(name==='ops-sailing'){const rate=(publishedDataset()?.rates||[]).find(r=>r.rate_id===query.rate_ids[0]);if(!rate){message='请先选择一条已发布 COSCO 海运费，再查询该线路船期。';rerender();return true;}schedules.show(rate,query.shipping_date,publishedOptions().rate_details.find(d=>d.rate_id===rate.rate_id));return true;}
-    if(name==='ops-reload'){if(dirty||editor||batch||templateEditorDirty()){message='请先保存或取消当前编辑。';rerender();return true;}loaded=false;void load(contextId,true);return true;}
+    if(name==='ops-reload'){if(dirty||editor||batch||templateEditorDirty()){message='请先保存或取消当前编辑。';rerender();return true;}generation++;loading=false;loaded=false;items=[];history=null;historyRows=[];caseList=[];casePicker=emptyCasePicker();invalidateHistory();void load(contextId,true);return true;}
     if(name==='ops-new'||name==='ops-copy-record'||name==='ops-next-version'||name==='ops-edit'){if(editor){message='请先保存或取消当前编辑。';rerender();return true;}const kind=button.dataset.kind,index=button.dataset.index===undefined?null:Number(button.dataset.index),value=index===null?newRecord(kind):clone(draftOptions()[kind][index]);if(name==='ops-copy-record'&&kind!=='rate_details'){value.id=crypto.randomUUID();value.version=1;}else if(index!==null&&kind!=='rate_details')value.version=Math.max(...draftOptions()[kind].filter(r=>r.id===value.id).map(r=>r.version))+1;if(name==='ops-next-version'){value.valid_from='';value.valid_until='';}editor={kind,index:['ops-copy-record','ops-next-version'].includes(name)?null:index,value};rerender();return true;}
     if(name==='ops-close-editor'){editor=null;rerender();return true;}
     if(name==='ops-add-tier'){captureEditor(document.querySelector('[data-fcl-form="ops-record"]'));editor.value.tiers.push({min_kg:'',max_kg:'',amount:''});rerender();return true;}

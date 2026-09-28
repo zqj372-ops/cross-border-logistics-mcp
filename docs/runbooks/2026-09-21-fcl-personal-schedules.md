@@ -7,7 +7,7 @@
 1. 使用包含本变更的 Portal 构建，按现有生产发布流程部署。
 2. 在服务器私有环境配置中保留已验证的 FCL 固定受理人设置，设置 `PORTAL_FCL_SCHEDULE_LIVE_ENABLED=true`。要求 `PORTAL_FCL_ENABLED=true` 和现有身份权威配置有效，否则启动失败。
 3. 企业 `PORTAL_SCHEDULE_LIVE_TENANT_ALLOWLIST` 可以为空。个人查询使用 `fcl-personal-` 加固定受理人 subject 的 SHA-256 前 32 位作为独立证据/审计目录，不把个人账号伪装为企业。
-4. 个人 FCL 船期目前固定为 COSCO。服务端即使收到其他船公司请求也会拒绝；现有 `PORTAL_SCHEDULE_LIVE_CARRIER_ALLOWLIST` 继续作为额外限制，个人 scope 应包含 COSCO（例如 `scope=COSCO`），旧配置中的 ONE 等条目不会扩大个人权限。企业原有船公司策略保持不变。
+4. 根据 [2026-09-27 船期扩展](../rfcs/2026-09-27-public-carrier-schedule-expansion.md)，个人查询范围为已实查的 COSCO、ONE、EVERGREEN、SML、YML。`PORTAL_SCHEDULE_LIVE_CARRIER_ALLOWLIST` 继续作为额外限制：现有 `scope=COSCO` 配置仍只允许 COSCO；需要新增来源时显式加入对应标识。未验证来源仍被拒绝。企业原有船公司策略保持不变。
 5. 证据与审计继续使用 `PORTAL_SCHEDULE_LIVE_EVIDENCE_ROOT` / `PORTAL_SCHEDULE_LIVE_AUDIT_PATH`，或现有生产数据目录中的默认位置。不得把身份 subject、会话或证据正文写进交付文档。
 
 ## 验收
@@ -23,4 +23,4 @@
 
 将 `PORTAL_FCL_SCHEDULE_LIVE_ENABLED=false` 后重启即可撤销新增个人访问；无需数据库迁移，不删除历史记录。此开关不授予个人 API Key/MCP 权限。
 
-本地可丢弃 fixture 和假适配器测试不访问船公司。它们验证界面、权限、证据隔离和报价回归；不能代替上线后的真实船期连通验收。
+本地可丢弃 fixture 和假适配器测试不访问船公司。它们验证界面、权限、证据隔离和报价回归；不能代替上线后的真实船期连通验收。2026-09-27 另以隔离身份运行真实公开来源查询，EMC/SML/YML 的 CLI 与本地页面均通过上海至温哥华实查；这仍不代表生产已部署。

@@ -17,9 +17,14 @@ export class PortalPublicCustomsService {
     if (!this.#business.publicAvailable(operation)) return fail(503, "unavailable", "public_customs_unavailable");
     try {
       const count = batch && "items" in parsed.data ? parsed.data.items.length : 1;
-      const quota = this.#quota.reserve(address, count, this.#now());
+      const reservedAt = this.#now();
+      let quota = this.#quota.reserve(address, count, reservedAt);
       if (!quota.allowed) return fail(429, "blocked", quota.remaining === 0 ? "public_daily_limit_reached" : "public_daily_limit_insufficient", quota);
       const body = await this.#business.executePublic(operation, parsed.data, requestId, batch);
+      if (body.status === "unavailable" && body.data === null && body.reason_codes.includes("customs_data_not_ready")) {
+        this.#quota.release(address, count, reservedAt);
+        quota = { ...this.#quota.read(address, this.#now()), allowed: true };
+      }
       return { httpStatus: 200, body, quota };
     } catch { return fail(503, "unavailable", "public_customs_unavailable"); }
   }

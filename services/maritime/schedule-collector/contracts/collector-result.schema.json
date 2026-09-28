@@ -47,7 +47,8 @@
             "ONE",
             "MAERSK",
             "MSC",
-            "MATSON"
+            "MATSON",
+            "SML"
           ]
         },
         "query_origin": {
@@ -166,7 +167,8 @@
             "ONE",
             "MAERSK",
             "MSC",
-            "MATSON"
+            "MATSON",
+            "SML"
           ]
         },
         "sales_carrier": {

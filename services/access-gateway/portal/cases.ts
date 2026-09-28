@@ -14,6 +14,7 @@ import { PortalError, type PortalContext } from './contracts';
 import type { PortalService } from './service';
 import { openPortalProductionDatabase, securePortalDatabaseFiles } from './production-persistence';
 import {SyncTransactionGuard} from './sync-transaction';
+import {checkExecutionMigration,initializeExecutionTables,type ExecutionMigration} from './fcl-execution-store';
 import {
   caseInputSchema,
   caseUpdateSchema,
@@ -128,6 +129,7 @@ export type FclNotificationSettings = {
   readonly timeoutMs?: number;
 };
 export type CaseStoreOptions = {
+  execution?:ExecutionMigration;
   fcl?:
     | { mode: 'fresh_fixture'; authorized: true; oldWritersStopped: true }
     | { mode: 'exclusive_verified'; authorized: true; oldWritersStopped: true; assertExclusive: () => void }
@@ -214,13 +216,17 @@ const fclPatchFieldValue = (input: FclInquiryDraft, field: FclInquiryPatch['chan
 export class CaseStore {
   readonly db: DatabaseSync;
   readonly fclEnabled: boolean;
+  readonly executionEnabled:boolean;
   constructor(readonly path: string, options: CaseStoreOptions = {}) {
     const fclOption = options.fcl;
     const fclRequested = fclOption !== undefined;
-    this.db = openPortalProductionDatabase(path, 'freightclaw-business-cases', fclRequested ? CASE_SCHEMA_VERSION : 1);
+    const maximum=options.execution?3:fclRequested?CASE_SCHEMA_VERSION:1;
+    if(options.execution&&!fclRequested)throw new Error('fcl_execution_requires_fcl');
+    this.db = openPortalProductionDatabase(path, 'freightclaw-business-cases', maximum);
     try {
       const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-      if (version > (fclRequested ? CASE_SCHEMA_VERSION : 1)) throw new Error('cases_schema_incompatible');
+      if (version > maximum) throw new Error('cases_schema_incompatible');
+      if(options.execution)checkExecutionMigration(version,options.execution);
       if (fclRequested && version < CASE_SCHEMA_VERSION) {
         if (!fclOption || fclOption.mode === 'reopen') throw new Error('fcl_schema_not_upgraded');
         if (!fclOption.authorized || !fclOption.oldWritersStopped) throw new Error('fcl_upgrade_not_authorized');
@@ -279,12 +285,14 @@ export class CaseStore {
             PRAGMA user_version=${CASE_SCHEMA_VERSION};
           `);
         }
+        if(options.execution)initializeExecutionTables(this.db,version,options.execution);
         this.db.exec('COMMIT');
       } catch (error) {
         this.db.exec('ROLLBACK');
         throw error;
       }
       this.fclEnabled = fclRequested;
+      this.executionEnabled=Boolean(options.execution);
       securePortalDatabaseFiles(path);
     } catch (error) {
       this.db.close();
@@ -295,7 +303,11 @@ export class CaseStore {
   close() { this.db.close(); securePortalDatabaseFiles(this.path); }
 }
 
+export type FclCaseNotificationEvent={event_id:string;case_ref:string;owner_id:string;case_version:number;kind:string;status:string};
 export class CaseService {
+  private fclEventObserver:((event:FclCaseNotificationEvent)=>void)|undefined;
+  setFclEventObserver(observer:(event:FclCaseNotificationEvent)=>void){if(!this.store.executionEnabled||this.fclEventObserver)throw new Error('fcl_event_observer_invalid');this.fclEventObserver=observer;}
+
   readonly #fcl: NormalizedFclOptions | null;
   readonly #fclHandoffTransaction=new SyncTransactionGuard();
   constructor(readonly store: CaseStore, readonly portal: Pick<PortalService, 'getState'>, fcl?: FclCaseServiceOptions) {
@@ -428,8 +440,10 @@ export class CaseService {
         .run(randomUUID(), row.case_id, row.version, row.status, message, visibility, label, row.updated_at, actorId);
       return;
     }
+    const eventId=randomUUID();
     this.store.db.prepare('INSERT INTO business_case_events(event_id,case_id,version,status,message,visibility,actor_label,created_at,actor_id,event_kind,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run(randomUUID(), row.case_id, row.version, row.status, message, visibility, label, row.updated_at, actorId, kind, JSON.stringify(payload));
+      .run(eventId, row.case_id, row.version, row.status, message, visibility, label, row.updated_at, actorId, kind, JSON.stringify(payload));
+    this.fclEventObserver?.({event_id:eventId,case_ref:row.case_id,owner_id:row.owner_id,case_version:row.version,kind,status:row.status});
   }
   create(ctx: PortalContext, input: unknown, key: string) {
     const scope = this.scope(ctx), draft = parse(caseInputSchema, input) as Draft;
@@ -904,6 +918,10 @@ export class CaseService {
       throw error;
     }
   }
+  assertFclHandoffTransaction(ctx:PortalContext):void{
+    this.requireFclReceiver(ctx);
+    if(!this.#fclHandoffTransaction.isOpen)throw new PortalError('fcl_handoff_transaction_required');
+  }
   private fclHandoffPayloadEquivalent(left: FclHandoffPayload, right: FclHandoffPayload, ignoreRecordedAt = false): boolean {
     const normalize = (payload: FclHandoffPayload) => {
       if (!ignoreRecordedAt) return payload;
@@ -1006,6 +1024,7 @@ export class CaseService {
       .run(eventId, payload.case_id, payload.case_version, caseRow.status, fclHandoffEventMessage, 'internal', ctx.identity.displayName, payload.recorded_at, ctx.identity.userId, 'fcl_handoff_recorded', JSON.stringify(payload));
     db.prepare('INSERT INTO business_case_idempotency(scope,key,digest,case_id) VALUES(?,?,?,?)').run(scope, key, payload.request_digest, payload.case_id);
     const committed = this.assertFclHandoffCommitted({ eventId, scope, key, expected: payload, expectedStatus: caseRow.status, actorLabel: ctx.identity.displayName });
+    this.fclEventObserver?.({event_id:eventId,case_ref:caseRow.case_id,owner_id:caseRow.owner_id,case_version:caseRow.version,kind:'fcl_handoff_recorded',status:caseRow.status});
     const caseRowAfter = this.store.db.prepare('SELECT * FROM business_cases WHERE case_id=?').get(payload.case_id) as Row | undefined;
     const fclRowAfter = this.fclRowByCase(payload.case_id);
     if (!caseRowAfter || !fclRowAfter || JSON.stringify(caseRowAfter) !== caseRowBefore || JSON.stringify(fclRowAfter) !== fclRowBefore) throw new PortalError('fcl_handoff_case_changed');
@@ -1240,7 +1259,7 @@ export class CaseService {
       notification: this.notification(row),
       replay: !first,
     });
-    if (!first || personalContext) return base;
+    if (!first || personalContext || this.fclEventObserver) return base;
     const notification = await this.attemptFclNotification(row, base, inquiry);
     return fclCaseSubmissionSchema.parse({ ...base, notification });
   }
