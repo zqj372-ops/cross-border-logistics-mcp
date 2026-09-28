@@ -17,7 +17,7 @@ it('shows the selected country as an import brief, groups bilingual codes and ne
  const data=reference([item('CN','1234560000','zh-CN','合成商品'),item('CA','1234561000','en','Synthetic article'),item('CA','1234561000','fr','Article fictif'),item('CA','1234562000','en','Other article')]);
  const html=renderCustomsReference(ui,data,{input:{query:'123456',codeCountry:'CA'},country:'CA'});
  expect(html).toContain('商品进口建议与要求');
- for(const label of ['建议申报品名','建议归类','税率','反倾销','反补贴','进口限制','认证与标签','清关资料']) expect(html).toContain(label);
+ for(const label of ['当前候选税号','对应税则品名','税率','反倾销','反补贴','进口限制','认证与标签','清关资料']) expect(html).toContain(label);
  expect(html.match(/<option /gu)).toHaveLength(2);
  expect(html).toContain('value="1234561000" selected');
  expect(html).toContain('待核验');expect(html).not.toContain('无反倾销');expect(html).not.toContain('归类已确认');
@@ -41,12 +41,48 @@ it('displays corresponding Chinese and English names with translation provenance
  candidate.name_translation={language:'zh',text:'合成器具 — 其他',status:'machine',model:'fixture-model'};
  const html=renderCustomsReference(ui,reference([candidate]),{input:{query:'客户填写的器具',codeCountry:'US'}});
  expect(html).toContain('中文（参考译文）：合成器具 — 其他');expect(html).toContain('英文（官方原文）：Synthetic articles — Other');
- expect(html).toContain('建议申报品名');expect(html).toContain('客户填写的器具');expect(html).not.toContain('待补充商品中文名称');
+ expect(html).toContain('商品品名草案');expect(html).toContain('客户填写的器具');expect(html).not.toContain('待补充商品中文名称');
  expect(html).toContain('机器翻译，仅供理解原文');
  const cn=item('CN','1234567890','zh-CN','合成器具');
  cn.name_translation={language:'en',text:'Synthetic articles',status:'machine',model:'fixture-model'};
  const cnHtml=renderCustomsReference(ui,reference([cn]),{country:'CN'});
  expect(cnHtml).toContain('中文（官方原文）：合成器具');expect(cnHtml).toContain('英文（参考译文）：Synthetic articles');
+});
+it('puts the compact import requirements table before full bilingual names and keeps candidate labels readable',()=>{
+ const candidate=item('CA','1234561000','en','Other');
+ candidate.hierarchy=[{...candidate.item,code:'123456',description_original:'Synthetic articles'}];
+ candidate.name_translation={language:'zh',text:'合成器具 — 其他',status:'machine',model:'fixture-model'};
+ const html=renderCustomsReference(ui,reference([candidate,item('CA','1234562000','en','Second article')]),{input:{query:'客户输入品名',codeCountry:'CA'}});
+ expect(html).toContain('<table class="customs-brief"');
+ expect(html).toContain('<th scope="col">条件与核验</th>');
+ expect(html.indexOf('<th scope="row">进口限制</th>')).toBeLessThan(html.indexOf('对应税则品名'));
+ expect(html).toContain('value="1234561000" selected>1234561000 · 合成器具 — 其他</option>');
+ expect(html).toContain('候选品名对照');
+ expect(html).toContain('Synthetic articles — Other');
+ expect(html).toContain('商品品名草案');
+ expect(html).not.toContain('最佳归类推荐');
+ const cnHtml=renderCustomsReference(ui,reference([item('CN','1234561000','zh','合成器具'),item('CN','1234562000','zh','其他器具')]),{country:'CN'});
+ expect(cnHtml).toContain('<td>合成器具</td><td>译文暂不可用</td>');
+});
+it('merges only equivalent reference rate displays while preserving scope, conditions and effective dates',()=>{
+ const candidate=item('CA','1234561000','en','Synthetic article');
+ const rate={...dataset.tariffs[0]!,country:'CA' as const,code:'123456',treatment:'MFN',measure_type:'customs_duty',rate_expression_raw:'7.5%',condition_text_raw:'Only condition A'};
+ candidate.rates=[rate,{...rate,code:'1234561000'}, {...rate,condition_text_raw:'Only condition B'}];
+ let html=renderCustomsReference(ui,reference([candidate]));
+ let brief=html.split('<section data-customs-brief>')[1]!.split('</table>')[0]!;
+ expect(brief.match(/<strong>7\.5%<\/strong>/gu)).toHaveLength(2);
+ expect(brief).toContain('所属税目 123456');expect(brief).toContain('所属税目 1234561000');
+ expect(brief).toContain('Only condition A');expect(brief).toContain('Only condition B');
+ candidate.rates=[rate,{...rate,code:'1234561000',effective_from:'2026-05-01'}];
+ html=renderCustomsReference(ui,reference([candidate]));
+ brief=html.split('<section data-customs-brief>')[1]!.split('</table>')[0]!;
+ expect(brief.match(/<strong>7\.5%<\/strong>/gu)).toHaveLength(2);
+ for(const difference of [{origin_country:'US'},{conditions_json:'{"requires_review":true}'},{interaction_json:'{"additional":true}'},{release_revision:'other-edition'}]){
+  candidate.rates=[rate,{...rate,code:'1234561000',...difference}];
+  html=renderCustomsReference(ui,reference([candidate]));
+  brief=html.split('<section data-customs-brief>')[1]!.split('</table>')[0]!;
+  expect(brief.match(/<strong>7\.5%<\/strong>/gu)).toHaveLength(2);
+ }
 });
 it('puts the source MFN rate before optional preferential schedules and avoids duplicated parent names',()=>{
  const candidate=item('CA','1234561000','en','Synthetic article');

@@ -994,9 +994,79 @@ code, pre { font-family: var(--font-code); }
 
 .schedule-detail-page>.page-head{display:none}
 
-/* The customs task keeps the query short and the import brief readable. */
-.customs-workspace{display:grid;gap:24px}.customs-query-fields{display:grid;grid-template-columns:minmax(260px,2fr) minmax(160px,1fr) minmax(170px,1fr) auto;gap:18px;align-items:start}.customs-query-fields .form-actions{margin:29px 0 0;padding:0;border:0}.customs-query-fields .field{margin:0}.customs-extra{margin-top:18px}.customs-extra>summary{cursor:pointer;color:var(--muted);font-size:14px}.customs-extra>p{margin-top:12px;font-size:14px}.customs-extra .field-grid{margin-top:14px;max-width:850px}.customs-country-tabs{display:flex;gap:8px;flex-wrap:wrap}.customs-country-tabs [aria-pressed=true]{background:var(--ink);color:white}.customs-country-tabs span{margin-left:5px}.customs-result-state{margin:16px 0;color:var(--muted);font-size:14px}.customs-candidate-picker{display:block;max-width:100%;font-size:14px;font-weight:600}.customs-candidate-picker select{display:block;width:100%;margin-top:8px;min-width:0;text-overflow:ellipsis}.customs-brief-context{margin:22px 0 12px;font-weight:600}.customs-brief{margin:0;border-top:1px solid var(--line)}.customs-brief-row{display:grid;grid-template-columns:140px minmax(0,1fr);gap:20px;padding:15px 0;border-bottom:1px solid var(--line)}.customs-brief dt{font-weight:650}.customs-brief dd{margin:0;overflow-wrap:anywhere;line-height:1.7}.customs-brief small{display:block;color:var(--muted);font-size:13px;margin-top:4px;line-height:1.65}.customs-code{font-size:18px;font-variant-numeric:tabular-nums}.customs-pending{font-weight:600;color:var(--warning)}.customs-rate-line+ .customs-rate-line{margin-top:9px}.customs-rate-line strong{font-variant-numeric:tabular-nums}.customs-evidence-line,.customs-boundary{font-size:13px;line-height:1.7;margin:14px 0;color:var(--muted);overflow-wrap:anywhere}.customs-source-detail{margin:18px 0;overflow-wrap:anywhere}.customs-source-detail p{margin-top:6px}.customs-workspace table small{display:block;color:var(--muted);font-size:12px;margin-top:5px}
-@media(max-width:1000px){.customs-query-fields{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}.customs-query-fields .form-actions{margin-top:29px}}
-@media(max-width:600px){.customs-query-fields{grid-template-columns:minmax(0,1fr)}.customs-query-fields .form-actions{margin-top:0}.customs-query-fields .form-actions .button{width:100%}.customs-brief-row{grid-template-columns:minmax(0,1fr);gap:5px;padding:14px 0}.customs-country-tabs .button{padding:8px 10px;font-size:14px}.customs-extra .field-grid{grid-template-columns:1fr}}
-
-.customs-copy-status{margin-left:12px;font-size:14px;color:var(--muted)}
+/* Compact customs workspace: keep conditions beside each result, full evidence below. */
+.customs-workspace{display:grid;gap:18px}
+.customs-workspace>*{min-width:0}
+.customs-workspace .panel-head{padding:16px 20px}
+.customs-workspace .panel-head p{font-size:14px;line-height:1.6}
+.customs-workspace .panel-body{padding:20px}
+.customs-query-fields{display:grid;grid-template-columns:minmax(260px,2fr) minmax(160px,1fr) minmax(170px,1fr) auto;gap:14px;align-items:start}
+.customs-query-fields .form-actions{margin:29px 0 0;padding:0;border:0}
+.customs-query-fields .field{margin:0}
+.customs-extra{margin-top:12px}
+.customs-extra>summary{cursor:pointer;color:var(--muted);font-size:14px}
+.customs-extra>p{margin-top:12px;font-size:14px}
+.customs-extra .field-grid{margin-top:14px;max-width:850px}
+.customs-country-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.customs-country-tabs [aria-pressed=true]{background:var(--ink);color:white}
+.customs-country-tabs span{margin-left:5px}
+.customs-result-state{margin:10px 0 14px;color:var(--muted);font-size:13px}
+.customs-result-toolbar{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap}
+.customs-candidate-picker{display:block;flex:1;min-width:220px;max-width:100%;font-size:14px;font-weight:600}
+.customs-candidate-picker select{display:block;width:100%;margin-top:6px;min-width:0;text-overflow:ellipsis}
+.customs-copy-action{display:grid;gap:4px}
+.customs-copy-status{font-size:13px;color:var(--muted)}
+.customs-copy-status:empty{display:none}
+.customs-brief-context{margin:16px 0 10px;font-size:13px;color:var(--muted)}
+.customs-classification{margin-bottom:12px}
+.customs-classification>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.customs-classification>div>span:first-child{font-size:14px;color:var(--muted)}
+.customs-code{font-size:20px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.customs-classification p{margin-top:6px;font-size:14px}
+.customs-classification p small{margin-left:8px;font-size:13px}
+.customs-classification p.customs-classification-reason{color:var(--muted);font-size:13px;line-height:1.6}
+.customs-brief{margin:0;border:1px solid var(--line);table-layout:fixed}
+.customs-brief tr>*{padding:10px 12px;vertical-align:top;border-bottom:1px solid var(--line);font-size:14px;line-height:1.55;white-space:normal;overflow-wrap:anywhere}
+.customs-brief thead th{background:var(--soft);color:var(--muted);font-size:13px;font-weight:600}
+.customs-brief thead th:first-child{width:110px}
+.customs-brief thead th:nth-child(2){width:32%}
+.customs-brief tbody th{background:transparent;color:var(--ink);font-weight:600}
+.customs-brief td:last-child{color:var(--muted);font-size:13px}
+.customs-brief td>strong{font-size:18px;font-variant-numeric:tabular-nums}
+.customs-brief small{display:block;font-size:13px;line-height:1.55;margin-top:3px}
+.customs-brief .badge{font-size:12px}
+.customs-brief tbody tr:last-child>*{border-bottom:0}
+.customs-pending{font-weight:600;color:var(--amber)}
+.customs-rate-label{display:block;font-size:13px;margin-top:2px}
+.customs-product-names{margin:16px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+.customs-product-names h3{font-size:14px;margin-bottom:8px}
+.customs-product-names>div{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.customs-product-names p{font-size:14px;line-height:1.65;overflow-wrap:anywhere}
+.customs-product-names>small{display:block;font-size:13px;margin-top:8px}
+.customs-evidence-line,.customs-boundary{font-size:13px;line-height:1.6;margin:8px 0;color:var(--muted);overflow-wrap:anywhere}
+.customs-source-detail{margin:18px 0;overflow-wrap:anywhere}
+.customs-source-detail p{margin-top:6px}
+.customs-candidate-comparison>p{font-size:13px;color:var(--muted);margin:10px 0}
+.customs-candidate-comparison table{min-width:640px;table-layout:fixed}
+.customs-candidate-comparison th:first-child{width:150px}
+.customs-candidate-comparison tr>*{padding:10px 12px;vertical-align:top;white-space:normal;overflow-wrap:anywhere;font-size:14px}
+.customs-candidate-comparison small{display:block;font-size:13px;color:var(--brand)}
+.customs-current-candidate{background:var(--blue-soft)}
+@media(max-width:1100px){.customs-query-fields{grid-template-columns:minmax(220px,2fr) minmax(160px,1fr)}.customs-query-fields .form-actions{align-self:end;margin:0}}
+@media(max-width:760px){.customs-product-names>div{grid-template-columns:minmax(0,1fr);gap:8px}}
+@media(max-width:600px){
+ .customs-workspace .panel-body,.customs-workspace .panel-head{padding:16px}
+ .customs-query-fields{grid-template-columns:minmax(0,1fr)}
+ .customs-query-fields .form-actions{margin:0}
+ .customs-query-fields .form-actions .button{width:100%}
+ .customs-country-tabs .button{padding:8px 10px;font-size:14px}
+ .customs-extra .field-grid{grid-template-columns:1fr}
+ .customs-candidate-picker{min-width:0;flex-basis:100%}
+ .customs-classification p small{display:block;margin-left:0}
+ .customs-brief thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+ .customs-brief tbody{display:block}
+ .customs-brief tr{display:grid;grid-template-columns:88px minmax(0,1fr);border-bottom:1px solid var(--line)}
+ .customs-brief tr:last-child{border-bottom:0}
+ .customs-brief tr>*{border:0;padding:10px 10px 4px}
+ .customs-brief td:last-child{grid-column:2;padding-top:0;padding-bottom:10px}
+}
