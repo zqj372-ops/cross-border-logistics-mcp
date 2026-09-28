@@ -390,3 +390,23 @@ it('isolates personal sailing evidence across accounts even with an old enterpri
   expect(scopes.size).toBe(2);
   for(const tenantId of scopes)expect((await service.machineExecute({tool:'maritime.schedule.search',tenantId,actorId:'alice',input:searchInput})).status).toBe('blocked');
 });
+
+
+describe("deployment-scoped carrier directory", () => {
+  it("uses the same allowed carriers for person and machine callers without source requests", async () => {
+    const app = createScheduleLiveService({
+      portal: portalStub({ org_scope: { tenantId: "tenant_scope", role: "owner" } }),
+      policy: { liveEnabled: () => true, carrierEnabled: (_tenant, carrier) => ["SML", "YML"].includes(carrier) },
+      clock: { now: () => new Date("2026-09-28T00:00:00Z") },
+      audit: new InMemoryScheduleLiveAuditSink(), evidenceRoot: await evidenceRoot(),
+      adapters: [], http: unusableHttp,
+    });
+    for (const result of [
+      await app.carriers(context("org_scope", "receiver")),
+      await app.machineExecute({ tool: "maritime.schedule.carriers", tenantId: "tenant_scope", actorId: "machine", input: {} }),
+    ]) {
+      const body = result.body as { data: { carriers: { id: string }[] } };
+      expect(body.data.carriers.map(carrier => carrier.id).sort()).toEqual(["SML", "YML"]);
+    }
+  });
+});

@@ -22,6 +22,7 @@ import type {
 } from "../schedule-collector/ports";
 import {
   ScheduleLiveContractError,
+  parseScheduleLiveCarriersEnvelope,
   parseScheduleLiveLocationsRequest,
   parseScheduleLiveSearchRequest,
   type ScheduleLiveResponse,
@@ -188,6 +189,13 @@ export function createScheduleLiveService(
     return options.policy.carrierEnabled?.(tenantId, carrier) ?? true;
   }
 
+  function carrierDirectory(service: CollectorServiceApi, tenantId: string) {
+    const envelope = parseScheduleLiveCarriersEnvelope(service.carriers().envelope);
+    return { ...envelope, data: envelope.data === null ? null : {
+      carriers: envelope.data.carriers.filter(carrier => carrierAllowed(tenantId, carrier.id)),
+    } };
+  }
+
   function tenantEvidence(tenantId: string): EvidenceStore {
     return new FileEvidenceStore({ root: tenantDirectory(evidenceRoot, tenantId) });
   }
@@ -305,7 +313,7 @@ export function createScheduleLiveService(
         throw error;
       }
       const service = collector(tenantId, ctx.identity.userId, requestId, auditId, "carriers");
-      const result = service.carriers();
+      const envelope = carrierDirectory(service, tenantId);
       await options.audit.record({
         tenant_id: tenantId,
         actor_id: ctx.identity.userId,
@@ -313,12 +321,12 @@ export function createScheduleLiveService(
         request_id: requestId,
         audit_id: auditId,
         carrier: null,
-        status: envelopeStatus(result.envelope, "success"),
+        status: envelopeStatus(envelope, "success"),
         issue_code: null,
         at: options.clock.now().toISOString(),
         input_sha256: null,
       });
-      return { status: "success", body: result.envelope };
+      return { status: "success", body: envelope };
     },
     async locations(ctx, input, operation) {
       const requestId = operation?.requestId ?? identifier("schedule-live-req");
@@ -476,7 +484,8 @@ export function createScheduleLiveService(
         );
         let result: { readonly data: unknown; readonly envelope: unknown };
         if (action === "carriers") {
-          result = service.carriers();
+          const envelope = carrierDirectory(service, request.tenantId);
+          result = { data: envelope.data, envelope };
         } else if (action === "locations") {
           const parsed = parseScheduleLiveLocationsRequest(request.input);
           if (!carrierAllowed(request.tenantId, parsed.carrier)) {
