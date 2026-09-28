@@ -334,6 +334,7 @@ export function mountFclInquiry(root) {
       if (attempt !== ticketEpoch) return;
       await exchangeTicket(inquiryId, credential);
       if (attempt !== ticketEpoch) return;
+      accessLink = ticketLink(inquiryId, credential);
       window.history.replaceState(null, '', `${location.pathname}${location.search}`);
       await loadTicket(inquiryId, attempt);
     } catch (error) {
@@ -374,7 +375,8 @@ export function mountFclInquiry(root) {
     if (button.dataset.step) { capture(); step = Number(button.dataset.step); errors = {}; render(); return; }
     if (button.dataset.action === 'fcl-back') { capture(); step = Math.max(1, step - 1); render(); return; }
     if(button.dataset.action==='fcl-open-customer'){
-      const match=/^#fcl-ticket\/([^/]+)\/([^/]+)$/.exec(location.hash);
+      const match=/^#fcl-ticket\/([^/]+)\/([^/]+)$/.exec(accessLink?new URL(accessLink).hash:location.hash);
+      if(!match){notice='请使用提交后保存的个人访问链接打开本票，再关联客户中心。';render();return;}
       if(match){try{sessionStorage.setItem('freightclaw.pending-claim',JSON.stringify({inquiry_id:decodeURIComponent(match[1]),credential:decodeURIComponent(match[2]),expires:Date.now()+900000}));}catch{notice='请复制查询链接，在客户中心关联询价。';render();return;}}
       location.assign('/customer/');return;
     }
