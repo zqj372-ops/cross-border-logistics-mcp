@@ -34,7 +34,7 @@ ${commands.map(command => `  ${command.name.padEnd(24)} ${command.description}`)
   --input, -i <文件|->      业务输入 JSON；- 表示标准输入
   --key-file <私有文件>     从文件读取既有统一 API Key；也可使用 FREIGHTCLAW_API_KEY
   --endpoint <origin>       默认 https://www.freightclaw.net；仅 HTTPS 或本机 HTTP
-  --timeout <秒>            网络及标准输入等待上限，1–60，默认15
+  --timeout <秒>            等待上限1–60秒，默认15；关税查询默认40
   --json                    紧凑 JSON；默认使用缩进 JSON
   --help, -h                显示帮助
   --version, -v             显示 CLI 版本
@@ -139,7 +139,7 @@ function responseCode(command: Command | undefined, httpStatus: number, payload:
   if (!record(payload) || typeof payload.status !== "string" || !Object.hasOwn(exitCodes, payload.status)) throw new CliError("response_invalid", 1, "服务响应不符合已知状态合同。");
   if (command) {
     const allowed = [command.responseVersion, ...(command.kind === "business" ? ["portal-business@2026-09-05.v1", "business-access@2026-09-05.v1"] : ["portal-t0-rest@2026-09-05.v1"])];
-    if(command.name==='customs query')allowed.push('portal-customs-reference@2026-09-27.v1','portal-customs-reference@2026-09-27.v2');
+    if(command.name==='customs query')allowed.push('portal-customs-reference@2026-09-27.v1','portal-customs-reference@2026-09-27.v2','portal-customs-reference@2026-09-28.v3');
     if (!validateResponse(command, httpStatus, payload) || !allowed.includes(String(payload.schema_version))) throw new CliError("response_invalid", 1, "服务响应不符合当前命令的合同。");
     if (payload.status === "success" && payload.data === null) throw new CliError("response_invalid", 1, "成功响应缺少业务结果。");
     if (payload.status === "success" && record(payload.data) && (payload.data.testData === true || (record(payload.data.dataStatus) && payload.data.dataStatus.ready === false))) throw new CliError("response_not_ready", 1, "来源未就绪或返回测试数据，不能判定为业务成功。");
@@ -184,7 +184,7 @@ export async function runCli(args: string[], io: CliIO = {}): Promise<number> {
     if (!command && (values.input !== undefined || values["key-file"] !== undefined)) throw new CliError("arguments_invalid", 2, "status 不读取业务输入或凭证。");
     const env = io.env ?? process.env;
     const base = endpoint(values.endpoint ?? env.FREIGHTCLAW_ENDPOINT ?? "https://www.freightclaw.net");
-    const timeoutSeconds = values.timeout ?? "15";
+    const timeoutSeconds = values.timeout ?? (command?.name==='customs query'?'40':'15');
     if (!/^(?:[1-9]|[1-5][0-9]|60)$/u.test(timeoutSeconds)) throw new CliError("timeout_invalid", 2, "超时必须为1到60秒的整数。");
     const timeout = Number(timeoutSeconds) * 1000;
     let body: string | undefined, key: string | undefined;

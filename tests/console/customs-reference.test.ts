@@ -35,6 +35,22 @@ it('explains Chinese HS6 candidate lookup without treating a Chinese name as a d
  expect(html).toContain('中文：译文暂不可用');
  expect(html).toContain('候选 · 待复核');
 });
+it('shows opt-in suggested search terms as uncertain and escapes them instead of presenting a classification',()=>{
+ const data=reference([item('CA','1234561000','en','Synthetic goods')]);
+ data.search={terms:['客户俗称','<script>not executed</script>'],assisted:true};
+ const html=renderCustomsReference(ui,data,{input:{query:'客户俗称',codeCountry:'CA'}});
+ expect(html).toContain('检索词建议（机器生成，待核对）');
+ expect(html).toContain('&lt;script>');expect(html).not.toContain('<script>');
+ expect(html).toContain('机器建议不作为归类依据');
+});
+it('keeps long official descriptions in evidence without expanding the compact summary or native select',()=>{
+ const text='Long legal description '.repeat(3000)+'END_OF_SOURCE';
+ const html=renderCustomsReference(ui,reference([item('CA','99140000','en',text)]));
+ const brief=html.split('<section data-customs-brief>')[1]!.split('</section>')[0]!;
+ const option=html.split('<option ')[1]!.split('</option>')[0]!;
+ expect(brief.length).toBeLessThan(6000);expect(option.length).toBeLessThan(250);
+ expect(brief).toContain('完整品名见来源依据');expect(html).toContain('END_OF_SOURCE');
+});
 it('displays corresponding Chinese and English names with translation provenance, separate from a customer draft',()=>{
  const candidate=item('US','1234567890','en','Other');
  candidate.hierarchy=[{...candidate.item,code:'123456',description_original:'Synthetic articles'}];

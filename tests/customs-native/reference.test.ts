@@ -11,12 +11,12 @@ import { dataset } from './publication-fixture';
 import { createCustomsNameTranslator } from '../../services/customs-native/name-translation';
 const dirs:string[]=[];
 afterEach(()=>{for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
-function fixture(longName=false,nomenclature=dataset.nomenclature){
+function fixture(longName=false,nomenclature=dataset.nomenclature,tariffs=dataset.tariffs,sources=dataset.sources){
  const dir=mkdtempSync(join(tmpdir(),'customs-reference-'));dirs.push(dir);const path=join(dir,'data.sqlite'),db=new DatabaseSync(path);
  const insert=(name:string,rows:Record<string,unknown>[])=>{const keys=Object.keys(rows[0]!);db.exec(`CREATE TABLE ${name} (${keys.map(k=>`"${k}" ${typeof rows[0]![k]==='number'?'INTEGER':'TEXT'}`).join(',')})`);for(const row of rows)db.prepare(`INSERT INTO ${name} VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k] as SQLInputValue));};
- insert('source_release',dataset.sources.map(s=>({...s,status:'staged'})));
+ insert('source_release',sources.map(s=>({...s,status:'staged'})));
  const strip=(row:Record<string,unknown>)=>Object.fromEntries(Object.entries(row).filter(([k])=>k==='release_id'||!k.startsWith('release_')));
- insert('nomenclature',nomenclature.map(row=>strip(longName?{...row,description_original:'Synthetic long source description '.repeat(1000)}:row)));insert('tariff_rule',dataset.tariffs.map(strip));db.close();
+ insert('nomenclature',nomenclature.map(row=>strip(longName?{...row,description_original:'Synthetic long source description '.repeat(2800)}:row)));insert('tariff_rule',tariffs.map(strip));db.close();
  const config={snapshotFile:path,sha256:createHash('sha256').update(readFileSync(path)).digest('hex')};return{config,client:createCustomsReferenceClient(config)};
 }
 const request={input:{query:'732393',ruleDate:'2026-09-27',codeCountry:'CN',attributes:{originCountry:'CN'}},actor:{type:'service' as const,id:'fixture'},requestId:'req_reference_0001'};
@@ -37,7 +37,7 @@ it('finds destination-country candidates from Chinese official names and keeps e
 });
 it('does not invent Chinese aliases, discard query terms, use expired anchors, or override an explicit HS selection',async()=>{
  const {client}=fixture();
- for(const query of ['不存在的中文商品','保温杯 未知条件']){
+ for(const query of ['不存在的中文商品','保温杯 未知条件','保温杯 '.repeat(8)+'未知条件']){
   expect(await client.query({...request,input:{...request.input,query,codeCountry:'CA'}})).toMatchObject({status:'manual_review',data:{candidates:[]}});
  }
  const english=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'Vacuum',codeCountry:'CA'}})).data);
@@ -51,8 +51,79 @@ it('keeps unusually long official source text readable when it exceeds the trans
  const {config}=fixture(true),fetchImpl=vi.fn<typeof fetch>();
  const result=await createCustomsReferenceClient(config,createCustomsNameTranslator({apiKey:'fixture-secret',model:'fixture-model'},fetchImpl)).query(request);
  expect(result).toMatchObject({status:'manual_review',data:{formal_ready:false}});
- expect(customsReferenceData.parse(result.data).candidates[0]!.item.description_original.length).toBeGreaterThan(9_000);
+ expect(customsReferenceData.parse(result.data).candidates[0]!.item.description_original.length).toBeGreaterThan(50_000);
  expect(fetchImpl).not.toHaveBeenCalled();
+});
+it('ranks goods before mentions in components and does not match a different compound product',async()=>{
+ const cn=dataset.nomenclature.find(row=>row.country==='CN')!,ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const names=[['7003190000','手机或平板电脑盖板用原板玻璃'],['8517130000','智能手机'],['8471301000','平板电脑'],['8501101000','玩具用电动机'],['9503006000','智力玩具'],['8205400000','螺丝刀'],['8524919000','专用于笔记本电脑的液晶模组']];
+ const rows=names.flatMap(([code,name],i)=>[{...cn,id:i*2+1,code:code!,description_original:name!},{...ca,id:i*2+2,code:code!,description_original:'Synthetic destination goods'}]);
+ const {client}=fixture(false,rows);
+ for(const [query,prefix] of [['手机','851713'],['平板电脑','847130'],['玩具','950300']]){
+  const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query,codeCountry:'CA'}})).data);
+  expect(data.candidates.filter(c=>c.item.country==='CA').map(c=>c.item.code.slice(0,6))).toEqual([prefix]);
+ }
+ for(const query of ['螺丝','笔记本电脑'])expect(await client.query({...request,input:{...request.input,query,codeCountry:'CA'}})).toMatchObject({data:{candidates:[]}});
+});
+it('limits distinct codes before retaining both Canadian legal languages',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const rows=Array.from({length:12},(_,i)=>['en','fr'].map((language,j)=>({...ca,id:i*2+j+1,language,code:`123456${String(i).padStart(4,'0')}`,description_original:'Synthetic goods'}))).flat();
+ const {client}=fixture(false,rows);
+ const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'123456',codeCountry:'CA'}})).data);
+ expect(new Set(data.candidates.map(c=>c.item.code)).size).toBe(9);
+ expect(data.candidates).toHaveLength(18);
+ expect(data.candidates.every(c=>data.candidates.some(other=>other.item.code===c.item.code&&other.item.language!==c.item.language))).toBe(true);
+});
+it('matches whole English words and plurals without confusing screws with screwdrivers',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const names=[['7318120000','Wood screws'],['8205400000','Screwdrivers'],['9900000000','Parts for screws']];
+ const {client}=fixture(false,names.map(([code,description_original],i)=>({...ca,id:i+1,code:code!,description_original:description_original!})));
+ for(const query of ['screw','screws']){
+  const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query,codeCountry:'CA'}})).data);
+  expect(data.candidates.map(c=>c.item.code)).toEqual(['7318120000']);
+ }
+});
+it('uses effective same-country prefix ancestors and never takes a sibling parent rate',async()=>{
+ const us=dataset.nomenclature.find(row=>row.country==='US')!,rate=dataset.tariffs.find(row=>row.country==='US')!;
+ const rows=[{...us,id:1,code:'8470210000',parent_code:'84701000',description_original:'Incorporating a printing device'},
+  {...us,id:2,code:'84701000',parent_code:'8470',description_original:'Wrong sibling'},
+  {...us,id:3,code:'8470',description_original:'Calculating machines'},
+  {...us,id:4,code:'84702100',description_original:'Expired parent',effective_to:'2026-01-01'}];
+ const tariffs=['8470210000','84701000','8470'].map((code,i)=>({...rate,id:'rate_'+i,code,code_match_type:'exact' as const}));
+ const {client}=fixture(false,rows,tariffs);
+ const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'8470210000',codeCountry:'US'}})).data);
+ const selected=data.candidates.find(c=>c.item.code==='8470210000')!;
+ expect(selected.hierarchy.map(p=>p.code)).toEqual(['8470']);
+ expect(selected.rates.map(r=>r.code)).toEqual(['8470','8470210000']);
+ expect(selected.item.parent_code).toBe('84701000'); // Preserve raw evidence; do not repair its hash in place.
+ expect(data.warnings.join(' ')).toContain('层级');
+});
+it('looks up opt-in search terms only in official rows, preserves evidence, and keeps attributes local',async()=>{
+ const {config}=fixture(),suggest=vi.fn().mockResolvedValue({terms:[{language:'en',text:'Vacuum flasks'}]});
+ const client=createCustomsReferenceClient(config,undefined,suggest);
+ const result=await client.query({...request,input:{...request.input,query:'客户俗称',codeCountry:'CA',attributes:{originCountry:'CN',material:'private material',use:'private use'}}});
+ const data=customsReferenceData.parse(result.data);
+ expect(suggest.mock.calls).toEqual([['客户俗称']]);
+ expect(data.candidates.find(c=>c.item.country==='CA')?.item.description_original).toBe('Vacuum flasks and vessels');
+ expect(data.search).toEqual({terms:['客户俗称','Vacuum flasks'],assisted:true});
+ expect(result.status).toBe('manual_review');expect(data.formal_ready).toBe(false);
+ expect(data.warnings.join(' ')).toContain('机器建议检索词');
+ suggest.mockClear();await client.query(request);expect(suggest).not.toHaveBeenCalled();
+ suggest.mockResolvedValue(null);
+ const fallback=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'保温杯',codeCountry:'CA'}})).data);
+ expect(fallback.candidates.length).toBeGreaterThan(0);expect(fallback.search?.assisted).toBe(false);
+ expect(fallback.warnings.join(' ')).toContain('已保留原始关键词');
+});
+it('connects an explicit GACC parent to same-year MOF only and rejects a different edition',async()=>{
+ const cn=dataset.nomenclature.find(row=>row.country==='CN')!,source=dataset.sources.find(s=>s.country==='CN')!;
+ const sources=[{...source,id:'gacc',authority:'GACC',edition:'2026'},{...source,id:'mof',authority:'MOF',dataset:'customs_tariff_8_digit',edition:'2026'}];
+ const names=[{...cn,id:1,release_id:'gacc',code:'1234567890',parent_code:'12345678'},{...cn,id:2,release_id:'mof',code:'12345678',parent_code:null}];
+ const input={...request.input,query:'1234567890'};
+ const compatible=fixture(false,names,dataset.tariffs,sources);
+ const data=customsReferenceData.parse((await compatible.client.query({...request,input})).data);
+ expect(data.candidates[0]!.hierarchy.map(p=>p.release_id)).toEqual(['mof']);
+ const incompatible=fixture(false,names,dataset.tariffs,sources.map(s=>s.id==='mof'?{...s,edition:'2025'}:s));
+ expect(customsReferenceData.parse((await incompatible.client.query({...request,input})).data).candidates[0]!.hierarchy).toEqual([]);
 });
 it('returns staged official text as reference only with original rates and evidence; unknown codes never mean free',async()=>{
  const {client}=fixture();const r=await client.query(request);
@@ -81,7 +152,7 @@ it('adds bilingual display names from source text only, preserving official rows
  const input={...request.input,query:'private customer description',selectedHs6:'732393',attributes:{originCountry:'CN',material:'private material'}};
  const raw=customsReferenceData.parse((await client.query({...request,input})).data);
  const result=await createCustomsReferenceClient(config,createCustomsNameTranslator({apiKey:'fixture-secret',model:'fixture-model'},fetchImpl)).query({...request,input});
- expect(result).toMatchObject({schema_version:'portal-customs-reference@2026-09-27.v2',status:'manual_review',data:{formal_ready:false}});
+ expect(result).toMatchObject({schema_version:'portal-customs-reference@2026-09-28.v3',status:'manual_review',data:{formal_ready:false}});
  const data=customsReferenceData.parse(result.data);
  expect(data.candidates.length).toBeGreaterThan(0);
  data.candidates.forEach((candidate,index)=>{

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { z } from "zod";
-import { customsReferenceData, customsReferenceDataV1, customsReferenceVersion } from '../../services/customs-native/reference';
+import { customsReferenceData, customsReferenceDataV1, customsReferenceDataV2, customsReferenceVersion } from '../../services/customs-native/reference';
 
 import { inputSchema as customsInput, queryResponseSchema as customsData } from "../../services/access-gateway/portal/business/customs-client";
 import { freightcomInputSchema } from "../../services/access-gateway/portal/business/freightcom-client";
@@ -49,6 +49,8 @@ const envelope=(version:string,data:JsonObject,extra:JsonObject={})=>({type:"obj
 const quoteExtra={source_schema_version:{const:"quote-preview@2026-09-05.v2"},source_refs:{type:"array",items:jsonSchema(sourceRefSchema)},request_id:{type:"string"},preview_only:{const:true},saved:{const:false},sendable:{const:false}};
 const response:JsonObject & {anyOf:JsonObject[]}={$schema:"https://json-schema.org/draft/2020-12/schema",$id:"https://freightclaw.local/schemas/business-call-response.schema.json",anyOf:[{...envelope(customsReferenceVersion,jsonSchema(customsReferenceData)),properties:{...envelope(customsReferenceVersion,jsonSchema(customsReferenceData)).properties as JsonObject,status:{const:"manual_review"},data:jsonSchema(customsReferenceData)}},envelope("portal-customs@2026-09-05.v1",jsonSchema(customsData)),envelope("portal-tax@2026-09-05.v1",jsonSchema(singleResponseSchema),{request_id:{type:"string"}}),envelope("portal-tax@2026-09-05.v1",jsonSchema(batchResponseSchema),{request_id:{type:"string"}}),envelope("portal-quote@2026-09-05.v1",jsonSchema(zoneDataSchema),quoteExtra),envelope("portal-quote@2026-09-05.v1",jsonSchema(extractDataSchema),quoteExtra),{type:"object",additionalProperties:false,required:["schema_version","status","data","reason_codes"],properties:{schema_version:{const:"portal-business@2026-09-05.v1"},status:{enum:["blocked","unavailable"]},data:{type:"null"},reason_codes:{type:"array",items:{type:"string"}}}},error()]};
 const referenceV1=envelope('portal-customs-reference@2026-09-27.v1',jsonSchema(customsReferenceDataV1));
+const referenceV2=envelope('portal-customs-reference@2026-09-27.v2',jsonSchema(customsReferenceDataV2));
+response.anyOf.push({...referenceV2,properties:{...referenceV2.properties,status:{const:'manual_review'},data:jsonSchema(customsReferenceDataV2)}});
 response.anyOf.push({...referenceV1,properties:{...referenceV1.properties,status:{const:'manual_review'},data:jsonSchema(customsReferenceDataV1)}},freightcomResponse);
 output("business-call-response.schema.json",response);
 

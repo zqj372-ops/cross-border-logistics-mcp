@@ -1,6 +1,7 @@
 import type { NativeFreightcomService } from '../native-freightcom';
 import { createCustomsReferenceClient, customsReferenceConfig } from '../../../customs-native/reference';
 import { createCustomsNameTranslator } from '../../../customs-native/name-translation';
+import { createCustomsSearchTerms } from '../../../customs-native/search-terms';
 import { nativeCustomsWithHistory } from '../native-customs-history';
 import { createNativeQuoteClient } from '../../../quote-native/client';
 import type { ResidentialRates } from '../../../quote-native/contracts';
@@ -152,7 +153,8 @@ export async function loadPortalBusinessService(options: LoadPortalBusinessServi
       if(item.customsHistoryEnabled)connection.customsHistoryClient=createCustomsHistoryClient(clientOptions);
       const tax = createTaxPortalClient(clientOptions);
       const translation=item.customsReference?.nameTranslation;
-      const reference = item.customsReference ? createCustomsReferenceClient(item.customsReference,translation?createCustomsNameTranslator({apiKey:readSecret(translation.apiKeyFile),model:translation.model},options.fetchImpl):undefined) : undefined;
+      const searchTerms=item.customsReference?.searchTerms;
+      const reference = item.customsReference ? createCustomsReferenceClient(item.customsReference,translation?createCustomsNameTranslator({apiKey:readSecret(translation.apiKeyFile),model:translation.model},options.fetchImpl):undefined,searchTerms?createCustomsSearchTerms({apiKey:readSecret(searchTerms.apiKeyFile),model:searchTerms.model},options.fetchImpl):undefined) : undefined;
       connection.customsClient = { query: async (request) => {
         const result=await customs.query({ ...request, input: request.input as CustomsPortalQueryInput });
         return reference && result.status==='unavailable' && result.reason_codes.includes('customs_data_not_ready') ? reference.query(request) : result;

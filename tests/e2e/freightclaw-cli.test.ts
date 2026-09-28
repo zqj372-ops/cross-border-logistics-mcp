@@ -24,8 +24,8 @@ async function invoke(args: string[], options: { input?: string; env?: NodeJS.Pr
 }
 
 describe("FreightClaw command line client", () => {
-  it.each(['v1','v2'])("accepts reference %s as manual review and rejects promoting it to success", async version => {
-    const body={schema_version:`portal-customs-reference@2026-09-27.${version}`,status:'manual_review',reason_codes:['customs_reference_only'],data:{request_id:'req_reference_0001',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),candidates:[],sources:[],warnings:['No classification or final duty conclusion.']}};
+  it.each(['2026-09-27.v1','2026-09-27.v2','2026-09-28.v3'])("accepts reference %s as manual review and rejects promoting it to success", async version => {
+    const body={schema_version:`portal-customs-reference@${version}`,status:'manual_review',reason_codes:['customs_reference_only'],data:{request_id:'req_reference_0001',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),candidates:[],sources:[],warnings:['No classification or final duty conclusion.']}};
     const result=await invoke(['customs','query','--input','-','--json'],{fetch:()=>Promise.resolve(Response.json(body))});
     expect(result.code).toBe(4);expect(JSON.parse(result.stdout)).toEqual(body);
     expect((await invoke(['customs','query','--input','-'],{fetch:()=>Promise.resolve(Response.json({...body,status:'success'}))})).code).toBe(1);
