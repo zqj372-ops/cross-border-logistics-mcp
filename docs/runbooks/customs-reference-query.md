@@ -41,3 +41,5 @@ npm run build:cli
 追加验证：`npx vitest run tests/customs-native/compliance-reference.test.ts tests/customs-native/data-pipeline.test.ts tests/console/customs-reference.test.ts`；生产切换前以只读容器验证中文品名、精确税号、双反关联与否、指南、翻译和 v4 包络。无需业务数据库迁移；保存旧配置和镜像，恢复它们即可回滚，保留切换后业务数据。
 
 品名检索 v4 在同一次已授权请求中增加最多 3 个 HS6 检索方向，服务只接受当前目的国官方资料实际存在的前缀，再从来源读取候选及税率。结果的 `search.hs6_hints` 和界面均明确机器建议；它不能替代商品归类核验。该项取代 v3 仅使用关键词的限制，外送数据范围仍仅为商品查询名称。
+
+页面升级回归：已打开的旧页面可能仍驻留旧脚本，即使 HTML 为 no-store 且新脚本 URL 已带内容哈希。新版在关税查询及税费提交前重新读取当前入口，比较已加载脚本版本；不一致或检查失败时保持表单、阻止此次请求并明确要求刷新／重试。接口调用未发生，因而不会扣除这次访客额度。不支持的参考响应必须提示更新，不能进入正式结果模板或显示 undefined。验证 `tests/console/page-version.test.ts` 与 `tests/console/customs-summary-interaction.test.ts`，并在隔离页面加载后更换入口版本、检查零查询，再普通刷新后查询成功。既有已打开页面需首次刷新获取这项保护；不自动重载正在编辑的业务页面。

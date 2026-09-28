@@ -22,6 +22,7 @@ import { createApiKeysUi } from './api-keys.js';
 import { createServiceAccessUi } from './service-access.js';
 import { createOperationManual } from './manual.js';
 import { verifyCredentialAfterDelivery } from './credential-verification.js';
+import { assertCurrentPortalPage } from './page-version.js';
 const PUBLIC_PAGES = ['home', 'market', 'catalog', 'service', 'guide', 'cli', 'customs', 'tax', 'schedules', 'terminal-efficiency'];
 const API = '/console/api/v1';
 const app = document.querySelector('#app');
@@ -79,6 +80,8 @@ function canCredential(application) { return !platformIdentity() && developer() 
 function effectiveGrants(applicationId) { return model.state.grants.filter((grant) => (!applicationId || grant.application_id === applicationId) && grant.state === 'active' && (!grant.expires_at || Date.parse(grant.expires_at) > Date.now())); }
 function notify(message, error = false) { const element = document.querySelector('#notification'); element.textContent = message; element.classList.toggle('error', error); element.hidden = false; clearTimeout(notify.timer); notify.timer = setTimeout(() => { element.hidden = true; }, 5000); }
 const errors = {
+  portal_page_updated: '页面已更新，请刷新页面后重新查询。本次未提交查询，也未扣额度。',
+  portal_page_version_unavailable: '暂时无法检查页面版本，请稍后重试。本次未提交查询，也未扣额度。',
   login_invalid: "账号、密码或验证码不正确，请重新输入。", login_rate_limited: "尝试次数较多，请 10 分钟后再试。",
   native_input_invalid: "请检查导入格式、必填字段、金额和日期；数值使用小数文本。", native_preview_mismatch: "配置已变化，请重新预览后确认。", native_publication_blocked: "存在未通过的来源或配置校验，请先修正草稿。", native_management_denied: "当前账号没有修改业务配置的权限。", native_organization_required: "请切换到要配置的企业。",
   channel_unsaved_changes: "表单有未保存的修改，请先保存草稿再继续。", channels_unavailable: "当前环境尚未启用渠道管理。", channel_input_invalid: "请完整填写渠道资料，并核对日期与编号格式。", channel_code_exists: "渠道编号已存在，请使用其他编号。", channel_expired: "该配置已过期，请先调整有效期。", channel_preview_mismatch: "配置已经变化，请重新预览。", cli_request_not_found: "CLI 登录请求已过期，请在终端重新发起。", cli_auth_unavailable: "当前环境尚未启用 CLI 人员登录。", cases_unavailable: "当前环境尚未启用询价受理。", case_input_invalid: "请检查需求资料，补充内容不能为空。", case_not_found: "询价不存在或当前账号无权查看。", case_management_denied: "当前账号没有处理询价的权限。", case_transition_invalid: "需求状态已变化，请刷新后核对。", case_daily_limit: "今日提交次数已达上限，请稍后再试。",
@@ -109,6 +112,7 @@ function closeAccount(restoreFocus = false) {
 }
 async function request(path, { method = 'GET', body, key, acceptBusiness = false, guestRetry = false, signal } = {}) {
   const originalPath = path;
+  if (method === 'POST' && !guestRetry && ['/business/customs/query', '/business/customs/tax-estimate', '/business/customs/tax-estimates/batch'].includes(path)) await assertCurrentPortalPage(import.meta.url);
   const publicCustoms = ['/business/customs/query', '/business/customs/tax-estimate', '/business/customs/tax-estimates/batch'].includes(path) && !organizationSession();
   if (publicCustoms) { await ensureSession(); path = path.replace('/business/customs/', '/public/customs/'); }
   const writes = method !== 'GET'; const headers = { Accept: 'application/json' };
