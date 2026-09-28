@@ -13,6 +13,19 @@ function item(country:'CN'|'US'|'CA',code:string,language:string,description:str
 function reference(candidates:ReferenceData['candidates']):ReferenceData {
  return {request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates};
 }
+it('shows bounded reference remedies and conditional guidance with source links, date and coverage gaps',()=>{
+ const data=reference([item('CA','1234567890','en','Synthetic goods')]);
+ const source={url:'https://www.cbsa-asfc.gc.ca/sima-lmsi/mif-mev/test-eng.html',retrieved_at:'2026-09-28T01:00:00Z',source_sha256:'b'.repeat(64)};
+ data.compliance={snapshot_sha256:'c'.repeat(64),collected_at:source.retrieved_at,date_mismatch:true,truncated:false,catalogues:[{...source,country:'CA',expected:2,collected:1,missing_details:1}],remedies:[{...source,id:'CA-test',case_id:'test',country:'CA',origin_country:'CN',kind:'anti_dumping',title:'<script>unsafe</script> goods',source_kind:'measure_in_force',matched_codes:['1234567890'],scope_excerpt:'Scope excluding toys.',scope_truncated:true}],guidance:[{...source,id:'ca-docs',country:'CA',authority:'CBSA',category:'documents',code_prefixes:[],summary:'合成商业发票要求',condition:'按实际货物核对'}]};
+ const html=renderCustomsReference(ui,data,{country:'CA'});
+ expect(html).toContain('可能涉及');expect(html).toContain('合成商业发票要求');
+ expect(html).toContain('Scope excluding toys.');expect(html).toContain('完整范围及排除');
+ expect(html).toContain('目录 1/2');expect(html).toContain('1 项缺少');
+ expect(html).toContain('与查询日期不同');expect(html).toContain('未命中不代表免征');
+ expect(html).toContain('href="https://www.cbsa-asfc.gc.ca/');expect(html).not.toContain('<script>unsafe');
+ const foreign=renderCustomsReference(ui,{...data,candidates:[item('US','1234567890','en','Synthetic goods')]},{country:'US'});
+ expect(foreign).not.toContain('Scope excluding toys.');expect(foreign).not.toContain('合成商业发票要求');
+});
 it('shows the selected country as an import brief, groups bilingual codes and never equates missing measures with no duties',()=>{
  const data=reference([item('CN','1234560000','zh-CN','合成商品'),item('CA','1234561000','en','Synthetic article'),item('CA','1234561000','fr','Article fictif'),item('CA','1234562000','en','Other article')]);
  const html=renderCustomsReference(ui,data,{input:{query:'123456',codeCountry:'CA'},country:'CA'});
@@ -49,7 +62,7 @@ it('keeps long official descriptions in evidence without expanding the compact s
  const brief=html.split('<section data-customs-brief>')[1]!.split('</section>')[0]!;
  const option=html.split('<option ')[1]!.split('</option>')[0]!;
  expect(brief.length).toBeLessThan(6000);expect(option.length).toBeLessThan(250);
- expect(brief).toContain('完整品名见来源依据');expect(html).toContain('END_OF_SOURCE');
+ expect(brief).toContain('完整品名见来源依据');expect(option).toContain('END_OF_SOURCE');
 });
 it('displays corresponding Chinese and English names with translation provenance, separate from a customer draft',()=>{
  const candidate=item('US','1234567890','en','Other');
@@ -59,6 +72,8 @@ it('displays corresponding Chinese and English names with translation provenance
  expect(html).toContain('中文（参考译文）：合成器具 — 其他');expect(html).toContain('英文（官方原文）：Synthetic articles — Other');
  expect(html).toContain('商品品名草案');expect(html).toContain('客户填写的器具');expect(html).not.toContain('待补充商品中文名称');
  expect(html).toContain('机器翻译，仅供理解原文');
+ candidate.hierarchy.push({...candidate.item,code:'12345678',description_original:'Of cotton'});
+ expect(renderCustomsReference(ui,reference([candidate]),{country:'US'})).toContain('Synthetic articles — Of cotton — Other');
  const cn=item('CN','1234567890','zh-CN','合成器具');
  cn.name_translation={language:'en',text:'Synthetic articles',status:'machine',model:'fixture-model'};
  const cnHtml=renderCustomsReference(ui,reference([cn]),{country:'CN'});

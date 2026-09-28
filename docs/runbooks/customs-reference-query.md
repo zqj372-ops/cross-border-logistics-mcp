@@ -30,3 +30,14 @@ npm run build:cli
 正式税费仍须完成附加税与贸易救济、排除条款、待遇资格、汇率及叠加矩阵的来源核验与审核发布。不得以本参考资料哈希代替正式 publication_snapshot，也不得为解除门禁编造审批记录。
 
 [v3 修复与可选检索词服务](../rfcs/2026-09-28-customs-reference-search-v3.md) 保留 v1/v2 接收兼容，只读参考查询改用 v3。仅参考品名允许最多 100,000 字符，界面摘要缩略并保留完整来源原文。父级须为有效同国编码前缀；只允许 GACC 显式八位父项与同年 MOF 对应。可选 `searchTerms` 与 `nameTranslation` 配置形状相同，但外送授权独立；未配置时绝不调用。机器检索词在结果中明确展示，不能提供税号、税率或适用性结论。CLI 关税查询默认等待 40 秒，其他命令保持 15 秒。
+
+
+[v4 监管参考证据](../rfcs/2026-09-28-customs-compliance-reference-v4.md) 增加可选 `customsReference.compliance:{snapshotFile,sha256}`，JSON 文件同样只读挂载、哈希绑定；响应使用 v4，保留 v1–v3 兼容。开启 searchTerms 已获得本任务 2026-09-28 的明确授权；其他环境不默认开启。
+
+采集命令：`python3 services/customs-native/data_pipeline/compliance_reference.py --directory <已核对的美国 China 案件目录.json> --output <证据目录>`。目录包含公开页面 URL、China 查询、实际观察时间、总数和全部案件 ID。脚本保存两国原件及元数据、过滤撤销记录，按 `import-guidance.json` 的官方出处补充条件型指南；最终 `remedies.json` 通过 TypeScript 合同与哈希验证后装载，不是正式规则发布。遇程序抓取受限但官方页面可通过已授权读取工具核对时，可保留实际读取到的公开页面文本快照；原件元数据必须明确 `retrieval_method` 和 `representation`，不得伪称原始 HTTP 字节或静默替换来源。
+
+加拿大目录计数按反倾销／反补贴分项，已撤销的记录单列 excluded_rescinded。美国目录含调查，缺税号或范围的案件计入 missing_details，无法参加税号匹配。输出范围摘录最长 2,000 字符，不是完整排除清单；Web 可打开完整官方案件页面，API/CLI 保留 URL、时间和来源哈希。未命中不代表免征，查询日期与采集日期不一致须显示。指南的章号只是提示入口，税号不是许可证／认证适用性判定。
+
+追加验证：`npx vitest run tests/customs-native/compliance-reference.test.ts tests/customs-native/data-pipeline.test.ts tests/console/customs-reference.test.ts`；生产切换前以只读容器验证中文品名、精确税号、双反关联与否、指南、翻译和 v4 包络。无需业务数据库迁移；保存旧配置和镜像，恢复它们即可回滚，保留切换后业务数据。
+
+品名检索 v4 在同一次已授权请求中增加最多 3 个 HS6 检索方向，服务只接受当前目的国官方资料实际存在的前缀，再从来源读取候选及税率。结果的 `search.hs6_hints` 和界面均明确机器建议；它不能替代商品归类核验。该项取代 v3 仅使用关键词的限制，外送数据范围仍仅为商品查询名称。

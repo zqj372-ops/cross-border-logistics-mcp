@@ -14,3 +14,5 @@ it('prepares source-contract-valid candidates and rejects overwrite, wrong hashe
   for(const row of Array.isArray(fixture[key!])?fixture[key!] as unknown[]:[fixture[key!]])expect(check(row),JSON.stringify(check.errors)).toBe(true);
  }
 });
+
+it('collects trade-remedy identity and scope with isolated official-shaped fixtures',()=>{expect(()=>execFileSync('python3',['-m','unittest','discover','-s','tests/customs-native','-p','test_compliance_reference.py'],{stdio:'pipe'})).not.toThrow();});

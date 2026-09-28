@@ -83,6 +83,71 @@ it('matches whole English words and plurals without confusing screws with screwd
   expect(data.candidates.map(c=>c.item.code)).toEqual(['7318120000']);
  }
 });
+it('matches a commodity across valid parent and child names without borrowing sibling or foreign headings',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const names=[['6109','T-shirts, singlets and other vests, knitted or crocheted',null],['610910','Of cotton','6109'],['610990','Of other textile materials','6109'],['620910','Of cotton','6109']];
+ const {client}=fixture(false,names.map(([code,description_original,parent_code],i)=>({...ca,id:i+1,code:code!,description_original:description_original!,parent_code:parent_code??null})));
+ const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'cotton T-shirt',codeCountry:'CA'}})).data);
+ expect(data.candidates.map(c=>c.item.code)).toEqual(['610910']);
+});
+it('ranks a destination name above other goods sharing its Chinese HS6 anchor',async()=>{
+ const cn=dataset.nomenclature.find(row=>row.country==='CN')!,ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const {config}=fixture(false,[{...cn,id:1,code:'6307909000',description_original:'口罩'},...[
+  ['6307903000','Furniture moving pads'],['6307909920','Face-masks'],['9999990000','Mask parts'],
+ ].map(([code,name],i)=>({...ca,id:i+2,code:code!,description_original:name!}))]);
+ const client=createCustomsReferenceClient(config,undefined,()=>Promise.resolve({terms:[{language:'en',text:'face masks'}]}));
+ const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'口罩',codeCountry:'CA'}})).data);
+ expect(data.candidates.filter(c=>c.item.country==='CA')[0]?.item.code).toBe('6307909920');
+});
+it('only uses suggested HS6 directions that exist in current official data, ahead of broad word matches',async()=>{
+ const cn=dataset.nomenclature.find(row=>row.country==='CN')!,ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const {config}=fixture(false,[{...cn,id:1,code:'2309900000',description_original:'动物饲料'},...[
+  ['2309900000','Other animal feed'],['2309100000','Dog or cat food, put up for retail sale'],
+ ].map(([code,name],i)=>({...ca,id:i+2,code:code!,description_original:name!}))]);
+ const client=createCustomsReferenceClient(config,undefined,()=>Promise.resolve({terms:[{language:'zh',text:'动物饲料'},{language:'en',text:'animal feed'}],hs6:['000000','230910']}));
+ const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'狗粮',codeCountry:'CA'}})).data);
+ expect(data.candidates.filter(c=>c.item.country==='CA')[0]?.item.code).toBe('2309100000');
+ expect(data.search).toMatchObject({hs6_hints:['230910']});
+});
+it('keeps direct official name matches ahead of conflicting model families while retaining translation ranking',async()=>{
+ const cn=dataset.nomenclature.find(row=>row.country==='CN')!,ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const {config}=fixture(false,[{...cn,id:1,code:'8517130000',description_original:'智能手机'},...[
+  ['8517130000','Smartphones'],['8517620000','Routing apparatus'],
+ ].map(([code,name],i)=>({...ca,id:i+2,code:code!,description_original:name!}))]);
+ const suggest=vi.fn().mockResolvedValue({terms:[{language:'en',text:'smartphones'}],hs6:['851712','851762']});
+ const data=customsReferenceData.parse((await createCustomsReferenceClient(config,undefined,suggest).query({...request,input:{...request.input,query:'智能手机',codeCountry:'CA'}})).data);
+ expect(data.candidates.filter(c=>c.item.country==='CA')[0]?.item.code).toBe('8517130000');
+ expect(data.search).toMatchObject({terms:['智能手机','smartphones'],assisted:true});
+ expect(data.search).not.toHaveProperty('hs6_hints');
+});
+it('ranks stated material within suggested families and uses a broad heading before unrelated specific goods',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const names=[['9617000000','Vacuum flasks',null],['7323','Table, kitchen or other household articles and parts thereof, of iron or steel',null],['732393','Of stainless steel','7323'],['7323931000','Parts for use in the manufacture of cookware','732393'],['7323939000','Other','732393'],['420292','With outer surface of textile materials',null],['4202921000','Golf bags','420292']];
+ const {config}=fixture(false,names.map(([code,description_original,parent_code],i)=>({...ca,id:i+1,code:code!,description_original:description_original!,parent_code:parent_code??null})));
+ const suggest=vi.fn().mockResolvedValue({terms:[{language:'en',text:'stainless steel drinking cup'}],hs6:['961700','732393']});
+ const client=createCustomsReferenceClient(config,undefined,suggest);
+ const cup=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'不锈钢水杯',codeCountry:'CA'}})).data);
+ expect(cup.candidates.find(c=>c.item.country==='CA')?.item.code).toBe('732393');
+ suggest.mockResolvedValue({terms:[{language:'en',text:'backpack'}],hs6:['420292']});
+ const bag=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'背包',codeCountry:'CA'}})).data);
+ expect(bag.candidates.find(c=>c.item.country==='CA')?.item.code).toBe('420292');
+});
+it('does not match a commodity only mentioned in an exclusion',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!,cn=dataset.nomenclature.find(row=>row.country==='CN')!;
+ const {client}=fixture(false,[{...ca,id:1,code:'85411000',description_original:'Diodes, other than photosensitive or light-emitting diodes (LED)'},{...ca,id:2,code:'85414100',description_original:'Light-emitting diodes (LED)'},{...cn,id:3,code:'85411000',description_original:'二极管，但光敏二极管或发光二极管除外'},{...cn,id:4,code:'85414100',description_original:'发光二极管（LED）'}]);
+ for(const query of ['light emitting diodes','发光二极管']){
+  const data=customsReferenceData.parse((await client.query({...request,input:{...request.input,query,codeCountry:'CA'}})).data);
+  expect(data.candidates.filter(c=>c.item.country==='CA').map(c=>c.item.code)).toEqual(['85414100']);
+ }
+});
+it('keeps the suggested propulsion family ahead of an equally partial short bicycle heading',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const names=[['8711600000','Cycles with electric motor for propulsion'],['87120000','Bicycles and other cycles, not motorized']];
+ const {config}=fixture(false,names.map(([code,description_original],i)=>({...ca,id:i+1,code:code!,description_original:description_original!})));
+ const suggest=()=>Promise.resolve({terms:[{language:'en' as const,text:'electric bicycle'}],hs6:['871160','871200']});
+ const data=customsReferenceData.parse((await createCustomsReferenceClient(config,undefined,suggest).query({...request,input:{...request.input,query:'电动自行车',codeCountry:'CA'}})).data);
+ expect(data.candidates.find(c=>c.item.country==='CA')?.item.code).toBe('8711600000');
+});
 it('uses effective same-country prefix ancestors and never takes a sibling parent rate',async()=>{
  const us=dataset.nomenclature.find(row=>row.country==='US')!,rate=dataset.tariffs.find(row=>row.country==='US')!;
  const rows=[{...us,id:1,code:'8470210000',parent_code:'84701000',description_original:'Incorporating a printing device'},
@@ -112,7 +177,9 @@ it('looks up opt-in search terms only in official rows, preserves evidence, and 
  suggest.mockResolvedValue(null);
  const fallback=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'保温杯',codeCountry:'CA'}})).data);
  expect(fallback.candidates.length).toBeGreaterThan(0);expect(fallback.search?.assisted).toBe(false);
- expect(fallback.warnings.join(' ')).toContain('已保留原始关键词');
+ expect(suggest).toHaveBeenCalledWith('保温杯');
+ const missing=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'客户俗称',codeCountry:'CA'}})).data);
+ expect(missing.warnings.join(' ')).toContain('已保留原始关键词');
 });
 it('connects an explicit GACC parent to same-year MOF only and rejects a different edition',async()=>{
  const cn=dataset.nomenclature.find(row=>row.country==='CN')!,source=dataset.sources.find(s=>s.country==='CN')!;
@@ -152,7 +219,7 @@ it('adds bilingual display names from source text only, preserving official rows
  const input={...request.input,query:'private customer description',selectedHs6:'732393',attributes:{originCountry:'CN',material:'private material'}};
  const raw=customsReferenceData.parse((await client.query({...request,input})).data);
  const result=await createCustomsReferenceClient(config,createCustomsNameTranslator({apiKey:'fixture-secret',model:'fixture-model'},fetchImpl)).query({...request,input});
- expect(result).toMatchObject({schema_version:'portal-customs-reference@2026-09-28.v3',status:'manual_review',data:{formal_ready:false}});
+ expect(result).toMatchObject({schema_version:'portal-customs-reference@2026-09-28.v4',status:'manual_review',data:{formal_ready:false}});
  const data=customsReferenceData.parse(result.data);
  expect(data.candidates.length).toBeGreaterThan(0);
  data.candidates.forEach((candidate,index)=>{

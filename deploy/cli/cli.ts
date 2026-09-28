@@ -139,7 +139,7 @@ function responseCode(command: Command | undefined, httpStatus: number, payload:
   if (!record(payload) || typeof payload.status !== "string" || !Object.hasOwn(exitCodes, payload.status)) throw new CliError("response_invalid", 1, "服务响应不符合已知状态合同。");
   if (command) {
     const allowed = [command.responseVersion, ...(command.kind === "business" ? ["portal-business@2026-09-05.v1", "business-access@2026-09-05.v1"] : ["portal-t0-rest@2026-09-05.v1"])];
-    if(command.name==='customs query')allowed.push('portal-customs-reference@2026-09-27.v1','portal-customs-reference@2026-09-27.v2','portal-customs-reference@2026-09-28.v3');
+    if(command.name==='customs query')allowed.push('portal-customs-reference@2026-09-27.v1','portal-customs-reference@2026-09-27.v2','portal-customs-reference@2026-09-28.v3','portal-customs-reference@2026-09-28.v4');
     if (!validateResponse(command, httpStatus, payload) || !allowed.includes(String(payload.schema_version))) throw new CliError("response_invalid", 1, "服务响应不符合当前命令的合同。");
     if (payload.status === "success" && payload.data === null) throw new CliError("response_invalid", 1, "成功响应缺少业务结果。");
     if (payload.status === "success" && record(payload.data) && (payload.data.testData === true || (record(payload.data.dataStatus) && payload.data.dataStatus.ready === false))) throw new CliError("response_not_ready", 1, "来源未就绪或返回测试数据，不能判定为业务成功。");

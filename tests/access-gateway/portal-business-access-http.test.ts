@@ -9,7 +9,7 @@ import { assertBusinessMachineExecutionResult,createBusinessMachineHttpHandler,t
 const servers:Array<ReturnType<typeof createServer>>=[];afterEach(async()=>{for(const server of servers.splice(0))await new Promise<void>(resolve=>server.close(()=>resolve()));});
 it('binds reference results to the query operation and request without permitting formal success',()=>{
  const r={schema_version:'portal-customs-reference@2026-09-27.v1',status:'manual_review',reason_codes:['customs_reference_only'],data:{request_id:'req_reference_0001',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),candidates:[],sources:[],warnings:[]}};
- expect(assertBusinessMachineExecutionResult(r,'req_reference_0001','customs.query')).toEqual(r);
+ for(const schema_version of ['portal-customs-reference@2026-09-27.v1','portal-customs-reference@2026-09-27.v2','portal-customs-reference@2026-09-28.v3','portal-customs-reference@2026-09-28.v4'])expect(assertBusinessMachineExecutionResult({...r,schema_version},'req_reference_0001','customs.query')).toEqual({...r,schema_version});
  for(const invalid of [{...r,status:'success'},{...r,data:{...r.data,formal_ready:true}},{...r,data:{...r.data,request_id:'req_other'}}])expect(()=>assertBusinessMachineExecutionResult(invalid,'req_reference_0001','customs.query')).toThrow();
  expect(()=>assertBusinessMachineExecutionResult(r,'req_reference_0001','customs.tax.estimate')).toThrow();
 });
