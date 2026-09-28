@@ -11,7 +11,7 @@ import {
   syntheticOoclLocationCandidates,
   syntheticOoclScheduleResponse,
 } from "./fixtures/synthetic-oocl";
-import { signalField } from "./errors";
+import { CollectorRuntimeError, signalField } from "./errors";
 import { addUtcDays, defaultDateWindow } from "./normalize";
 import type { CollectorPorts } from "./ports";
 import { createCollectorService } from "./service";
@@ -19,7 +19,12 @@ import { DEFAULT_TRANSPORT_POLICY } from "./transport/config";
 import { createControlledHttpTransport } from "./transport/http";
 import { createCoscoLiveTransportPolicy } from "./transport/cosco-live";
 import { createHmmLiveTransportPolicy } from "./transport/hmm-live";
+import { createHmmBrowserPort } from "./transport/hmm-browser";
+import { createOoclBrowserPort } from "./transport/oocl-browser";
+import { createMaerskBrowserPort, withMaerskBrowserPort } from "./transport/maersk-browser";
+import type { ScheduleBrowserOptions } from "./transport/public-browser";
 import { createOneLiveTransportPolicy } from "./transport/one-live";
+import { createPublicSchedulePolicy } from "./transport/public-live";
 import { createNodePinnedConnector } from "./transport/node-connector";
 
 export interface CliIo {
@@ -70,6 +75,8 @@ Ambiguous locations require selecting an official candidate with --origin-id/--d
 Carrier codes are not a promise of route coverage. Consult carriers and README for verified scope.
 ONE live requests use CY/CY and GP cargo only. Times retain source precision and timezone limits.
 Queries print a JSON envelope. Read status, coverage, warnings and provenance together.
+Optional HMM/OOCL/MAERSK browser attempts use operator setting SCHEDULE_BROWSER_EXECUTABLE.
+Maersk's observed path uses SCHEDULE_BROWSER_HEADED=true; source access is not guaranteed.
 
 Exit codes: 0 success; 1 internal failure; 2 CLI usage; 3 needs_input;
   4 manual_review; 5 blocked; 6 unavailable.
@@ -132,13 +139,24 @@ function requestIds(): { readonly requestId: string; readonly auditId: string } 
   };
 }
 
+function browserOptions(): ScheduleBrowserOptions | null {
+  const executablePath = process.env.SCHEDULE_BROWSER_EXECUTABLE;
+  return executablePath ? { executablePath,
+    ...(process.env.SCHEDULE_BROWSER_PROXY_PORT ? { proxyPort: Number(process.env.SCHEDULE_BROWSER_PROXY_PORT) } : {}),
+    headed: process.env.SCHEDULE_BROWSER_HEADED === "true",
+  } : null;
+}
+
 function createPorts(
   mode: "live" | "synthetic",
   carrier?: string,
 ): CollectorPorts {
+  const browser = browserOptions();
   const policy =
     mode === "live"
-      ? carrier === "HMM"
+      ? carrier === "SML" || carrier === "EVERGREEN" || carrier === "YML"
+        ? createPublicSchedulePolicy(carrier)
+        : carrier === "HMM"
         ? createHmmLiveTransportPolicy()
         : carrier === "ONE"
           ? createOneLiveTransportPolicy()
@@ -146,6 +164,8 @@ function createPorts(
       : DEFAULT_TRANSPORT_POLICY;
   return {
     clock: { now: () => new Date() },
+    ...(mode === "live" && (carrier === "HMM" || carrier === "OOCL" || carrier === "MAERSK") && browser
+      ? { browser: (carrier === "HMM" ? createHmmBrowserPort : carrier === "MAERSK" ? createMaerskBrowserPort : createOoclBrowserPort)(browser) } : {}),
     context: {
       ...requestIds(),
       localFixture: mode === "synthetic",
@@ -219,7 +239,7 @@ function printEnvelope(io: CliIo, value: unknown): number {
 }
 
 function failureEnvelope(
-  status: "needs_input" | "unavailable",
+  status: CollectorRuntimeError["status"],
   code: string,
   message: string,
 ): unknown {
@@ -230,7 +250,7 @@ function failureEnvelope(
     status,
     data: null,
     blockers: [{ code, message, severity: "error" }],
-    reviewStatus: status === "needs_input" ? "pending" : "not_required",
+    reviewStatus: status === "needs_input" || status === "manual_review" ? "pending" : "not_required",
   });
 }
 
@@ -358,10 +378,8 @@ export async function runCli(
     }
     if (command === "query") {
       const args = queryArgs(argv);
-      const result = await createService(
-        args.mode,
-        createPorts(args.mode, args.carrier),
-      ).query({
+      const ports = createPorts(args.mode, args.carrier);
+      const query = (ports: CollectorPorts) => createService(args.mode, ports).query({
         carrier: args.carrier,
         origin: {
           text: args.origin,
@@ -377,6 +395,10 @@ export async function runCli(
         until: args.until,
         routing: args.routing,
       }, signalField(options.signal));
+      const browser = browserOptions();
+      const result = args.mode === "live" && args.carrier === "MAERSK" && browser
+        ? await withMaerskBrowserPort(browser, port => query({ ...ports, browser: port }), signalField(options.signal))
+        : await query(ports);
       return printEnvelope(io, result.envelope);
     }
     throw new CliUsageError("cli_unknown_command");
@@ -393,6 +415,7 @@ export async function runCli(
       );
       return 2;
     }
+    if (error instanceof CollectorRuntimeError) return printEnvelope(io, failureEnvelope(error.status, error.code, error.message));
     io.stderr("collector_cli_internal_error\n");
     io.stdout(
       `${JSON.stringify(

@@ -17,10 +17,16 @@ async function service(carrierAllowlist?:Record<string,string[]>){
  return createProductionScheduleLiveService({portal:{getState:()=>{throw new Error('personal access must not read a company');}},audit:new InMemoryScheduleLiveAuditSink(),evidenceRoot:root,tenantAllowlist:[],personalAccess:{scopeId:scope,authorize:ctx=>Promise.resolve(ctx.identity.userId==='receiver')},...(carrierAllowlist?{carrierAllowlist}:{})});
 }
 describe('personal FCL production carrier boundary',()=>{
+ it('permits the verified public schedule sources authorized in the carrier expansion',async()=>{
+  const app=await service();
+  for(const carrier of ['SML','EVERGREEN','ONE','YML']) expect((await app.locations(receiver,{carrier,text:'Shanghai',country_code:'CN'},offline)).status).toBe('unavailable');
+  const restricted=await service({[scope]:['COSCO']});
+  await expect(restricted.locations(receiver,{carrier:'SML',text:'Shanghai',country_code:'CN'},offline)).rejects.toMatchObject({code:'schedule_live_carrier_denied'});
+ });
  it('rejects other carriers even when an older deployment allowlist includes them',async()=>{
-  for(const allowlist of [undefined,{[scope]:['COSCO','ONE']}]){
+  for(const allowlist of [undefined,{[scope]:['COSCO','HMM','OOCL']}]){
    const app=await service(allowlist);
-   await expect(app.locations(receiver,{carrier:'ONE',text:'Shanghai',country_code:'CN'},offline)).rejects.toMatchObject({code:'schedule_live_carrier_denied'});
+   await expect(app.locations(receiver,{carrier:'HMM',text:'Shanghai',country_code:'CN'},offline)).rejects.toMatchObject({code:'schedule_live_carrier_denied'});
    await expect(app.search(receiver,{carrier:'OOCL',origin:{text:'Shanghai',country_code:'CN',carrier_location_id:null},destination:{text:'Vancouver',country_code:'CA',carrier_location_id:null},from:'2026-10-01',until:'2026-10-28',routing:'any'},offline)).rejects.toMatchObject({code:'schedule_live_carrier_denied'});
   }
  });

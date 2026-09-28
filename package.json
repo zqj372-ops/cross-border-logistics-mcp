@@ -1,7 +1,7 @@
 {
   "name": "cross-border-logistics-mcp",
-  "version": "0.0.12",
-  "freightclawVersion": "0.012",
+  "version": "0.0.13",
+  "freightclawVersion": "0.013",
   "private": true,
   "type": "module",
   "engines": {
@@ -59,6 +59,7 @@
     "oci-keymanagement": "2.140.0",
     "oci-secrets": "2.140.0",
     "pg": "8.23.0",
+    "playwright-core": "1.63.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "4.4.3"
   },

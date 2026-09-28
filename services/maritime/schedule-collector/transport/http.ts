@@ -194,7 +194,7 @@ export function createControlledHttpTransport(
           .map(([name, value]) => `${name}=${value}`)
           .join("; ");
       }
-      const body =
+      let body =
         input.body === undefined || input.body === null
           ? null
           : new TextEncoder().encode(JSON.stringify(input.body));
@@ -212,6 +212,9 @@ export function createControlledHttpTransport(
           "collector_request_body_not_approved",
         );
       }
+      if (body !== null && (typeof input.body !== "object" || input.body === null || Array.isArray(input.body))) {
+        throw new CollectorRuntimeError("validation_error", "blocked", "collector_request_body_object_required");
+      }
       if (body !== null && input.body !== null && typeof input.body === "object") {
         const bodyKeys = Object.keys(input.body);
         if (
@@ -223,6 +226,12 @@ export function createControlledHttpTransport(
             "blocked",
             "collector_request_body_key_rejected",
           );
+        }
+        if (headers["content-type"] === "application/x-www-form-urlencoded") {
+          if (Object.values(input.body).some(value => typeof value !== "string")) {
+            throw new CollectorRuntimeError("validation_error", "blocked", "collector_form_string_fields_required");
+          }
+          body = new TextEncoder().encode(new URLSearchParams(input.body as Record<string, string>).toString());
         }
       }
       if (body !== null && body.byteLength > policy.maxRequestBodyBytes) {

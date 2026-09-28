@@ -85,7 +85,7 @@ export interface ScheduleLiveServiceOptions {
   readonly audit: ScheduleLiveAuditSink;
   readonly evidenceRoot: string;
   readonly adapters: readonly CarrierAdapter[];
-  readonly http: CarrierHttpPort;
+  readonly http: CarrierHttpPort | (() => CarrierHttpPort);
   readonly browser?: CarrierBrowserPort;
   readonly deadlineMs?: number;
   readonly localFixture?: boolean;
@@ -236,7 +236,7 @@ export function createScheduleLiveService(
       },
       audit: auditFor(tenantId, actorId, action, auditId),
       evidence: tenantEvidence(tenantId),
-      http: options.http,
+      http: typeof options.http === "function" ? options.http() : options.http,
       ...(options.browser === undefined ? {} : { browser: options.browser }),
     };
     return createCollectorService({

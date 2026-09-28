@@ -9,6 +9,7 @@ import { createCoscoLiveTransportPolicy } from "../schedule-collector/transport/
 import { createHmmLiveTransportPolicy } from "../schedule-collector/transport/hmm-live";
 import { createNodePinnedConnector } from "../schedule-collector/transport/node-connector";
 import { createOneLiveTransportPolicy } from "../schedule-collector/transport/one-live";
+import { createPublicSchedulePolicy } from "../schedule-collector/transport/public-live";
 import type { TransportPolicy } from "../schedule-collector/transport/config";
 import {
   createScheduleLiveService,
@@ -89,34 +90,35 @@ export function createProductionScheduleLiveService(options: {
     throw new Error("schedule_live_tenant_allowlist_invalid");
   }
   const carrierAllowlist = options.carrierAllowlist ?? {};
-  const ports = new Map<string, CarrierHttpPort>([
-    ["ONE", liveHttpPort(createOneLiveTransportPolicy())],
-    ["COSCO", liveHttpPort(createCoscoLiveTransportPolicy())],
-    ["HMM", liveHttpPort(createHmmLiveTransportPolicy())],
-  ]);
-  const http: CarrierHttpPort = {
-    request(input) {
-      const carrier = normalizeCarrierId(input.carrier) ?? input.carrier;
-      const port = ports.get(carrier);
-      if (port === undefined) {
-        return Promise.reject(
-          new CollectorRuntimeError(
-            "not_implemented",
-            "unavailable",
-            "collector_carrier_not_implemented",
-          ),
-        );
-      }
-      return port.request(input);
-    },
-  };
+  function createHttp(): CarrierHttpPort {
+    // Request budgets and anonymous cookies belong to one business query.
+    const ports = new Map<string, CarrierHttpPort>([
+      ["ONE", liveHttpPort(createOneLiveTransportPolicy())],
+      ["COSCO", liveHttpPort(createCoscoLiveTransportPolicy())],
+      ["HMM", liveHttpPort(createHmmLiveTransportPolicy())],
+      ["SML", liveHttpPort(createPublicSchedulePolicy("SML"))],
+      ["EVERGREEN", liveHttpPort(createPublicSchedulePolicy("EVERGREEN"))],
+      ["YML", liveHttpPort(createPublicSchedulePolicy("YML"))],
+    ]);
+    return {
+      request(input) {
+        const carrier = normalizeCarrierId(input.carrier) ?? input.carrier;
+        const port = ports.get(carrier);
+        if (port === undefined) {
+          return Promise.reject(new CollectorRuntimeError("not_implemented", "unavailable", "collector_carrier_not_implemented"));
+        }
+        return port.request(input);
+      },
+    };
+  }
+
   const policy: ScheduleLivePolicy = {
     liveEnabled: (tenantId) => allowedTenants.has(tenantId)||isPersonalScheduleScope(options.personalAccess,tenantId),
     carrierEnabled: (tenantId, carrier) => {
       const normalized = normalizeCarrierId(carrier) ?? carrier;
-      // The personal FCL workflow currently accepts COSCO schedules only.
-      // Tenant-specific restrictions still apply and cannot widen this scope.
-      if (isPersonalScheduleScope(options.personalAccess,tenantId) && normalized !== "COSCO") return false;
+      // Public schedule expansion authorized 2026-09-27; quote binding remains COSCO-only.
+      // Keep unfinished sources and deployment-denied carriers closed.
+      if (isPersonalScheduleScope(options.personalAccess,tenantId) && !["COSCO", "ONE", "EVERGREEN", "SML", "YML"].includes(normalized)) return false;
       const allowed = carrierAllowlist[tenantId]??(isPersonalScheduleScope(options.personalAccess,tenantId)?carrierAllowlist[options.personalAccess!.scopeId]:undefined);
       if (allowed === undefined) return true;
       return allowed.some((entry) => (normalizeCarrierId(entry) ?? entry) === normalized);
@@ -131,6 +133,6 @@ export function createProductionScheduleLiveService(options: {
     audit: options.audit,
     evidenceRoot: resolve(options.evidenceRoot),
     adapters: [],
-    http,
+    http: createHttp,
   });
 }

@@ -186,6 +186,17 @@ const searchInput = {
 };
 
 describe("schedule live service audit and isolation", () => {
+  it("creates a fresh transport budget and anonymous session for each business query", async () => {
+    let created = 0;
+    const service = createScheduleLiveService({
+      portal: portalStub({ org_a: { tenantId: "tenant_a", role: "owner" } }),
+      policy: { liveEnabled: () => true }, clock: { now: () => new Date("2026-09-18T00:00:00Z") },
+      audit: new InMemoryScheduleLiveAuditSink(), evidenceRoot: await evidenceRoot(), adapters: [quickAdapter()],
+      http: () => { created++; return unusableHttp; },
+    });
+    for (let n = 0; n < 2; n++) expect((await service.search(context("org_a", "user_a"), searchInput)).status).toBe("success");
+    expect(created).toBe(2);
+  });
   it("binds one request_id and audit_id across the envelope and every audit event", async () => {
     const audit = new InMemoryScheduleLiveAuditSink();
     const service = createScheduleLiveService({
