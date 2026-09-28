@@ -179,7 +179,7 @@ async function refresh() {
   model.credentials.clear();
   model.admissions = null;
 }
-function brand() { return `<a class="brand" href="#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
+function brand() { return `<a class="brand" href="/console/#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
 function loginStorage() { try { return window.sessionStorage; } catch { return null; } }
 function renderLogin() {
   if(portalMode)try{sessionStorage.setItem('freightclaw.portal-return',JSON.stringify({path:portalMode==='customer'?'/customer/':'/ops/',hash:location.hash,expires:Date.now()+900000}));}catch{/* Storage is optional. */}
@@ -210,7 +210,7 @@ function customerNav() {
   const targets = [['首页', 'home'], ['服务市场', 'market'], ['CLI', 'cli'], ['操作手册', 'guide']];
   const navItems = targets.map(([title, target]) => `<button type="button" class="nav-item" data-go="${target}" ${active === target ? 'aria-current="page"' : ''}>${title}</button>`).join('');
   const signedIn = model.session?.authenticated;
-  const account = `<div class="account-disclosure"><button class="account-toggle" type="button" data-action="account-menu" aria-label="账号菜单" aria-expanded="false" aria-controls="account-menu"><span class="customer-avatar">${signedIn ? esc(model.session.identity.display_name.slice(0, 1)) : icon('account')}</span><svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="account-menu" class="account-dropdown" hidden><div class="account-summary"><strong>${signedIn ? esc(model.session.identity.display_name) : '欢迎来到 FreightClaw'}</strong><span>${signedIn ? '管理你的账号与业务' : '登录后管理个人记录与服务'}</span></div><button type="button" data-go="account">${icon('account')}${signedIn ? '个人中心' : '登录个人中心'}</button>${signedIn ? `<button type="button" data-go="cases">${icon('file')}我的询价</button>${model.session.fcl_capability?.fcl_personal ? `<button type="button" data-go="fcl">${icon('container')}整柜询价</button>` : ''}${manager() || operator() ? `<button type="button" data-go="operations">${icon('file')}询价管理</button>${manager() ? '<button type="button" data-go="market/configure">' + icon('grid') + '模块配置</button>' : ''}` : ''}` : ''}${signedIn && !reviewer() ? `<button type="button" data-go="customs-history">${icon('clock')}关务历史</button>${developer() && !platformIdentity() ? `<button type="button" data-go="api-keys">${icon('key')}API Key</button>` : ''}` : ''}${signedIn ? '<button class="account-logout" type="button" data-action="logout">退出登录</button>' : ''}</div></div>`;
+  const account = `<div class="account-disclosure"><button class="account-toggle" type="button" data-action="account-menu" aria-label="账号菜单" aria-expanded="false" aria-controls="account-menu"><span class="customer-avatar">${signedIn ? esc(model.session.identity.display_name.slice(0, 1)) : icon('account')}</span><svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="account-menu" class="account-dropdown" hidden><div class="account-summary"><strong>${signedIn ? esc(model.session.identity.display_name) : '欢迎来到 FreightClaw'}</strong><span>${signedIn ? '管理你的账号与业务' : '登录后管理个人记录与服务'}</span></div>${signedIn ? `<button type="button" data-action="customer-portal">${icon('file')}客户中心</button>${model.session.personal_operator||model.session.personal_participant?`<button type="button" data-action="ops-portal">${icon('container')}运营后台</button>`:''}${manager()?`<button type="button" data-go="market/configure">${icon('grid')}模块配置</button>`:''}`:`<button type="button" data-go="account">${icon('account')}登录个人中心</button>`}${signedIn && !reviewer() ? `<button type="button" data-go="customs-history">${icon('clock')}关务历史</button>${developer() && !platformIdentity() ? `<button type="button" data-go="api-keys">${icon('key')}API Key</button>` : ''}` : ''}${signedIn ? '<button class="account-logout" type="button" data-action="logout">退出登录</button>' : ''}</div></div>`;
   document.querySelector('#sidebar').innerHTML = `<nav>${navItems}</nav>${signedIn ? `<div class="sidebar-footer"><span>${esc(model.session.identity.display_name)}</span></div>` : ''}`;
   document.querySelector('#topbar').innerHTML = `${brand()}<nav class="customer-navigation" aria-label="主导航">${navItems}</nav><div class="customer-account">${account}<button type="button" class="button quiet mobile-menu" data-action="menu" aria-expanded="false" aria-label="打开导航">${icon('menu')}</button></div>`;
   const fclPersonal = model.session?.fcl_capability?.fcl_personal === true;
@@ -361,7 +361,7 @@ function render() {
   if(portalMode==='ops'&&page!=='fcl'){go('fcl');return;}
 
   if (model.session?.authenticated && !model.state && !publicPages.includes(page)) { document.querySelector('#content').innerHTML = '<p role="status">正在读取个人中心…</p>'; return; }
-  if (page === 'account' && model.session.fcl_capability?.fcl_personal) page = 'fcl';
+  if (page === 'account' && model.session.authenticated) {location.replace(model.session.personal_operator||model.session.personal_participant?'/ops/':'/customer/');return;}
   if (page === 'account') page = reviewer() ? 'platform' : orgRole() === 'developer' ? 'api-keys' : model.session.organization_id ? 'workbench' : 'members';
   const main = document.querySelector('#content');
   if (reviewer() && !model.session.organization_id && ![...PUBLIC_PAGES, 'platform', 'requests', 'request', 'grants', 'grant-edit', 'organizations', 'organization-new', 'organization', 'business-request', 'business-grant', 'channels', 'cli-authorize', 'cases', 'operations', 'case', 'fcl'].includes(page)) { main.innerHTML = empty('请在平台工作区处理任务', '企业应用和成员页面面向企业成员。当前身份使用申请审核与服务开通入口。', link('返回工作概览', 'platform')); return; }
@@ -413,6 +413,7 @@ function showSecret(result, applicationId, kind = 't0') {
   model.secret = { key, credentialId, applicationId, kind, version: data?.credential?.version }; document.querySelector('#secret-value').textContent = key; dialog.showModal();
 }
 async function runAction(button) {
+  if(['customer-portal','ops-portal'].includes(button.dataset.action)){location.assign(button.dataset.action==='customer-portal'?'/customer/':'/ops/');return;}
   if (await loginForm.action(button)) return;
   if (workspaceHome.action(button)) return;
   if (await maritime.action(button)) return;
