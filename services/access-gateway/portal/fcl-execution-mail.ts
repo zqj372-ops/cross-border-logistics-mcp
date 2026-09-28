@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import {fclDocumentsMailSchema,fclDocumentsSendSchema,fclDocumentsPreviewSchema} from './fcl-execution-contracts';
 import {randomUUID} from 'node:crypto';
 import {PortalError,type PortalContext} from './contracts';
 import type {FclCaseNotificationEvent,FclMailMessage,FclMailTransport} from './cases';
@@ -5,7 +7,7 @@ import {SyncTransactionGuard} from './sync-transaction';
 import {executionDigest,type FclExecutionService} from './fcl-execution';
 import {FCL_MAIL_TEMPLATE_VERSION,fclMailListRequestSchema,fclMailListSchema,fclOutboxSchema,type FclExecution,type FclNode,type FclOutbox,type FclNotificationConfig,fclCaseMailResolveSchema,fclCaseMailRetrySchema} from './fcl-execution-contracts';
 
-import {FCL_NODE_LABELS,renderExecutionMail} from './fcl-execution-mail-format';
+import {FCL_NODE_LABELS,renderExecutionMail,shipmentLabel,progressCopy} from './fcl-execution-mail-format';
 
 const binding=(node:FclNode)=>executionDigest({cycle:node.cycle,status:node.status,assignment:node.assignment,notification:node.notification});
 export interface FclExecutionMailOptions{
@@ -32,6 +34,39 @@ export class FclExecutionMailService{
     if(record.message_id!==row.message_id||record.event_id!==row.event_id||record.case_ref!==row.case_id||(record.node_id??'')!==row.node_id||record.cycle!==row.cycle||record.audience!==row.audience||record.status!==row.status)throw new PortalError('fcl_mail_readback_failed');return record;
   }
   private update(message:FclOutbox){this.db.prepare('UPDATE fcl_execution_outbox SET status=?,payload=? WHERE message_id=?').run(message.status,JSON.stringify(message),message.message_id);if(JSON.stringify(this.read(message.message_id))!==JSON.stringify(message))throw new PortalError('fcl_mail_readback_failed');}
+  previewDocuments(ctx:PortalContext,input:unknown){
+    const r=fclDocumentsMailSchema.parse(input),view=this.execution.get(ctx,{case_ref:r.case_ref});
+    const node=view?.nodes.find(n=>n.node_id===r.node_id);
+    if(!view||!node)throw new PortalError('fcl_not_found');
+    if(view.version!==r.expected_version)throw new PortalError('version_conflict');
+    if(['skipped','cancelled'].includes(node.status))throw new PortalError('fcl_execution_node_closed');
+    if(new Set([r.to,...r.cc].map(s=>s.toLowerCase())).size!==1+r.cc.length)throw new PortalError('fcl_execution_input_invalid');
+    let total=0;
+    const attachments=r.attachments.map(a=>{
+      const bytes=Buffer.from(a.content_base64,'base64');total+=bytes.length;
+      const ext=a.filename.split('.').at(-1)?.toLowerCase();
+      const valid=a.content_type==='application/pdf'?ext==='pdf'&&bytes.subarray(0,5).toString()==='%PDF-':a.content_type==='image/png'?ext==='png'&&bytes.subarray(0,8).toString('hex')==='89504e470d0a1a0a':a.content_type==='image/jpeg'?['jpg','jpeg'].includes(ext??'')&&bytes.subarray(0,3).toString('hex')==='ffd8ff':((ext==='xlsx'&&a.content_type.endsWith('spreadsheetml.sheet'))||(ext==='docx'&&a.content_type.endsWith('wordprocessingml.document')))&&bytes.subarray(0,4).toString('hex')==='504b0304';
+      if(!valid||bytes.toString('base64')!==a.content_base64||total>4*1024*1024)throw new PortalError('fcl_execution_input_invalid');
+      return {filename:a.filename,content_type:a.content_type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+    });
+    return fclDocumentsPreviewSchema.parse({preview_digest:executionDigest({actor:ctx.identity.userId,...r}),to:r.to,cc:r.cc,subject:r.subject,body:r.body,attachments});
+  }
+  sendDocuments(ctx:PortalContext,input:unknown,key:string){
+    const {preview_digest,confirmed,...r}=fclDocumentsSendSchema.parse(input);void confirmed;
+    if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');
+    this.transaction(()=>{
+      const view=this.execution.get(ctx,{case_ref:r.case_ref}),node=view?.nodes.find(n=>n.node_id===r.node_id);if(!view||!node)throw new PortalError('fcl_not_found');
+      const scope=JSON.stringify(['customs-documents',ctx.identity.userId]),digest=executionDigest(input);
+      const old=this.db.prepare('SELECT digest,case_id FROM business_case_idempotency WHERE scope=? AND key=?').get(scope,key) as {digest:string;case_id:string}|undefined;
+      if(old){if(old.digest!==digest||old.case_id!==r.case_ref)throw new PortalError('idempotency_conflict');return;}
+      if(this.previewDocuments(ctx,r).preview_digest!==preview_digest)throw new PortalError('fcl_execution_input_invalid');
+      const at=this.now(),event=randomUUID(),message=fclOutboxSchema.parse({extensions:{documents_v1:{actor_id:ctx.identity.userId,owner_id:view.owner_id,subject:r.subject,body:r.body,attachments:r.attachments}},message_id:randomUUID(),event_id:event,case_ref:r.case_ref,node_id:r.node_id,cycle:node.cycle,audience:'external',status:'pending',assignment_digest:binding(node),template_version:FCL_MAIL_TEMPLATE_VERSION,to:r.to,cc:r.cc,attempts:0,lease_token:null,lease_until:null,result_code:null,created_at:at,updated_at:at});
+      this.db.prepare('INSERT INTO fcl_execution_outbox(message_id,event_id,case_id,node_id,cycle,audience,status,payload) VALUES(?,?,?,?,?,?,?,?)').run(message.message_id,event,r.case_ref,r.node_id,node.cycle,'external','pending',JSON.stringify(message));
+      if(!this.read(message.message_id))throw new PortalError('fcl_mail_readback_failed');
+      this.db.prepare('INSERT INTO business_case_idempotency VALUES(?,?,?,?)').run(scope,key,digest,r.case_ref);
+    });
+    return this.list(ctx,{case_ref:r.case_ref});
+  }
   enqueueCustomerNotice(caseRef:string,eventId:string,kind:'received'|'quote'|'confirmed'|'accepted'|'progress',body:string,offerId:string|null=null){
     let row=this.db.prepare("SELECT c.owner_id,e.actor_id,e.payload_json FROM business_cases c JOIN business_case_events e ON e.case_id=c.case_id AND e.event_kind='portal_claim' WHERE c.case_id=? ORDER BY e.rowid DESC LIMIT 1").get(caseRef) as {owner_id:string;actor_id:string|null;payload_json:string}|undefined;
     if(!row&&kind==='received'){
@@ -46,12 +81,12 @@ export class FclExecutionMailService{
     if(!this.read(message.message_id))throw new PortalError('fcl_mail_readback_failed');
   }
   enqueue(progress:FclExecution,event:FclExecution['history'][number]){
-    if(['start','node_complete','node_exception','node_return'].includes(event.action))this.enqueueCustomerNotice(progress.case_ref,event.event_id,event.action==='start'?'accepted':'progress',event.action==='start'?'运营已接单，开始执行。':`${event.node_id?FCL_NODE_LABELS[event.node_id]:'业务'}：${event.action==='node_complete'?'已完成':event.action==='node_exception'?'需要处理，运营将联系您':'待补充资料'}。`);
+    if(event.extensions?.progress_v1?.visibility!=='internal'&&['start','node_start','node_complete','node_exception','node_return','node_reopen','node_skip'].includes(event.action))this.enqueueCustomerNotice(progress.case_ref,event.event_id,event.action==='start'?'accepted':'progress',event.extensions?.progress_v1?.message||(event.action==='start'?'运营已接单，开始执行。':progressCopy(event.node_id!,event.action.replace('node_',''))));
     // Invoked only by the execution service inside its Case transaction, never by a request body.
     for(const id of event.notify_node_ids){
       const node=progress.nodes.find(n=>n.node_id===id);if(!node||this.execution.configurationMissing(node).length)continue;
       for(const audience of ['internal','external'] as const){
-        if(event.action==='mention'&&audience==='external')continue;
+        if((event.action==='mention'||event.extensions?.progress_v1?.visibility==='internal')&&audience==='external')continue;
         const enabled=audience==='internal'?node.assignment.enabled:node.notification.external_enabled;
         const to=audience==='internal'?node.assignment.to:node.notification.external_to;
         if(!enabled||!to)continue;
@@ -101,10 +136,15 @@ export class FclExecutionMailService{
     if(request.cursor){try{const c=JSON.parse(Buffer.from(request.cursor,'base64url').toString()) as {user:string;case_ref:string;before:number};if(c.user!==ctx.identity.userId||c.case_ref!==request.case_ref||!Number.isSafeInteger(c.before)||c.before<1)throw new Error();before=c.before;}catch{throw new PortalError('fcl_execution_input_invalid');}}
     const rows=this.db.prepare(`SELECT rowid,message_id FROM fcl_execution_outbox WHERE case_id=? AND rowid<? AND (?=1 OR node_id IN (${ids.map(()=>'?').join(',')||'NULL'})) ORDER BY rowid DESC LIMIT ?`).all(request.case_ref,before,owner?1:0,...ids,request.limit+1) as {rowid:number;message_id:string}[];
     const page=rows.slice(0,request.limit);
-    return fclMailListSchema.parse({items:page.map(row=>this.read(row.message_id)!),next_cursor:rows.length>request.limit?Buffer.from(JSON.stringify({user:ctx.identity.userId,case_ref:request.case_ref,before:page.at(-1)!.rowid})).toString('base64url'):null});
+    return fclMailListSchema.parse({items:page.map(row=>{const m=this.read(row.message_id)!;for(const a of m.extensions?.documents_v1?.attachments??[])delete a.content_base64;return m;}),next_cursor:rows.length>request.limit?Buffer.from(JSON.stringify({user:ctx.identity.userId,case_ref:request.case_ref,before:page.at(-1)!.rowid})).toString('base64url'):null});
   }
 
   private applicable(message:FclOutbox):{people:string[];render:()=>FclMailMessage}|null{
+    if(message.extensions?.documents_v1){
+      const d=message.extensions.documents_v1,p=this.execution.readForDispatch(message.case_ref),node=p?.nodes.find(n=>n.node_id===message.node_id);
+      if(!p||!node||p.owner_id!==d.owner_id||node.cycle!==message.cycle||binding(node)!==message.assignment_digest||['skipped','cancelled'].includes(node.status)||![p.owner_id,p.coordinator_id,node.assignment.responsible_id,...node.assignment.collaborator_ids].includes(d.actor_id)||d.attachments.some(a=>!a.content_base64))return null;
+      return {people:[p.owner_id,d.actor_id],render:()=>({to:message.to,cc:message.cc,subject:d.subject,body:d.body,attachments:d.attachments.map(a=>({...a,content_base64:a.content_base64!}))})};
+    }
     if(message.extensions?.customer_notice_v1){
       const notice=message.extensions?.customer_notice_v1;
       if(notice.kind==='received')return {people:[notice.owner_id],render:()=>({to:message.to,cc:[],subject:'FreightClaw · 询价已收到',body:'您好，\n\n已收到您的询价，工作人员将与您联系。\n如非本人提交，请忽略本邮件。\n\nFreightClaw'})};
@@ -114,7 +154,8 @@ export class FclExecutionMailService{
         const offer=this.db.prepare("SELECT payload_json FROM business_case_events WHERE case_id=? AND event_kind='portal_offer' ORDER BY rowid DESC LIMIT 1").get(message.case_ref) as {payload_json:string}|undefined;
         if(!offer||((JSON.parse(offer.payload_json) as {offer_id:string;document:{valid_until:string}}).offer_id!==notice.offer_id||(JSON.parse(offer.payload_json) as {document:{valid_until:string}}).document.valid_until<this.now().slice(0,10)))return null;
       }
-      return {people:[notice.owner_id],render:()=>({to:message.to,cc:[],subject:`[${row.inquiry_no}] ${notice.kind==='quote'?'报价待确认':notice.kind==='confirmed'?'委托已提交':notice.kind==='accepted'?'已接单':'进度更新'}`,body:`您好，\n\n${notice.body}\n业务编号：${row.inquiry_no}\n查看详情（需登录）：${this.options.publicOrigin??''}/customer/#customer/${message.case_ref}\n\n如有疑问，请联系受理人员。\nFreightClaw`})};
+      const progress=this.execution.readForDispatch(message.case_ref),label=progress?shipmentLabel(progress):row.inquiry_no;
+      return {people:[notice.owner_id],render:()=>({to:message.to,cc:[],subject:`[${label}] ${notice.kind==='quote'?'报价待确认':notice.kind==='confirmed'?'委托已提交':notice.kind==='accepted'?'已接单':'进度更新'}`,body:`您好，\n\n${notice.body}\n业务编号：${label}\n查看详情（需登录）：${this.options.publicOrigin??''}/customer/#customer/${message.case_ref}\n\n如有疑问，请联系受理人员。\nFreightClaw`})};
     }
     if(message.pre_execution){
       const snapshot=message.pre_execution,row=this.db.prepare('SELECT owner_id,version,status FROM business_cases WHERE case_id=?').get(message.case_ref) as {owner_id:string;version:number;status:string}|undefined;
@@ -129,7 +170,7 @@ export class FclExecutionMailService{
     const enabled=message.audience==='internal'?node.assignment.enabled:node.notification.external_enabled;
     const to=message.audience==='internal'?node.assignment.to:node.notification.external_to;
     if(!enabled||to!==message.to||!node.assignment.responsible_id)return null;
-    return {render:()=>renderExecutionMail(progress,node,message.audience,this.options.publicOrigin),people:[progress.owner_id,progress.coordinator_id,node.assignment.responsible_id,...node.assignment.collaborator_ids]};
+    return {render:()=>{const result=renderExecutionMail(progress,node,message.audience,this.options.publicOrigin);const event=progress.history.find(e=>e.event_id===message.event_id);if(message.audience==='internal'&&event?.reason)result.body+='\n进度说明：'+event.reason;return result;},people:[progress.owner_id,progress.coordinator_id,node.assignment.responsible_id,...node.assignment.collaborator_ids]};
   }
   async dispatchOnce():Promise<void>{
     if(this.running)return;this.running=true;

@@ -92,6 +92,9 @@ function validAddress(value:string):boolean{return z.email().max(254).safeParse(
 function requestPayload(config:FclSmtpConfig,message:FclMailMessage,maximum:number):string{
   if(!validAddress(message.to)||message.cc.some(address=>!validAddress(address))||message.cc.length>10||/[\r\n]/u.test(message.subject)||message.subject.length===0||message.subject.length>500)fail('fcl_mail_header_invalid');
   if(typeof message.body!=='string'||Buffer.byteLength(message.body,'utf8')>maximum)fail('fcl_mail_body_invalid');
+  // eslint-disable-next-line no-control-regex -- Reject unsafe attachment headers.
+  for(const a of message.attachments??[]){if(!a.filename||/[\r\n/\\\x00-\x1f]/u.test(a.filename)||!['application/pdf','image/png','image/jpeg','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(a.content_type)||Buffer.from(a.content_base64,'base64').toString('base64')!==a.content_base64)fail('fcl_mail_body_invalid');}
+  if((message.attachments?.length??0)>5)fail('fcl_mail_body_invalid');
   const payload=JSON.stringify({config,message});
   if(Buffer.byteLength(payload,'utf8')>maximum+4096)fail('fcl_mail_body_invalid');
   return payload;
@@ -107,7 +110,7 @@ export class SmtpFclMailTransport implements FclMailTransport{
 
   constructor(config:FclSmtpConfig,options:FclSmtpTransportOptions={}){
     this.#config=parseFclSmtpConfig(config);
-    const timeout=options.timeoutMs??FCL_SMTP_CHILD_TIMEOUT_MS,maximum=options.maxMessageBytes??1024*1024;
+    const timeout=options.timeoutMs??FCL_SMTP_CHILD_TIMEOUT_MS,maximum=options.maxMessageBytes??8*1024*1024;
     if(!Number.isInteger(timeout)||timeout<100||timeout>60_000)fail('fcl_smtp_config_invalid');
     if(!Number.isInteger(maximum)||maximum<1_024||maximum>8*1024*1024)fail('fcl_smtp_config_invalid');
     this.#runner=options.runner??new ChildProcessFclSmtpRunner();

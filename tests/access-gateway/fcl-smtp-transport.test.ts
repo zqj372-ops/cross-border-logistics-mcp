@@ -1,3 +1,4 @@
+import {spawnSync} from 'node:child_process';
 import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -83,4 +84,28 @@ it('executes a fixed local child fixture when explicitly injected',async()=>{
 
 it('keeps the child hard deadline below the outer notification deadline',()=>{
   expect(FCL_SMTP_CHILD_TIMEOUT_MS).toBeLessThan(FCL_SMTP_NOTIFICATION_TIMEOUT_MS);
+});
+
+it('builds a real MIME attachment with the Python sender without connecting to SMTP',()=>{
+ const script=`import runpy,io,json,sys,base64,smtplib
+module=runpy.run_path('services/access-gateway/portal/fcl_smtp_send.py')
+class FakeSMTP:
+ def __init__(self,*a,**kw): pass
+ def __enter__(self): return self
+ def __exit__(self,*a): pass
+ def login(self,*a): pass
+ def send_message(self,m):
+  parts=list(m.iter_attachments())
+  assert len(parts)==1
+  assert parts[0].get_filename()=='invoice.pdf'
+  assert parts[0].get_content_type()=='application/pdf'
+  assert parts[0].get_payload(decode=True)==b'%PDF-fixture'
+  return {}
+smtplib.SMTP_SSL=FakeSMTP
+payload={'config':{'host':'unused','port':465,'secure':True,'username':'fixture','password':'fixture','from':'sender@example.test'},'message':{'to':'receiver@example.test','cc':[],'subject':'fixture','body':'documents','attachments':[{'filename':'invoice.pdf','content_type':'application/pdf','content_base64':base64.b64encode(b'%PDF-fixture').decode()}]}}
+sys.stdin=io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode()))
+assert module['main']()==0
+`;
+ const result=spawnSync('python3',['-c',script],{encoding:'utf8'});
+ expect(result.status,result.stderr).toBe(0);expect(result.stdout).toBe('OK\n');
 });

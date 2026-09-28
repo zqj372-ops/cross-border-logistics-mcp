@@ -35,7 +35,7 @@ it('persists audience-separated messages atomically, sends real To/Cc and never 
     await f.mail.dispatchOnce();await f.mail.dispatchOnce();await f.mail.dispatchOnce();
     expect(sent).toHaveLength(2);
     expect(sent.find(m=>m.to==='internal@example.test')?.cc).toEqual(['copy@example.test']);
-    expect(sent.find(m=>m.to==='internal@example.test')?.body).toContain(`https://portal.example.test/console/#fcl/case/${view.case_ref}`);
+    expect(sent.find(m=>m.to==='internal@example.test')?.body).toContain(`https://portal.example.test/ops/#fcl/case/${view.case_ref}`);
     const external=sent.find(m=>m.to==='carrier@example.test')!;
     expect(external.cc).toEqual([]);expect(external.body).not.toContain('/console/');
     expect(JSON.stringify(sent)).not.toMatch(/SECRET|private:internal-only/);
@@ -92,4 +92,22 @@ it('cancels stale assignments and treats a crashed sending lease as unknown on a
     const items=f.mail.list(receiver,{case_ref:f.progress.case_ref}).items;
     expect(called).toBe(1);expect(items.some(m=>m.status==='unknown')).toBe(true);expect(items.some(m=>m.status==='cancelled')).toBe(true);
   }finally{closeFixture(f);}
+});
+
+it('previews and queues customs attachments once, rejects changed previews and cross-account access',async()=>{
+ const sent:FclMailMessage[]=[];const f=await setup(m=>{sent.push(m);});
+ try{
+ const snapshot=f.execution.readForDispatch(f.progress.case_ref)!;
+ snapshot.nodes.push({...snapshot.nodes[0]!,node_id:'canada_customs',notification:{...snapshot.nodes[0]!.notification,node_id:'canada_customs'},fields:{importer:'Fixture',declaration_ref:'',release_confirmed:false,release_evidence:'',inspection_notes:''}});
+ f.caseStore.db.prepare('UPDATE fcl_case_progress SET payload=? WHERE case_id=?').run(JSON.stringify(snapshot),snapshot.case_ref);
+ const input={contract_version:FCL_EXECUTION_VERSION,case_ref:f.progress.case_ref,expected_version:1,node_id:'canada_customs',to:'broker@example.test',cc:[],subject:'清关资料',body:'请查收附件并核对资料。',attachments:[{filename:'invoice.pdf',content_type:'application/pdf',content_base64:Buffer.from('%PDF-1.4\nsynthetic fixture\n%%EOF').toString('base64')}]};
+ const preview=f.mail.previewDocuments(receiver,input);
+ expect(()=>f.mail.previewDocuments(other,input)).toThrow();
+ expect(()=>f.mail.sendDocuments(receiver,{...input,body:'changed',preview_digest:preview.preview_digest,confirmed:true},'customs-send-bad-01')).toThrow();
+ const request={...input,preview_digest:preview.preview_digest,confirmed:true};
+ f.mail.sendDocuments(receiver,request,'customs-send-good-01');f.mail.sendDocuments(receiver,request,'customs-send-good-01');
+ const list=f.mail.list(receiver,{case_ref:f.progress.case_ref});expect(list.items).toHaveLength(1);expect(JSON.stringify(list)).not.toContain(input.attachments[0]!.content_base64);
+ await f.mail.dispatchOnce();expect(sent).toHaveLength(1);expect(sent[0]?.attachments?.[0]?.filename).toBe('invoice.pdf');
+ expect(()=>f.mail.previewDocuments(receiver,{...input,attachments:[{...input.attachments[0],filename:'../invoice.pdf'}]})).toThrow();
+ }finally{closeFixture(f);}
 });

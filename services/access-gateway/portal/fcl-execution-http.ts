@@ -16,6 +16,8 @@ export class FclExecutionHttpService{
     const run=async()=>{
       if(Object.hasOwn(customerRoutes,action))return new FclCustomerService(this.execution,this.workflow,this.mail).run(ctx,action as CustomerAction,input,key);
       switch(action){
+        case 'execution-documents-preview':return this.mail.previewDocuments(ctx,input);
+        case 'execution-documents-send':return this.mail.sendDocuments(ctx,input,key());
         case 'case-mail-resolve':return this.mail.resolveCaseMail(ctx,input,key());
         case 'case-mail-retry':return this.mail.resolveCaseMail(ctx,input,key(),true);
         case 'execution-preview':return this.workflow.previewFclExecution(ctx,input,this.execution);

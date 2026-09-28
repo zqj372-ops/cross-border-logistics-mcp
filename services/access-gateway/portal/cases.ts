@@ -113,6 +113,7 @@ export type CaseView = { case_id: string; status: CaseStatus; version: number; i
 export type CaseViewV2 = CaseView & { review_context: { latest_customer_supplement_ref: string | null } };
 export type QuoteLinkCaseRead = { case_ref: string; owner_id: string; organization_id: string | null; status: CaseStatus; version: number; latest_customer_supplement_ref: string | null };
 export type FclMailMessage = {
+  attachments?: Array<{filename:string;content_type:string;content_base64:string}>;
   to: string;
   cc: string[];
   subject: string;

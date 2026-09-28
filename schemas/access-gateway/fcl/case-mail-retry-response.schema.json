@@ -19,7 +19,7 @@
           "maxItems": 32,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema8"
+            "$ref": "#/$defs/__schema9"
           }
         }
       },
@@ -59,7 +59,7 @@
           "maxItems": 32,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema9"
+            "$ref": "#/$defs/__schema10"
           }
         }
       },
@@ -92,7 +92,7 @@
           "maxItems": 32,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           }
         }
       },
@@ -140,6 +140,40 @@
         "extensions": {
           "type": "object",
           "properties": {
+            "documents_v1": {
+              "type": "object",
+              "properties": {
+                "actor_id": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "owner_id": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "subject": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "body": {
+                  "type": "string",
+                  "maxLength": 8000
+                },
+                "attachments": {
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema3"
+                  }
+                }
+              },
+              "required": [
+                "actor_id",
+                "owner_id",
+                "subject",
+                "body",
+                "attachments"
+              ],
+              "additionalProperties": false
+            },
             "customer_notice_v1": {
               "type": "object",
               "properties": {
@@ -193,9 +227,6 @@
               "additionalProperties": false
             }
           },
-          "required": [
-            "customer_notice_v1"
-          ],
           "additionalProperties": false
         },
         "pre_execution": {
@@ -205,11 +236,33 @@
               "$ref": "#/$defs/__schema2"
             },
             "case_version": {
-              "$ref": "#/$defs/__schema3"
+              "$ref": "#/$defs/__schema4"
             },
             "inquiry_no": {
               "type": "string",
               "maxLength": 80
+            },
+            "extensions": {
+              "type": "object",
+              "properties": {
+                "shipment_v1": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "maxLength": 2400
+                    }
+                  },
+                  "required": [
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "shipment_v1"
+              ],
+              "additionalProperties": false
             },
             "customer_name": {
               "type": "string",
@@ -260,7 +313,7 @@
                     "to": {
                       "anyOf": [
                         {
-                          "$ref": "#/$defs/__schema4"
+                          "$ref": "#/$defs/__schema5"
                         },
                         {
                           "type": "null"
@@ -271,7 +324,7 @@
                       "maxItems": 10,
                       "type": "array",
                       "items": {
-                        "$ref": "#/$defs/__schema4"
+                        "$ref": "#/$defs/__schema5"
                       }
                     },
                     "enabled": {
@@ -294,7 +347,7 @@
                 "external_to": {
                   "anyOf": [
                     {
-                      "$ref": "#/$defs/__schema4"
+                      "$ref": "#/$defs/__schema5"
                     },
                     {
                       "type": "null"
@@ -305,7 +358,7 @@
                   "maxItems": 10,
                   "type": "array",
                   "items": {
-                    "$ref": "#/$defs/__schema4"
+                    "$ref": "#/$defs/__schema5"
                   }
                 },
                 "external_enabled": {
@@ -315,7 +368,7 @@
                   "maxItems": 17,
                   "type": "array",
                   "items": {
-                    "$ref": "#/$defs/__schema5"
+                    "$ref": "#/$defs/__schema6"
                   }
                 }
               },
@@ -351,7 +404,7 @@
           "maxItems": 100,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema6"
+            "$ref": "#/$defs/__schema7"
           }
         },
         "message_id": {
@@ -392,7 +445,7 @@
           ]
         },
         "cycle": {
-          "$ref": "#/$defs/__schema3"
+          "$ref": "#/$defs/__schema4"
         },
         "audience": {
           "type": "string",
@@ -421,13 +474,13 @@
           "const": "fcl-node-mail@2026-09-23.v1"
         },
         "to": {
-          "$ref": "#/$defs/__schema4"
+          "$ref": "#/$defs/__schema5"
         },
         "cc": {
           "maxItems": 10,
           "type": "array",
           "items": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           }
         },
         "attempts": {
@@ -450,7 +503,7 @@
         "lease_until": {
           "anyOf": [
             {
-              "$ref": "#/$defs/__schema7"
+              "$ref": "#/$defs/__schema8"
             },
             {
               "type": "null"
@@ -469,10 +522,10 @@
           ]
         },
         "created_at": {
-          "$ref": "#/$defs/__schema7"
+          "$ref": "#/$defs/__schema8"
         },
         "updated_at": {
-          "$ref": "#/$defs/__schema7"
+          "$ref": "#/$defs/__schema8"
         }
       },
       "required": [
@@ -503,17 +556,47 @@
       "maxLength": 200
     },
     "__schema3": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^/\\\\\\r\\n\\x00-\\x1f]+$"
+        },
+        "content_type": {
+          "type": "string",
+          "enum": [
+            "application/pdf",
+            "image/png",
+            "image/jpeg",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          ]
+        },
+        "content_base64": {
+          "type": "string",
+          "maxLength": 5592408
+        }
+      },
+      "required": [
+        "filename",
+        "content_type"
+      ],
+      "additionalProperties": false
+    },
+    "__schema4": {
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
     },
-    "__schema4": {
+    "__schema5": {
       "type": "string",
       "maxLength": 254,
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
     },
-    "__schema5": {
+    "__schema6": {
       "type": "string",
       "enum": [
         "carrier",
@@ -533,7 +616,7 @@
         "empty_return_at"
       ]
     },
-    "__schema6": {
+    "__schema7": {
       "type": "object",
       "properties": {
         "actor_id": {
@@ -545,7 +628,7 @@
           "maxLength": 2000
         },
         "at": {
-          "$ref": "#/$defs/__schema7"
+          "$ref": "#/$defs/__schema8"
         },
         "outcome": {
           "type": "string",
@@ -560,15 +643,10 @@
       ],
       "additionalProperties": false
     },
-    "__schema7": {
+    "__schema8": {
       "type": "string",
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-    },
-    "__schema8": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 120
     },
     "__schema9": {
       "type": "string",
@@ -576,6 +654,11 @@
       "maxLength": 120
     },
     "__schema10": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema11": {
       "type": "string",
       "minLength": 1,
       "maxLength": 120
