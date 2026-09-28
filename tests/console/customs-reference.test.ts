@@ -132,5 +132,6 @@ it('preserves published measure conclusions, producer conditions and unknown mea
 it('shows the manual review boundary and original text without introducing a duty total or interpreting HTML',()=>{
  const esc=(value:unknown)=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
  const html=renderCustomsReference({esc,panel:(title:string,subtitle:string,body:string)=>title+subtitle+body,note:esc},{request_id:'req_ui',formal_ready:false,rule_date:'2026-09-27',snapshot_sha256:'a'.repeat(64),warnings:['待复核','其他待复核'],sources:[],candidates:[{item:{...dataset.nomenclature[0]!,country:'CN',code:'123456',display_code:'123456',description_original:'<script>unsafe</script>',is_declarable:0,language:'zh',source_locator:'official:row1'},hierarchy:[],rates:[],name_translation:null}]});
+ expect(html).toContain('来源未标记为可申报税号');expect(html).not.toContain('这是父级税目');
  expect(html).not.toContain('&lt;br>');expect(html).toContain('待复核 其他待复核');expect(html).toContain('中国税号');expect(html).toContain('进口税率不能作为出口税率');expect(html).not.toContain('中国出口');expect(html).toContain('候选 · 待复核');expect(html).toContain('不代表免税或零税率');expect(html).toContain('&lt;script>');expect(html).not.toContain('<script>');expect(html).not.toContain('已确认的关税合计');
 });
