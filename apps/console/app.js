@@ -182,7 +182,7 @@ async function refresh() {
 function brand() { return `<a class="brand" href="/console/#home" aria-label="FreightClaw 首页"><span class="brand-mark">${icon('box')}</span><span class="wordmark">FreightClaw<small>物流能力开放平台</small></span></a>`; }
 function loginStorage() { try { return window.sessionStorage; } catch { return null; } }
 function renderLogin() {
-  if(portalMode)try{sessionStorage.setItem('freightclaw.portal-return',JSON.stringify({path:portalMode==='customer'?'/customer/':'/ops/',hash:location.hash,expires:Date.now()+900000}));}catch{/* Storage is optional. */}
+  if(portalMode&&model.session?.authenticated===false)try{sessionStorage.setItem('freightclaw.portal-return',JSON.stringify({path:portalMode==='customer'?'/customer/':'/ops/',hash:location.hash,expires:Date.now()+900000}));}catch{/* Storage is optional. */}
   if (!peekLoginDestination(loginStorage())) rememberLoginDestination(['case','channels','cli-authorize','business-admin','quote','configure','market'].includes(route().page) && route().id ? `${route().page}/${route().id}` : route().page, loginStorage());
   document.title = '登录 · FreightClaw';
   app.className = 'login-shell';
@@ -356,7 +356,7 @@ function render() {
   const publicPages = page === 'market' && id === 'configure' ? PUBLIC_PAGES.filter(p=>p!=='market') : PUBLIC_PAGES;
   if (page === 'login' || (!model.session?.authenticated && (!publicPages.includes(page) || new URLSearchParams(location.search).has('auth_error')))) { renderLogin(); return; }
   ensureShell(); nav();
-  if(portalMode==='customer') { document.querySelector('#content').innerHTML='<div class="fcl-workbench">'+customer.page(route().page==='customer'?route().id:'')+'</div>'; return; }
+  if(portalMode==='customer') { document.title='客户中心 · FreightClaw'; document.querySelector('#content').innerHTML='<div class="fcl-workbench">'+customer.page(route().page==='customer'?route().id:'')+'</div>'; return; }
   if(portalMode==='ops'&&!model.session?.personal_operator&&!model.session?.personal_participant) { document.querySelector('#content').innerHTML=empty('没有运营权限','请使用已授权的个人账号。','<a class="button" href="/customer/">返回客户中心</a>'); return; }
   if(portalMode==='ops'&&page!=='fcl'){go('fcl');return;}
 
