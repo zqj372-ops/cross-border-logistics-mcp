@@ -148,6 +148,30 @@ it('keeps the suggested propulsion family ahead of an equally partial short bicy
  const data=customsReferenceData.parse((await createCustomsReferenceClient(config,undefined,suggest).query({...request,input:{...request.input,query:'电动自行车',codeCountry:'CA'}})).data);
  expect(data.candidates.find(c=>c.item.country==='CA')?.item.code).toBe('8711600000');
 });
+it('recognizes English plural goods and does not combine words from separate legal list clauses',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!;
+ const names=[['94042','Mattresses:'],['94041000','Mattress supports'],['73269010','Stainless steel couplings; For use in the manufacture of vacuum flasks'],['96170000','Vacuum flasks and other vacuum vessels, complete']];
+ const {config}=fixture(false,names.map(([code,description_original],i)=>({...ca,id:i+1,code:code!,description_original:description_original!})));
+ const client=createCustomsReferenceClient(config);
+ const mattress=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'mattress',codeCountry:'CA'}})).data);
+ expect(mattress.candidates[0]?.item.code).toBe('94042');
+ const parts=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'stainless steel vacuum flask',codeCountry:'CA'}})).data);
+ expect(parts.candidates).toEqual([]);
+ const batteries=fixture(false,[{...ca,id:1,code:'85076000',description_original:'Lithium batteries'}]);
+ expect(customsReferenceData.parse((await batteries.client.query({...request,input:{...request.input,query:'lithium battery',codeCountry:'CA'}})).data).candidates).toHaveLength(1);
+});
+it('does not let a narrower Chinese variant or incidental material overlap replace the commodity family',async()=>{
+ const ca=dataset.nomenclature.find(row=>row.country==='CA')!,cn=dataset.nomenclature.find(row=>row.country==='CN')!;
+ const names=[['94041000','Mattress supports'],['94042','Mattresses:'],['94042100','Of cellular rubber'],['94049090','Mattress pads'],['96170000','Vacuum flasks'],['732393','Of stainless steel'],['73269010','Vacuum evaporator masks, of stainless steel, for production of photo cells']];
+ const {config}=fixture(false,[{...cn,id:1,code:'94041000',description_original:'弹簧床垫'},...names.map(([code,description_original],i)=>({...ca,id:i+2,code:code!,description_original:description_original!}))]);
+ const suggest=vi.fn().mockResolvedValue({terms:[{language:'en',text:'mattress'}],hs6:['940421','940490']});
+ const client=createCustomsReferenceClient(config,undefined,suggest);
+ const mattress=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'床垫',codeCountry:'CA'}})).data);
+ expect(mattress.candidates.find(c=>c.item.country==='CA')?.item.code).toBe('94042100');
+ suggest.mockResolvedValue({terms:[{language:'en',text:'stainless steel vacuum flask'}],hs6:['961700','732393','732690']});
+ const flask=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'不锈钢保温杯',codeCountry:'CA'}})).data);
+ expect(flask.candidates.find(c=>c.item.country==='CA')?.item.code).toBe('96170000');
+});
 it('uses effective same-country prefix ancestors and never takes a sibling parent rate',async()=>{
  const us=dataset.nomenclature.find(row=>row.country==='US')!,rate=dataset.tariffs.find(row=>row.country==='US')!;
  const rows=[{...us,id:1,code:'8470210000',parent_code:'84701000',description_original:'Incorporating a printing device'},

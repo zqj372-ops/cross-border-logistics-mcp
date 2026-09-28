@@ -29,9 +29,10 @@ const officialHosts = new Set(['gss.mof.gov.cn','online.customs.gov.cn','www.cbs
 function nameScore(description:string,terms:string[],screenParts=true) {
   const name=description.normalize('NFKC').toLowerCase().replace(/[-‐‑–—]/gu,' ').replace(/\b(?:other than|excluding|not including|except)\b[^;.]*|但[^；。]*除外/gu,' ').trim();
   const query=terms.join(' ');
-  if(!terms.length||!terms.every(term=>name.includes(term)||!/\p{Script=Han}/u.test(term)&&term.endsWith('s')&&name.includes(term.slice(0,-1))))return 0;
+  if(!terms.length)return 0;
   if(name===query)return 10_000;
   if(/\p{Script=Han}/u.test(query)){
+    if(!terms.every(term=>name.includes(term)))return 0;
     // A mention as the intended use or a prefix of another product is not a goods match.
     // ponytail: lexical screening only; common names absent from official text still need reviewed search terms.
     if(screenParts&&!/(零件|部件|组件|配件)/u.test(query)&&/(零件|部件|组件|配件)/u.test(name))return 0;
@@ -47,11 +48,18 @@ function nameScore(description:string,terms:string[],screenParts=true) {
       if(!matched)return 0;
     }
   }else{
-    const words=name.match(/[\p{L}\p{N}]+/gu)??[];
-    if(!terms.every(term=>words.some(word=>word===term||word===term+'s'||term===word+'s')))return 0;
+    const singular=(word:string)=>word.endsWith('ies')?word.slice(0,-3)+'y':word.replace(/(ss|[xz]|ch|sh)es$/u,'$1').replace(/(?<!s)s$/u,'');
+    const wanted=terms.map(singular);
+    const matching=name.split(';').filter(clause=>{
+      const words=(clause.match(/[\p{L}\p{N}]+/gu)??[]).map(singular);
+      if(!wanted.every(term=>words.includes(term)))return false;
+      const purpose=clause.search(/\bfor\b/u);
+      const subject=(clause.slice(0,purpose).match(/[\p{L}\p{N}]+/gu)??[]).map(singular);
+      return purpose<0||wanted.some(term=>subject.includes(term));
+    });
+    if(!matching.length)return 0;
     if(screenParts&&!/\b(parts?|components?|accessories)\b/u.test(query)&&/\b(parts?|components?|accessories)\b/u.test(name)&&!/(?:and|including) (?:their )?parts/iu.test(name))return 0;
-    const purpose=name.indexOf(' for ');
-    if(purpose>=0&&terms.every(term=>!name.slice(0,purpose).includes(term)))return 0;
+    if(matching.some(clause=>(clause.match(/[\p{L}\p{N}]+/gu)??[]).map(singular).join(' ')===wanted.join(' ')))return 10_000;
   }
   return 1_000/(1+name.length);
 }
@@ -89,7 +97,7 @@ export function createCustomsReferenceClient(config: z.infer<typeof customsRefer
       const terms=(text:string)=>[...new Set(text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu)??[])];
       const originalTerms=terms(parsed.data.query);
       const nameRows=!code?db.prepare(`SELECT id,release_id,country,language,code,description_original FROM nomenclature WHERE ${eligible}`).all(...ids,ruleDate,ruleDate):[];
-      const originalMatched=nameRows.some(row=>(!codeCountry||row.country===codeCountry||row.country==='CN'&&/\p{Script=Han}/u.test(parsed.data.query))&&nameScore(String(row.description_original),originalTerms)>0);
+      const originalMatched=nameRows.some(row=>(!codeCountry||row.country===codeCountry||row.country==='CN'&&/\p{Script=Han}/u.test(parsed.data.query))&&nameScore(String(row.description_original),originalTerms)===10_000);
       const suggested=!code&&suggestTerms?await suggestTerms(parsed.data.query):null;
       // Translations still rank foreign subheadings; model families cannot replace a direct official name match.
       const aiHs6=originalMatched?[]:[...new Set(suggested?.hs6??[])].filter(hs6=>nameRows.some(row=>(!codeCountry||row.country===codeCountry)&&String(row.code).startsWith(hs6)));
@@ -104,14 +112,14 @@ export function createCustomsReferenceClient(config: z.infer<typeof customsRefer
         const scoreFor=(words:string[])=>{
           const partsQuery=/(零件|部件|组件|配件|\bparts?\b|\bcomponents?\b|\baccessories\b)/iu.test(words.join(' '));
           const partsOnly=!partsQuery&&segments.some(text=>/^[-—\s]*(?:parts?\b|components?\b|accessories\b|零件|部件|组件|配件)/iu.test(text));
-          return Math.max(nameScore(String(row.description_original),words),partsOnly?0:nameScore(path,words,false)/2);
+          return Math.max(nameScore(String(row.description_original),words),partsOnly?0:Math.max(nameScore(path,words,false),...parents.map(parent=>nameScore(String(parent!.description_original),words)))/2);
         };
         const original=scoreFor(originalTerms);
         const score=original?1_000_000+original:Math.max(0,...alternatives.map((words,index)=>{const value=scoreFor(words);return value?(alternatives.length-index)*10_000+value:0;}));
         // Partial literal words only rank already bounded HS6 candidates, never widen a name search.
         const literal=String(row.language).startsWith('en')&&/\p{Script=Han}/u.test(parsed.data.query)?alternatives[0]??[]:originalTerms;
         const words=literal.filter(word=>word.length>2&&!['the','and','for','with','other'].includes(word));
-        const matched=words.filter(word=>scoreFor([word])>0).length;
+        const matched=!score&&aiHs6.some(prefix=>String(row.code).startsWith(prefix))?words.filter(word=>scoreFor([word])>0).length:0;
         partialScores.set(row.id,!score&&matched?matched*100/Math.max(1,words.length)+1/(1+path.length):0);
         return [row.id,score] as const;
       }));
@@ -130,7 +138,7 @@ export function createCustomsReferenceClient(config: z.infer<typeof customsRefer
         const crossCountry=directions.length>0;
         const search=code?(code.length>6&&codeCountry===country?'code=?':"substr(code,1,?)=?"):crossCountry?`substr(code,1,6) IN (${directions.map(()=>'?').join(',')})${aiHs6.length?'':` OR ${nameSearch}`}`:nameSearch;
         const lookup=code?(code.length>6&&codeCountry===country?[code]:[Math.min(code.length,6),code.slice(0,6)]):crossCountry?directions:[];
-        const relevance=code?'0':crossCountry?`(reference_name_score(id)+reference_partial_score(id)+CASE substr(code,1,6) ${directions.map((_,i)=>`WHEN ? THEN ${10_000_000-i*10}`).join(' ')} ELSE 0 END)`:'reference_name_score(id)';
+        const relevance=code?'0':crossCountry?`(reference_name_score(id)+reference_partial_score(id)+CASE substr(code,1,6) ${directions.map((_,i)=>`WHEN ? THEN ${10_000_000-i*25}`).join(' ')} ELSE 0 END)`:'reference_name_score(id)';
         const broadFirst=!code&&crossCountry?'CASE WHEN MAX(reference_name_score(id)+reference_partial_score(id))=0 THEN length(code) ELSE 0 END,':'';
         const selectedCodes=db.prepare(`SELECT code FROM nomenclature WHERE country=? AND ${eligible} AND (${search}) GROUP BY code ORDER BY MAX(${relevance}) DESC,${broadFirst}MAX(is_declarable) DESC,code LIMIT 9`).all(country,...ids,ruleDate,ruleDate,...lookup,...(crossCountry&&!code?directions:[])).map(row=>String(row.code));
         if(!selectedCodes.length)continue;
