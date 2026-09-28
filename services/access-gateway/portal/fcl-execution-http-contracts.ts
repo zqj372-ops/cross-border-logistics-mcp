@@ -4,6 +4,8 @@ import * as c from './fcl-execution-contracts';
 const empty=z.object({}).strict();
 export const executionRoutes={
   ...customerRoutes,
+  'execution-documents-preview':[c.fclDocumentsMailSchema,c.fclDocumentsPreviewSchema,false,'预览报关资料邮件'],
+  'execution-documents-send':[c.fclDocumentsSendSchema,c.fclMailListSchema,true,'发送已确认的报关资料邮件'],
   'case-mail-resolve':[c.fclCaseMailResolveSchema,c.fclMailListSchema,true,'登记询报价通知的核实结果'],
   'case-mail-retry':[c.fclCaseMailRetrySchema,c.fclMailListSchema,true,'重试已明确失败的询报价通知'],
   'execution-history':[c.fclExecutionHistoryRequestSchema,c.fclExecutionHistorySchema,false,'分页读取获授权的执行操作记录'],
@@ -40,6 +42,6 @@ const entries=Object.entries(executionRoutes) as [FclExecutionAction,typeof exec
 export const executionRequests=Object.fromEntries(entries.map(([key,value])=>[key,value[0]])) as unknown as Record<FclExecutionAction,z.ZodType>;
 export const executionOutputs=Object.fromEntries(entries.map(([key,value])=>[key,value[1]])) as unknown as Record<FclExecutionAction,z.ZodType>;
 export const executionMethods=Object.fromEntries(entries.map(([key])=>[key,'POST'])) as Record<FclExecutionAction,'POST'>;
-export const executionBodyLimits=Object.fromEntries(entries.map(([key])=>[key,128*1024])) as Record<FclExecutionAction,number>;
+export const executionBodyLimits=Object.fromEntries(entries.map(([key])=>[key,key.startsWith('execution-documents-')?6*1024*1024:128*1024])) as Record<FclExecutionAction,number>;
 export const executionWrites=entries.filter(([,value])=>value[2]).map(([key])=>key);
 export const executionDescriptions=Object.fromEntries(entries.map(([key,value])=>[key,value[3]])) as Record<FclExecutionAction,string>;

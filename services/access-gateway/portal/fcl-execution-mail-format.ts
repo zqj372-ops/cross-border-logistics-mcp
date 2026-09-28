@@ -20,14 +20,22 @@ function extras(config:FclNotificationRow,fields:Record<string,unknown>,eta:stri
     return typeof value!=='string'||!value?[]:[`${FCL_MAIL_FIELD_LABELS[key]}：${dateFields.has(key)?formatFclMailDate(value):value}`];
   });
 }
-export function renderExecutionMail(progress:Pick<FclExecution,'inquiry_no'|'customer_name'|'case_ref'|'shared'>,node:FclNode,audience:'internal'|'external',origin=''):FclMailMessage{
+export function renderExecutionMail(progress:Pick<FclExecution,'inquiry_no'|'customer_name'|'case_ref'|'shared'> & {nodes?:FclNode[]},node:FclNode,audience:'internal'|'external',origin=''):FclMailMessage{
   const internal=audience==='internal',config=node.notification;
-  const lines=[`业务单号：${progress.inquiry_no}`,`客户：${progress.customer_name}`,`环节：${FCL_NODE_LABELS[node.node_id]}`,`待办：${node.status==='completed'?'已登记完成，请核对交接结果':node.status==='exception'?'资料或异常需要处理':'请处理本环节资料及交接'}`,`截止时间（登记时区）：${formatFclMailDate(node.deadline)}`,...extras(config,node.fields,progress.shared.eta)];
+  const lines=[`业务单号：${shipmentLabel(progress)}`,`客户：${progress.customer_name}`,`环节：${FCL_NODE_LABELS[node.node_id]}`,`待办：${node.status==='completed'?'已登记完成，请核对交接结果':node.status==='exception'?'资料或异常需要处理':'请处理本环节资料及交接'}`,`截止时间（登记时区）：${formatFclMailDate(node.deadline)}`,...extras(config,node.fields,progress.shared.eta)];
   if(internal)lines.push(`负责人：${node.assignment.responsible_id??'待配置'}`,`详情（需登录）：${origin}/console/#fcl/case/${progress.case_ref}`);
-  return {to:(internal?node.assignment.to:config.external_to)??'',cc:[...(internal?node.assignment.cc:config.external_cc)],subject:`${progress.inquiry_no} · ${FCL_NODE_LABELS[node.node_id]}`,body:lines.join('\n')};
+  return {to:(internal?node.assignment.to:config.external_to)??'',cc:[...(internal?node.assignment.cc:config.external_cc)],subject:`${shipmentLabel(progress)} · ${FCL_NODE_LABELS[node.node_id]}`,body:lines.join('\n')};
 }
 export function renderNotificationTestBody(row:FclNotificationRow,audience:'internal'|'external'){
   const time='2026-01-02T09:00:00-08:00';
   const samples={carrier:'TEST-CARRIER',vessel_voyage:'TEST-VOYAGE',booking_so:'TEST-SO',etd:time,cutoff:time,pickup_location:'合成提柜地点',appointment:time,declaration_ref:'TEST-DECLARATION',release_evidence:'synthetic:release',warehouse:'合成仓库',handover_at:time,delivery_address:'合成派送地址',signed_at:time,empty_return_at:time};
   return ['这是一封用户主动触发的合成测试邮件。','业务单号：TEST-FCL','客户：合成测试客户',`环节：${FCL_NODE_LABELS[row.node_id]}`,'待办：核对发信通道，不执行真实业务。','截止时间（登记时区）：2026-01-01 12:00 UTC+08:00',...extras(row,samples,time),audience==='internal'?'正式内部通知的详情入口需要个人账号登录。':'这是外部作业通知模板，不含内部单据或价格。'].join('\n');
+}
+
+export const FCL_STAGE_COPY={booking:'订舱已确认，请核对 SO 和船期。',pickup:'提货装柜已完成。',export_customs:'出口报关已完成放行。',shipping_documents:'运输文件已核对并交接。',canada_customs:'加拿大清关已完成放行，等待提柜安排。',devanning_storage:'货物已拆柜入仓，等待后续交接。',delivery:'派送及本单约定的还柜事项已完成。'} as const;
+export function progressCopy(nodeId:keyof typeof FCL_STAGE_COPY,action:string){return action==='complete'?FCL_STAGE_COPY[nodeId]:action==='start'?`${FCL_NODE_LABELS[nodeId]}已开始处理。`:action==='return'?'请补充本环节所需资料，我们收到后继续处理。':action==='exception'?'本环节出现异常，正在跟进处理。':action==='reopen'?'本环节已重新开启处理。':action==='skip'?'本环节已跳过。':'本环节状态已更新。';}
+export function shipmentLabel(progress:Pick<FclExecution,'inquiry_no'|'shared'> & {nodes?:FclNode[]}){
+ const booking=progress.nodes?.find(n=>n.node_id==='booking');
+ const so=booking&&'booking_so' in booking.fields?booking.fields.booking_so:'';
+ return [so||progress.inquiry_no,...progress.shared.containers.map(c=>c.container_number)].join(' / ');
 }

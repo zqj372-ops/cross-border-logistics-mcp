@@ -46,3 +46,31 @@ it('claims with proof, isolates customers and binds confirmation and acceptance 
   expect(JSON.stringify(sent)).not.toContain('cost_price');expect(JSON.stringify(sent)).toContain('2026-10-15');
  }finally{closeFixture(f);}
 });
+
+it('keeps internal progress out of customer timelines and mail while showing SO and container references',async()=>{
+ const f=await readyFixture(),config=emptyFclNotificationConfig();
+ for(const row of config.rows)row.assignment.responsible_id=receiver.identity.userId;
+ const execution=new FclExecutionService(f.caseService,{configuration:()=>config,isActive:()=>true,now:()=> '2026-10-08T12:00:00Z',onEvent:(p,e)=>mail.enqueue(p,e)});
+ const mail=new FclExecutionMailService(execution,{verifyUsers:()=>Promise.resolve('active')}),service=new FclCustomerService(execution,f.workflow,mail);
+ const customer={...other,identity:{...other.identity,email:'shipper@example.test'}};
+ try{
+ const c=service.claim(customer,{inquiry_id:f.submitted.inquiry_id,credential:f.submitted.credential},'visibility-claim-0001');
+ const offer=service.publish(receiver,{handoff:handoffRequest(f)},'visibility-publish-01');
+ service.confirm(customer,{case_ref:c.case_ref,offer_id:offer.offer_id,confirmed:true},'visibility-confirm-01');
+ service.accept(receiver,{case_ref:c.case_ref,offer_id:offer.offer_id,confirmed:true},'visibility-accept-001');
+ const before=mail.list(receiver,{case_ref:c.case_ref}).items.length;
+ const v=execution.get(receiver,{case_ref:c.case_ref})!;
+ execution.nodeAction(receiver,'exception',{contract_version:v.contract_version,case_ref:c.case_ref,expected_version:v.version,node_id:'booking',reason:'PRIVATE-INTERNAL',confirmed:true,extensions:{progress_v1:{visibility:'internal',message:''}}},'visibility-internal-01');
+ expect(service.get(customer,{case_ref:c.case_ref}).nodes.find(n=>n.id==='booking')?.status).toBe('not_started');
+ expect(JSON.stringify(service.get(customer,{case_ref:c.case_ref}))).not.toContain('PRIVATE-INTERNAL');
+ expect(mail.list(receiver,{case_ref:c.case_ref}).items.length).toBe(before);
+ const current=execution.get(receiver,{case_ref:c.case_ref})!;
+ execution.nodeAction(receiver,'skip',{contract_version:current.contract_version,case_ref:c.case_ref,expected_version:current.version,node_id:'booking',reason:'客户确认无需订舱',confirmed:true,extensions:{progress_v1:{visibility:'customer',message:'本单无需订舱。'}}},'visibility-public-001');
+ const publicView=service.get(customer,{case_ref:c.case_ref});
+ expect(publicView.nodes.find(n=>n.id==='booking')?.status).toBe('skipped');
+ expect(publicView.events.some(e=>e.message==='本单无需订舱。')).toBe(true);
+ expect(JSON.stringify(publicView)).not.toContain('PRIVATE-INTERNAL');
+ expect(mail.list(receiver,{case_ref:c.case_ref}).items.length).toBe(before+1);
+
+ }finally{closeFixture(f);}
+});

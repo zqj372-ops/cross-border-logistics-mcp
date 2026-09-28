@@ -1841,6 +1841,36 @@
         },
         "created_at": {
           "$ref": "#/$defs/__schema10"
+        },
+        "extensions": {
+          "type": "object",
+          "properties": {
+            "progress_v1": {
+              "type": "object",
+              "properties": {
+                "visibility": {
+                  "type": "string",
+                  "enum": [
+                    "customer",
+                    "internal"
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "visibility",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "progress_v1"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

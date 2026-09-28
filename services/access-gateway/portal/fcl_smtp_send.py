@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import smtplib
 import socket
@@ -44,6 +45,18 @@ def main():
         mail["Cc"] = ", ".join(recipients[1:])
     mail["Subject"] = subject
     mail.set_content(body, subtype="plain", charset="utf-8")
+    try:
+        attachments = message.get("attachments", [])
+        if len(attachments) > 5:
+            return 64
+        for item in attachments:
+            name = item["filename"]
+            if not name or any(ord(c) < 32 or c in "/\\" for c in name):
+                return 64
+            maintype, subtype = item["content_type"].split("/", 1)
+            mail.add_attachment(base64.b64decode(item["content_base64"], validate=True), maintype=maintype, subtype=subtype, filename=name)
+    except Exception:
+        return 64
     try:
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL(host, port, timeout=10, context=context) as smtp:

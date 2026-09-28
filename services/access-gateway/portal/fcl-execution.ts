@@ -1,3 +1,4 @@
+import {shipmentLabel} from './fcl-execution-mail-format';
 import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {PortalError,type PortalContext} from './contracts';
@@ -128,7 +129,7 @@ export class FclExecutionService{
   }
   private audit(ctx:PortalContext,value:FclExecution,action:FclExecution['history'][number]['action'],reason:string,node:FclNode|null=null,beforeNodes:FclNode[]=[],beforeShared:FclExecution['shared']|null=null){
     if(value.history.length>=5000)throw new PortalError('fcl_execution_history_limit_exceeded');
-    const event={event_id:randomUUID(),version:value.version,actor_id:this.actor(ctx),action,node_id:node?.node_id??null,cycle:node?.cycle??null,reason,before_nodes:structuredClone(beforeNodes),before_shared:beforeShared,notify_node_ids:node?[node.node_id]:[],created_at:this.now()};
+    const event:FclExecution['history'][number]={event_id:randomUUID(),version:value.version,actor_id:this.actor(ctx),action,node_id:node?.node_id??null,cycle:node?.cycle??null,reason,before_nodes:structuredClone(beforeNodes),before_shared:beforeShared,notify_node_ids:node?[node.node_id]:[],created_at:this.now()};
     value.history.push(event);return event;
   }
   private readback(expected:FclExecution){const actual=this.row(expected.case_ref);if(JSON.stringify(actual)!==JSON.stringify(expected))throw new PortalError('fcl_execution_readback_failed');return actual!;}
@@ -169,7 +170,7 @@ export class FclExecutionService{
     if(changed.changes!==1)throw new PortalError('version_conflict');this.remember(scope,request,value.case_ref,key);this.options.onEvent?.(value,event);return this.readback(value);
   }
   private transaction<T>(operation:()=>T){const db=this.cases.store.db;this.#guard.begin(db,'fcl_execution_readback_failed');try{const result=operation();this.#guard.commit(db);return result;}catch(error){this.#guard.rollbackOnFailure(db);throw error;}}
-  private mutate(ctx:PortalContext,action:FclExecution['history'][number]['action'],input:{case_ref:string;expected_version:number},key:string,authorize:(value:FclExecution)=>void,change:(value:FclExecution)=>{reason:string;node?:FclNode;beforeNodes?:FclNode[];beforeShared?:FclExecution['shared'];notify?:boolean;notifyNodes?:FclNode['node_id'][];force?:boolean}){
+  private mutate(ctx:PortalContext,action:FclExecution['history'][number]['action'],input:{case_ref:string;expected_version:number},key:string,authorize:(value:FclExecution)=>void,change:(value:FclExecution)=>{reason:string;node?:FclNode;beforeNodes?:FclNode[];beforeShared?:FclExecution['shared'];notify?:boolean;notifyNodes?:FclNode['node_id'][];force?:boolean;extensions?:FclExecution['history'][number]['extensions']}){
     this.actor(ctx);const result=this.transaction(()=>{
       const value=this.row(input.case_ref);if(!value)throw new PortalError('fcl_not_found');authorize(value);
       const {scope,old}=this.replay(ctx,action,input,input.case_ref,key);if(old)return value;
@@ -178,6 +179,7 @@ export class FclExecutionService{
       if(JSON.stringify(value)===before&&!changeResult.force){this.remember(scope,input,value.case_ref,key);return value;}
       value.version++;value.updated_at=this.now();value.state=value.nodes.every(terminal)?'completed':'executing';
       const event=this.audit(ctx,value,action,changeResult.reason,changeResult.node??null,changeResult.beforeNodes,changeResult.beforeShared??null);
+      if(changeResult.extensions)event.extensions=changeResult.extensions;
       if(changeResult.notifyNodes)event.notify_node_ids=changeResult.notifyNodes;
       fclExecutionSchema.parse(value);
       const written=this.cases.store.db.prepare('UPDATE fcl_case_progress SET version=?,payload=?,updated_at=? WHERE case_id=? AND version=?').run(value.version,JSON.stringify(value),value.updated_at,value.case_ref,input.expected_version);
@@ -231,7 +233,7 @@ export class FclExecutionService{
       }
       const lastSignal=value.history.slice().reverse().find(event=>event.node_id===node.node_id&&['node_exception','node_return'].includes(event.action));
       const newSignal=['exception','return'].includes(action)&&(lastSignal?.action!==`node_${action}`||lastSignal.reason!==request.reason);
-      return {reason:request.reason,node,beforeNodes,notify:true,notifyNodes:targets.length?targets:[node.node_id],force:newSignal};
+      return {reason:request.reason,node,beforeNodes,notify:true,notifyNodes:targets.length?targets:[node.node_id],force:newSignal,extensions:request.extensions};
     });
   }
   assign(ctx:PortalContext,input:unknown,key:string){const request=parse(fclExecutionNodeAssignSchema,input);return this.mutate(ctx,'node_assign',request,key,value=>this.manager(ctx,value),value=>{
@@ -270,7 +272,7 @@ export class FclExecutionService{
     if(request.cursor){try{const c=z.object({user:z.string(),state:z.string(),case_ref:z.uuid()}).strict().parse(JSON.parse(Buffer.from(request.cursor,'base64url').toString()));if(c.user!==user||c.state!==request.state)throw new Error();cursor=c.case_ref;}catch{throw new PortalError('fcl_execution_input_invalid');}}
     // SQL restricts candidate visibility before pagination; no global in-memory case scan.
     const rows=this.cases.store.db.prepare(`SELECT case_id FROM fcl_case_progress p WHERE case_id>? AND (owner_id=? OR json_extract(payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?))) AND (? NOT IN ('executing','completed') OR json_extract(payload,'$.state')=?) AND (?<>'mine' OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.status') IN ('not_started','active','exception') AND (json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?)))) ORDER BY case_id LIMIT ?`).all(cursor,user,user,user,user,request.state,request.state,request.state,user,user,request.limit+1) as {case_id:string}[];
-    const page=rows.slice(0,request.limit),items=page.map(row=>{const value=this.row(row.case_id)!;const projected=this.project(ctx,value),pending=projected.nodes.filter(node=>!terminal(node));return {case_ref:value.case_ref,inquiry_no:value.inquiry_no,customer_name:value.customer_name,route:value.route,state:value.state,coordinator_id:value.coordinator_id,pending_nodes:pending.map(node=>node.node_id),deadline:pending.map(n=>n.deadline).filter((v):v is string=>v!==null).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]??null,exception:pending.some(n=>n.status==='exception')};});
+    const page=rows.slice(0,request.limit),items=page.map(row=>{const value=this.row(row.case_id)!;const projected=this.project(ctx,value),pending=projected.nodes.filter(node=>!terminal(node));return {case_ref:value.case_ref,inquiry_no:value.inquiry_no,extensions:{shipment_v1:{label:shipmentLabel(value)}},customer_name:value.customer_name,route:value.route,state:value.state,coordinator_id:value.coordinator_id,pending_nodes:pending.map(node=>node.node_id),deadline:pending.map(n=>n.deadline).filter((v):v is string=>v!==null).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]??null,exception:pending.some(n=>n.status==='exception')};});
     return fclExecutionListOutputSchema.parse({items,next_cursor:rows.length>request.limit?Buffer.from(JSON.stringify({user,state:request.state,case_ref:page.at(-1)!.case_id})).toString('base64url'):null});
   }
   private workspaceCandidates(ctx:PortalContext,input:unknown){
@@ -293,7 +295,7 @@ export class FclExecutionService{
       if(!this.active(row.owner_id))continue;
       const execution=this.row(row.case_id);
       let item:z.infer<typeof fclWorkspaceListOutputSchema>['items'][number];
-      if(execution){const view=this.project(ctx,execution),pending=view.nodes.filter(n=>!terminal(n));if(request.mine&&!pending.some(n=>[n.assignment.responsible_id,...n.assignment.collaborator_ids].includes(user)))continue;item={case_ref:row.case_id,inquiry_no:view.inquiry_no,customer_name:view.customer_name,route:view.route,phase:view.state,coordinator_id:view.coordinator_id,pending_nodes:pending.map(n=>n.node_id),deadline:pending.map(n=>n.deadline).filter((v):v is string=>v!==null).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]??null,exception:pending.some(n=>n.status==='exception')};}
+      if(execution){const view=this.project(ctx,execution),pending=view.nodes.filter(n=>!terminal(n));if(request.mine&&!pending.some(n=>[n.assignment.responsible_id,...n.assignment.collaborator_ids].includes(user)))continue;item={case_ref:row.case_id,inquiry_no:view.inquiry_no,extensions:{shipment_v1:{label:shipmentLabel(execution)}},customer_name:view.customer_name,route:view.route,phase:view.state,coordinator_id:view.coordinator_id,pending_nodes:pending.map(n=>n.node_id),deadline:pending.map(n=>n.deadline).filter((v):v is string=>v!==null).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]??null,exception:pending.some(n=>n.status==='exception')};}
       else{const view=this.cases.getFclCase(ctx,row.case_id),input=view.current_input,awaiting=isAwaiting(row.case_id);item={case_ref:row.case_id,inquiry_no:view.inquiry_no,customer_name:input.contact.company||input.contact.name,route:[input.pol,input.pod,input.final_destination].filter((place,index,places)=>place&&place!==places[index-1]).join(' → '),phase:awaiting?'awaiting_confirmation':'inquiry_quote',coordinator_id:user,pending_nodes:[awaiting?'customer_followup':view.review_context.review_required?'intake':'quote'],deadline:null,exception:view.case_status==='needs_input'};}
       if(request.phase==='all'||item.phase===request.phase)items.push(item);
     }
