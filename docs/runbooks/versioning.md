@@ -1,6 +1,6 @@
 # 版本号规则
 
-当前对外版本：`0.013`，对应内部 npm semver `0.0.13`。本次扩展长荣、SM Line、阳明公开船期采集，页面按服务端能力展示船公司。生产开放仍受部署 allowlist 和目标环境验证限制；MSK 浏览器 CLI 与 OOCL PDF 探测的本地结果不代表生产支持。
+当前对外版本：`0.014`，对应内部 npm semver `0.0.14`。本次修复中文品名查询美加官方税目候选的匹配路径，并显示船期当前工作区可查询的来源数量。关税仍为官方原文参考和待复核候选；船期开放仍受部署权限和目标环境验证限制。
 
 ## 递增规则
 
@@ -18,8 +18,8 @@ npm 不允许 `0.002` 这种带前导零的 semver，因此版本同时保留两
 
 | 用途 | 当前值 | 下一版 | 权威位置 |
 | --- | --- | --- | --- |
-| 对外产品版本 | `0.013` | `0.014` | `src/logistics_mcp/version.ts` |
-| npm 包版本 | `0.0.13` | `0.0.14` | `package.json`、`deploy/cli/package.json` |
+| 对外产品版本 | `0.014` | `0.015` | `src/logistics_mcp/version.ts` |
+| npm 包版本 | `0.0.14` | `0.0.15` | `package.json`、`deploy/cli/package.json` |
 
 官网、CLI `--version`、MCP `serverInfo.version` 和面向用户的文档使用对外产品版本。npm tarball 的包元数据使用合法 semver；发布下载文件可以使用对外版本命名。
 

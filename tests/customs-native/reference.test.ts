@@ -11,15 +11,42 @@ import { dataset } from './publication-fixture';
 import { createCustomsNameTranslator } from '../../services/customs-native/name-translation';
 const dirs:string[]=[];
 afterEach(()=>{for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
-function fixture(longName=false){
+function fixture(longName=false,nomenclature=dataset.nomenclature){
  const dir=mkdtempSync(join(tmpdir(),'customs-reference-'));dirs.push(dir);const path=join(dir,'data.sqlite'),db=new DatabaseSync(path);
  const insert=(name:string,rows:Record<string,unknown>[])=>{const keys=Object.keys(rows[0]!);db.exec(`CREATE TABLE ${name} (${keys.map(k=>`"${k}" ${typeof rows[0]![k]==='number'?'INTEGER':'TEXT'}`).join(',')})`);for(const row of rows)db.prepare(`INSERT INTO ${name} VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k] as SQLInputValue));};
  insert('source_release',dataset.sources.map(s=>({...s,status:'staged'})));
  const strip=(row:Record<string,unknown>)=>Object.fromEntries(Object.entries(row).filter(([k])=>k==='release_id'||!k.startsWith('release_')));
- insert('nomenclature',dataset.nomenclature.map(row=>strip(longName?{...row,description_original:'Synthetic long source description '.repeat(1000)}:row)));insert('tariff_rule',dataset.tariffs.map(strip));db.close();
+ insert('nomenclature',nomenclature.map(row=>strip(longName?{...row,description_original:'Synthetic long source description '.repeat(1000)}:row)));insert('tariff_rule',dataset.tariffs.map(strip));db.close();
  const config={snapshotFile:path,sha256:createHash('sha256').update(readFileSync(path)).digest('hex')};return{config,client:createCustomsReferenceClient(config)};
 }
 const request={input:{query:'732393',ruleDate:'2026-09-27',codeCountry:'CN',attributes:{originCountry:'CN'}},actor:{type:'service' as const,id:'fixture'},requestId:'req_reference_0001'};
+it('finds destination-country candidates from Chinese official names and keeps each country’s own rates and evidence',async()=>{
+ const {client}=fixture();
+ for(const codeCountry of ['CA','US']){
+  const result=await client.query({...request,input:{...request.input,query:'保温杯',codeCountry}});
+  expect(result.status).toBe('manual_review');
+  const data=customsReferenceData.parse(result.data);
+  expect(new Set(data.candidates.map(c=>c.item.country))).toEqual(new Set(['CN','US','CA']));
+  const destination=data.candidates.find(c=>c.item.country===codeCountry)!;
+  expect(destination.item.description_original).toBe('Vacuum flasks and vessels');
+  expect(destination.rates.length).toBeGreaterThan(0);
+  expect(destination.rates.every(rate=>rate.country===codeCountry)).toBe(true);
+  expect(data.warnings.join(' ')).toContain('中文品名');
+  expect(data.formal_ready).toBe(false);
+ }
+});
+it('does not invent Chinese aliases, discard query terms, use expired anchors, or override an explicit HS selection',async()=>{
+ const {client}=fixture();
+ for(const query of ['不存在的中文商品','保温杯 未知条件']){
+  expect(await client.query({...request,input:{...request.input,query,codeCountry:'CA'}})).toMatchObject({status:'manual_review',data:{candidates:[]}});
+ }
+ const english=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'Vacuum',codeCountry:'CA'}})).data);
+ expect(english.candidates.map(c=>c.item.country)).toEqual(['CA']);
+ const selected=customsReferenceData.parse((await client.query({...request,input:{...request.input,query:'保温杯',codeCountry:'CA',selectedHs6:'732393'}})).data);
+ expect(selected.candidates.every(c=>c.item.code.startsWith('732393'))).toBe(true);
+ const expired=fixture(false,dataset.nomenclature.map(row=>row.country==='CN'?{...row,effective_to:'2026-01-01'}:row));
+ expect(await expired.client.query({...request,input:{...request.input,query:'保温杯',codeCountry:'CA'}})).toMatchObject({status:'manual_review',data:{candidates:[]}});
+});
 it('keeps unusually long official source text readable when it exceeds the translation limit',async()=>{
  const {config}=fixture(true),fetchImpl=vi.fn<typeof fetch>();
  const result=await createCustomsReferenceClient(config,createCustomsNameTranslator({apiKey:'fixture-secret',model:'fixture-model'},fetchImpl)).query(request);

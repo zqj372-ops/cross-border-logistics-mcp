@@ -51,8 +51,9 @@ export function createMaritimeWorkspace({api,mutate,esc,head,note,icon,model,rer
     const carriers=live.carriers?.carriers||[];
     const fallback=[{id:'ONE',display_name:'Ocean Network Express',capability_status:null},{id:'COSCO',display_name:'COSCO SHIPPING Lines',capability_status:null}];
     const visible=carriers.length?carriers:fallback;
-    const disabled=!access.canQuery||!carriers.some(c=>c.capability_status==='live_verified');
-    return `<form class="panel maritime-query schedule-query" data-form="maritime-live-query"><h2 class="schedule-form-title">点到点船期</h2><div class="form-error" role="alert" hidden></div><div class="schedule-route-search">
+    const available=carriers.filter(c=>c.capability_status==='live_verified');
+    const disabled=!access.canQuery||!available.length;
+    return `<form class="panel maritime-query schedule-query" data-form="maritime-live-query"><h2 class="schedule-form-title">点到点船期</h2>${access.canQuery&&live.carriers?`<p class="form-fineprint" data-schedule-coverage>当前工作区可查询 ${available.length} 家船公司 · 仅列出已开通的来源，其他来源尚未在此工作区开放。</p>`:''}<div class="form-error" role="alert" hidden></div><div class="schedule-route-search">
 ${locationPicker.field('origin',live.originText,live.originCountry)}
 <span class="schedule-search-arrow" aria-hidden="true">→</span>
 ${locationPicker.field('destination',live.destinationText,live.destinationCountry)}

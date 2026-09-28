@@ -27,6 +27,13 @@ it('shows the selected country as an import brief, groups bilingual codes and ne
 it('does not substitute another country when the requested country has no match',()=>{
  const html=renderCustomsReference(ui,reference([item('CN','1234560000','zh-CN','合成商品')]),{input:{query:'missing',codeCountry:'US'}});
  expect(html).toContain('美国暂无匹配候选');expect(html).not.toContain('data-customs-brief');
+ expect(html).toContain('商品名关键词');expect(html).not.toContain('用该地区的原文品名检索');
+});
+it('explains Chinese HS6 candidate lookup without treating a Chinese name as a destination-country translation',()=>{
+ const html=renderCustomsReference(ui,reference([item('CN','8470100000','zh-CN','合成计算器'),item('CA','8470100000','en','Synthetic calculator')]),{input:{query:'计算器',codeCountry:'CA'}});
+ expect(html).toContain('中文税目关联的 HS6 候选');
+ expect(html).toContain('中文：译文暂不可用');
+ expect(html).toContain('候选 · 待复核');
 });
 it('displays corresponding Chinese and English names with translation provenance, separate from a customer draft',()=>{
  const candidate=item('US','1234567890','en','Other');

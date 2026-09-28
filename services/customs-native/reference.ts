@@ -50,11 +50,16 @@ export function createCustomsReferenceClient(config: z.infer<typeof customsRefer
       const candidates:z.infer<typeof customsReferenceData>['candidates']=[];
       const ids=sources.map(s=>s.id),inIds=ids.map(()=>'?').join(',');
       const eligible=`release_id IN (${inIds}) AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)`;
+      const terms=parsed.data.query.normalize('NFKC').trim().split(/\s+/u).slice(0,8);
+      const nameSearch=terms.map(()=>"instr(lower(description_original),lower(?))>0").join(' AND ');
+      const chineseQuery=!code&&/\p{Script=Han}/u.test(parsed.data.query);
+      // Use official Chinese names as search anchors, never as a foreign classification or translation.
+      const chineseHs6=chineseQuery?db.prepare(`SELECT DISTINCT substr(code,1,6) AS hs6 FROM nomenclature WHERE country='CN' AND language LIKE 'zh%' AND length(code)>=6 AND ${eligible} AND (${nameSearch}) ORDER BY hs6 LIMIT 9`).all(...ids,ruleDate,ruleDate,...terms).map(row=>String(row.hs6)):[];
       for(const country of ['CN','US','CA']) {
-        if(!code&&codeCountry&&codeCountry!==country)continue;
-        const terms=parsed.data.query.normalize('NFKC').trim().split(/\s+/u).slice(0,8);
-        const search=code?(code.length>6&&codeCountry===country?'code=?':"substr(code,1,?)=?"):terms.map(()=>"instr(lower(description_original),lower(?))>0").join(' AND ');
-        const lookup=code?(code.length>6&&codeCountry===country?[code]:[Math.min(code.length,6),code.slice(0,6)]):terms;
+        if(!code&&!chineseQuery&&codeCountry&&codeCountry!==country)continue;
+        const crossCountry=country!=='CN'&&chineseHs6.length>0;
+        const search=code?(code.length>6&&codeCountry===country?'code=?':"substr(code,1,?)=?"):crossCountry?`substr(code,1,6) IN (${chineseHs6.map(()=>'?').join(',')})`:nameSearch;
+        const lookup=code?(code.length>6&&codeCountry===country?[code]:[Math.min(code.length,6),code.slice(0,6)]):crossCountry?chineseHs6:terms;
         const rows=db.prepare(`SELECT * FROM nomenclature WHERE country=? AND ${eligible} AND (${search}) ORDER BY is_declarable DESC,code,language LIMIT 9`).all(country,...ids,ruleDate,ruleDate,...lookup);
         for(const row of rows){
           const item=NomenclatureRowSchema.parse(normalize(row));
@@ -79,6 +84,7 @@ export function createCustomsReferenceClient(config: z.infer<typeof customsRefer
         '税率按所属税目原文展示；父级规则、优惠待遇、原产地及商品条件仍须核对。',
         '附加税、贸易救济、排除条款、许可证、汇率和总税费尚待核验；未展示不代表不适用或税率为零。',
         '各地区最多展示 9 条候选，请用更完整税号或法律品名缩小范围；其他地区同 HS 前缀仅供对照。',
+        ...(chineseQuery?['中文品名匹配中国官方税目，再以 HS6 检索各地区候选；跨地区同前缀不代表归类相同，须核对目的国细分品名与商品条件。']:[]),
       ]});
       return {schema_version:customsReferenceVersion,status:'manual_review',data,reason_codes:['customs_reference_only']};
     } catch { return fail('customs_reference_invalid'); } finally { db?.close(); }

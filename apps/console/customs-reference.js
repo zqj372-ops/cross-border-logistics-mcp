@@ -72,7 +72,7 @@ export function renderCustomsReference(ui, data, options = {}) {
   const group = local.find(items => items[0].item.code === code) || local[0];
   const tabs = `<nav class="customs-country-tabs" aria-label="结果地区">${['CA','US','CN'].map(key => `<button type="button" class="button small" data-action="business-customs-country" data-country="${key}" aria-pressed="${key === country}">${countries[key]}${key === 'CN' ? '税号资料' : '进口'} <span>${[...groups.values()].filter(items => items[0].item.country === key).length}</span></button>`).join('')}</nav>`;
   let content;
-  if (!group) content = `<div class="empty-state"><h3>${esc(countries[country])}暂无匹配候选</h3><p>请核对税号地区，或用该地区的原文品名检索。未匹配不表示没有进口限制或税费。</p></div>`;
+  if (!group) content = `<div class="empty-state"><h3>${esc(countries[country])}暂无匹配候选</h3><p>请尝试较短的商品名关键词，或输入 HS 税号；部分商品俗称尚未覆盖。未匹配不表示没有进口限制或税费。</p></div>`;
   else {
     const current = group.find(entry => entry.item.language.startsWith(country === 'CN' ? 'zh' : 'en')) || group[0];
     const { item } = current;
@@ -83,7 +83,7 @@ export function renderCustomsReference(ui, data, options = {}) {
       displayCode: item.display_code, status: 'candidate', isDeclarable: group.every(entry => Boolean(entry.item.is_declarable)),
       legalNames: [...group.map(entry => ({language:entry.item.language,text:namePath(entry)})),...(current.name_translation ? [current.name_translation] : [])],
       nameTranslationLanguage: current.name_translation?.language,
-      classificationReason: item.code === input.query?.replace(/[.\s]/gu, '') && input.codeCountry === country ? '与所填税号精确匹配；商品归类适用性仍待复核。' : `当前查看的候选，按编码顺序展示，不代表最佳归类。${country !== input.codeCountry ? '跨地区同 HS 前缀仅供对照，不代表归类等同。' : ''}`,
+      classificationReason: item.code === input.query?.replace(/[.\s]/gu, '') && input.codeCountry === country ? '与所填税号精确匹配；商品归类适用性仍待复核。' : country !== 'CN' && !input.selectedHs6 && /\p{Script=Han}/u.test(input.query || '') ? '中文税目关联的 HS6 候选，按编码顺序展示；须核对目的国细分品名与商品条件，不代表归类等同。' : `当前查看的候选，按编码顺序展示，不代表最佳归类。${country !== input.codeCountry ? '跨地区同 HS 前缀仅供对照，不代表归类等同。' : ''}`,
       rates: rawRates.map(rate => ({label:measureLabels[rate.measure_type] || rate.measure_type,treatment:rate.treatment,displayValue:rate.rate_expression_raw,conditionText:rate.condition_text_raw,confirmed:false,scope:`所属税目 ${rate.code}`})),
     };
     const sourceText = [...new Set(group.map(entry => {const source=sources.get(entry.item.release_id);return source ? `${source.authority} · ${source.edition}/${source.revision} · 抓取 ${source.retrieved_at}` : '来源版本待核对';}))].join('；');

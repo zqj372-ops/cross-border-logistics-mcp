@@ -40,6 +40,8 @@ describe('customer schedule presentation', () => {
     expect(html).toMatch(/<option value="SML"[^>]*>SML/);
     expect(html).toMatch(/<option value="EVERGREEN"[^>]*>EMC/);
     expect(html).toMatch(/<option value="YML"[^>]*disabled[^>]*>YML.*待验证/);
+    expect(html).toContain('当前工作区可查询 2 家船公司');
+    expect(html).toContain('仅列出已开通的来源');
   });
   it('shows voyage business fields without rendering internal metadata or raw warnings', async () => {
     const { html } = await render(result());
