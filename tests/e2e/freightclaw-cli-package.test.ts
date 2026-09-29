@@ -62,7 +62,7 @@ describe("standalone CLI installation", () => {
     const listed = JSON.parse((await installed(["commands", "--json"])).stdout) as { commands: unknown[] };
     expect(listed.commands).toHaveLength(9);
     const workspaceCommands=(await installed(["workspace","commands","--json"])).stdout;
-    expect(JSON.parse(workspaceCommands)).toHaveLength(160);
+    expect(JSON.parse(workspaceCommands)).toHaveLength(164);
     expect(workspaceCommands).toContain("fcl case-create");
     expect(workspaceCommands).toContain("schedules live-search");
     expect(workspaceCommands).toContain("fcl document-export");
@@ -70,6 +70,7 @@ describe("standalone CLI installation", () => {
     expect(workspaceCommands).toContain("fcl execution-documents-preview");
     expect(workspaceCommands).toContain("fcl execution-documents-send");
     expect(workspaceCommands).toContain("fcl notification-v2-save");
+    for(const action of ["smtp-get","smtp-save","smtp-test","smtp-activate"])expect(workspaceCommands).toContain(`fcl ${action}`);
     expect(workspaceCommands).toContain("fcl inquiry submit");
     expect((await installed(["workspace","schema","schedules","live-search"])).code).toBe(0);
     expect((await installed(["workspace","schema","fcl","document-export"])).code).toBe(0);
