@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="350" viewBox="0 0 1120 350" role="img" aria-labelledby="title desc">
+<title id="title">一票业务，从询价到签收</title><desc id="desc">客户与运营分开入口，报价、文件和进度留在同一票业务中。。客户只看公开进度  ·  内部协作单独记录  ·  关键节点按配置发送邮件</desc>
+<rect width="1120" height="350" rx="20" fill="#f5f7fb"/>
+<g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,Microsoft YaHei,sans-serif">
+<text x="48" y="57" fill="#172238" font-size="28" font-weight="700">一票业务，从询价到签收</text>
+<text x="48" y="88" fill="#5c687e" font-size="16">客户与运营分开入口，报价、文件和进度留在同一票业务中。</text>
+<rect x="48.0" y="122" width="241.0" height="138" rx="12" fill="white" stroke="#dbe2ee"/>
+<text x="68.0" y="154" fill="#2459da" font-size="13" font-weight="700">01</text>
+<text x="68.0" y="184" fill="#172238" font-size="22" font-weight="600">提交需求</text>
+<text x="68.0" y="214" fill="#5c687e" font-size="15">客户填写运输资料</text>
+<text x="68.0" y="237" fill="#5c687e" font-size="15">不确定的信息继续补充</text>
+<rect x="309.0" y="122" width="241.0" height="138" rx="12" fill="white" stroke="#dbe2ee"/>
+<text x="329.0" y="154" fill="#2459da" font-size="13" font-weight="700">02</text>
+<text x="329.0" y="184" fill="#172238" font-size="22" font-weight="600">核对报价</text>
+<text x="329.0" y="214" fill="#5c687e" font-size="15">运营选价格、套费用</text>
+<text x="329.0" y="237" fill="#5c687e" font-size="15">客户确认报价并下单</text>
+<rect x="570.0" y="122" width="241.0" height="138" rx="12" fill="white" stroke="#dbe2ee"/>
+<text x="590.0" y="154" fill="#2459da" font-size="13" font-weight="700">03</text>
+<text x="590.0" y="184" fill="#172238" font-size="22" font-weight="600">接单执行</text>
+<text x="590.0" y="214" fill="#5c687e" font-size="15">运营接单并分配节点</text>
+<text x="590.0" y="237" fill="#5c687e" font-size="15">用 SO 和柜号跟进</text>
+<rect x="831.0" y="122" width="241.0" height="138" rx="12" fill="white" stroke="#dbe2ee"/>
+<text x="851.0" y="154" fill="#2459da" font-size="13" font-weight="700">04</text>
+<text x="851.0" y="184" fill="#172238" font-size="22" font-weight="600">进度与完成</text>
+<text x="851.0" y="214" fill="#5c687e" font-size="15">清关、提柜、派送</text>
+<text x="851.0" y="237" fill="#5c687e" font-size="15">保留文件和流转记录</text>
+<text x="48" y="307" fill="#5c687e" font-size="16">客户只看公开进度  ·  内部协作单独记录  ·  关键节点按配置发送邮件</text>
+</g></svg>

@@ -1,26 +1,24 @@
-# Self-hosted Authentik candidate
+# Authentik 身份服务候选
 
-This stack replaces the planned Cloudflare Access administrator login with a dedicated Authentik
-instance on the existing Oracle VM. It does not replace the current Cloudflare DNS/proxy path and it
-does not make the Access Gateway production-eligible.
+[文档中心](../../docs/README.md) / 身份部署
 
-## Boundary
+本目录保留在既有 Oracle 主机运行专用 Authentik 管理登录的候选配置。不替换 Cloudflare DNS/代理，也不使 Access Gateway 自动获得生产资格。
 
-- Authentik is pinned to `2026.8.0` and PostgreSQL to `16-alpine`; both image references also include
-  the immutable registry digests verified on the target when this candidate was created.
-- PostgreSQL is private to the Authentik network. Only Authentik HTTP is published, on
-  `127.0.0.1:19000`, for the initial SSH-tunnel setup and local diagnostics.
-- The worker has no Docker socket. The embedded proxy outpost is declared by a reviewed blueprint.
-- Host secret files live under `secrets/`, are generated on the target, and must remain owned by the
-  Authentik runtime UID/GID `1000:1000` with mode `0400`.
-- The host `blueprints/` directory must be `root:1000` mode `0750` and blueprint files `root:1000`
-  mode `0640`, so the non-root Authentik worker can discover them without making them world-readable.
-- The application is bound to the built-in `authentik Admins` group and emits fixed, short-lived
-  management claims. The Gateway must still verify RS256, issuer, audience, time and the exact
-  management tenant.
-- Quote, customs, Freightcom and every business write operation remain absent from `t0-v1`.
+## 运行边界
 
-## Target layout
+| 项目 | 要求 |
+| --- | --- |
+| 镜像 | 候选固定 Authentik 2026.8.0、PostgreSQL 16-alpine，并绑定当时核验的不可变 digest |
+| 数据库 | 仅 Authentik 私有网络可见 |
+| HTTP | 只发布 127.0.0.1:19000，用于 SSH 隧道与诊断 |
+| Worker | 不挂 Docker socket；embedded outpost 由已审查 blueprint 声明 |
+| secrets | 在目标机生成；1000:1000，0400 |
+| blueprints 目录 / 文件 | root:1000，目录 0750，文件 0640 |
+| 管理员 | 绑定 authentik Admins，签发短期管理 claims；Gateway 仍验证 RS256、issuer、audience、时间和精确 management tenant |
+
+T0 中不包含报价、关务、Freightcom 或业务写操作。
+
+## 目录与首次配置
 
 ```text
 /data/logistics-mcp/infra/authentik/
@@ -34,23 +32,18 @@ does not make the Access Gateway production-eligible.
   state/templates/
 ```
 
-The first setup page is reached only through an SSH tunnel:
+在有权限的本机建立隧道：
 
 ```bash
 ssh -N -L 19000:127.0.0.1:19000 oracle-new
 ```
 
-Then open `http://127.0.0.1:19000/if/flow/initial-setup/` and set the `akadmin` password. Do not put
-that password in chat, repository files, shell history or the Gateway environment.
+打开 `http://127.0.0.1:19000/if/flow/initial-setup/` 设置 akadmin 密码。密码只在页面输入，不进入聊天、仓库、shell 历史或 Gateway 环境。
 
-Before exposing the console, verify the blueprint status, the provider discovery/JWKS endpoint,
-RS256, exact claims, the administrator group binding and the embedded outpost. Nginx must protect
-only `/admin`, `/access-console` and `/admin/api/v1/access/`; MCP, token exchange, JWKS and the public
-homepage keep their existing boundaries.
+对外开放前检查 blueprint、discovery/JWKS、签名、精确 claims、管理员组和 outpost。对应代理只保护 /admin、/access-console、/admin/api/v1/access/；MCP、换票、JWKS 和公开首页保持各自边界。
 
-## Backup and rollback
+## 备份与回滚
 
-Back up PostgreSQL with `pg_dump` and archive the blueprint/config references before every change.
-The same-host backup is only a single-node recovery copy; it is not an off-host disaster-recovery
-copy. Rollback restores the previous Nginx file, restarts only the Access Gateway if its IdP settings
-changed, and leaves Authentik PostgreSQL/data intact for incident evidence.
+变更前用 pg_dump 备份 PostgreSQL，并保存 blueprint/config 引用。同机备份只是单节点恢复副本，不是异地灾备。
+
+回滚恢复旧 Nginx；只有 Gateway IdP 配置变更才重启 Gateway。保留 Authentik 数据库和文件，便于恢复与排障。

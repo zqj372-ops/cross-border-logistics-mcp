@@ -6,7 +6,7 @@ version: 2026-09-06.v1
 
 # FreightClaw 接入指南
 
-你正在帮助用户接入 FreightClaw。先确认用户需要的业务，复用已有的 Key 和客户端配置。普通业务人员可以直接使用 [业务工作台](https://www.freightclaw.net/console/#workbench)，不需要创建 API Key。
+你正在帮助用户接入 FreightClaw。先确认用户需要的业务，复用已有的 Key 和客户端配置。普通业务人员可直接使用客户中心或运营后台，不需要创建 API Key。
 
 ## 接入准备
 
@@ -17,7 +17,7 @@ version: 2026-09-06.v1
 
 API 根地址为 `https://www.freightclaw.net`，业务调用无需浏览器登录状态。
 
-## 一枚 Key 直接调用 REST
+## REST：使用已授权的应用 Key
 
 所有下列固定路由支持请求头：
 
@@ -48,43 +48,21 @@ Content-Type: application/json
 
 把 `input` 替换为文档规定的实际业务输入；空对象不代表有效查询。授权精确到操作，不能通过 Key 越过应用、成员、企业、来源服务或审核限制。企业、操作者、上游地址由服务端确定，不要添加到业务输入中。
 
-以下是读取 Agent 规范的最小只读调用，要求 Key 已启用 `system.agent_context.get`：
+## 先用 CLI 验证
 
-```python
-import json
-import os
-from urllib.request import Request, HTTPRedirectHandler, build_opener
-from urllib.error import HTTPError
+CLI 复用 OpenAPI 的输入与响应校验。安装后先查看本地命令和 Schema：
 
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise HTTPError(req.full_url, code, "Redirect refused", headers, fp)
-
-request = Request(
-    "https://www.freightclaw.net/api/v2/tools/system.agent_context.get",
-    data=json.dumps({"profile_id": "runtime-caller"}).encode(),
-    headers={
-        "Authorization": "ApiKey " + os.environ["FREIGHTCLAW_API_KEY"],
-        "Content-Type": "application/json",
-    },
-    method="POST",
-)
-try:
-    response = build_opener(NoRedirect()).open(request, timeout=45)
-except HTTPError as response_error:
-    response = response_error
-with response:
-    result = json.load(response)
-print(json.dumps({
-    "status": result.get("status"),
-    "request_id": result.get("request_id"),
-    "reason_codes": result.get("reason_codes", []),
-}, ensure_ascii=False))
+```sh
+freightclaw commands
+freightclaw schema agent context
+freightclaw agent context --input context.json --json
 ```
 
-`runtime-caller` 是调用方 profile。若当前部署未提供该 profile，保留接口返回的错误并核对部署标准包，不能将失败解释为调用成功。
+最后一条需要已授权的应用 Key；`context.json` 可使用 `{"profile_id":"runtime-caller"}`。凭证通过私有文件或环境注入。该 profile 不存在时保留错误，核对部署标准包，不把失败当成功。
 
-## MCP 客户端
+普通人员处理整柜业务使用[客户中心](https://www.freightclaw.net/customer/)或[运营后台](https://www.freightclaw.net/ops/)。人员 CLI 另走[浏览器确认登录](workspace-cli.md)，不复用应用 Key。
+
+## MCP：先换取短期令牌
 
 MCP 入口：`https://www.freightclaw.net/mcp`，使用 Streamable HTTP。
 
