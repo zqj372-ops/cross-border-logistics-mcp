@@ -670,7 +670,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (!quoteView) return '';
     const current = documentView?.quote_binding?.quote_ref === quoteView.quote_ref ? documentView.customer_input : null;
     const draft = documentDisplayDraft || current || {
-      quote_no: `FCL-${detail.inquiry_no}`,
+      quote_no: detail.inquiry_no,
       quote_date: model().session?.fcl_capability?.business_date || new Date().toISOString().slice(0, 10),
       valid_until: '',
       remark: null,
@@ -1116,7 +1116,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
         expected_case_version: detail.case_version,
         expected_customer_supplement_ref: detail.review_context.latest_customer_supplement_ref,
         expected_config_version: configView?.version ?? 0,
-        quote_no: display.quote_no || `FCL-${detail.inquiry_no}`,
+        quote_no: display.quote_no || detail.inquiry_no,
         quote_date: display.quote_date || model().session?.fcl_capability?.business_date || new Date().toISOString().slice(0, 10),
         valid_until: display.valid_until || '',
         remark: display.remark ?? null,
