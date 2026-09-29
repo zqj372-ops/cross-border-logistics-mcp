@@ -17,7 +17,7 @@
 
 ## MCP T0：固定范围
 
-必须显式设置 `MCP_DATA_MODE=production` 和 `MCP_RUNTIME_PROFILE=t0-v1`。只注册：
+必须显式设置 `MCP_DATA_MODE=production` 和 `MCP_RUNTIME_PROFILE=t0-v1`。只注册以下 3 个工具：
 
 ```text
 cargo.calculate
@@ -74,7 +74,7 @@ ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS=<optional-exact-sub>[,<optional-exact-sub>
 ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS=900
 ```
 
-必须匹配精确 email；配置 sub 时两者都匹配。拒绝没有用户 email/sub 的 service token；不依赖可能截断的 group 列表作为唯一授权。缺 IdP 参数、映射或密钥健康检查时不可用。目标 Access 应用、MFA、角色归属和真实登录仍须验收。
+必须命中显式 email 映射，精确匹配 email；配置 sub 时两者都匹配。拒绝没有用户 email/sub 的 service token；不依赖可能截断的 group 列表作为唯一授权。缺 IdP 参数、映射或密钥健康检查时不可用。目标 Access 应用、MFA、角色归属和真实登录仍须验收。
 
 ## 状态与数据库
 
@@ -92,7 +92,7 @@ T0 Runtime 的 SQLite 不等于 Gateway 生产凭证权威库。Gateway 候选�
 
 v1/v2 首次迁移 v3 时，显式提供真实旧版本 ACCESS_GATEWAY_LEGACY_PEPPER_VERSION，且 keyring 已有对应材料；不猜测、不重标旧 hash。迁移、备份、旧 Key exchange 读回后才能移除参数。本地 keyring 不替代 KMS/Secret Manager，production_eligible 仍为 false。
 
-## 就绪与发布检查
+## 就绪与发布检查（health / readiness）
 
 | 检查 | 能证明什么 |
 | --- | --- |
@@ -100,6 +100,8 @@ v1/v2 首次迁移 v3 时，显式提供真实旧版本 ACCESS_GATEWAY_LEGACY_PE
 | `/readyz` | profile、目录、Agent Pack、JWKS、数据库审计/幂等/会话及关闭状态；失败返回非 2xx |
 | 业务来源查询 | 该来源的状态，不能从 T0 就绪推断 |
 | 用户验收 | 实际身份下的业务操作及读回 |
+
+RiskCustoms `ready=false` 不影响 T0 readiness，因为关务模块未注册；它仍应在对应业务接口保留不可用状态。
 
 Compose 使用 readyz；fixture token、长期 Key verifier、缺标准包或目录漂移不能进入 production ready。
 
