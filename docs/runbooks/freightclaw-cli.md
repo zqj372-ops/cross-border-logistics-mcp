@@ -1,12 +1,10 @@
-# FreightClaw CLI 交付与验证
+# CLI 构建与交付
 
-版本：0.021。入口为 `deploy/cli`，二进制命令为 `freightclaw`。这是现有固定 REST 路由的客户端，适用已接受的 [统一应用 Key 合同](../rfcs/2026-09-06-unified-application-key-v1.md)；没有新增服务端模块、工具合同、身份或业务写权限。
+[文档中心](../README.md) / CLI 发布
 
-使用方法、命令表、输入示例、退出码和凭证方式见 [CLI 使用说明](../../deploy/cli/README.md)。当前通过 npm tarball 交付，未发布到公共 npm registry。此客户端发布无需重启 Portal、迁移数据库或改动来源服务。
+入口 `deploy/cli`，命令 `freightclaw`。CLI 调用既有接口，不新增工具合同或业务权限。当前产品版本取 `package.json` 的 `freightclawVersion`，npm 版本取 `version`。
 
-新用户可先阅读 [CLI 图文使用指南](freightclaw-cli-illustrated.md)。指南附有四张实际运行记录截图，分别说明命令总览、线上就绪检查、本机输入校验和本机来源不可用演示；图片的原始输出及出处随文档保存。
-
-## 构建与验证
+## 构建与检查
 
 ```sh
 npm ci
@@ -20,24 +18,31 @@ npm run validate:schemas
 git diff --check
 ```
 
-CLI 请求/响应校验直接复用 `apps/console/openapi.json` 的已发布 Schema；没有手写第二份业务合同。T0 统一包络额外限定为当前命令的货物或装柜结果类型。类型、版本或状态不一致时返回本地协议错误；不会猜测修复数据。
+发布还需全量相关测试和 CI。CLI 直接复用 `apps/console/openapi.json`，不手写第二份业务合同。测试使用合成数据、本机 HTTP 和临时安装前缀，覆盖输入、状态、大小、超时、重定向、凭证保护和独立安装。
 
-完整集成测试使用合成数据及本机 HTTP 服务，覆盖应用 Key 的固定路由、九条输入 Schema、业务状态、错误合同、流式响应大小、超时、重定向、凭证回显保护和安装后独立运行。安装测试在临时目录构建 tarball，再安装到独立前缀；不会写入用户全局安装。
-
-发布前运行仓库全量测试和现有 CI。CI 继续校验服务端构建、Schema、镜像和共享数据库，不把客户端 fixture 成功当作真实客户业务验收。Mac 本机与 Linux CI 的结果分别记录；没有 Windows 实机验收时不得宣称 Windows 已验证。
-
-## 打包与安装
+## 交付
 
 ```sh
 npm run build:cli
 npm pack ./dist/cli
-npm install --global /absolute/path/freightclaw-cli-0.021.tgz
+```
+
+以 `npm pack` 实际输出的文件名为准，记录包哈希与版本，再通过既有发布流程提供下载。用户可安装经过核验的包：
+
+```sh
+npm install --global /absolute/path/to/verified-package.tgz
 freightclaw --version
 freightclaw commands --json
 freightclaw schema customs query --json
 freightclaw status --json
 ```
 
-`status` 只访问 Portal 公共就绪接口且不读取 API Key；真实账号调用应由已开通服务的应用提供 Key。保持原服务授权及正式数据就绪要求。现有来源部署及数据限制见 [2026-09-07 关务历史部署记录](riskcustoms-history-deployment-2026-09-07.md)。
+`status` 只检查 Portal，不读取 API Key。实际业务要用已授权身份验证；fixture 成功不证明正式来源或生产调用成功。分别记录 macOS、Linux 的验证，没有 Windows 实机记录就不宣称已验证。
 
-回滚只需重新安装已验证的旧 tarball；初次交付可用 `npm uninstall --global @freightclaw/cli` 移除客户端。不会改变服务器或业务数据库。
+CLI 包发布不需要重启 Portal 或迁移数据库；但新增命令依赖的服务端接口必须已部署。安装包不会自动升级。
+
+## 回滚
+
+重新安装已验证的旧包。初次安装可用 `npm uninstall --global @freightclaw/cli` 移除客户端；不会改变服务器或业务库。
+
+[使用说明](../../deploy/cli/README.md) · [人员 CLI](../../apps/console/workspace-cli.md) · [统一 Key 合同](../rfcs/2026-09-06-unified-application-key-v1.md)

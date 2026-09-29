@@ -1,96 +1,53 @@
-# FreightClaw workspace CLI
+# 人员 CLI
 
-本页对应当前产品版本 `0.018`。public FCL inquiry 无需登录；staff 人员操作使用独立 device flow，API Key 不能替代本人身份。已有查询 Key 与权限继续保留。
+[CLI 参考](https://github.com/zqj372-ops/cross-border-logistics-mcp/blob/main/deploy/cli/README.md) / 人员操作
 
-## 构建与登录
+`workspace` 与网页使用同一业务接口和权限。人员会话、应用 Key、公开询价会话各自独立。实际命令和输入以安装包的 `workspace commands`、`workspace schema` 为准。
 
-在该分支仓库根目录执行：
-
-```sh
-npm ci
-npm run build:cli
-node dist/cli/bin/freightclaw.mjs workspace login start --endpoint http://127.0.0.1:8907 --session-file ~/.config/freightclaw/local-session.json
-```
-
-首次发起返回退出码 3 和确认链接；打开链接，以账号、密码、图形验证码登录，核对代码并点击“确认连接”。随后执行：
+## 登录一次，再操作
 
 ```sh
-node dist/cli/bin/freightclaw.mjs workspace login finish --session-file ~/.config/freightclaw/local-session.json
+freightclaw workspace login start --endpoint https://www.freightclaw.net --session-file ~/.config/freightclaw/session.json
 ```
 
-后续命令均追加同一个 `--session-file`；也可设置 `FREIGHTCLAW_SESSION_FILE` 指向该文件。会话绑定服务地址，不能换地址复用。文件包含凭证，只能本人读取，不要上传；默认会话最多 30 分钟。再次登录使用新文件路径，或先正常退出。应用 Key 不会自动获得后台管理权限。
-
-## 已实现命令
-
-下列示例省略共同前缀 `node dist/cli/bin/freightclaw.mjs`。`--json` 输出紧凑 JSON；`--input -` 可读取标准输入。
-
-| 命令 | 用途 |
-| --- | --- |
-| `workspace commands` | 查询管理命令目录 |
-| `workspace whoami` | 当前人员身份 |
-| `workspace organizations` | 可进入的企业 |
-| `workspace state` | 当前企业、成员与应用状态 |
-| `workspace use --input organization.json --idempotency-key <本次唯一值>` | 切换企业；输入 `{"organization_id":"实际企业ID"}`，平台工作区使用 null |
-| `workspace channels list` | 渠道列表 |
-| `workspace channels get --id <渠道ID>` | 草稿和当前发布版本 |
-| `workspace channels create --input channel.json --idempotency-key <本次唯一值>` | 新增草稿 |
-| `workspace channels save --id <渠道ID> --input save.json --idempotency-key <本次唯一值>` | 保存草稿 |
-| `workspace channels preview --id <渠道ID>` | 预览当前草稿，取得版本及确认摘要 |
-| `workspace channels publish --id <渠道ID> --input publish.json --idempotency-key <本次唯一值>` | 确认发布 |
-| `workspace channels history --id <渠道ID>` | 发布版本和脱敏操作记录 |
-| `workspace channels disable --id <渠道ID> --input version.json --idempotency-key <本次唯一值>` | 停用当前发布版本 |
-| `workspace channels rollback --id <渠道ID> --input rollback.json --idempotency-key <本次唯一值>` | 回退指定历史发布版本 |
-| `workspace cases list` | 自己的询价；管理查询输入 `{"management":true}` |
-| `workspace cases get --id <询价ID>` | 详情和进度；内部备注按权限过滤 |
-| `workspace cases create --input inquiry.json --idempotency-key <本次唯一值>` | 提交询价 |
-| `workspace cases update --id <询价ID> --input update.json --idempotency-key <本次唯一值>` | 管理员更新状态与备注 |
-| `workspace cases reply --id <询价ID> --input reply.json --idempotency-key <本次唯一值>` | 客户补充资料 |
-| `workspace logout` | 撤销独立 CLI 会话并删除对应文件，网页继续登录 |
-
-## 渠道输入与发布
-
-用 `workspace schema channels create` 查看字段；`save`、`publish`、`disable`、`rollback` 同样提供输入 Schema。以下为合成格式，名称和日期请替换为实际资料：
-
-```json
-{"code":"CA-SEA","name":"示例海运渠道","warehouse":"示例始发仓","origin_country":"CN","destination_country":"CA","service":"ocean_fcl","currency":"CAD","valid_from":"2026-09-01","valid_until":"2027-12-31"}
-```
-
-- 保存：`{"expected_version":1,"input":{完整渠道字段}}`。编号创建后固定。
-- 发布：先 preview，再传 `{"expected_version":返回版本,"preview_hash":"返回摘要"}`。
-- 停用：`{"expected_version":当前版本}`。
-- 回退：先 history 选定 `release_id`，执行 `channels preview --id <渠道ID> --input target.json`，其中 target.json 为 `{"release_id":"选定发布ID"}`；确认后传 `{"expected_version":预览版本,"preview_hash":"预览摘要","release_id":"选定发布ID"}` 给 rollback。
-- 每次写入显式提供 16–128 位 `--idempotency-key`；同一次操作重试复用原值，内容变化必须换值。CLI 不自动重试。
-- 草稿保存不会覆盖当前发布版本；版本变化会拒绝旧请求。渠道信息尚不含运价、分区与计费规则，始终返回 `ready_for_quotes:false`。
-
-询价输入合同位于仓库 `schemas/access-gateway/portal-cases-{input,update,reply,list}.schema.json`。也可使用 `workspace schema cases create`（以及 list、update、reply）查看安装包内的合同；CLI 会校验输入与成功响应。
-
-## 交付范围
-
-当前 `workspace commands` 包含现有人员功能以及 FCL 人员 action、公开 inquiry action。运行 `workspace commands` 查看实际支持范围。OCR、邮件订舱、SO 识别仍未交付；命令存在不等于生产业务已启用。
-
-FCL 执行 v2 增加同票成交、节点协作及邮件待办，人员命令仍使用本人会话。`workspace-list` 支持阶段与“待我处理”；`execution-preview/start/get` 处理明确成交；`execution-node-*`、`execution-shared-save` 更新执行；`notification-v2-*` 管理个人默认配置。全部动作与 Web 使用相同版本、权限、幂等和返回结构。
+首次返回退出码 3 与确认链接。打开链接，正常登录，核对代码并确认连接，再执行：
 
 ```sh
-freightclaw workspace schema fcl execution-start
-freightclaw workspace schema fcl execution-node-complete
-freightclaw workspace fcl execution-get --session-file session.json --input case-ref.json
-freightclaw workspace fcl execution-node-save --session-file session.json --input node.json --idempotency-key node-save-000000001
+freightclaw workspace login finish --session-file ~/.config/freightclaw/session.json
+freightclaw workspace whoami --session-file ~/.config/freightclaw/session.json
+freightclaw workspace commands
 ```
 
-写入前读回当前 `expected_version`；成交引用必须来自已批准的正式文件，不能自动选择最新报价。`execution-history` 与 `execution-mail-list` 使用游标分页。邮件 `unknown` 先经 `execution-mail-resolve` 记录核实结果，确认未发送后才可明确重试；`smtp_accepted` 不等于最终投递。执行参与权不会赋予原 Case/Quote/运价库读取权限。
+后续命令携带同一 `--session-file`，或设置 `FREIGHTCLAW_SESSION_FILE`。会话绑定服务地址，默认最多 30 分钟，文件只允许本人读取。再次登录用新文件或先退出。`workspace logout` 撤销 CLI 会话并删除对应文件，不退出网页。
 
-## FCL 人员与公开询价
+本地演示使用 `http://127.0.0.1:8882`，必须先启动对应 fixture；本地会话不能用于官网。
 
-人员 FCL 命令复用同一 person session，路径固定为 `/console/api/v1/fcl/<action>`：
+## 整柜业务
+
+FCL 按个人账号隔离，无需先执行 organizations/use 或创建企业。
 
 ```sh
 freightclaw workspace fcl case-list --session-file session.json
+freightclaw workspace schema fcl quote-match
 freightclaw workspace fcl rate-save --session-file session.json --input rates.json --idempotency-key rate-save-0000001
 freightclaw workspace fcl document-export --session-file session.json --input export.json --file ./quote.pdf --idempotency-key document-export-01
-freightclaw workspace schema fcl quote-match
 ```
 
-公开 inquiry 命令使用独立 `--inquiry-session-file`，不复用人员 session：
+| 任务 | 命令范围 |
+| --- | --- |
+| 本人受理询价 | `fcl case-create`、`case-list` 及案件 action |
+| 维护价格、制作报价 | rate / template / quote / document 对应 action，先查 Schema |
+| 待办与执行 | `workspace-list`、`execution-preview/start/get` |
+| 节点协作 | `execution-node-*`、`execution-shared-save` |
+| 历史与邮件 | `execution-history`、`execution-mail-list`、`notification-v2-*` |
+
+海运费与模板可省略 valid_from/valid_until；正式报价保留有效期。基础海运费只从所选运价读取，旧模板重复费用先核对。执行引用来自已批准的正式文件，不能自动挑最新报价。
+
+人员动作使用固定 `/console/api/v1/fcl/<action>`。执行参与权不自动赋予原询价、报价和运价库读取权限。PDF 导出不覆盖已有文件，stdout 不输出 content_base64。
+
+## FCL 人员与公开询价
+
+公开询价使用独立 `--inquiry-session-file`：
 
 ```sh
 freightclaw workspace fcl inquiry session --inquiry-session-file inquiry.json
@@ -101,74 +58,30 @@ freightclaw workspace fcl inquiry supplement --inquiry-session-file inquiry.json
 freightclaw workspace fcl inquiry logout --inquiry-session-file inquiry.json --idempotency-key inquiry-logout-0001
 ```
 
-公开文件只允许当前用户读取，绑定单一 origin 和本票，拒绝 symlink；提交前保存 pending key/body，未知结果不换身份、不自动重试。exchange 可从 Web 的受限恢复文件读取 `{inquiry_id,credential}`，credential 不进入命令参数、URL、环境变量或输出。FCL PDF 不覆盖已有文件，stdout 不输出 `content_base64`。生产启用、真实接收人 authority 与业务验收仍独立判断。
+文件绑定单一 origin 和本票，拒绝 symlink，仅本人可读。提交前保存 pending key/body；结果未知时不换身份、不自动重试。exchange 可读 Web 的受限恢复文件 `{inquiry_id,credential}`，凭据不放进命令参数、URL、环境变量或输出。
 
-关务、私人地址运价、Freightcom 配置与人员身份查询：参见 [业务操作说明](native-business.md)。新增操作与网站共用当前企业配置和权限。
+## 写操作的共同规则
 
-FCL 的海运费与费用模板按登录个人账号隔离，不要求企业身份。`workspace fcl case-create --input inquiry.json --session-file session.json --idempotency-key <唯一键>` 可新建本人受理的询价；输入使用现有整柜询价 Schema。维护运价、费用模板时可省略 `valid_from` / `valid_until`，正式对客报价仍保留有效期。基础海运费只从所选运价读取，旧模板重复费用需核对后显式排除。
+1. 先读当前记录和 expected_version，再按 `workspace schema <命令>` 准备输入。
+2. 每次写入提供 16–128 位 `--idempotency-key`；同一次重试复用原值，内容改变使用新值。
+3. 要求预览的操作先取得当前 preview_hash，再提交确认。保存草稿不等于发布。
+4. 写后读回。版本冲突刷新核对；邮件 unknown 先经 `execution-mail-resolve` 核实，确认未发后才重试。smtp_accepted 不等于送达。
 
-## 报价单制作
+## 其他人员功能
 
-报价单通过人员会话管理，入口是服务市场 → 报价单制作。查询 API Key 不具备文档保存或确认权限。
+| 组 | 用途与边界 |
+| --- | --- |
+| `channels` | 渠道草稿、预览、发布、历史、停用和回退；不含运价规则，ready_for_quotes 保持 false |
+| `cases` | 普通询价列表、详情、创建、更新和客户补充 |
+| `documents` | 模板、preview/save/list/get/approve/reject/export；native-prepare 由服务端重算并绑定来源 |
+| `customs-data` / `customs-packages` | 关务草稿和完整快照的导入、浏览及发布控制 |
+| `residential-rates` | 私人地址价格配置、表格预览导入和导出 |
+| `quote self` / `quote freightcom` | 两条独立询价路径，不自动共享或覆盖资料 |
+| `schedules` / `terminals` | 发布快照 query/get/save/preview/publish/disable/rollback |
+| `organizations` / `state` / `use` | 旧组织配置管理；不是个人 FCL 的前置步骤 |
 
-- `workspace documents config`：读取当前企业模板；空白返回 `input: null`。
-- `workspace documents config-save --input template-save.json --idempotency-key <唯一键>`：负责人/管理员保存公司信息、客户条款和常用费用；需要 `expected_version` 与 `confirmed: true`。
-- `workspace documents preview --input preview.json`：核对 `{ "input": <报价单> }`，返回费用合计、模板版本和十分钟预览。
-- `workspace documents save --input save.json --idempotency-key <唯一键>`：将预览返回的 `input`、`template_version`、`preview_hash`、`preview_expires_at` 与 `confirmed: true` 提交；不要将 `totals` 作为保存输入。
-- `workspace documents list --input list.json`：可选 `limit`（1—100）和 `before`（上一页的 `next_cursor`）。
-- `workspace documents get --input record.json`：输入 `{ "id": "记录 UUID" }`，读回保存时的模板和报价快照。修改时以其 `input` 重新预览和保存新单据。
-- `workspace documents approve --input approval.json --idempotency-key <唯一键>`：负责人/管理员人工核对。必须填写 `id`、`expected_version`、`evidence_ref`、`evidence_version`、`review_notes`、`confirmation: "human_verified_price_and_source"`。
-- `workspace documents export --input record.json --file ./quotation.pdf`：导出并校验 PDF；不会覆盖已有文件。未确认记录带草稿标识；已确认但过期的报价禁止导出正式版。
+报价单保存使用预览返回的输入、模板版本、哈希和截止时间，不将 totals 当作保存输入。审批需真实人工证据；退回或过期记录不能导出正式版。独立文档制作不自动发送邮件或订舱。
 
-上述命令均带 `--session-file <私有会话文件>`。完整字段使用 `workspace schema documents preview` 等命令查看。金额、数量、汇率均为十进制字符串；USD/CAD 到 CNY 的汇率允许 `null`，此时不虚构折算总额。PDF 不嵌入可编辑输入或隐藏费用原文。程序不会发送邮件、下单或订舱。
+船期/码头快照每批最多 500 条、512 KiB；来源带版本、观察和失效时间，事件时间带时区。无匹配不等于没有航次。快照维护与受控船期采集是不同路径，不能将录入来源 URL 理解成自动抓取。
 
-
-## 原生报价与完整关务数据包
-
-- `workspace documents native-prepare --input native.json`：输入 `{request:<自有运价询价>,customer:<客户与日期字段>}`；服务器重新计算费用和来源绑定。
-- `workspace documents save --input save.json --idempotency-key <唯一键>`：取上一步 `data` 中的 `input`、`template_version`、`preview_hash`、`preview_expires_at`、`native_quote_v1`，加 `confirmed:true` 保存；不要提交 `totals`。之后使用原有 get/approve/export。
-- `workspace documents reject --input rejection.json --idempotency-key <唯一键>`：`{id,expected_version,reason}`，由管理人员退回草稿。退回记录不得导出正式版。
-- `workspace quote shared-preview --input shared.json`：`{request,transport}`，验证逐组实体托盘并生成 Freightcom 输入；不会调用承运商。transport 含发货地、日期、时间窗、描述、货运等级和防冻条件。
-- `workspace customs-packages list/import/browse/publish/disable`：完整 SQLite 法规快照接收、目录检索及发布控制。import/publish/disable 要求幂等键；browse 为只读。
-- `workspace residential-rates export --input selection.json --file calgary.csv`：selection 可为 `{"table":"rates","selection":"published","origin":"calgary"}`。import-preview 同样支持 origin，生成完整待保存配置，保留其他起运地。
-
-通过 `freightclaw workspace schema <命令>` 获取闭合输入 Schema。staff 命令复用 `--session-file` 指定的人员会话；FCL public inquiry 使用独立 `--inquiry-session-file`。公开查询 Key 没有人员配置、保存或审核权限。CLI 版本不会自动升级，官网下载包按发布流程单独更新。
-
-
-## 船期与码头效率（本地候选功能）
-
-前台分别为 `#schedules`、`#terminal-efficiency`，配置分别为 `#configure/ocean.schedules`、`#configure/port.efficiency`。市场的官方查询链接可公开使用；企业维护的数据必须通过人员会话读取。没有自动同步船司或港口网站。
-
-两个命令组均提供 `query`、`get`、`save`、`preview`、`publish`、`disable`、`rollback`，共 14 条操作：
-
-```sh
-freightclaw workspace schedules get --session-file session.json
-freightclaw workspace schema schedules save
-freightclaw workspace schedules save --session-file session.json --input schedule-draft.json --idempotency-key schedule-draft-00001
-freightclaw workspace schedules preview --session-file session.json
-freightclaw workspace schedules publish --session-file session.json --input schedule-publish.json --idempotency-key schedule-publish-001
-freightclaw workspace schedules query --session-file session.json --input route.json
-freightclaw workspace terminals query --session-file session.json --input port.json
-```
-
-`route.json` 示例（日期由调用者选择，以离港港口本地日期过滤，最多 90 天）：
-
-```json
-{"origin":"CNSHA","destination":"CAVAN","from":"2026-09-10","until":"2026-09-30"}
-```
-
-`port.json` 示例，可另填 `terminal` 和 `metric`：
-
-```json
-{"port":"CAVAN","metric":"rail_dwell_days"}
-```
-
-`save` 输入为 `{expected_version,input}`。`input` 必须包含 `label`、`source`、`records`。一批数据绑定一份明确来源，来源为 `{name,url,version,observed_at,expires_at,verified}`，URL 必须为 HTTPS；它只作为证据链接，后台不会抓取任意 URL。每批最多 500 条记录、512 KiB 请求。
-
-船期字段：`id,origin,destination,carrier,vessel,voyage,departure,arrival,departure_kind,arrival_kind,routing,via`。事件时间要求 RFC3339 并包含时区；事件类型 `planned|estimated|actual`。`routing=direct` 时 `via=null`；中转必须提供 `via`。
-
-效率字段：`id,port,terminal,metric,value,unit,period_start,period_end,definition,missing_reason`。数值为十进制字符串；缺失用 null 并说明原因。指标单位固定为 `rail_dwell_days/days`、`anchorage_wait_hours/hours`、`truck_turn_minutes/minutes`、`on_dock_feet/feet`。不同统计口径不自动汇总。
-
-发布仍要求 `{expected_version,preview_hash,confirmation:"reviewed_sources_and_conditions"}`，字段来自刚完成的预览。停用需 `expected_version`；回退先 `preview --input` 传入 `{"release_id":"历史UUID"}`，再以同一哈希和 release_id 调用 rollback。写操作必须给幂等键；同次重试保持同一键。管理员变更不扩张机器 API Key 的权限。
-
-结果 `unavailable` / 退出码 6 表示没有可用发布；过期或缺失指标为 `manual_review` / 4。无匹配行带 `no_matching_records`，不代表没有航次或码头运行正常。结果保留来源版本、观察/失效时间、发布 ID 与哈希。生产网站未部署该候选版本前，命令会明确返回不可用。
+[原生业务配置](native-business.md)说明关务、私人地址和 Freightcom 的具体输入；[船期采集器](https://github.com/zqj372-ops/cross-border-logistics-mcp/blob/main/services/maritime/schedule-collector/README.md)说明获准来源。API Key 不会因网页管理权限变化而自动增权。

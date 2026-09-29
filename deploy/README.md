@@ -1,15 +1,23 @@
-# T0 MCP deployment template
+# 部署目录
 
-本文件说明 `t0-v1` 的基础部署模板；模板本身不构成目标环境上线证明。2026-09-06 已保存的 Portal/MCP 发布状态、统一 Key 和业务缺口见 [当前状态](../docs/product/2026-09-05-mcp-product-redesign/18-current-status-and-gaps.md)。新增 Portal 部署入口在 `deploy/portal/`，人员身份配置在 `deploy/self-hosted-authentik/`，业务部署要求见 [Business API v2](../docs/runbooks/business-api-v2.md)。
+[文档中心](../docs/README.md) / [发布与维护](../docs/guides/maintenance.md)
 
-T0 服务只在容器网络暴露
-`8080`，公网入口必须由企业 TLS/WAF/Edge 提供，并负责受控路由、限流、紧急 denylist
-和告警。Compose 不直接发布公网端口。
+**先选部署对象。** Portal、MCP T0 和 Gateway 候选有不同的运行与安全边界。
 
-## 固定生产范围
+| 对象 | 位置 / 手册 |
+| --- | --- |
+| 客户、运营与业务 API | `deploy/portal/` · [Business API v2](../docs/runbooks/business-api-v2.md) |
+| 个人整柜切换 | [FCL 切换手册](../docs/runbooks/2026-09-21-fcl-production-cutover.md) |
+| 人员身份 | [Authentik 候选配置](self-hosted-authentik/README.md) |
+| MCP T0 | 本页下方 · [发布](../docs/runbooks/t0-release.md) · [回滚](../docs/runbooks/t0-rollback.md) |
+| Gateway 存储 | [PostgreSQL 切换](../docs/runbooks/access-gateway-postgres-cutover.md) |
+| CLI | [构建与交付](../docs/runbooks/freightclaw-cli.md) |
 
-`MCP_DATA_MODE=production` 与 `MCP_RUNTIME_PROFILE=t0-v1` 必须同时显式提供。该 profile
-只注册 3 个工具：
+历史回执只证明对应日期的发布，不是当前环境探测。Compose 模板也不是上线证据。
+
+## MCP T0：固定范围
+
+必须显式设置 `MCP_DATA_MODE=production` 和 `MCP_RUNTIME_PROFILE=t0-v1`。只注册：
 
 ```text
 cargo.calculate
@@ -17,108 +25,24 @@ container.plan_summary
 system.agent_context.get
 ```
 
-它只发布五个固定 Agent resources，并只装载 `cargo`、`container`、`agent-access` 三个
-镜像内静态 T0 模块。正式报价、RiskCustoms/关务、Freightcom、知识/状态、review 和所有
-业务写工具在 `t0-v1` 中不注册、不初始化、不读取 secret，也不产生业务出站请求。它们不是
-“返回 unavailable 的生产工具”，而是不存在于此 profile 的工具目录。
+该 profile 只发布五个固定 Agent resources，装载 cargo、container、agent-access 三个镜像内静态模块。报价、关务、Freightcom、知识/状态、review 和业务写工具不注册、不初始化、不读密钥、不出站。其他 release 轨道不能叠加后仍声称属于 T0。
 
-现有宽 Phase 1、Freightcom 和 Admin module-control 只保留在显式 local/fixture 或后续独立
-release 轨道。`deploy/compose.riskcustoms.override.yml.example` 是历史/后续适配器参考，不能
-叠加到 `t0-v1` 候选并宣称仍符合本 profile。
+Compose 仅在容器网络暴露 8080，不直接发布公网端口。公网 TLS/WAF/Edge 负责受控路由、限流、紧急 denylist 和告警。历史 RiskCustoms override 不是 T0 配置。
 
-## 身份、JWT 与出站
+## 身份与网络
 
-生产 MCP 只接受 `Authorization: Bearer <short-jwt>`。统一 `flcbk_...` Key 经 Portal application exchange 换票，旧 `lmcpk_...` Key 经既有 Gateway 换票；长期 Key 不能直接进入 MCP 实例。生产入口使用：
+MCP 只接受短期 `Authorization: Bearer <jwt>`。长期应用 Key 先经对应 Portal/Gateway 换票，不直接传给 MCP。
 
-- `MCP_JWKS_URL` 读取 RS256 公钥；
-- `MCP_JWT_ISSUER`、`MCP_JWT_AUDIENCE` 和最长 15 分钟策略校验 claims；
-- JWT 中服务端签发的 tenant、actor、client、service role、精确 `tool:` scope 和 session；
-- `MCP_ALLOWED_OUTBOUND_HOSTS` 约束 JWKS 主机。统一 Key 的 JWT 另外通过 `MCP_APPLICATION_AUTHORITY_URL` 与 `MCP_APPLICATION_AUTHORITY_ALLOWED_HOSTS` 指定的精确 authority 路径核对当前授权；它不是业务 API 查询出口。
+| 配置 | 用途 |
+| --- | --- |
+| MCP_JWKS_URL | HTTPS RS256 公钥来源 |
+| MCP_JWT_ISSUER / MCP_JWT_AUDIENCE | 精确 claims 与最长 15 分钟令牌校验 |
+| MCP_ALLOWED_OUTBOUND_HOSTS | JWKS 等获准主机 |
+| MCP_APPLICATION_AUTHORITY_URL / MCP_APPLICATION_AUTHORITY_ALLOWED_HOSTS | 统一 Key JWT 的当前授权复核，不是业务查询出口 |
 
-JWKS 必须使用 HTTPS，并由部署环境配置实际企业域名。示例中的 `.invalid` 地址只用于
-离线 config 检查，不能成为 staging 或 production readback。
+tenant、actor、client、role、精确工具 scope 和 session 来自服务端签发。示例 .invalid 域名只用于离线检查，不能作为实际读回证据。
 
-### Cloudflare Access 管理员入口
-
-`deploy/nginx/www.freightclaw.net.conf` 只从 Cloudflare Access 注入的
-`Cf-Access-Jwt-Assertion` 构造管理 API 的 Bearer 身份；没有该断言时，`/admin/`、
-`/access-console/` 和 `/admin/api/v1/access/` 均在边缘代理后的 origin 入口失败闭合。
-Gateway 仍会校验 RS256 签名、issuer、application audience、时间窗口和管理员映射，
-不把“存在 header”当成身份证明。
-
-适配 Cloudflare Access 时必须成组提供：
-
-```text
-ACCESS_GATEWAY_ADMIN_JWKS_URL=https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
-ACCESS_GATEWAY_ADMIN_JWKS_HOST=<team>.cloudflareaccess.com
-ACCESS_GATEWAY_ADMIN_ISSUER=https://<team>.cloudflareaccess.com
-ACCESS_GATEWAY_ADMIN_AUDIENCE=<exact-application-aud-tag>
-ACCESS_GATEWAY_ADMIN_IDENTITY_MODE=cloudflare-access
-ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS=<exact-admin-email>[,<exact-admin-email>]
-ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS=<optional-exact-sub>[,<optional-exact-sub>]
-ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS=900
-```
-
-`cloudflare-access` 不依赖宽泛域名或前端隐藏做授权：必须命中显式 email 映射；
-配置 subject 时还必须同时命中精确 `sub`。Gateway 拒绝没有用户 email/sub 的
-service token，并用脱敏稳定的 `sub` 作为审计 actor。不依赖 JWT 中可被截断的大型
-custom group 列表做唯一授权依据。任一核心 IdP 参数、email 映射或密钥健康检查缺失时，
-管理 API 保持 `unavailable`。这只闭合了仓库内的身份适配路径；目标环境的 Access 应用、
-MFA、角色 owner 和真实登录回执仍是上线门禁。
-
-## 持久平台状态
-
-`MCP_STATE_DB_PATH=/var/lib/logistics-mcp/platform.sqlite` 保存脱敏的 MCP audit、idempotency
-和 session binding。Compose 将 `/var/lib/logistics-mcp` 放入持久 volume，容器根文件系统
-保持只读、非 root、无 Linux capabilities。
-
-SQLite 只用于当前单实例 T0 Runtime 的平台状态，不是 Unified Access Gateway 的生产
-tenant/client/Key 权威库。Gateway 候选必须显式设置
-`ACCESS_GATEWAY_STORE_BACKEND=postgresql`，并从只读文件 Secret 读取数据库密码；连接失败、
-schema/instance/management tenant 不匹配或迁移指纹漂移时直接失败，不回退到 SQLite。
-
-从现有 Gateway SQLite 切换 PostgreSQL 时，先停止 Gateway 写入并保留原卷，再运行：
-
-```bash
-npm run migrate:access-gateway-postgres
-```
-
-迁移器只接受私有的 SQLite v3 tenant store 和 operations v1 store，在一个 PostgreSQL 事务中
-写入 tenant/client/credential/entitlement、幂等绑定、审计和限流窗口，再用全表计数与规范化
-SHA-256 逻辑指纹读回。相同源可以幂等重跑；已存在但不匹配的目标 schema 会失败闭合。
-切换与回滚步骤见
-[Access Gateway PostgreSQL 切换 Runbook](../docs/runbooks/access-gateway-postgres-cutover.md)。
-
-当前同宿主私有容器网络可以显式使用 `ACCESS_GATEWAY_POSTGRES_SSL_MODE=disable`；任何跨宿主或
-托管数据库必须改为 `verify-full` 并挂载获批 CA。自托管 PostgreSQL 仍不等于托管数据库资格，
-多实例、KMS、IdP、集中审计/吊销和目标环境恢复/故障验证仍须独立完成。
-
-当前单节点 Gateway 候选会把每个 credential 的 pepper 版本写入受保护的 SQLite 状态，并在
-同一持久卷的 `.secrets/credential-pepper-history.json` 中保留对应验证材料。轮换时必须同时更换
-pepper bytes 和递增 `ACCESS_GATEWAY_PEPPER_VERSION`；禁止复用版本名，也不得在仍有 credential
-引用时删除历史版本。该本地 keyring 只解决候选环境的轮换连续性，不替代 KMS/Secret Manager，
-因此不会改变 `production_eligible=false`。
-
-从 v1/v2 SQLite 首次迁移到 v3 时，必须临时显式提供
-`ACCESS_GATEWAY_LEGACY_PEPPER_VERSION`，其值必须是旧 credential 实际使用的版本，且对应材料
-必须已存在于 keyring。迁移不会用新的 current version 猜测或重新标记旧 hash；任一条件不满足
-就拒绝启动。完成迁移、备份和旧 Key exchange 回读后，该迁移参数才可移除。
-
-## health 与 readiness
-
-- `GET /healthz` 只证明 Node 进程能响应；不用于 Compose 流量门禁。
-- `GET /readyz` 聚合 production profile、精确目录、reviewed Agent Pack、JWKS、所选 Gateway
-  数据库的 audit/idempotency/session 和 shutdown 状态，并显式返回 `database_backend`。任一
-  全局依赖失败返回非 2xx。
-- Compose healthcheck 使用 `/readyz`，使不满足门禁的实例不接收流量。
-- fixture mode、fixture token、长期 API Key verifier、缺少 pack/catalog 或目录漂移不能进入
-  production ready。
-- RiskCustoms `ready=false`、报价接口健康或 Freightcom 测试状态与 T0 Runtime readiness 无关，
-  因为这些模块未注册。
-
-## 必填配置
-
-Compose 不为下列 production 设置提供静默默认值：
+生产配置不得静默默认：
 
 ```text
 MCP_DATA_MODE
@@ -133,26 +57,57 @@ MCP_ALLOWED_OUTBOUND_HOSTS
 MCP_TRUSTED_PROXY_ADDRESSES
 ```
 
-`MCP_ALLOWED_ORIGINS`、`MCP_ALLOWED_HOSTS` 和可信代理必须精确配置；不得使用 `*`、客户
-提交值或默认公网网段。TLS 私钥、JWT、API Key、KMS handle 和数据库凭证不得写入
-`deploy/env.example`、Compose、镜像、日志或审计正文。
+Host、Origin、代理必须精确配置，不用通配符或客户输入。TLS 私钥、JWT、API Key、KMS handle 和数据库凭证不得进入示例文件、镜像、日志或审计正文。
 
-## 本地静态检查
+## Cloudflare Access 管理路径
+
+对应 Nginx 配置只从 Cf-Access-Jwt-Assertion 构造管理员身份；缺失时 `/admin/`、`/access-console/` 和 `/admin/api/v1/access/` 拒绝访问。Gateway 继续验证签名、issuer、audience、时间和管理员映射，不能只检查 header 存在。
+
+```text
+ACCESS_GATEWAY_ADMIN_JWKS_URL=https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
+ACCESS_GATEWAY_ADMIN_JWKS_HOST=<team>.cloudflareaccess.com
+ACCESS_GATEWAY_ADMIN_ISSUER=https://<team>.cloudflareaccess.com
+ACCESS_GATEWAY_ADMIN_AUDIENCE=<exact-application-aud-tag>
+ACCESS_GATEWAY_ADMIN_IDENTITY_MODE=cloudflare-access
+ACCESS_GATEWAY_ADMIN_ALLOWED_EMAILS=<exact-admin-email>[,<exact-admin-email>]
+ACCESS_GATEWAY_ADMIN_ALLOWED_SUBJECTS=<optional-exact-sub>[,<optional-exact-sub>]
+ACCESS_GATEWAY_ADMIN_MAX_TOKEN_AGE_SECONDS=900
+```
+
+必须匹配精确 email；配置 sub 时两者都匹配。拒绝没有用户 email/sub 的 service token；不依赖可能截断的 group 列表作为唯一授权。缺 IdP 参数、映射或密钥健康检查时不可用。目标 Access 应用、MFA、角色归属和真实登录仍须验收。
+
+## 状态与数据库
+
+MCP_STATE_DB_PATH 通常为 `/var/lib/logistics-mcp/platform.sqlite`，存储脱敏审计、幂等和会话绑定。目录挂持久卷；根文件系统只读、非 root、无 Linux capabilities。
+
+T0 Runtime 的 SQLite 不等于 Gateway 生产凭证权威库。Gateway 候选显式设置 `ACCESS_GATEWAY_STORE_BACKEND=postgresql`，密码来自只读 Secret 文件。连接、schema、instance、management tenant 或迁移指纹不符即失败，不回退 SQLite。
+
+迁移先停写、备份、保留原卷，再按手册执行 `npm run migrate:access-gateway-postgres`。迁移器接受私有 SQLite v3 + operations v1，以事务、全表计数和 SHA-256 逻辑指纹验证；相同源可幂等重跑，目标不符拒绝。
+
+同宿主私有容器网络才可显式 SSL_MODE=disable；跨宿主或托管库必须 verify-full 并挂获批 CA。自托管 PostgreSQL 不代表已完成托管资格或多实例验收。
+
+### Pepper 轮换
+
+单节点候选在受保护状态中记录 credential pepper 版本，并在持久卷 `.secrets/credential-pepper-history.json` 保留验证材料。轮换同时更换 bytes 和递增 ACCESS_GATEWAY_PEPPER_VERSION，禁止复用版本或删除仍被引用的历史材料。
+
+v1/v2 首次迁移 v3 时，显式提供真实旧版本 ACCESS_GATEWAY_LEGACY_PEPPER_VERSION，且 keyring 已有对应材料；不猜测、不重标旧 hash。迁移、备份、旧 Key exchange 读回后才能移除参数。本地 keyring 不替代 KMS/Secret Manager，production_eligible 仍为 false。
+
+## 就绪与发布检查
+
+| 检查 | 能证明什么 |
+| --- | --- |
+| `/healthz` | Node 进程响应，不作为流量门禁 |
+| `/readyz` | profile、目录、Agent Pack、JWKS、数据库审计/幂等/会话及关闭状态；失败返回非 2xx |
+| 业务来源查询 | 该来源的状态，不能从 T0 就绪推断 |
+| 用户验收 | 实际身份下的业务操作及读回 |
+
+Compose 使用 readyz；fixture token、长期 Key verifier、缺标准包或目录漂移不能进入 production ready。
 
 ```bash
 docker compose --env-file deploy/env.example -f deploy/compose.yml config
 bash deploy/scripts/check-release.sh --fixture-only
 ```
 
-这些命令不启动容器、不访问真实 URL、不推送镜像，也不证明生产完成。发布候选还必须绑定
-当前 Git SHA、镜像 digest、配置版本，并在目标 staging 完成短 JWT、3 工具、5 资源、
-tenant 隔离、审计、备份恢复、目标负载、告警和前一镜像回滚演练。
+以上不启动容器、不访问真实 URL、不推送镜像。候选需绑定 Git SHA、镜像 digest 和配置版本，并在获准 staging 验证短 JWT、三工具、五资源、隔离、审计、恢复、负载、告警和回滚。
 
-仓库内 smoke/load runner 会创建并随后停用合成 tenant/Key，所以只能在候选 staging 执行。
-除原有确认短语外，还必须分别显式设置 `DEPLOYMENT_SMOKE_ENVIRONMENT=staging` 或
-`DEPLOYMENT_LOAD_ENVIRONMENT=staging`；runner 会在打开显式配置的 Gateway Store 前回读目标
-`/readyz`，只有
-`profile=single-node-candidate`、`operational_ready=true` 且 `production_eligible=false` 才继续。
-
-在真实企业 IdP、TLS/Edge、KMS/Secret Manager、Unified Access Gateway、集中吊销和上述
-演练没有回执前，状态固定为“待适配验证 / NO-GO”。
+smoke/load 会创建并停用合成 tenant/Key，只能用于 staging，分别要求 DEPLOYMENT_SMOKE_ENVIRONMENT 或 DEPLOYMENT_LOAD_ENVIRONMENT=staging 及原确认短语。读回需为 single-node-candidate、operational_ready=true、production_eligible=false 才继续。真实 IdP、Edge、KMS、集中吊销等未取得回执前，候选保持 NO-GO。
