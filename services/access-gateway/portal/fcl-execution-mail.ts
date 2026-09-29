@@ -100,8 +100,9 @@ export class FclExecutionMailService{
   }
   enqueueCaseEvent(event:FclCaseNotificationEvent){
     if(event.kind==='fcl_inquiry_submitted'&&this.db.prepare("SELECT 1 FROM business_case_events WHERE event_id=? AND visibility='customer' AND actor_id LIKE 'anonymous:%'").get(event.event_id))this.enqueueCustomerNotice(event.case_ref,event.event_id,'received','已收到您的询价，工作人员将与您联系。如非本人提交，请忽略本邮件。');
-    const nodeId=event.kind==='fcl_inquiry_submitted'?'intake':event.kind==='fcl_staff_confirmation'?'quote':event.kind==='fcl_handoff_recorded'||event.kind==='fcl-document-approve'?'customer_followup':event.kind==='fcl-document-reject'?'quote':event.kind==='fcl_case_status_updated'&&event.status==='needs_input'?'intake':null;
+    const nodeId=event.kind==='fcl_inquiry_submitted'?'intake':event.kind==='fcl_staff_confirmation'?'quote':event.kind==='fcl_handoff_recorded'?'customer_followup':event.kind==='fcl-document-approve'||event.kind==='fcl-document-reject'?'quote':event.kind==='fcl_case_status_updated'&&event.status==='needs_input'?'intake':null;
     if(!nodeId)return;
+    if(nodeId==='customer_followup'&&!this.db.prepare("SELECT 1 FROM business_case_events WHERE event_id=? AND case_id=? AND event_kind='portal_confirm'").get(event.event_id,event.case_ref))return;
     const config=this.options.configuration?.(event.owner_id),notification=config?.rows.find(r=>r.node_id===nodeId);
     if(!notification||!notification.assignment.enabled||!notification.assignment.to||notification.assignment.responsible_id!==event.owner_id)return;
     const row=this.db.prepare('SELECT c.owner_id,c.version,c.input_json,i.inquiry_no FROM business_cases c JOIN fcl_inquiries i ON i.case_id=c.case_id WHERE c.case_id=?').get(event.case_ref) as {owner_id:string;version:number;input_json:string;inquiry_no:string}|undefined;
@@ -160,9 +161,10 @@ export class FclExecutionMailService{
     if(message.pre_execution){
       const snapshot=message.pre_execution,row=this.db.prepare('SELECT owner_id,version,status FROM business_cases WHERE case_id=?').get(message.case_ref) as {owner_id:string;version:number;status:string}|undefined;
       const current=this.options.configuration?.(snapshot.owner_id)?.rows.find(r=>r.node_id===message.node_id);
-      if(!row||row.owner_id!==snapshot.owner_id||row.version!==snapshot.case_version||['closed','cancelled'].includes(row.status)||!current||executionDigest(current)!==message.assignment_digest)return null;
-      if(message.node_id==='customer_followup'&&this.execution.readForDispatch(message.case_ref))return null;
-      return {people:[snapshot.owner_id],render:()=>({to:message.to,cc:message.cc,subject:`${snapshot.inquiry_no} · ${FCL_NODE_LABELS[message.node_id!]}`,body:[`业务单号：${snapshot.inquiry_no}`,`客户：${snapshot.customer_name}`,`路线：${snapshot.route}`,`环节：${FCL_NODE_LABELS[message.node_id!]}`,`待办：${snapshot.event_kind==='fcl-document-reject'?'报价文件被退回，请补充后重新审核':'请登录核对本环节资料'}`,`负责人：${snapshot.owner_id}`,`详情（需登录）：${this.options.publicOrigin??''}/console/#fcl/case/${message.case_ref}`].join('\n')})};
+      const customerConfirmed=message.node_id==='customer_followup'&&!!this.db.prepare("SELECT 1 FROM business_case_events WHERE event_id=? AND case_id=? AND event_kind='portal_confirm'").get(message.event_id,message.case_ref);
+      if(message.node_id==='customer_followup'&&!customerConfirmed)return null;
+      if(!row||row.owner_id!==snapshot.owner_id||(!customerConfirmed&&row.version!==snapshot.case_version)||['closed','cancelled'].includes(row.status)||!current||executionDigest(current)!==message.assignment_digest)return null;
+      return {people:[snapshot.owner_id],render:()=>({to:message.to,cc:message.cc,subject:`${snapshot.inquiry_no} · ${FCL_NODE_LABELS[message.node_id!]}`,body:[`业务单号：${snapshot.inquiry_no}`,`客户：${snapshot.customer_name}`,`路线：${snapshot.route}`,`环节：${FCL_NODE_LABELS[message.node_id!]}`,`待办：${customerConfirmed?'客户已确认下单，请跟进应收事项':snapshot.event_kind==='fcl-document-reject'?'报价文件被退回，请补充后重新审核':'请登录核对本环节资料'}`,`负责人：${snapshot.owner_id}`,`详情（需登录）：${this.options.publicOrigin??''}/console/#fcl/case/${message.case_ref}`].join('\n')})};
     }
 
     const progress=this.execution.readForDispatch(message.case_ref),node=progress?.nodes.find(n=>n.node_id===message.node_id);

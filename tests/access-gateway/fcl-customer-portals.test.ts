@@ -8,14 +8,19 @@ import {receiver,other,readyFixture,closeFixture,handoffRequest} from '../quote-
 it('claims with proof, isolates customers and binds confirmation and acceptance to the published quote',async()=>{
  const f=await readyFixture();const config=emptyFclNotificationConfig();
  const execution=new FclExecutionService(f.caseService,{configuration:()=>config,isActive:()=>true,now:()=> '2026-10-08T12:00:00Z',onEvent:(p,e)=>mail.enqueue(p,e)});
- const sent:unknown[]=[];const mail=new FclExecutionMailService(execution,{verifyUsers:()=>Promise.resolve('active'),now:()=> '2026-10-08T12:00:00Z',transport:{send:m=>{sent.push(m);}}});
+ config.rows.find(r=>r.node_id==='customer_followup')!.assignment={responsible_id:receiver.identity.userId,collaborator_ids:[],to:'finance@example.test',cc:[],enabled:true};
+ const sent:unknown[]=[];const mail=new FclExecutionMailService(execution,{configuration:()=>config,verifyUsers:()=>Promise.resolve('active'),now:()=> '2026-10-08T12:00:00Z',transport:{send:m=>{sent.push(m);}}});
  const service=new FclCustomerService(execution,f.workflow,mail);const customer={...other,identity:{...other.identity,email:'shipper@example.test'}};
  try{
   expect(()=>service.claim(customer,{inquiry_id:f.submitted.inquiry_id,credential:'x'.repeat(40)},'customer-claim-bad-0001')).toThrow();
   const claimed=service.claim(customer,{inquiry_id:f.submitted.inquiry_id,credential:f.submitted.credential},'customer-claim-good-0001');
   expect(claimed.case_ref).toBe(f.confirmed.case_id);
   expect(()=>service.get({...customer,identity:{...customer.identity,userId:'another'}},{case_ref:claimed.case_ref})).toThrow();
+  f.caseService.setFclEventObserver(e=>mail.enqueueCaseEvent(e));
   const offer=service.publish(receiver,{handoff:handoffRequest(f)},'customer-publish-0001');
+  const row=f.caseService.getFclCase(receiver,claimed.case_ref);
+  mail.enqueueCaseEvent({event_id:'00000000-0000-4000-8000-000000000123',case_ref:claimed.case_ref,owner_id:receiver.identity.userId,case_version:row.case_version,kind:'fcl-document-approve',status:row.case_status});
+  expect(mail.list(receiver,{case_ref:claimed.case_ref}).items.filter(m=>m.to==='finance@example.test')).toHaveLength(0);
   expect(JSON.stringify(service.get(customer,{case_ref:claimed.case_ref}))).not.toContain('cost_price');
   expect(()=>service.confirm(customer,{case_ref:claimed.case_ref,offer_id:'00000000-0000-4000-8000-000000000000',confirmed:true},'customer-confirm-bad-0001')).toThrow();
   f.setClock('2026-10-16T12:00:00Z');
@@ -32,6 +37,8 @@ it('claims with proof, isolates customers and binds confirmation and acceptance 
   f.caseStore.db.exec('DROP TRIGGER fail_customer_mail');
   const confirmed=service.confirm(customer,{case_ref:claimed.case_ref,offer_id:offer.offer_id,confirmed:true},'customer-confirm-good-0001');
   expect(confirmed.state).toBe('awaiting_acceptance');
+  service.confirm(customer,{case_ref:claimed.case_ref,offer_id:offer.offer_id,confirmed:true},'customer-confirm-good-0001');
+  expect(mail.list(receiver,{case_ref:claimed.case_ref}).items.filter(m=>m.to==='finance@example.test')).toHaveLength(1);
   expect(execution.readForDispatch(claimed.case_ref)).toBeNull();
   const input={case_ref:claimed.case_ref,offer_id:offer.offer_id,confirmed:true as const};
   const accepted=service.accept(receiver,input,'customer-accept-good-0001');
@@ -43,6 +50,8 @@ it('claims with proof, isolates customers and binds confirmation and acceptance 
   expect(()=>restarted.run({...customer,identity:{...customer.identity,userId:'another'}},'customer-pdf',{case_ref:claimed.case_ref,offer_id:offer.offer_id},()=> 'customer-pdf-0001')).toThrow('fcl_not_found');
   const acceptedMail=f.caseStore.db.prepare("SELECT count(*) n FROM fcl_execution_outbox WHERE json_extract(payload,'$.extensions.customer_notice_v1.kind')='accepted'").get() as {n:number};expect(acceptedMail.n).toBe(1);
   for(let i=0;i<8;i++)await mail.dispatchOnce();expect(sent.length).toBeGreaterThan(0);
+  expect(sent.filter(m=>(m as {to:string}).to==='finance@example.test')).toHaveLength(1);
+  expect(JSON.stringify(sent)).toContain('客户已确认下单');
   expect(JSON.stringify(sent)).not.toContain('cost_price');expect(JSON.stringify(sent)).toContain('2026-10-15');
  }finally{closeFixture(f);}
 });
