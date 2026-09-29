@@ -1,13 +1,37 @@
 #!/usr/bin/env python3
 import base64
 import json
+import ipaddress
 import smtplib
 import socket
 import ssl
 import sys
 from email.message import EmailMessage
+from email.headerregistry import Address
 
 MAX_INPUT = 9 * 1024 * 1024
+
+
+def public_socket(host, port, timeout):
+    addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global or ipaddress.ip_address(item[4][0]).is_multicast for item in addresses):
+        raise OSError("smtp_destination_not_public")
+    return socket.create_connection((addresses[0][4][0], port), timeout)
+
+
+class PublicSMTP(smtplib.SMTP):
+    def _get_socket(self, host, port, timeout):
+        return public_socket(host, port, timeout)
+
+
+class PublicSMTPSSL(smtplib.SMTP_SSL):
+    def _get_socket(self, host, port, timeout):
+        raw = public_socket(host, port, timeout)
+        try:
+            return self.context.wrap_socket(raw, server_hostname=host)
+        except Exception:
+            raw.close()
+            raise
 
 
 def main():
@@ -23,14 +47,15 @@ def main():
         username = config["username"]
         password = config["password"]
         sender = config["from"]
+        sender_name = config.get("from_name", "")
         recipients = [message["to"], *message["cc"]]
         subject = message["subject"]
         body = message["body"]
-        if config["secure"] is not True or not isinstance(port, int) or not 1 <= port <= 65535:
+        if not isinstance(config["secure"], bool) or not isinstance(port, int) or not 1 <= port <= 65535:
             return 64
         if len(recipients) > 11 or len(set(recipients)) != len(recipients):
             return 64
-        for value in [sender, subject, *recipients]:
+        for value in [sender_name, sender, subject, *recipients, *([config["reply_to"]] if config.get("reply_to") else [])]:
             if not isinstance(value, str) or "\r" in value or "\n" in value:
                 return 64
         if not isinstance(body, str):
@@ -39,8 +64,10 @@ def main():
         return 64
 
     mail = EmailMessage()
-    mail["From"] = sender
+    mail["From"] = Address(display_name=sender_name, addr_spec=sender)
     mail["To"] = recipients[0]
+    if config.get("reply_to"):
+        mail["Reply-To"] = config["reply_to"]
     if len(recipients) > 1:
         mail["Cc"] = ", ".join(recipients[1:])
     mail["Subject"] = subject
@@ -59,7 +86,11 @@ def main():
         return 64
     try:
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, timeout=10, context=context) as smtp:
+        with (PublicSMTPSSL(host, port, timeout=10, context=context) if config["secure"] else PublicSMTP(host, port, timeout=10)) as smtp:
+            if not config["secure"]:
+                smtp.ehlo()
+                smtp.starttls(context=context)
+                smtp.ehlo()
             smtp.login(username, password)
             refused = smtp.send_message(mail)
             if refused:

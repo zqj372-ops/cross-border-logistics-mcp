@@ -106,7 +106,7 @@ try{
   assert.equal((await owner.call('workspace-list',{phase:'completed'})).data.items.some(row=>row.case_ref===ticket.case_id),true);
   assert.equal((await owner.call('case-get',{case_id:ticket.case_id})).data.case_version,oldVersion);
   checks.push('完成订舱时一次交接并启动提单节点；核对凭证后整票完结，已完成列表读回');
-  await page.goto(`${base}/ops/#fcl/config`,{waitUntil:'networkidle'});await page.locator('.fcl-node-mail-table').waitFor();
+  await page.goto(`${base}/ops/#fcl/config`,{waitUntil:'networkidle'});await page.locator('.fcl-mail-nodes').waitFor();await page.locator('[data-mail-node="booking"] > summary').click();
   await page.locator('[name="booking:to"]').fill('future-booking@example.test');
   response=page.waitForResponse(r=>r.url().endsWith('/notification-v2-save'));await page.locator('[data-fcl-notifications="settings"] button[type="submit"]').click();
   assert.equal((await(await response).json()).status,'success');
@@ -114,9 +114,9 @@ try{
   assert.ok((await(await response).json()).data.body.includes('TEST-SO'));
   assert.equal((await owner.call('execution-get',{case_ref:ticket.case_id})).data.nodes.find(n=>n.node_id==='booking').assignment.to,'owner@example.test');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:join(out,'node-mail-config.png'),fullPage:true});
-  assert.equal(await page.locator('.fcl-node-mail-table tbody tr').count(),10);
+  assert.equal(await page.locator('.fcl-mail-node').count(),10);
   await page.setViewportSize({width:390,height:844});await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:join(out,'node-mail-mobile.png'),fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
-  checks.push('节点与邮件十行配置表，桌面和手机检查');
+  checks.push('节点邮件分组设置，桌面和手机检查');
   const relogged=await account('fixture-fcl-receiver'),retained=(await relogged.call('execution-get',{case_ref:ticket.case_id})).data;
   assert.equal(retained.state,'completed');assert.equal(retained.acceptances.length,1);assert.equal(retained.shared.hbl,'LOCAL-HBL');
   assert.equal(retained.nodes.find(n=>n.node_id==='shipping_documents').fields.handover_evidence,'synthetic:bill-of-lading-handover');

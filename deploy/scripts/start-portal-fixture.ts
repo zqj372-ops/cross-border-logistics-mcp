@@ -1,3 +1,4 @@
+import {FclSmtpSettings} from '../../services/access-gateway/portal/fcl-smtp-settings';
 import {CustomsPackages} from '../../services/customs-native/packages';
 import {DocumentStore,DocumentService} from '../../services/quote-documents/service';
 import {DocumentWorkflowStore,DocumentWorkflowService} from '../../services/quote-documents/workflow';
@@ -60,7 +61,7 @@ async function startPersonalFclFixture(input:{databaseDirectory:string;port:numb
       const execution=new FclExecutionService(caseService,{isActive:active,now,configuration:ctx=>rateService.getFclNotificationV2(ctx),onEvent:(progress,event)=>mail.enqueue(progress,event)});
       const mail:FclExecutionMailService=new FclExecutionMailService(execution,{publicOrigin:input.origin,configuration:owner=>rateService.readFclNotificationForDispatch(owner),transport:mailTransport,verifyUsers:ids=>Promise.resolve(ids.every(active)?'active':'inactive'),now});
       lifecycleMail=mail;caseService.setFclEventObserver(event=>mail.enqueueCaseEvent(event));
-      executionHttp=new FclExecutionHttpService(execution,documentWorkflow,rateService,mail);stopWorker=mail.startWorker();
+      executionHttp=new FclExecutionHttpService(execution,documentWorkflow,rateService,mail,undefined,new FclSmtpSettings({store:rateStore,ownerId:receiverIdentity.userId,secret:credentialSecret.toString('hex'),fallback:mailTransport,transport:()=>mailTransport}));stopWorker=mail.startWorker();
     }
     const server=await startPortalServer({caseService,documentService,documentWorkflowService:documentWorkflow,nativeAdmin:rateService,fcl:{receiverUserId:receiverIdentity.userId,caseService,nativeAdmin:rateService,documentWorkflow,publicSessionSecret,businessDate:()=>"2026-10-08",secureCookie:false,...(executionHttp?{execution:executionHttp}:{})},mode:"fixtures",service:input.runtime.service,port:input.port,staticDirectory:"dist/console"});
     console.log(`FreightClaw personal FCL fixture: ${server.origin}/inquiry/`);

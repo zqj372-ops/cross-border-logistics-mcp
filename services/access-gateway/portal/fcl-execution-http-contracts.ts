@@ -1,6 +1,7 @@
 import {z} from 'zod';
 import {customerRoutes} from './fcl-customer-contracts';
 import * as c from './fcl-execution-contracts';
+import {smtpSaveSchema,smtpTestSchema,smtpActivateSchema,smtpViewSchema} from './fcl-smtp-settings-contracts';
 const empty=z.object({}).strict();
 export const executionRoutes={
   ...customerRoutes,
@@ -35,6 +36,10 @@ export const executionRoutes={
   'notification-v2-save':[c.fclNotificationV2SaveSchema,c.fclNotificationV2ViewSchema,true,'保存节点与邮件默认配置'],
   'notification-preview':[c.fclNotificationPreviewRequestSchema,c.fclNotificationPreviewOutputSchema,false,'预览合成节点测试邮件'],
   'notification-test':[c.fclNotificationTestSchema,c.fclNotificationPreviewOutputSchema,true,'明确发送一封合成测试邮件'],
+  'smtp-get':[empty,smtpViewSchema,false,'读取发信服务安全配置'],
+  'smtp-save':[smtpSaveSchema,smtpViewSchema,true,'保存发信服务草稿'],
+  'smtp-test':[smtpTestSchema,smtpViewSchema,true,'测试已保存发信服务'],
+  'smtp-activate':[smtpActivateSchema,smtpViewSchema,true,'启用已测试发信服务'],
 } as const;
 export type FclExecutionAction=keyof typeof executionRoutes;
 export const FCL_EXECUTION_ACTIONS=Object.keys(executionRoutes) as FclExecutionAction[];

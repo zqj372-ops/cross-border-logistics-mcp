@@ -7,10 +7,12 @@ import type {FclMailMessage,FclMailTransport} from './cases';
 const configSchema=z.object({
   host:z.string().trim().min(1).max(253),
   port:z.number().int().min(1).max(65535),
-  secure:z.literal(true),
+  secure:z.boolean(),
   username:z.string().min(1).max(320),
   password:z.string().min(1).max(4096),
   from:z.email().max(254),
+  from_name:z.string().trim().max(100).regex(/^[^\r\n]*$/u).optional(),
+  reply_to:z.email().max(254).nullable().optional(),
 }).strict();
 
 export type FclSmtpConfig=z.infer<typeof configSchema>;

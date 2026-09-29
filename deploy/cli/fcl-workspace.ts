@@ -324,7 +324,7 @@ async function staffCommand(action:FclHttpAction,values:FclCliValues,io:CliIO,he
   const key=values['idempotency-key'];
   if(fclStaffWriteActions.has(action)&&(!key||!keyPattern.test(key)))throw new Failure('idempotency_key_required');
   if(!fclStaffWriteActions.has(action)&&key)throw new Failure('unexpected_idempotency_key');
-  const body=values.input===undefined?(action==='case-list'?{limit:25,status:null,cursor:null}:{}):await readInput(values,io,helpers,FCL_HTTP_BODY_LIMITS[action],true);
+  const body=values.input===undefined?(action==='case-list'?{limit:25,status:null,cursor:null}:{}):action==='smtp-save'&&values.input!=='-'?helpers.parseJson(await readPrivate(values.input,FCL_HTTP_BODY_LIMITS[action],'smtp_input_file_invalid')):await readInput(values,io,helpers,FCL_HTTP_BODY_LIMITS[action],true);
   const parsed=fclHttpRequestSchemas[action].safeParse(body);
   if(!parsed.success)throw new Failure('input_schema_invalid');
   const query=new URLSearchParams();
@@ -333,8 +333,9 @@ async function staffCommand(action:FclHttpAction,values:FclCliValues,io:CliIO,he
     if(typeof value!=='string'&&typeof value!=='number'&&typeof value!=='boolean')throw new Failure('query_invalid');
     query.set(name,String(value));
   }
+  const smtpPassword=action==='smtp-save'?(parsed.data as {password?:string|null}).password:null;
   const path='/console/api/v1/fcl/'+action+(query.size?'?'+query.toString():'');
-  const response=await request(io.fetch??fetch,helpers,base,path,{method,body:method==='POST'?parsed.data:undefined,cookie:`fc_portal_session=${session.session_token}`,csrf:method==='POST'?session.csrf_token:undefined,idempotencyKey:key,maximum,secrets:[session.session_token,session.csrf_token],timeoutMs:fclActionTimeoutMs(action)});
+  const response=await request(io.fetch??fetch,helpers,base,path,{method,body:method==='POST'?parsed.data:undefined,cookie:`fc_portal_session=${session.session_token}`,csrf:method==='POST'?session.csrf_token:undefined,idempotencyKey:key,maximum,secrets:[session.session_token,session.csrf_token,...(smtpPassword?[smtpPassword]:[])],timeoutMs:fclActionTimeoutMs(action)});
   let result=envelope(fclHttpResponseSchemas[action],response);
   if(action==='document-export'&&result.status==='success'){
     if(!values.file)throw new Failure('pdf_file_required');

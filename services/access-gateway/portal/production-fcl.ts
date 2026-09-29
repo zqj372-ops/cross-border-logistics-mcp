@@ -1,3 +1,5 @@
+import {FclSmtpSettings} from './fcl-smtp-settings';
+import type {FclSmtpConfig} from './fcl-smtp-transport';
 import {FclExecutionService} from './fcl-execution';
 import {FclExecutionMailService} from './fcl-execution-mail';
 import {FclExecutionHttpService} from './fcl-execution-http';
@@ -29,6 +31,7 @@ export interface ProductionFclCompositionOptions{
   readonly receiverSub:string;
   readonly authority:FclReceiverAuthority;
   readonly mailTransport:FclMailTransport;
+  readonly smtpConfig?:FclSmtpConfig;
   readonly caseCredentialSecret:string;
   readonly publicSessionSecret:string;
   readonly nativeBusiness?:{business:Pick<PortalBusinessService,'execute'>;current:(org:string)=>QuoteRelease|null};
@@ -60,8 +63,9 @@ export async function composeProductionFcl(options:ProductionFclCompositionOptio
   // The anonymous intake receiver retains its separate live authority check.
   const receiverIsActive=(userId:string)=>userId!==options.receiverSub||currentFclReceiverAuthorized(userId,options.receiverSub);
   return options.authority.runVerified(()=>{
-    const nativeAdmin=new NativeAdminService(options.nativeStore,options.portal,{receiverUserId:options.receiverSub,receiverIsActive,now,executionIsActive:id=>options.executionDirectory?.isActive(id)===true,mailConfigured:()=>Boolean(options.mailTransport),mailTransport:options.mailTransport});
-    const caseService=new CaseService(options.caseStore,options.portal,{receiverUserId:options.receiverSub,receiverIsActive,credentialSecret:options.caseCredentialSecret,credentialTtlDays:30,now,mail:{enabled:false},notificationSettings:()=>{const view=nativeAdmin.getFclNotification(receiverContext);return view.input?{...view.input,transport:options.mailTransport,timeoutMs:FCL_SMTP_NOTIFICATION_TIMEOUT_MS}:null;}});
+    const smtp=new FclSmtpSettings({store:options.nativeStore,ownerId:options.receiverSub,secret:options.caseCredentialSecret,fallback:options.mailTransport,...(options.smtpConfig?{initial:options.smtpConfig}:{})});
+    const nativeAdmin=new NativeAdminService(options.nativeStore,options.portal,{receiverUserId:options.receiverSub,receiverIsActive,now,executionIsActive:id=>options.executionDirectory?.isActive(id)===true,mailConfigured:()=>true,mailTransport:smtp});
+    const caseService=new CaseService(options.caseStore,options.portal,{receiverUserId:options.receiverSub,receiverIsActive,credentialSecret:options.caseCredentialSecret,credentialTtlDays:30,now,mail:{enabled:false},notificationSettings:()=>{const view=nativeAdmin.getFclNotification(receiverContext);return view.input?{...view.input,transport:smtp,timeoutMs:FCL_SMTP_NOTIFICATION_TIMEOUT_MS}:null;}});
     let lifecycleMail:FclExecutionMailService|undefined;
     const quoteService=new FclQuoteService({caseReader:caseService,rateReader:nativeAdmin,now});
     const documentService=new DocumentService(options.documentStore,options.portal,undefined,options.nativeBusiness,caseService);
@@ -73,9 +77,9 @@ export async function composeProductionFcl(options:ProductionFclCompositionOptio
       if(!options.publicOrigin)throw new Error('fcl_execution_public_origin_not_configured');
       const directory=options.executionDirectory;
       const execution=new FclExecutionService(caseService,{now,isActive:id=>directory.isActive(id),configuration:ctx=>nativeAdmin.getFclNotificationV2(ctx),onEvent:(value,event)=>mail.enqueue(value,event)});
-      const mail:FclExecutionMailService=new FclExecutionMailService(execution,{publicOrigin:options.publicOrigin,configuration:owner=>nativeAdmin.readFclNotificationForDispatch(owner),now,transport:options.mailTransport,verifyUsers:ids=>directory.verify(ids)});
+      const mail:FclExecutionMailService=new FclExecutionMailService(execution,{publicOrigin:options.publicOrigin,configuration:owner=>nativeAdmin.readFclNotificationForDispatch(owner),now,transport:smtp,verifyUsers:ids=>directory.verify(ids)});
       lifecycleMail=mail;caseService.setFclEventObserver(event=>mail.enqueueCaseEvent(event));
-      executionHttp=new FclExecutionHttpService(execution,documentWorkflow,nativeAdmin,mail,directory);
+      executionHttp=new FclExecutionHttpService(execution,documentWorkflow,nativeAdmin,mail,directory,smtp);
       stopWorker=mail.startWorker();
     }
     return Object.freeze({
