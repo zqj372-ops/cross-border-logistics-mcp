@@ -330,8 +330,9 @@ function stateMemberships(value: unknown): readonly Membership[] {
 }
 async function sessionBody(options: PortalHttpOptions, session: PortalSession, fclHttp?:FclHttpService|null): Promise<Record<string, unknown>> {
   const fixtures = options.mode === "fixtures" ? options.identityProvider.listFixtureIdentities?.() ?? [] : [];
+  const userGroup=session.identity&&fclHttp?await fclHttp.userGroup(session.identity):null;
   const capability=session.identity&&fclHttp?await fclHttp.capability(session.identity):null;
-  return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures, ...(capability?{fcl_capability:capability,personal_participant:session.identity?await fclHttp?.isParticipant(session.identity):false,personal_operator:capability.fcl_personal&&session.identity?fclHttp?.isOperator(session.identity)===true:false}:{}) };
+  return { schema_version: PORTAL_SCHEMA_VERSION, mode: options.mode, authenticated: session.identity !== null, identity: session.identity, organization_id: session.organizationId, csrf_token: session.csrfToken, fixture_identities: fixtures, ...(userGroup?{extensions:{user_group_v1:userGroup}}:{}), ...(capability?{fcl_capability:capability,personal_participant:session.identity?await fclHttp?.isParticipant(session.identity):false,personal_operator:capability.fcl_personal&&session.identity?fclHttp?.isOperator(session.identity)===true:false}:{}) };
 }
 function mutation<T>(request: IncomingMessage, input: T, expectedVersion?: number): PortalMutation<T> { return expectedVersion === undefined ? { idempotencyKey: idempotency(request), input } : { idempotencyKey: idempotency(request), expectedVersion, input }; }
 function stableResourceId(prefix: string, context: PortalContext, key: string): string {

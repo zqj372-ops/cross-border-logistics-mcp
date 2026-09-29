@@ -22,3 +22,18 @@ it('puts progress before the collapsed quote for an executing shipment',async()=
  expect(html.indexOf('运输进度')).toBeLessThan(html.indexOf('报价与费用'));
  expect(html).toContain('<details class="panel customer-quote">');
 });
+
+it('filters public state without losing pagination and prevents duplicate load-more requests',async()=>{
+ type UI={page:(id?:string)=>string;action:(button:{dataset:Record<string,string>})=>Promise<boolean>};
+ const create=createCustomerPortal as (dependencies:Record<string,unknown>)=>UI;
+ let calls=0,resolveNext:((value:unknown)=>void)|undefined;
+ const ui=create({identity:()=> 'customer',api:()=>{calls++;return calls===1?Promise.resolve({status:'success',data:{items:[{case_ref:'a',inquiry_no:'FCL-1',state:'inquiry'}],next_before:10}}):new Promise(resolve=>{resolveNext=resolve;});},mutate:()=>{},esc:(s:string|number)=>String(s??''),head:()=>'',rerender:()=>{},notify:()=>{}});
+ ui.page();await new Promise(resolve=>setTimeout(resolve,0));
+ await ui.action({dataset:{action:'customer-state',state:'completed'}});
+ expect(ui.page()).not.toContain('<strong>FCL-1</strong>');expect(ui.page()).toContain('customer-more');
+ const pending=ui.action({dataset:{action:'customer-more'}});
+ await ui.action({dataset:{action:'customer-more'}});expect(calls).toBe(2);
+ resolveNext!({status:'success',data:{items:[{case_ref:'b',inquiry_no:'FCL-2',state:'completed'}],next_before:null}});await pending;
+ expect(ui.page()).toContain('<strong>FCL-2</strong>');expect(ui.page()).not.toContain('customer-more');
+ await ui.action({dataset:{action:'customer-order-reset'}});expect(ui.page()).toContain('<strong>FCL-1</strong>');
+});

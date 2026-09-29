@@ -23,6 +23,9 @@ it('combines owner inquiries with assigned execution nodes and scopes phase curs
       currentVersion=execution.saveNode(receiver,{contract_version:FCL_EXECUTION_VERSION,case_ref:p.case_ref,expected_version:currentVersion,node_id:node.node_id,fields:node.fields,deadline:node.node_id==='booking'?'2026-10-08T09:00:00-07:00':'2026-10-08T10:00:00+08:00',notes:'',evidence_refs:[]},`timezone-deadline-${node.node_id}`).version;
     }
     expect(execution.workspaceList(receiver,{},()=>true).items[0]?.deadline).toBe('2026-10-08T10:00:00+08:00');
+    execution.options.canReadCommercial=()=>false;
+    const restricted=execution.get(receiver,{case_ref:p.case_ref});
+    expect(restricted?.role).toBe('participant');expect(restricted).not.toHaveProperty('acceptances');expect(restricted).not.toHaveProperty('history');
   }finally{closeFixture(f);}
 });
 
@@ -47,4 +50,16 @@ it('records explicit mentions once and preserves a per-case external override',a
     expect(additional.version).toBe(repeat.version+1);
     expect('history' in additional&&additional.history.at(-1)?.reason).toBe('Additional evidence received');
   }finally{closeFixture(f);}
+});
+
+it('does not retain former owner access after becoming an operator without assignments',async()=>{
+ const f=await readyFixture();try{
+  const execution=new FclExecutionService(f.caseService,{isActive:()=>true,now:()=> '2026-10-08T12:00:00Z'});
+  const p=f.workflow.startFclExecution(receiver,{contract_version:FCL_EXECUTION_VERSION,handoff:handoffRequest(f),confirmation:{method:'email',confirmed_at:'2026-10-08T11:00:00Z',contact_name:'Customer',note:'Accepted',evidence_refs:[]},coordinator_id:other.identity.userId,expected_config_version:0,confirmed:true},'group-owner-downgrade-01',execution);
+  execution.options.canReadCommercial=()=>false;
+  expect(()=>execution.get(receiver,{case_ref:p.case_ref})).toThrow('fcl_not_found');
+  expect(execution.list(receiver,{}).items).toEqual([]);
+  expect(execution.workspaceList(receiver,{},()=>true).items).toEqual([]);
+  expect(()=>execution.getOwner(receiver,p.case_ref)).toThrow('fcl_not_found');
+ }finally{closeFixture(f);}
 });

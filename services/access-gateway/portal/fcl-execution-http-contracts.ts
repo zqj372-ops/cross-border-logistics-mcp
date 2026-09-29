@@ -1,3 +1,4 @@
+import {userGroupRoutes} from './fcl-user-groups-contracts';
 import {z} from 'zod';
 import {customerRoutes} from './fcl-customer-contracts';
 import * as c from './fcl-execution-contracts';
@@ -40,6 +41,7 @@ export const executionRoutes={
   'smtp-save':[smtpSaveSchema,smtpViewSchema,true,'保存发信服务草稿'],
   'smtp-test':[smtpTestSchema,smtpViewSchema,true,'测试已保存发信服务'],
   'smtp-activate':[smtpActivateSchema,smtpViewSchema,true,'启用已测试发信服务'],
+  ...userGroupRoutes,
 } as const;
 export type FclExecutionAction=keyof typeof executionRoutes;
 export const FCL_EXECUTION_ACTIONS=Object.keys(executionRoutes) as FclExecutionAction[];

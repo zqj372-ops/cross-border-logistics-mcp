@@ -16552,6 +16552,364 @@
         "x-freightclaw-max-response-bytes": 12582912
       }
     },
+    "/console/api/v1/fcl/group-self": {
+      "post": {
+        "operationId": "fcl_group_self",
+        "summary": "FCL 人员操作 group-self",
+        "description": "固定合同 fcl-http@2026-09-21.v1；最大请求 131072 bytes，最大响应 12582912 bytes。人员会话和精确 FCL receiver 由服务端校验，API Key 或企业上下文不能替代。",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FclGroupSelfRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-freightclaw-max-request-bytes": 131072,
+        "x-freightclaw-max-response-bytes": 12582912
+      }
+    },
+    "/console/api/v1/fcl/group-list": {
+      "post": {
+        "operationId": "fcl_group_list",
+        "summary": "FCL 人员操作 group-list",
+        "description": "固定合同 fcl-http@2026-09-21.v1；最大请求 131072 bytes，最大响应 12582912 bytes。人员会话和精确 FCL receiver 由服务端校验，API Key 或企业上下文不能替代。",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FclGroupListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupListResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-freightclaw-max-request-bytes": 131072,
+        "x-freightclaw-max-response-bytes": 12582912
+      }
+    },
+    "/console/api/v1/fcl/group-save": {
+      "post": {
+        "operationId": "fcl_group_save",
+        "summary": "FCL 人员操作 group-save",
+        "description": "固定合同 fcl-http@2026-09-21.v1；最大请求 131072 bytes，最大响应 12582912 bytes。人员会话和精确 FCL receiver 由服务端校验，API Key 或企业上下文不能替代。",
+        "security": [
+          {
+            "PortalSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FclGroupSaveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "操作结果；业务状态及来源版本以响应为准。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-freightclaw-max-request-bytes": 131072,
+        "x-freightclaw-max-response-bytes": 12582912
+      }
+    },
     "/console/api/v1/fcl/estimate-run": {
       "post": {
         "operationId": "fcl_estimate_run",
@@ -126273,6 +126631,585 @@
             "maxLength": 120
           },
           "__schema4": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "FclGroupSelfRequest": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "FclGroupSelfResponse": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "const": "success"
+              },
+              "data": {
+                "$ref": "#/components/schemas/FclGroupSelfResponse/$defs/__schema0"
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse/$defs/__schema1"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "needs_input",
+                  "manual_review"
+                ]
+              },
+              "data": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FclGroupSelfResponse/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse/$defs/__schema2"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "blocked",
+                  "unavailable"
+                ]
+              },
+              "data": {
+                "type": "null"
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupSelfResponse/$defs/__schema3"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "sales",
+                  "operations",
+                  "administrator"
+                ]
+              },
+              "can_manage": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "group",
+              "can_manage"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "__schema2": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "__schema3": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "FclGroupListRequest": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "default": "",
+            "type": "string",
+            "maxLength": 200
+          },
+          "before": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "query",
+          "before"
+        ],
+        "additionalProperties": false
+      },
+      "FclGroupListResponse": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "const": "success"
+              },
+              "data": {
+                "$ref": "#/components/schemas/FclGroupListResponse/$defs/__schema0"
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupListResponse/$defs/__schema2"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "needs_input",
+                  "manual_review"
+                ]
+              },
+              "data": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FclGroupListResponse/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupListResponse/$defs/__schema3"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "blocked",
+                  "unavailable"
+                ]
+              },
+              "data": {
+                "type": "null"
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupListResponse/$defs/__schema4"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupListResponse/$defs/__schema1"
+                }
+              },
+              "next_before": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "items",
+              "next_before"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "object",
+            "properties": {
+              "user_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "email": {
+                "type": "string",
+                "format": "email",
+                "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              "group": {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "sales",
+                  "operations",
+                  "administrator"
+                ]
+              },
+              "legacy_group": {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "sales",
+                  "operations"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "administrator",
+                  "explicit",
+                  "existing",
+                  "default"
+                ]
+              }
+            },
+            "required": [
+              "user_id",
+              "name",
+              "email",
+              "group",
+              "legacy_group",
+              "version",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "__schema2": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "__schema3": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "__schema4": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "FclGroupSaveRequest": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "group": {
+            "type": "string",
+            "enum": [
+              "customer",
+              "sales",
+              "operations"
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "user_id",
+          "group",
+          "expected_version",
+          "confirmed"
+        ],
+        "additionalProperties": false
+      },
+      "FclGroupSaveResponse": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "const": "success"
+              },
+              "data": {
+                "$ref": "#/components/schemas/FclGroupSaveResponse/$defs/__schema0"
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse/$defs/__schema1"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "needs_input",
+                  "manual_review"
+                ]
+              },
+              "data": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FclGroupSaveResponse/$defs/__schema0"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse/$defs/__schema2"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "const": "fcl-http@2026-09-21.v1"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "blocked",
+                  "unavailable"
+                ]
+              },
+              "data": {
+                "type": "null"
+              },
+              "reason_codes": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FclGroupSaveResponse/$defs/__schema3"
+                }
+              }
+            },
+            "required": [
+              "schema_version",
+              "status",
+              "data",
+              "reason_codes"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "$defs": {
+          "__schema0": {
+            "type": "object",
+            "properties": {
+              "user_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "group": {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "sales",
+                  "operations"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "user_id",
+              "group",
+              "version"
+            ],
+            "additionalProperties": false
+          },
+          "__schema1": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "__schema2": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "__schema3": {
             "type": "string",
             "minLength": 1,
             "maxLength": 120

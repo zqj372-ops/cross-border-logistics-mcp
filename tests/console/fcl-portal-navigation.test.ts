@@ -22,3 +22,13 @@ it('carries the saved inquiry link after the exchanged credential was removed fr
  expect(JSON.parse(saved.get('freightclaw.pending-claim')||'null')).toMatchObject({inquiry_id:'fixture-id',credential:'fixture-credential'});
  expect(destination).toBe('/customer/');
 });
+
+it('returns both personal portals to login after logout even on the home hash',()=>{
+ const source=readFileSync('apps/console/app.js','utf8'),start=source.indexOf('function render() {');
+ const body=source.slice(start,source.indexOf('  ensureShell(); nav();',start))+'throw Error("private page rendered");}\nrender();';
+ for(const portalMode of ['customer','ops']){
+  let login=false;
+  runInNewContext(body,{route:()=>({page:'home'}),PUBLIC_PAGES:['home'],model:{session:{authenticated:false}},portalMode,renderLogin:()=>{login=true;}});
+  expect(login).toBe(true);
+ }
+});

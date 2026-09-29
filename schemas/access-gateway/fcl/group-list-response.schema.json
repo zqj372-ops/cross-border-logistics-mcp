@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema2"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "needs_input",
+            "manual_review"
+          ]
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema0"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema3"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema4"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "next_before": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "next_before"
+      ],
+      "additionalProperties": false
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "group": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "sales",
+            "operations",
+            "administrator"
+          ]
+        },
+        "legacy_group": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "sales",
+            "operations"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "administrator",
+            "explicit",
+            "existing",
+            "default"
+          ]
+        }
+      },
+      "required": [
+        "user_id",
+        "name",
+        "email",
+        "group",
+        "legacy_group",
+        "version",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema4": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    }
+  }
+}

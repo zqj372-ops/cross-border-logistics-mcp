@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "const": "success"
+        },
+        "data": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "needs_input",
+            "manual_review"
+          ]
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/__schema0"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema2"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "fcl-http@2026-09-21.v1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "unavailable"
+          ]
+        },
+        "data": {
+          "type": "null"
+        },
+        "reason_codes": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema3"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "data",
+        "reason_codes"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "sales",
+            "operations",
+            "administrator"
+          ]
+        },
+        "can_manage": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "group",
+        "can_manage"
+      ],
+      "additionalProperties": false
+    },
+    "__schema1": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    }
+  }
+}

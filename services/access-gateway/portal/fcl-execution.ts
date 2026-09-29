@@ -20,7 +20,7 @@ const parse=<T>(schema:z.ZodType<T>,input:unknown):T=>{const result=schema.safeP
 const terminal=(node:FclNode)=>['completed','skipped','cancelled'].includes(node.status);
 type Start=z.infer<typeof fclExecutionStartSchema>;
 type Evidence={handoff:FclHandoffPayload;document:FclDocumentPayload};
-export type FclExecutionOptions={now?:()=>string;isActive:(id:string)=>boolean;configuration?:(ctx:PortalContext)=>FclNotificationConfig;onEvent?:(progress:FclExecution,event:FclExecution['history'][number])=>void};
+export type FclExecutionOptions={canReadCommercial?:(ctx:PortalContext)=>boolean;now?:()=>string;isActive:(id:string)=>boolean;configuration?:(ctx:PortalContext)=>FclNotificationConfig;onEvent?:(progress:FclExecution,event:FclExecution['history'][number])=>void};
 
 export function emptyNodeFields(node:typeof FCL_NODE_IDS[number]){
   const fields:Record<typeof FCL_NODE_IDS[number],unknown>={
@@ -51,24 +51,24 @@ export class FclExecutionService{
   private visible(ctx:PortalContext,value:FclExecution){
     const user=this.actor(ctx);
     if(!this.active(value.owner_id))throw new PortalError('fcl_not_found');
-    if(user===value.owner_id||user===value.coordinator_id)return value;
+    if((user===value.owner_id&&this.options.canReadCommercial?.(ctx)!==false)||user===value.coordinator_id)return value;
     if(!value.nodes.some(node=>node.assignment.responsible_id===user||node.assignment.collaborator_ids.includes(user)))throw new PortalError('fcl_not_found');
     return value;
   }
-  private manager(ctx:PortalContext,value:FclExecution){this.visible(ctx,value);if(![value.owner_id,value.coordinator_id].includes(ctx.identity.userId))throw new PortalError('fcl_not_found');}
+  private manager(ctx:PortalContext,value:FclExecution){this.visible(ctx,value);if(![...(this.options.canReadCommercial?.(ctx)!==false?[value.owner_id]:[]),value.coordinator_id].includes(ctx.identity.userId))throw new PortalError('fcl_not_found');}
   private nodeAccess(ctx:PortalContext,value:FclExecution,nodeId:FclNode['node_id']){
     this.visible(ctx,value);const node=value.nodes.find(node=>node.node_id===nodeId);if(!node)throw new PortalError('fcl_not_found');
-    if(![value.owner_id,value.coordinator_id,node.assignment.responsible_id,...node.assignment.collaborator_ids].includes(ctx.identity.userId))throw new PortalError('fcl_not_found');return node;
+    if(![...(this.options.canReadCommercial?.(ctx)!==false?[value.owner_id]:[]),value.coordinator_id,node.assignment.responsible_id,...node.assignment.collaborator_ids].includes(ctx.identity.userId))throw new PortalError('fcl_not_found');return node;
   }
   project(ctx:PortalContext,value:FclExecution){
     this.visible(ctx,value);
-    if(ctx.identity.userId===value.owner_id)return fclExecutionViewSchema.parse({...value,history:value.history.slice(-50),history_count:value.history.length,role:'owner'});
+    if(ctx.identity.userId===value.owner_id&&this.options.canReadCommercial?.(ctx)!==false)return fclExecutionViewSchema.parse({...value,history:value.history.slice(-50),history_count:value.history.length,role:'owner'});
     const {acceptances:_acceptances,history:_history,...safe}=value;void _acceptances;void _history;
     // A coordinator manages operational data, but still does not receive commercial evidence.
     const nodes=ctx.identity.userId===value.coordinator_id?safe.nodes:safe.nodes.filter(node=>node.assignment.responsible_id===ctx.identity.userId||node.assignment.collaborator_ids.includes(ctx.identity.userId));
     return fclExecutionViewSchema.parse({...safe,nodes,role:'participant'});
   }
-  get(ctx:PortalContext,input:unknown){const request=parse(fclExecutionGetSchema,input);this.actor(ctx);const value=this.row(request.case_ref);if(!value){this.cases.getFclCase(ctx,request.case_ref);return null;}return this.project(ctx,value);}
+  get(ctx:PortalContext,input:unknown){const request=parse(fclExecutionGetSchema,input);this.actor(ctx);const value=this.row(request.case_ref);if(!value){if(this.options.canReadCommercial?.(ctx)===false)throw new PortalError('fcl_not_found');this.cases.getFclCase(ctx,request.case_ref);return null;}return this.project(ctx,value);}
   history(ctx:PortalContext,input:unknown){
     const request=parse(fclExecutionHistoryRequestSchema,input),value=this.row(request.case_ref);if(!value)throw new PortalError('fcl_not_found');
     const view=this.project(ctx,value),ids=new Set(view.nodes.map(n=>n.node_id));let before=Number.MAX_SAFE_INTEGER;
@@ -77,7 +77,7 @@ export class FclExecutionService{
     const page=visible.slice(0,request.limit),items=page.map(e=>view.role==='owner'?e:{...e,before_nodes:e.before_nodes.filter(n=>ids.has(n.node_id)),before_shared:null,notify_node_ids:e.notify_node_ids.filter(n=>ids.has(n))});
     return fclExecutionHistorySchema.parse({items,next_cursor:visible.length>request.limit?Buffer.from(JSON.stringify({case_ref:request.case_ref,user:ctx.identity.userId,before:page.at(-1)!.version})).toString('base64url'):null});
   }
-  getOwner(ctx:PortalContext,caseRef:string){this.actor(ctx);this.cases.getFclCase(ctx,caseRef);return this.row(caseRef);}
+  getOwner(ctx:PortalContext,caseRef:string){if(this.options.canReadCommercial?.(ctx)===false)throw new PortalError('fcl_not_found');this.actor(ctx);this.cases.getFclCase(ctx,caseRef);return this.row(caseRef);}
   private key(key:string){if(!/^[A-Za-z0-9._:-]{16,128}$/u.test(key))throw new PortalError('idempotency_key_invalid');}
   private replay(ctx:PortalContext,action:string,input:unknown,caseRef:string,key:string){
     this.key(key);const scope=JSON.stringify(['fcl-execution',this.actor(ctx),action]);
@@ -261,7 +261,7 @@ export class FclExecutionService{
     const config=this.configuration(ctx,request.expected_config_version),changes=value.nodes.filter(node=>node.status==='not_started').flatMap(node=>{const after=config.rows.find(row=>row.node_id===node.node_id)!;return JSON.stringify(node.notification)===JSON.stringify(after)?[]:[{node_id:node.node_id,before:node.notification,after}];});
     return fclExecutionDefaultsPreviewSchema.parse({preview_digest:executionDigest({request,changes}),configuration_version:config.version,changes});
   }
-  applyDefaults(ctx:PortalContext,input:unknown,key:string){const request=parse(fclExecutionDefaultsApplySchema,input);return this.mutate(ctx,'apply_defaults',request,key,value=>{if(value.owner_id!==this.actor(ctx))throw new PortalError('fcl_not_found');},value=>{
+  applyDefaults(ctx:PortalContext,input:unknown,key:string){const request=parse(fclExecutionDefaultsApplySchema,input);return this.mutate(ctx,'apply_defaults',request,key,value=>{if(this.options.canReadCommercial?.(ctx)===false||value.owner_id!==this.actor(ctx))throw new PortalError('fcl_not_found');},value=>{
     const preview=this.defaultsPreview(ctx,{contract_version:request.contract_version,case_ref:request.case_ref,expected_version:request.expected_version,expected_config_version:request.expected_config_version});
     if(preview.preview_digest!==request.preview_digest)throw new PortalError('fcl_execution_preview_changed');const beforeNodes=preview.changes.map(change=>structuredClone(value.nodes.find(n=>n.node_id===change.node_id)!));
     for(const change of preview.changes){const node=value.nodes.find(n=>n.node_id===change.node_id)!;node.notification=structuredClone(change.after);node.assignment=structuredClone(change.after.assignment);node.assignment_source='applied_default';}
@@ -271,7 +271,7 @@ export class FclExecutionService{
     const request=parse(fclExecutionListSchema,input),user=this.actor(ctx);let cursor='';
     if(request.cursor){try{const c=z.object({user:z.string(),state:z.string(),case_ref:z.uuid()}).strict().parse(JSON.parse(Buffer.from(request.cursor,'base64url').toString()));if(c.user!==user||c.state!==request.state)throw new Error();cursor=c.case_ref;}catch{throw new PortalError('fcl_execution_input_invalid');}}
     // SQL restricts candidate visibility before pagination; no global in-memory case scan.
-    const rows=this.cases.store.db.prepare(`SELECT case_id FROM fcl_case_progress p WHERE case_id>? AND (owner_id=? OR json_extract(payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?))) AND (? NOT IN ('executing','completed') OR json_extract(payload,'$.state')=?) AND (?<>'mine' OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.status') IN ('not_started','active','exception') AND (json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?)))) ORDER BY case_id LIMIT ?`).all(cursor,user,user,user,user,request.state,request.state,request.state,user,user,request.limit+1) as {case_id:string}[];
+    const rows=this.cases.store.db.prepare(`SELECT case_id FROM fcl_case_progress p WHERE case_id>? AND (owner_id=? OR json_extract(payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?))) AND (? NOT IN ('executing','completed') OR json_extract(payload,'$.state')=?) AND (?<>'mine' OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.status') IN ('not_started','active','exception') AND (json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?)))) ORDER BY case_id LIMIT ?`).all(cursor,this.options.canReadCommercial?.(ctx)===false?null:user,user,user,user,request.state,request.state,request.state,user,user,request.limit+1) as {case_id:string}[];
     const page=rows.slice(0,request.limit),items=page.map(row=>{const value=this.row(row.case_id)!;const projected=this.project(ctx,value),pending=projected.nodes.filter(node=>!terminal(node));return {case_ref:value.case_ref,inquiry_no:value.inquiry_no,extensions:{shipment_v1:{label:shipmentLabel(value)}},customer_name:value.customer_name,route:value.route,state:value.state,coordinator_id:value.coordinator_id,pending_nodes:pending.map(node=>node.node_id),deadline:pending.map(n=>n.deadline).filter((v):v is string=>v!==null).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]??null,exception:pending.some(n=>n.status==='exception')};});
     return fclExecutionListOutputSchema.parse({items,next_cursor:rows.length>request.limit?Buffer.from(JSON.stringify({user,state:request.state,case_ref:page.at(-1)!.case_id})).toString('base64url'):null});
   }
@@ -279,14 +279,14 @@ export class FclExecutionService{
     const request=parse(fclWorkspaceListSchema,input),user=ctx.identity.userId;let cursor='';
     if(!ctx.identity.emailVerified)throw new PortalError('fcl_not_found');
     if(request.cursor){try{const c=JSON.parse(Buffer.from(request.cursor,'base64url').toString()) as {user:string;phase:string;mine:boolean;case_ref:string};if(c.user!==user||c.phase!==request.phase||c.mine!==request.mine||!z.uuid().safeParse(c.case_ref).success)throw new Error();cursor=c.case_ref;}catch{throw new PortalError('fcl_execution_input_invalid');}}
-    const rows=this.cases.store.db.prepare(`SELECT c.case_id,c.owner_id FROM business_cases c JOIN fcl_inquiries i ON i.case_id=c.case_id LEFT JOIN fcl_case_progress p ON p.case_id=c.case_id WHERE c.case_id>? AND (c.owner_id=? OR json_extract(p.payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') a WHERE a.value=?))) ORDER BY c.case_id LIMIT ?`).all(cursor,user,user,user,user,request.limit+1) as {case_id:string;owner_id:string}[];
+    const rows=this.cases.store.db.prepare(`SELECT c.case_id,c.owner_id FROM business_cases c JOIN fcl_inquiries i ON i.case_id=c.case_id LEFT JOIN fcl_case_progress p ON p.case_id=c.case_id WHERE c.case_id>? AND (c.owner_id=? OR json_extract(p.payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') a WHERE a.value=?))) ORDER BY c.case_id LIMIT ?`).all(cursor,this.options.canReadCommercial?.(ctx)===false?null:user,user,user,user,request.limit+1) as {case_id:string;owner_id:string}[];
     return {request,rows,user};
   }
   // Only used to verify authority for already caller-scoped list candidates.
   workspaceAuthorityIds(ctx:PortalContext,input:unknown){return this.workspaceCandidates(ctx,input).rows.map(r=>r.owner_id);}
   listAuthorityIds(ctx:PortalContext){
     const user=ctx.identity.userId;
-    return (this.cases.store.db.prepare(`SELECT DISTINCT owner_id FROM fcl_case_progress p WHERE owner_id=? OR json_extract(payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?)) LIMIT 101`).all(user,user,user,user) as {owner_id:string}[]).map(row=>row.owner_id);
+    return (this.cases.store.db.prepare(`SELECT DISTINCT owner_id FROM fcl_case_progress p WHERE owner_id=? OR json_extract(payload,'$.coordinator_id')=? OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.nodes') n WHERE json_extract(n.value,'$.assignment.responsible_id')=? OR EXISTS(SELECT 1 FROM json_each(n.value,'$.assignment.collaborator_ids') c WHERE c.value=?)) LIMIT 101`).all(this.options.canReadCommercial?.(ctx)===false?null:user,user,user,user) as {owner_id:string}[]).map(row=>row.owner_id);
   }
   workspaceList(ctx:PortalContext,input:unknown,isAwaiting:(caseRef:string)=>boolean){
     this.actor(ctx);const {request,rows,user}=this.workspaceCandidates(ctx,input),page=rows.slice(0,request.limit);
@@ -296,7 +296,7 @@ export class FclExecutionService{
       const execution=this.row(row.case_id);
       let item:z.infer<typeof fclWorkspaceListOutputSchema>['items'][number];
       if(execution){const view=this.project(ctx,execution),pending=view.nodes.filter(n=>!terminal(n));if(request.mine&&!pending.some(n=>[n.assignment.responsible_id,...n.assignment.collaborator_ids].includes(user)))continue;item={case_ref:row.case_id,inquiry_no:view.inquiry_no,extensions:{shipment_v1:{label:shipmentLabel(execution)}},customer_name:view.customer_name,route:view.route,phase:view.state,coordinator_id:view.coordinator_id,pending_nodes:pending.map(n=>n.node_id),deadline:pending.map(n=>n.deadline).filter((v):v is string=>v!==null).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]??null,exception:pending.some(n=>n.status==='exception')};}
-      else{const view=this.cases.getFclCase(ctx,row.case_id),input=view.current_input,awaiting=isAwaiting(row.case_id);item={case_ref:row.case_id,inquiry_no:view.inquiry_no,customer_name:input.contact.company||input.contact.name,route:[input.pol,input.pod,input.final_destination].filter((place,index,places)=>place&&place!==places[index-1]).join(' → '),phase:awaiting?'awaiting_confirmation':'inquiry_quote',coordinator_id:user,pending_nodes:[awaiting?'customer_followup':view.review_context.review_required?'intake':'quote'],deadline:null,exception:view.case_status==='needs_input'};}
+      else{if(this.options.canReadCommercial?.(ctx)===false)continue;const view=this.cases.getFclCase(ctx,row.case_id),input=view.current_input,awaiting=isAwaiting(row.case_id);item={case_ref:row.case_id,inquiry_no:view.inquiry_no,customer_name:input.contact.company||input.contact.name,route:[input.pol,input.pod,input.final_destination].filter((place,index,places)=>place&&place!==places[index-1]).join(' → '),phase:awaiting?'awaiting_confirmation':'inquiry_quote',coordinator_id:user,pending_nodes:[awaiting?'customer_followup':view.review_context.review_required?'intake':'quote'],deadline:null,exception:view.case_status==='needs_input'};}
       if(request.phase==='all'||item.phase===request.phase)items.push(item);
     }
     // Filtering is bounded to one scan page; an empty page can still carry a continuation cursor.
