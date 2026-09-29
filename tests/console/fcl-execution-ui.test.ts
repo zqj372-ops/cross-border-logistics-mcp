@@ -23,3 +23,27 @@ it('does not expose conversion controls for a node participant',async()=>{
   ui.setCase('case-a');await ui.load();
   expect(ui.render()).toContain('订单流转');expect(ui.conversionPanel()).not.toContain('确认成交并转执行');
 });
+it('preserves assignment reason and notification edits across rerenders and selecting self',async()=>{
+  const {vi}=await import('vitest');
+  const assignment={responsible_id:null,collaborator_ids:[],to:null,cc:[],enabled:false};
+  const notification={external_to:null,external_cc:[],external_enabled:false,visible_fields:[]};
+  const view={case_ref:'case-a',inquiry_no:'FCL-TEST',route:'Test',owner_id:'owner',coordinator_id:'owner',role:'owner',version:1,state:'executing',shared:{containers:[]},nodes:[{node_id:'booking',status:'not_started',assignment,notification,assignment_source:'snapshot',fields:{},evidence_refs:[],deadline:null}]};
+  const write=vi.fn(()=>Promise.resolve({status:'success',data:view}));
+  const ui=createFclExecutionUI({call:(action:string)=>Promise.resolve({status:'success',data:action==='execution-mail-list'?{items:[]}:view}),write,esc,rerender:()=>{},notify:()=>{},context:()=>({userId:'owner'})});
+  const values:Record<string,string>={reason:'核对后交由本人处理',to:'test@example.invalid',enabled:'on'};
+  vi.stubGlobal('FormData',class{get(key:string){return values[key]||'';}});
+  try{
+    ui.setCase('case-a');await ui.load();
+    const form={dataset:{fclExecForm:'assignment',node:'booking'}};
+    ui.input({target:{closest:()=>form}});
+    expect(ui.render()).toContain('value="核对后交由本人处理"');
+    await ui.action({dataset:{action:'fcl-exec-assign-self',node:'booking'}});
+    expect(ui.render()).toContain('value="test@example.invalid"');
+    expect(ui.render()).toContain('value="核对后交由本人处理"');
+    values.responsible_id='owner';await ui.submit(form);
+    expect(write).toHaveBeenCalledWith('execution-node-assign',expect.objectContaining({reason:values.reason,assignment:expect.objectContaining({responsible_id:'owner',to:values.to,enabled:true})}),expect.any(String));
+    values.reason='';await ui.submit(form);
+    expect(write).toHaveBeenLastCalledWith('execution-node-assign',expect.objectContaining({reason:'首次分派'}),expect.any(String));
+    view.nodes[0]!.assignment.responsible_id='owner' as never;write.mockClear();await ui.submit(form);expect(write).not.toHaveBeenCalled();
+  }finally{vi.unstubAllGlobals();}
+});
