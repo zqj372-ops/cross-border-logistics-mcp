@@ -1,3 +1,4 @@
+import type {FclSmtpSettings} from './fcl-smtp-settings';
 import {FclCustomerService} from './fcl-customer';
 import {customerRoutes,CUSTOMER_ACTIONS,type CustomerAction} from './fcl-customer-contracts';
 import type {PortalContext} from './contracts';
@@ -10,11 +11,12 @@ import type {FclExecutionAction} from './fcl-execution-http-contracts';
 import type {FclExecutionDirectory} from './fcl-execution-identity';
 
 export class FclExecutionHttpService{
-  constructor(readonly execution:FclExecutionService,readonly workflow:DocumentWorkflowService,readonly native:NativeAdminService,readonly mail:FclExecutionMailService,readonly directory?:FclExecutionDirectory){}
+  constructor(readonly execution:FclExecutionService,readonly workflow:DocumentWorkflowService,readonly native:NativeAdminService,readonly mail:FclExecutionMailService,readonly directory?:FclExecutionDirectory,readonly smtp?:FclSmtpSettings){}
   async execute(ctx:PortalContext,action:FclExecutionAction,input:unknown,key:()=>string):Promise<unknown>{
     if(CUSTOMER_ACTIONS.includes(action))return new FclCustomerService(this.execution,this.workflow,this.mail).run(ctx,action as CustomerAction,input,key);
     const run=async()=>{
       if(Object.hasOwn(customerRoutes,action))return new FclCustomerService(this.execution,this.workflow,this.mail).run(ctx,action as CustomerAction,input,key);
+      if(action.startsWith('smtp-')){if(!this.smtp)throw new PortalError('fcl_smtp_settings_not_configured');switch(action){case 'smtp-get':return this.smtp.get(ctx);case 'smtp-save':return this.smtp.save(ctx,input,key());case 'smtp-test':return this.smtp.test(ctx,input,key());case 'smtp-activate':return this.smtp.activate(ctx,input,key());}}
       switch(action){
         case 'execution-documents-preview':return this.mail.previewDocuments(ctx,input);
         case 'execution-documents-send':return this.mail.sendDocuments(ctx,input,key());

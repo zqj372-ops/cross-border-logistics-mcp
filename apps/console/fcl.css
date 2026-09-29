@@ -516,17 +516,37 @@
 .fcl-exec-node .panel-body>details{margin-top:16px}
 .fcl-node-mail{grid-column:1/-1;min-width:0}
 .fcl-table-scroll{overflow-x:auto;max-width:100%;margin-bottom:18px}
-.fcl-node-mail table{width:100%;min-width:900px;border-collapse:collapse}
-.fcl-node-mail th,.fcl-node-mail td{text-align:left;padding:10px;border-bottom:1px solid var(--border,#dfe3e8);vertical-align:top}
-.fcl-node-mail input:not([type=checkbox]){width:100%;min-width:130px}
+.fcl-node-mail input:not([type=checkbox]){width:100%;min-width:0}
+.fcl-mail-heading,.fcl-mail-owner,.fcl-mail-save{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.fcl-mail-heading h2{margin:0;flex:1}
+.fcl-mail-heading>span,.fcl-mail-save>span{font-size:13px;color:var(--text-secondary,#5c6470)}
+.fcl-mail-customer{padding:16px 0;border-bottom:1px solid var(--border,#dfe3e8)}
+.fcl-mail-customer p{margin:6px 0;font-size:14px}
+.fcl-mail-node{border-bottom:1px solid var(--border,#dfe3e8)}
+.fcl-mail-node>summary{display:flex;gap:16px;align-items:center;padding:16px 0;cursor:pointer;list-style:none}
+.fcl-mail-node>summary::before{content:'›';font-size:20px;transition:transform .15s}
+.fcl-mail-node[open]>summary::before{transform:rotate(90deg)}
+.fcl-mail-node>summary strong{min-width:160px}
+.fcl-mail-node>summary span{font-size:13px;color:var(--text-secondary,#5c6470);overflow-wrap:anywhere}
+.fcl-mail-node>summary span:last-child{margin-left:auto}
+.fcl-mail-node-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;padding:4px 0 24px}
+.fcl-mail-node-body h3{font-size:15px;margin:0 0 14px}
+.fcl-mail-node-body .head-actions{margin-top:16px}
+.fcl-mail-owner{margin:12px 0;font-size:13px}
+.fcl-mail-owner details{width:100%}
+.fcl-mail-save{padding:20px 0 12px}
+.fcl-mail-service{margin-top:12px;font-size:13px;color:var(--text-secondary,#5c6470)}
+.fcl-settings{max-width:1120px;margin:0 auto}
+.fcl-settings-issuer{margin-bottom:20px}
+.fcl-settings-issuer>summary{padding:18px 22px;cursor:pointer;font-weight:600}
+@media(max-width:760px){.fcl-mail-node-body{grid-template-columns:1fr;gap:24px}.fcl-mail-node>summary{flex-wrap:wrap;gap:8px}.fcl-mail-node>summary strong{min-width:0;flex:1}.fcl-mail-node>summary span{width:100%;margin-left:22px}.fcl-mail-node>summary span:last-child{margin-left:22px}}
 .fcl-mail-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:10px 0}
 .fcl-mail-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;line-height:1.7;background:var(--surface-subtle,#f4f6f8);padding:16px}
 .fcl-exec-preview{margin-top:20px;padding:16px;background:var(--surface-subtle,#f4f6f8);border-radius:8px}
 #fcl-execution{margin-top:24px;scroll-margin-top:24px}
 #fcl-execution .field input,#fcl-execution .field textarea{max-width:100%}
 
-.fcl-mail-scroll-hint{display:none}
-@media(max-width:1100px){.fcl-mail-scroll-hint{display:block}}
+
 
 /* Same compact form rhythm for progress and document sending. */
 .fcl-progress-confirm { margin:12px 0; padding:16px; border:1px solid var(--border,#dce2eb); border-radius:8px; background:var(--surface,#fff); }
@@ -678,3 +698,8 @@
   #app[data-page="fcl"] #content .customer-ledger td:last-child { grid-column:2; grid-row:2 / 4; align-self:center; }
   #app[data-page="fcl"] #content .customer-ledger td:last-child a { display:inline-flex; align-items:center; min-height:44px; }
 }
+
+.fcl-smtp-settings{padding:20px 0;border-bottom:1px solid var(--border,#dfe3e8)}
+.fcl-smtp-settings h3{margin:0 0 8px}.fcl-smtp-settings summary{cursor:pointer;margin:12px 0}
+.fcl-smtp-settings .field-grid{margin:16px 0}.fcl-smtp-settings p{margin:8px 0;font-size:13px}
+.fcl-smtp-test{margin-top:20px}.fcl-smtp-test>.field{max-width:420px;margin-bottom:12px}

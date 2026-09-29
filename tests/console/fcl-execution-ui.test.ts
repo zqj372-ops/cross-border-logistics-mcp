@@ -47,3 +47,27 @@ it('preserves assignment reason and notification edits across rerenders and sele
     view.nodes[0]!.assignment.responsible_id='owner' as never;write.mockClear();await ui.submit(form);expect(write).not.toHaveBeenCalled();
   }finally{vi.unstubAllGlobals();}
 });
+
+it('renders mail settings as compact node sections and preserves other nodes on self assignment',async()=>{
+  // @ts-expect-error Browser module is intentionally plain JavaScript.
+  const {createFclNodeNotifications}=await import('../../apps/console/fcl-node-notifications.js');
+  const {vi}=await import('vitest');
+  const rows=['intake','booking'].map(node_id=>({node_id,assignment:{responsible_id:null,collaborator_ids:[],to:null,cc:[],enabled:false},external_to:null,external_cc:[],external_enabled:false,visible_fields:[]}));
+  const view={version:1,transport:'configured_unverified',rows};
+  const write=vi.fn(()=>Promise.resolve({status:'success',data:view}));
+  const ui=createFclNodeNotifications({call:()=>Promise.resolve({status:'success',data:view}),write,esc,rerender:()=>{},notify:()=>{},context:()=>({userId:'owner',email:'owner@example.invalid'})});
+  ui.render();await Promise.resolve();
+  expect(ui.render()).not.toContain('<table');
+  expect(ui.render()).toContain('内部提醒');expect(ui.render()).toContain('对接人邮件');
+  const values:Record<string,string>={'intake:to':'intake@example.invalid','booking:external_to':'agent@example.invalid','booking:external_enabled':'on'};
+  const form={matches:(selector:string)=>selector==='[data-fcl-notifications]'};
+  vi.stubGlobal('FormData',class{get(key:string){return values[key]||'';}});
+  try{
+    await ui.action({dataset:{action:'fcl-mail-self',node:'booking'},closest:()=>form});
+    expect(ui.render()).toContain('agent@example.invalid');expect(ui.render()).toContain('intake@example.invalid');
+    expect(ui.render()).toContain('data-mail-node="booking" open');
+    values['booking:responsible_id']='owner';values['booking:to']='owner@example.invalid';
+    await ui.submit(form);
+    expect(write).toHaveBeenCalledWith('notification-v2-save',expect.objectContaining({rows:expect.arrayContaining([expect.objectContaining({node_id:'booking',external_to:'agent@example.invalid',external_enabled:true}),expect.objectContaining({node_id:'intake',assignment:expect.objectContaining({to:'intake@example.invalid'})})])}));
+  }finally{vi.unstubAllGlobals();}
+});

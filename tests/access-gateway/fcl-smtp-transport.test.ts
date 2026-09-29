@@ -48,7 +48,8 @@ it('rejects injected headers before starting a child process',async()=>{
   await expect(transport.send({to:'receiver@example.test\r\nBcc: evil@example.test',cc:[],subject:'synthetic',body:'synthetic'})).rejects.toThrow('fcl_mail_header_invalid');
   await expect(transport.send({to:'receiver@example.test',cc:[],subject:'synthetic\r\nX-Evil: 1',body:'synthetic'})).rejects.toThrow('fcl_mail_header_invalid');
   expect(fake.calls).toEqual([]);
-  expect(()=>new SmtpFclMailTransport({...config,secure:false as never})).toThrow('fcl_smtp_config_invalid');
+  expect(()=>new SmtpFclMailTransport({...config,secure:false})).not.toThrow();
+  expect(()=>new SmtpFclMailTransport({...config,reply_to:'bad\r\nBcc: injected@example.test'})).toThrow('fcl_smtp_config_invalid');
 });
 
 it('reads only a closed private SMTP JSON file and sanitizes malformed secret JSON',()=>{
@@ -101,7 +102,7 @@ class FakeSMTP:
   assert parts[0].get_content_type()=='application/pdf'
   assert parts[0].get_payload(decode=True)==b'%PDF-fixture'
   return {}
-smtplib.SMTP_SSL=FakeSMTP
+module['main'].__globals__['PublicSMTPSSL']=FakeSMTP
 payload={'config':{'host':'unused','port':465,'secure':True,'username':'fixture','password':'fixture','from':'sender@example.test'},'message':{'to':'receiver@example.test','cc':[],'subject':'fixture','body':'documents','attachments':[{'filename':'invoice.pdf','content_type':'application/pdf','content_base64':base64.b64encode(b'%PDF-fixture').decode()}]}}
 sys.stdin=io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode()))
 assert module['main']()==0
