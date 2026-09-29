@@ -1,3 +1,4 @@
+import {FclUserGroups} from './fcl-user-groups';
 import {FclSmtpSettings} from './fcl-smtp-settings';
 import type {FclSmtpConfig} from './fcl-smtp-transport';
 import {FclExecutionService} from './fcl-execution';
@@ -63,6 +64,7 @@ export async function composeProductionFcl(options:ProductionFclCompositionOptio
   // The anonymous intake receiver retains its separate live authority check.
   const receiverIsActive=(userId:string)=>userId!==options.receiverSub||currentFclReceiverAuthorized(userId,options.receiverSub);
   return options.authority.runVerified(()=>{
+    const userGroups=new FclUserGroups(options.nativeStore,options.receiverSub);
     const smtp=new FclSmtpSettings({store:options.nativeStore,ownerId:options.receiverSub,secret:options.caseCredentialSecret,fallback:options.mailTransport,...(options.smtpConfig?{initial:options.smtpConfig}:{})});
     const nativeAdmin=new NativeAdminService(options.nativeStore,options.portal,{receiverUserId:options.receiverSub,receiverIsActive,now,executionIsActive:id=>options.executionDirectory?.isActive(id)===true,mailConfigured:()=>true,mailTransport:smtp});
     const caseService=new CaseService(options.caseStore,options.portal,{receiverUserId:options.receiverSub,receiverIsActive,credentialSecret:options.caseCredentialSecret,credentialTtlDays:30,now,mail:{enabled:false},notificationSettings:()=>{const view=nativeAdmin.getFclNotification(receiverContext);return view.input?{...view.input,transport:smtp,timeoutMs:FCL_SMTP_NOTIFICATION_TIMEOUT_MS}:null;}});
@@ -76,7 +78,7 @@ export async function composeProductionFcl(options:ProductionFclCompositionOptio
       if(!options.executionDirectory)throw new Error('fcl_execution_directory_not_configured');
       if(!options.publicOrigin)throw new Error('fcl_execution_public_origin_not_configured');
       const directory=options.executionDirectory;
-      const execution=new FclExecutionService(caseService,{now,isActive:id=>directory.isActive(id),configuration:ctx=>nativeAdmin.getFclNotificationV2(ctx),onEvent:(value,event)=>mail.enqueue(value,event)});
+      const execution=new FclExecutionService(caseService,{canReadCommercial:ctx=>['sales','administrator'].includes(userGroups.self(ctx.identity).group),now,isActive:id=>directory.isActive(id),configuration:ctx=>nativeAdmin.getFclNotificationV2(ctx),onEvent:(value,event)=>mail.enqueue(value,event)});
       const mail:FclExecutionMailService=new FclExecutionMailService(execution,{publicOrigin:options.publicOrigin,configuration:owner=>nativeAdmin.readFclNotificationForDispatch(owner),now,transport:smtp,verifyUsers:ids=>directory.verify(ids)});
       lifecycleMail=mail;caseService.setFclEventObserver(event=>mail.enqueueCaseEvent(event));
       executionHttp=new FclExecutionHttpService(execution,documentWorkflow,nativeAdmin,mail,directory,smtp);
@@ -88,7 +90,7 @@ export async function composeProductionFcl(options:ProductionFclCompositionOptio
       nativeAdmin,
       documentService,
       documentWorkflow,
-      fcl:Object.freeze({...(executionHttp?{execution:executionHttp}:{}),caseService,nativeAdmin,documentWorkflow,publicSessionSecret:options.publicSessionSecret,businessDate:options.businessDate??(()=>new Date().toISOString().slice(0,10)),receiverAuthority:options.authority,receiverUserId:options.receiverSub}),
+      fcl:Object.freeze({userGroups,...(executionHttp?{execution:executionHttp}:{}),caseService,nativeAdmin,documentWorkflow,publicSessionSecret:options.publicSessionSecret,businessDate:options.businessDate??(()=>new Date().toISOString().slice(0,10)),receiverAuthority:options.authority,receiverUserId:options.receiverSub}),
     });
   });
 }

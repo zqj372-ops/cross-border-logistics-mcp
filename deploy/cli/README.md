@@ -6,10 +6,10 @@
 
 ## 安装
 
-需要 Node.js 22.13+。从[官网 CLI 页面](https://www.freightclaw.net/console/#cli)取得对应版本的安装包和校验文件；当前仓库产品版本为 0.021，npm semver 为 0.0.21。官网包是否已更新须另行核对。
+需要 Node.js 22.13+。从[官网 CLI 页面](https://www.freightclaw.net/console/#cli)取得对应版本的安装包和校验文件；当前仓库产品版本为 0.022，npm semver 为 0.0.22。官网包是否已更新须另行核对。
 
 ```sh
-npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.021.tgz
+npm install --global https://www.freightclaw.net/downloads/freightclaw-cli-0.022.tgz
 freightclaw --version
 freightclaw commands
 freightclaw status

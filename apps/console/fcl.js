@@ -1,5 +1,7 @@
+import {createFclUsers} from './fcl-users.js';
+import {orderRows,filterOrders,orderFilters,renderOrderTable} from './fcl-order-list.js';
 import {shipmentLabel} from '../../services/access-gateway/portal/fcl-execution-mail-format.ts';
-import {nodeLabels as executionNodeLabels,displayExecutionDate,createFclExecutionUI} from './fcl-execution.js';
+import {createFclExecutionUI} from './fcl-execution.js';
 import {createFclNodeNotifications} from './fcl-node-notifications.js';
 import {isBaseOceanFreight} from '../../services/quote-native/fcl-fee-identity.ts';
 import {createFclInquiryDraft,FCL_CONTAINER_TYPES as containerTypes,FCL_SERVICE_IDS} from '../inquiry/fcl-model.ts';
@@ -200,7 +202,7 @@ export async function verifyPdfOutput(value, cryptoApi = globalThis.crypto) {
 }
 
 export function createFclWorkspace({api, mutate, model, esc, head, panel, empty, note, field:renderField, actions, formError, icon, rerender, notify}) {
-  let listPhase='all',listMine=false,workspaceListEnabled=null,casesLoading=false,detailLoading=false;
+  let orderFilter={},listPhase='all',listMine=false,workspaceListEnabled=null,casesLoading=false,detailLoading=false;
   const phaseLabels={all:'全部',inquiry_quote:'询报价',awaiting_confirmation:'待成交',executing:'执行中',completed:'已完成'};
   let epoch = 0, scope = '', activeRouteKey = '', cases = null, casesNextCursor = null, casesError = '', activeCaseId = '', detail = null, detailError = '', configView = null, notificationView = null, configError = '', issuerDraft = null, notificationDraft = null, issuerDirty = false, notificationDirty = false, message = '', matchResult = null, quoteView = null, quoteList = null, quoteHistoryView = null, quoteDraft = null, quoteRows = null, quoteSourceBaselines = new Map(), quoteManualBases = new Map(), quoteRemovedManualKeys = new Set(), quoteTouchedRows = new Set(), quoteRemovalKeys = new Set(), quoteAdjustmentReason = '', quoteDirty = false, editingQuoteRef = null, documentView = null, documentList = null, documentDisplayDraft = null, documentDisplayDirty = false, reviewView = null, handoffView = null, exportView = null, handoffDraft = '', handoffDirty = false, selectedRateId = null, relatedCaseId = '', caseStatusDraft = null, staffSupplementDraft = null, staffSupplementMessage = '', confirmReasonDraft = '', caseStatusDirty = false, staffSupplementDirty = false, confirmDirty = false, operationsOpen = false, loadingRelated = false;
   let detailTab = 'quote', eventFilter = 'all', customerOrder=null, customerOrderCase='';
@@ -208,11 +210,11 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   const detailTabs = [['quote', '需求与报价'], ['progress', '进度与记录'], ['files', '资料']];
   let workspaceStep = 'requirements', newCaseDraft = null, newCaseDirty = false;
   const field=(label,id,body)=>renderField(fclFieldLabel(label),id,body);
-  let operations, execution, nodeNotifications;
+  let operations, execution, nodeNotifications,users;
   const isDirty = () => newCaseDirty || operations?.isDirty() || execution?.isDirty() || nodeNotifications?.isDirty() || issuerDirty || notificationDirty || quoteDirty || documentDisplayDirty || caseStatusDirty || staffSupplementDirty || confirmDirty || handoffDirty;
   const discardDrafts = () => {
     newCaseDraft = null; newCaseDirty = false;
-    operations?.reset();
+    operations?.reset();users?.reset();
     execution?.reset(); nodeNotifications?.reset();
     issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false;
     matchResult = null; editingQuoteRef = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; reviewView = null; exportView = null;
@@ -226,9 +228,9 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const reset = () => {
     newCaseDraft = null; newCaseDirty = false;
-    operations?.reset();
+    operations?.reset();users?.reset();
     execution?.reset(); nodeNotifications?.reset();
-    customerOrder=null;customerOrderCase='';epoch += 1; listPhase='all';listMine=false;workspaceListEnabled=null;casesLoading=false;activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = '';detailLoading=false;
+    customerOrder=null;customerOrderCase='';epoch += 1; orderFilter={};listPhase='all';listMine=false;workspaceListEnabled=null;casesLoading=false;activeRouteKey = ''; cases = null; casesNextCursor = null; casesError = ''; activeCaseId = ''; detail = null; detailError = '';detailLoading=false;
     configView = null; notificationView = null; configError = ''; issuerDraft = null; notificationDraft = null; issuerDirty = false; notificationDirty = false; message = ''; matchResult = null; quoteView = null; quoteList = null; quoteHistoryView = null; quoteDraft = null; quoteRows = null; quoteSourceBaselines = new Map(); quoteManualBases = new Map(); quoteRemovedManualKeys = new Set(); quoteTouchedRows = new Set(); quoteRemovalKeys = new Set(); quoteAdjustmentReason = ''; quoteDirty = false; editingQuoteRef = null; documentView = null; documentList = null; documentDisplayDraft = null; documentDisplayDirty = false; reviewView = null; handoffView = null; exportView = null; handoffDraft = ''; handoffDirty = false; selectedRateId = null; relatedCaseId = ''; caseStatusDraft = null; staffSupplementDraft = null; staffSupplementMessage = ''; confirmReasonDraft = ''; caseStatusDirty = false; staffSupplementDirty = false; confirmDirty = false; operationsOpen = false; loadingRelated = false;
   };
   const clearCaseDependents = () => {
@@ -280,6 +282,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     const result = await mutate(`/fcl/${action}`, 'POST', body, { acceptBusiness: true, ...(intentScope ? { intentScope } : {}) });
     return validateResponse(action, result);
   };
+  users=createFclUsers({call,write,esc,rerender,notify});
   operations = createFclOperations({call,write,esc,rerender,notify,model,api});
   const executionContext = () => {
     const previous=handoffView?.current;
@@ -442,16 +445,15 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     if (e === epoch) rerender();
   };
 
-  const statusLabel = fclLabel;
-  const caseCard = (item) => item.phase ? `<a class="case-card" href="#fcl/case/${esc(item.case_ref)}"><span class="case-card-icon">${icon('container')}</span><div class="case-card-body"><div class="case-card-top"><h2>${esc(item.extensions?.shipment_v1?.label||item.inquiry_no)} · ${esc(item.customer_name)}</h2><span class="badge ${item.exception?'warning':''}">${phaseLabels[item.phase]}</span></div><p>${esc(item.route)}</p><div class="case-meta"><span>${executionNodeLabels[item.pending_nodes[0]]||'无待办'}${item.pending_nodes.length>1?' + '+(item.pending_nodes.length-1)+' 项':''}</span><span>负责人：${item.coordinator_id===model().session?.identity?.user_id?'本人':'已分派'}</span><span>${esc(displayExecutionDate(item.deadline))}</span>${item.exception?'<span>需处理异常</span>':''}</div></div><span class="case-arrow" aria-hidden="true">${icon('arrow')}</span></a>` : `<a class="case-card" href="#fcl/case/${encodeURIComponent(item.case_id)}"><span class="case-card-icon">${icon('container')}</span><div class="case-card-body"><div class="case-card-top"><h2>${esc(item.inquiry_no || 'FCL 询价')}</h2><span class="badge ${item.case_status === 'needs_input' ? 'warning' : ''}">${esc(statusLabel(item.case_status))}</span></div><p>${esc([item.current_input.pol, item.current_input.pod].filter(Boolean).join(' → ') || '线路待确认')}</p><div class="case-meta"><span>需求第 ${item.case_version} 版</span><span>${item.review_context?.review_required ? '待重新核对' : '已确认需求'}</span></div></div><span class="case-arrow" aria-hidden="true">${icon('arrow')}</span></a>`;
   const listPage = () => {
     void loadCases();
-    const heading = head('整柜业务', '', model().session?.personal_operator===false?'':'<button class="button primary" data-action="fcl-case-new">新增询价</button>')+(workspaceListEnabled===false?'':`<div class="head-actions fcl-phase-filters">${Object.entries(phaseLabels).map(([id,label])=>`<button class="button ${listPhase===id?'primary':''}" data-action="fcl-phase" data-phase="${id}">${label}</button>`).join('')}<button class="button ${listMine?'primary':''}" data-action="fcl-mine" aria-pressed="${listMine}">待我处理</button></div>`);
+    const heading = head('整柜业务', '', model().session?.personal_operator===false?'':'<button class="button primary" data-action="fcl-case-new">新增询价</button>')+(workspaceListEnabled===false?'':`<div class="head-actions fcl-phase-filters">${Object.entries(phaseLabels).filter(([id])=>model().session?.personal_operator!==false||!['inquiry_quote','awaiting_confirmation'].includes(id)).map(([id,label])=>`<button class="button ${listPhase===id?'primary':''}" data-action="fcl-phase" data-phase="${id}">${label}</button>`).join('')}<button class="button ${listMine?'primary':''}" data-action="fcl-mine" aria-pressed="${listMine}">待我处理</button></div>`);
     const draft = newCaseDraft;
     const createForm = draft ? `<form class="panel" data-fcl-form="case-create"><div class="panel-body"><div class="form-error" role="alert" hidden></div><h2>录入客户需求</h2><div class="field-grid">${valueField('联系人', 'new-case-name', draft.name || '', 'name="name" required maxlength="80"')}${valueField('邮箱', 'new-case-email', draft.email || '', 'name="email" type="email" required')}${valueField('公司（选填）', 'new-case-company', draft.company || '', 'name="company" maxlength="200"')}${valueField('起运港', 'new-case-pol', draft.pol || '', 'name="pol" maxlength="200"')}${valueField('目的港', 'new-case-pod', draft.pod || '', 'name="pod" maxlength="200"')}</div><label class="check-row"><input type="checkbox" name="consent" required${draft.consent ? ' checked' : ''}>已取得客户授权，保存联系资料用于询价和报价</label><div class="head-actions"><button type="submit" class="button primary">保存并完善需求</button><button type="button" class="button" data-action="fcl-case-cancel">取消</button></div></div></form>` : '';
     if (!cases && !casesError) return heading + createForm + '<p role="status">正在读取受理列表…</p>';
     if (casesError) return heading + createForm + note(casesError === 'network' ? '询价列表暂未加载，请重试。已填写的内容会保留。' : fclError({code: casesError}), 'error') + '<button class="button" type="button" data-action="fcl-cases-retry">重新加载</button>';
-    return heading + createForm + (cases.items.length||casesNextCursor ? `<div class="case-list">${cases.items.map(caseCard).join('')}</div>${casesNextCursor ? '<div class="head-actions"><button type="button" class="button" data-action="fcl-cases-more">加载更多业务</button></div>' : ''}` : empty('当前没有匹配的业务', '调整阶段筛选，或新增询价。这里只显示本人受理或获授权参与的记录。'));
+    const rows=filterOrders(orderRows(cases.items,'ops'),orderFilter);
+    return heading+createForm+`<section class="panel fcl-order-list">${orderFilters(orderFilter,'ops',esc)}${renderOrderTable(rows,'ops',esc)}<footer class="order-footer"><span>已加载 ${cases.items.length} 条 · 筛选显示 ${rows.length} 条</span>${casesNextCursor?`<button type="button" class="button" data-action="fcl-cases-more"${casesLoading?' disabled':''}>加载更多业务</button>`:''}</footer></section>`;
   };
 
   const staffSupplementFields = (inputValue) => `<div class="field-grid">${valueField('中国起运城市', 'fcl-origin-city', inputValue.origin_city || '', 'name="origin_city"')}${valueField('起运港（POL）', 'fcl-pol', inputValue.pol || '', 'name="pol"')}</div><div class="field-grid">${valueField('目的港（POD）', 'fcl-pod', inputValue.pod || '', 'name="pod"')}${valueField('最终目的地', 'fcl-final', inputValue.final_destination || '', 'name="final_destination"')}</div><fieldset class="fcl-container-grid"><legend>${fclField("containers")}</legend>${containerTypes.map(type => { const row = inputValue.containers.find(item => item.type === type); return `<div class="fcl-container-row"><label for="fcl-container-${type}">${type}</label><label class="check-row"><input type="checkbox" name="container-pending-${type}"${row?.quantity === null ? ' checked' : ''}>柜数待确认</label><input id="fcl-container-${type}" name="container-${type}" type="number" min="1" max="9999" step="1" value="${row?.quantity ?? ''}" aria-label="${type}柜数"></div>`; }).join('')}</fieldset><div class="field-grid">${valueField('货物品名', 'fcl-cargo-name', inputValue.cargo_name || '', 'name="cargo_name"')}${field('货物属性', 'fcl-cargo-type', `<select id="fcl-cargo-type" name="cargo_type"><option value="">待确认</option>${['general','battery','liquid_powder','wood','regulated','other'].map(value => `<option value="${value}"${inputValue.cargo_type === value ? ' selected' : ''}>${fclLabel(value)}</option>`).join('')}</select>`)}</div><div class="field-grid">${valueField('预计毛重 kg', 'fcl-weight', inputValue.estimated_weight?.value || '', 'name="estimated_weight" inputmode="decimal"')}${valueField('备货日期', 'fcl-ready', inputValue.cargo_ready_date || '', 'name="cargo_ready_date" type="date"')}</div><div class="field-grid">${field('贸易条款', 'fcl-incoterm', `<select id="fcl-incoterm" name="incoterm"><option value="">待确认</option>${['EXW','FOB','CIF','DDU','DDP','Other'].map(value => `<option value="${value}"${inputValue.incoterm === value ? ' selected' : ''}>${value}</option>`).join('')}</select>`)}${valueField('其他条款说明', 'fcl-incoterm-other', inputValue.incoterm_other || '', 'name="incoterm_other"')}</div><fieldset class="fcl-service-grid"><legend>服务范围</legend>${Object.entries(serviceLabels).map(([id, label]) => `<label class="check-row"><input type="checkbox" name="service" value="${id}"${inputValue.selected_services?.includes(id) ? ' checked' : ''}>${label}</label>`).join('')}</fieldset><div class="field-grid">${valueField('联系人', 'fcl-contact-name', inputValue.contact?.name || '', 'name="contact.name"')}${valueField('邮箱', 'fcl-contact-email', inputValue.contact?.email || '', 'name="contact.email" type="email"')}</div><div class="field-grid">${valueField('公司', 'fcl-contact-company', inputValue.contact?.company || '', 'name="contact.company"')}${valueField('电话', 'fcl-contact-phone', inputValue.contact?.phone || '', 'name="contact.phone"')}</div><div class="field"><label for="fcl-notes">补充说明</label><textarea id="fcl-notes" name="notes" rows="3" maxlength="4000">${esc(inputValue.notes || '')}</textarea></div>`;
@@ -499,7 +501,9 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
 
   const detailPage = (id) => {
     selectCase(id);
-    execution.setCase(id); void execution.load(); void loadCustomerOrder(id);
+    execution.setCase(id); void execution.load();
+    if(model().session?.personal_operator===false)return head('运输执行','','<a class="button" href="#fcl">返回列表</a>')+execution.render();
+    void loadCustomerOrder(id);
     void loadDetail(id);
     if (detail?.case_id === id && activeCaseId === id) void loadRelated(id);
     let heading = head(execution.view()?'整柜订单':'整柜报价', detail ? execution.view()?shipmentLabel(execution.view()):`${detail.inquiry_no} · 需求第 ${detail.case_version} 版` : '正在读取询价需求', `<a class="button" href="#fcl">返回询价列表</a>`);
@@ -808,6 +812,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     sync();
     const routeValue = syncRoute();
     if (!hasCapability()) return empty('当前账号没有整柜受理权限', '请使用指定的受理人账号登录。');
+    if(routeValue.action==='users')return model().session?.extensions?.user_group_v1?.can_manage?users.render():empty('没有人员管理权限','');
     const body = routeValue.action === 'compare' ? operations.render(routeValue.id) : routeValue.action === 'rates' ? operations.render('', 'rates') : routeValue.action === 'templates' ? operations.render('', 'templates') : routeValue.action === 'config' ? configPage() : routeValue.action === 'case' && routeValue.id ? detailPage(routeValue.id) : listPage();
     return `<div class="fcl-workbench">${body}</div>`;
   };
@@ -837,6 +842,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
   const captureFormDraft = (form) => {
     const type = form.dataset.fclForm;
+    if(type==='order-filter'){const values=new FormData(form);orderFilter={query:String(values.get('query')||''),route:String(values.get('route')||''),customer:String(values.get('customer')||''),exception:values.has('exception')};rerender();return true;}
     if (type === 'quote-save') {
       captureQuoteForm(form);
       quoteDirty = true;
@@ -907,10 +913,12 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
 
   const submit = async (form) => {
+    if (await users.submit(form)) return true;
     if (await operations.submit(form)) return true;
     if (await execution.submit(form) || await nodeNotifications.submit(form)) return true;
     if (!form.dataset.fclForm) return false;
     const type = form.dataset.fclForm;
+    if(type==='order-filter'){const values=new FormData(form);orderFilter={query:String(values.get('query')||''),route:String(values.get('route')||''),customer:String(values.get('customer')||''),exception:values.has('exception')};rerender();return true;}
     const e = epoch;
     if (type === 'case-create') {
       captureFormDraft(form);
@@ -1031,6 +1039,7 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
   };
 
   const action = async (button) => {
+    if (await users.action(button)) return true;
     if (await operations.action(button)) return true;
     if (await execution.action(button) || await nodeNotifications.action(button)) return true;
     const name = button.dataset.action;
@@ -1044,6 +1053,8 @@ export function createFclWorkspace({api, mutate, model, esc, head, panel, empty,
     }
     if (name === 'fcl-case-new') { newCaseDraft ||= {}; rerender(); document.querySelector('#new-case-name')?.focus(); return true; }
     if (name === 'fcl-case-cancel') { newCaseDraft = null; newCaseDirty = false; rerender(); return true; }
+    if(name==='fcl-order-reset'){orderFilter={};rerender();return true;}
+    if(name==='fcl-refresh'){if(casesLoading)return true;cases=null;casesError='';casesNextCursor=null;await loadCases();return true;}
     if(name==='fcl-phase'||name==='fcl-mine'){if(casesLoading)return true;if(name==='fcl-phase')listPhase=button.dataset.phase;else listMine=!listMine;cases=null;casesError='';casesNextCursor=null;await loadCases();return true;}
     if (name === 'fcl-cases-retry') { casesError = ''; await loadCases(); return true; }
     if (name === 'fcl-template-step') {
